@@ -37,6 +37,22 @@ mkdir -p /tmp/dune-demo
 
 真实 Agent 样例为 `samples/agent-pty.yaml`（本机 Codex）和 `samples/agent-acp.yaml`（本机 Gemini）。调整为已登录可用的命令即可；Dune 不配置 Agent 账号。ACP CLI 逐行收发 JSON-RPC，调用方负责初始化、权限请求应答与会话逻辑，不能把它当普通聊天终端。
 
+## 使用工作台账号登录 CLI
+
+```sh
+dune login --site https://example.com/tools/dune/
+# 在浏览器登录，核对终端与页面的代码，再确认。
+dune --login ~/.config/dune/login.json machines
+dune --login ~/.config/dune/login.json --target MACHINE_ID exec --cwd /tmp -- /usr/bin/uname -s
+dune logout
+```
+
+浏览器沿用站点已配置的本地账号或企业 SSO。`login` 默认打开浏览器，`--no-browser` 只打印确认地址；`--file /absolute/private/login.json` 选择另一份凭据，退出时使用相同的 `--file`。凭据文件不覆盖已有文件，须保存在当前用户拥有的私有目录，权限为 0600。自定义 CA 使用 `login --certificate /absolute/ca.pem`；站点必须为 HTTPS，仅数字 loopback 地址允许 HTTP。
+
+CLI 会话最长八小时，也不超过确认它的浏览器会话期限；浏览器退出、用户停用或身份关联会撤销相关 CLI 会话及已建立访问。`logout` 只撤销这份 CLI 会话，不退出浏览器。每次执行交换一个三十秒内单次使用的目标凭据；不把用户会话交给 fabricd。登录确认或交换结果未知时不会自动重放，应重新发起登录或明确核对结果。
+
+`--login` 与显式 `--config` 互斥，放在命令前；执行还须指定 `--target`，可用的命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。当前机器列表和访问采用 owner 策略，企业操作级授权及集群路由仍在实施。
+
 ## Files、Git、Ports
 
 ```sh
@@ -59,6 +75,8 @@ go run ./samples/client
 SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway URL、token 和目标。`ws://` 不需要 `TLSConfig`；显式使用 `wss://` 时才提供经过验证的 TLS 配置。`Start` 返回 Runtime 和交互 Stream，`Input` 返回请求 ID，需要从 `Recv` 收到对应 `written` 才确认输入写入。所有 API 均经真实网络链路，不直接访问 daemon。
 
 宿主已有字节连接时可使用 `pkg/client.Connect(ctx, conn, target)`，该协议包不依赖 HTTP 或 WebSocket 实现。`pkg/sdk` 保留原有默认拨号及执行 API。
+
+人类客户端使用 `pkg/login.New(login.Options{Site: "https://example.com/tools/dune/"})`；调用 `Begin(ctx)` 后展示返回的 `VerificationURL` 和 `Code`，由用户在浏览器明确确认，再用 `Attempt.Wait(ctx)` 取得 `Session`。`Client.Machines(ctx, session)` 查询目标，`Client.Dial(ctx, session, target)` 交换短期凭据并返回正常的 `*sdk.Client`。调用方私下保管 `Session.Token`、关闭两个客户端，并通过 `Client.Logout(ctx, session)` 撤销登录；`Client.Close` 只释放 HTTP 连接池。
 
 公开的 `pkg/gateway` 和 `pkg/fabricd` 可分别嵌入服务端和执行环境，无需产品数据库；参考 [Gateway 示例](samples/gateway/main.go)和 [fabricd 示例](samples/fabricd/main.go)。应用负责连接认证、HTTP 挂载及监听；core 持有连接和流，关闭规则见对应 Go API 注释。
 

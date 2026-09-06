@@ -104,10 +104,14 @@ func (e *External) Authenticate(ctx context.Context, token string) (User, error)
 		return User{}, ErrUnauthorized
 	}
 	user, err := e.store.ReadSession(ctx, digest(token), time.Now().Unix())
-	if err == nil && user.Namespace != e.namespace {
+	if err == nil && (user.Namespace != e.namespace || user.Kind != "browser") {
 		return User{}, ErrUnauthorized
 	}
 	return user, err
+}
+
+func (e *External) AuthenticateCLI(ctx context.Context, token string) (User, error) {
+	return authenticateCLI(ctx, e.store, e.Namespace(), token)
 }
 func (e *External) Logout(ctx context.Context, token string) error {
 	return e.store.DeleteSession(ctx, digest(token))

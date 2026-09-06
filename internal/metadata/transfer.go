@@ -14,7 +14,8 @@ var transferTables = []struct{ name, columns string }{
 	{"dune_external_identities", "namespace,subject,principal_id"},
 	{"dune_identity_links", "request_id,actor,principal_id,namespace,subject,reason,created_at"},
 	{"dune_local_accounts", "principal_id,email,salt,password_hash"},
-	{"dune_sessions", "hash,principal_id,expires_at,auth_version,identity_namespace"},
+	{"dune_sessions", "hash,principal_id,expires_at,auth_version,identity_namespace,kind,parent_hash"},
+	{"dune_cli_logins", "id,challenge,site,identity_namespace,expires_at,session_hash"},
 	{"dune_login_transactions", "state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at"},
 	{"dune_enrollments", "hash,principal_id,name,expires_at"},
 	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
@@ -80,7 +81,11 @@ func (s *Store) CopySQLiteTo(ctx context.Context, target *Store) (map[string]int
 }
 
 func copyTable(ctx context.Context, source, target *sql.Tx, name, columns string) (int64, error) {
-	rows, err := source.QueryContext(ctx, "SELECT "+columns+" FROM "+name)
+	query := "SELECT " + columns + " FROM " + name
+	if name == "dune_sessions" {
+		query += " ORDER BY CASE WHEN parent_hash IS NULL THEN 0 ELSE 1 END"
+	}
+	rows, err := source.QueryContext(ctx, query)
 	if err != nil {
 		return 0, err
 	}

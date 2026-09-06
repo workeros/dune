@@ -116,6 +116,12 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			if _, err := source.db.Exec(`INSERT INTO dune_login_transactions(state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at) VALUES('state','proof','issuer','https://dune.test/callback','nonce','verifier',9999999999)`); err != nil {
 				t.Fatal(err)
 			}
+			if _, err := source.db.Exec(`INSERT INTO dune_sessions(hash,principal_id,expires_at,auth_version,identity_namespace,kind,parent_hash) SELECT 'cli-session',principal_id,expires_at,auth_version,identity_namespace,'cli',hash FROM dune_sessions LIMIT 1`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := source.db.Exec(`INSERT INTO dune_cli_logins(id,challenge,site,identity_namespace,expires_at,session_hash) SELECT 'cli-request','proof-hash','https://dune.test/',identity_namespace,9999999999,hash FROM dune_sessions WHERE kind='browser' LIMIT 1`); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := source.db.Exec(`INSERT INTO dune_access_tickets(hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at) SELECT 'access-hash',s.hash,s.principal_id,s.identity_namespace,m.id,r.id,r.fabric_id,r.binding_revision,s.auth_version,9999999999 FROM dune_sessions s JOIN dune_runners r ON r.owner_id=s.principal_id JOIN dune_machines m ON m.runner_id=r.id LIMIT 1`); err != nil {
 				t.Fatal(err)
 			}
@@ -152,7 +158,7 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if counts["dune_principals"] != 1 || counts["dune_runners"] != 1 || counts["dune_sessions"] != 2 {
+			if counts["dune_principals"] != 1 || counts["dune_runners"] != 1 || counts["dune_sessions"] != 3 {
 				t.Fatalf("copy counts: %v", counts)
 			}
 			if !reflect.DeepEqual(before, snapshotRecords(t, target)) {

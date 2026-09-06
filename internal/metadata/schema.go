@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -45,6 +45,15 @@ var schema5 = []string{
 	`CREATE TABLE dune_access_tickets (hash TEXT PRIMARY KEY, session_hash TEXT NOT NULL REFERENCES dune_sessions(hash) ON DELETE CASCADE, principal_id TEXT NOT NULL REFERENCES dune_principals(id), identity_namespace TEXT NOT NULL, machine_id TEXT NOT NULL REFERENCES dune_machines(id) ON DELETE CASCADE, runner_id TEXT NOT NULL REFERENCES dune_runners(id) ON DELETE CASCADE, fabric_id TEXT NOT NULL, binding_revision BIGINT NOT NULL CHECK(binding_revision>0), auth_version BIGINT NOT NULL CHECK(auth_version>0), expires_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_access_expiry ON dune_access_tickets(expires_at)`,
 	`CREATE INDEX dune_access_session ON dune_access_tickets(session_hash)`,
+}
+
+var schema6 = []string{
+	`ALTER TABLE dune_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'browser' CHECK(kind IN ('browser','cli'))`,
+	`ALTER TABLE dune_sessions ADD COLUMN parent_hash TEXT REFERENCES dune_sessions(hash) ON DELETE CASCADE`,
+	`CREATE INDEX dune_sessions_parent ON dune_sessions(parent_hash)`,
+	`CREATE TABLE dune_cli_logins (id TEXT PRIMARY KEY, challenge TEXT NOT NULL, site TEXT NOT NULL, identity_namespace TEXT NOT NULL, expires_at BIGINT NOT NULL, session_hash TEXT REFERENCES dune_sessions(hash) ON DELETE CASCADE)`,
+	`CREATE INDEX dune_cli_expiry ON dune_cli_logins(expires_at)`,
+	`CREATE INDEX dune_cli_parent ON dune_cli_logins(session_hash)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -118,6 +127,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=5 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 5
+		}
+		if version == 5 {
+			for _, statement := range schema6 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=6 WHERE id=1`); err != nil {
 				return err
 			}
 		}

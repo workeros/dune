@@ -18,6 +18,7 @@ var ErrNotFound = errors.New("machine not found")
 
 type Sessions interface {
 	Authenticate(context.Context, string) (identity.User, error)
+	AuthenticateCLI(context.Context, string) (identity.User, error)
 	Namespace() string
 }
 
@@ -36,19 +37,27 @@ func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Loca
 // and target and continue checking their session and ownership through Valid.
 type ClientGrant struct {
 	token   string
+	expires int64
 	valid   func() bool
 	release func()
 }
 
-func (g *ClientGrant) Token() string { return g.token }
-func (g *ClientGrant) Valid() bool   { return g.valid() }
-func (g *ClientGrant) Close()        { g.release() }
+func (g *ClientGrant) Token() string    { return g.token }
+func (g *ClientGrant) ExpiresAt() int64 { return g.expires }
+func (g *ClientGrant) Valid() bool      { return g.valid() }
+func (g *ClientGrant) Close()           { g.release() }
 
 func (l *Local) Client(ctx context.Context, session, target string) (*ClientGrant, error) {
+	return l.client(ctx, session, target, l.sessions.Authenticate)
+}
+func (l *Local) ClientCLI(ctx context.Context, session, target string) (*ClientGrant, error) {
+	return l.client(ctx, session, target, l.sessions.AuthenticateCLI)
+}
+func (l *Local) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error)) (*ClientGrant, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
-	user, err := l.sessions.Authenticate(ctx, session)
+	user, err := authenticate(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +66,7 @@ func (l *Local) Client(ctx context.Context, session, target string) (*ClientGran
 	if err != nil {
 		return nil, err
 	}
-	return &ClientGrant{token: token, valid: l.validAccess(record), release: func() {
+	return &ClientGrant{token: token, expires: record.ExpiresAt, valid: l.validAccess(record), release: func() {
 		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
 		defer cancel()
 		// Cleanup is best-effort; expiry bounds an unconsumed ticket if storage

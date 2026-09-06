@@ -13,6 +13,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -51,6 +52,18 @@ func TestPostgresBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ticket, err := authorization.NewLocal(ctx, local, s).Client(ctx, cookie, machine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := wire.ID() + wire.ID()
+	cli, err := s.BeginCLI(ctx, tokenHash(proof), "https://restore.test/", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmCLI(ctx, cli.ID, "https://restore.test/", "", cli.Code, cookie, user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	cliSession, err := s.ConsumeCLI(ctx, cli.ID, "https://restore.test/", "", proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +120,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 		t.Fatal("restored metadata differs from backup")
 	}
 	local = identity.NewLocal(s, true)
+	if got, err := local.AuthenticateCLI(ctx, cliSession.Token); err != nil || got.ID != user.ID {
+		t.Fatal("restored CLI session invalid", err)
+	}
 	if got, err := local.Authenticate(ctx, cookie); err != nil || got.ID != user.ID {
 		t.Fatal("restored session invalid", err)
 	}

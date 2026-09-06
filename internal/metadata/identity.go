@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
@@ -72,11 +73,17 @@ func (s *Store) createSession(ctx context.Context, tx *sql.Tx, id, hash string, 
 
 func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (identity.User, error) {
 	var user identity.User
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email,s.identity_namespace FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.expires_at>$2 AND p.enabled=TRUE AND s.auth_version=p.auth_version`, hash, now).Scan(&user.ID, &user.Email, &user.Namespace)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email,s.identity_namespace,s.kind FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.expires_at>$2 AND p.enabled=TRUE AND s.auth_version=p.auth_version`+liveSessionParent("$2"), hash, now).Scan(&user.ID, &user.Email, &user.Namespace, &user.Kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
 	return user, err
+}
+
+// All session consumers use the same one-level parent validity condition.
+// nowParameter is an internal SQL placeholder, never user input.
+func liveSessionParent(nowParameter string) string {
+	return fmt.Sprintf(` AND ((s.kind='browser' AND s.parent_hash IS NULL) OR (s.kind='cli' AND EXISTS(SELECT 1 FROM dune_sessions parent WHERE parent.hash=s.parent_hash AND parent.kind='browser' AND parent.parent_hash IS NULL AND parent.principal_id=s.principal_id AND parent.identity_namespace=s.identity_namespace AND parent.auth_version=s.auth_version AND parent.expires_at>%s)))`, nowParameter)
 }
 
 func (s *Store) DeleteSession(ctx context.Context, hash string) error {

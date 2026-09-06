@@ -18,9 +18,11 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { ACPPane } from "@/components/acp";
 import { TerminalPane } from "@/components/terminal";
 import { Brand } from "@/components/brand";
+import { CLILogin, pendingCLIRequest } from "@/components/cli-login";
 import { APIError, request, post, call, errorText, type User, type Machine, type Runtime, type AgentConfig, type StartupInfo } from "@/lib/api";
 
 export function App() {
+  const [cliRequest, setCLIRequest] = useState(pendingCLIRequest);
   const [user, setUser] = useState<User | null>(), [machines, setMachines] = useState<Machine[]>([]), [selected, setSelected] = useState(""), [adding, setAdding] = useState(false), [error, setError] = useState(new URL(window.location.href).searchParams.get("login_error") === "1" ? "企业登录未完成或已过期，请重新登录。" : "");
   const [startup, setStartup] = useState<StartupInfo>(), [startupError, setStartupError] = useState("");
   const loadStartup = async () => {
@@ -31,10 +33,11 @@ export function App() {
   useEffect(() => { void loadStartup(); }, []);
   useEffect(() => { request<User>("/api/me").then(setUser).catch((e) => { setUser(null); if (!(e instanceof APIError && e.status === 401)) setError(errorText(e)); }); }, []);
   const refresh = async () => { try { const list = await request<Machine[]>("/api/machines"); setMachines(list); setSelected((old) => list.some((m) => m.id === old) ? old : list[0]?.id ?? ""); setError(""); } catch (e) { if (e instanceof APIError && e.status === 401) setUser(null); else setError(errorText(e)); } };
-  useEffect(() => { if (!user) return; void refresh(); const timer = setInterval(refresh, 5000); return () => clearInterval(timer); }, [user?.id]);
+  useEffect(() => { if (!user || cliRequest) return; void refresh(); const timer = setInterval(refresh, 5000); return () => clearInterval(timer); }, [user?.id, cliRequest]);
   if (startupError) return <main className="paper-grid grid min-h-screen place-items-center p-6"><section className="paper-card grid max-w-md gap-4 p-8"><Brand /><h1 className="text-xl font-bold">暂时无法打开工作台</h1><p className="error-box" role="alert">{startupError}</p><Button onClick={() => void loadStartup()}>重试</Button></section></main>;
   if (!startup || user === undefined) return <main className="grid min-h-screen place-items-center paper-grid"><span role="status">正在打开工作台…</span></main>;
   if (!user) return <Auth startup={startup} onLogin={(user) => { setUser(user); setError(""); }} initialError={error} />;
+  if (cliRequest) return <CLILogin id={cliRequest} user={user} onDone={() => setCLIRequest("")} />;
   const machine = machines.find((m) => m.id === selected);
   return <div className="workspace">
     <aside className="sidebar"><Brand /><div><div className="mb-3 flex items-center justify-between"><span className="muted font-semibold">我的开发机</span><Button variant="ghost" size="icon" aria-label="刷新机器列表" onClick={() => void refresh()}><Icon icon={refreshIcon} /></Button></div><nav className="machine-nav" aria-label="开发机">{machines.map((m) => <button key={m.id} className={`machine-row ${selected === m.id ? "active" : ""}`} onClick={() => setSelected(m.id)}><Icon icon={serverIcon} width={21} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{m.name}</span><span className="mt-1 block text-xs text-muted-foreground"><i className={`status-dot ${m.online ? "online" : ""}`} />{m.online ? "在线" : "离线"} · {m.os === "darwin" ? "macOS" : "Linux"}</span></span></button>)}</nav>{startup.attached && <Button className="mt-2 w-full" variant="outline" onClick={() => setAdding(true)}><Icon icon={addIcon} />接入开发机</Button>}</div><div className="sidebar-footer mt-auto border-t border-foreground/20 pt-4"><p className="mb-4 text-xs leading-relaxed text-muted-foreground">任务在你的机器上运行。<br />关闭网页，任务继续。</p><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs" title={user.email}>{user.email || "企业用户"}</span><Button variant="ghost" size="icon" aria-label="退出登录" onClick={() => void post("/api/auth/logout", {}).then(() => setUser(null)).catch((e) => setError(errorText(e)))}><Icon icon={logoutIcon} /></Button></div></div></aside>

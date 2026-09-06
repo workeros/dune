@@ -17,7 +17,7 @@ func (s *Store) CreateAccess(ctx context.Context, hash, sessionHash, principal, 
 			return err
 		}
 		now := time.Now().Unix()
-		sessionQuery := `SELECT s.auth_version FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.expires_at>$4 AND p.enabled=TRUE AND p.auth_version=s.auth_version`
+		sessionQuery := `SELECT s.auth_version FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.expires_at>$4 AND p.enabled=TRUE AND p.auth_version=s.auth_version` + liveSessionParent("$4")
 		if s.postgres {
 			// Lock parents before touching tickets, consistently with cascading
 			// logout/revocation. Otherwise cleanup followed by FK insertion can
@@ -85,7 +85,7 @@ func (s *Store) ConsumeAccess(ctx context.Context, hash, namespace string, now i
 
 func (s *Store) CheckAccess(ctx context.Context, record authorization.ConnectionAccess, now int64) (bool, error) {
 	var found int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id JOIN dune_machines m ON m.id=$1 JOIN dune_runners r ON r.id=m.runner_id WHERE s.hash=$2 AND s.principal_id=$3 AND s.identity_namespace=$4 AND s.expires_at>$5 AND s.auth_version=$6 AND p.enabled=TRUE AND p.auth_version=$6 AND r.owner_id=p.id AND r.id=$7 AND r.fabric_id=$8 AND r.binding_revision=$9`, record.Target, record.SessionHash, record.PrincipalID, record.Namespace, now, record.AuthVersion, record.RunnerID, record.FabricID, record.BindingRevision).Scan(&found)
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id JOIN dune_machines m ON m.id=$1 JOIN dune_runners r ON r.id=m.runner_id WHERE s.hash=$2 AND s.principal_id=$3 AND s.identity_namespace=$4 AND s.expires_at>$5 AND s.auth_version=$6 AND p.enabled=TRUE AND p.auth_version=$6 AND r.owner_id=p.id AND r.id=$7 AND r.fabric_id=$8 AND r.binding_revision=$9`+liveSessionParent("$5"), record.Target, record.SessionHash, record.PrincipalID, record.Namespace, now, record.AuthVersion, record.RunnerID, record.FabricID, record.BindingRevision).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

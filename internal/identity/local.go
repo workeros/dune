@@ -32,12 +32,14 @@ type User struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Namespace string `json:"-"`
+	Kind      string `json:"-"`
 }
 
 type Service interface {
 	Register(context.Context, string, string) (User, string, error)
 	Login(context.Context, string, string) (User, string, error)
 	Authenticate(context.Context, string) (User, error)
+	AuthenticateCLI(context.Context, string) (User, error)
 	Logout(context.Context, string) error
 	RegistrationAllowed() bool
 	Namespace() string
@@ -157,10 +159,14 @@ func (l *Local) Authenticate(ctx context.Context, token string) (User, error) {
 		return User{}, ErrUnauthorized
 	}
 	user, err := l.store.ReadSession(ctx, digest(token), time.Now().Unix())
-	if err == nil && user.Namespace != "" {
+	if err == nil && (user.Namespace != "" || user.Kind != "browser") {
 		return User{}, ErrUnauthorized
 	}
 	return user, err
+}
+
+func (l *Local) AuthenticateCLI(ctx context.Context, token string) (User, error) {
+	return authenticateCLI(ctx, l.store, l.Namespace(), token)
 }
 
 func (l *Local) Logout(ctx context.Context, token string) error {

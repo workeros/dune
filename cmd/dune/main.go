@@ -44,12 +44,35 @@ func main() {
 func run() error {
 	fs := flag.NewFlagSet("dune", flag.ContinueOnError)
 	path := fs.String("config", config.DefaultPath(), "machine config path")
+	loginPath := fs.String("login", "", "private human CLI credential file; replaces machine config for execution")
+	target := fs.String("target", "", "machine target for --login execution")
 	if e := fs.Parse(os.Args[1:]); e != nil {
 		return e
 	}
 	args := fs.Args()
+	if *loginPath != "" {
+		configSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "config" {
+				configSet = true
+			}
+		})
+		if configSet {
+			return fmt.Errorf("--login and --config cannot be combined")
+		}
+		if len(args) == 0 {
+			return fmt.Errorf("an execution command or machines is required with --login")
+		}
+		switch args[0] {
+		case "machines", "capabilities", "profile", "runtime", "exec", "files", "upload", "git", "upload-file", "ports":
+		default:
+			return fmt.Errorf("--login is only for human execution commands and machines")
+		}
+	} else if *target != "" {
+		return fmt.Errorf("--target requires --login")
+	}
 	if len(args) > 0 && (args[0] == "help" || args[0] == "version") {
-		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config must precede the subcommand.")
+		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login and --target must precede the subcommand; --login and --config are mutually exclusive.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "init" {
@@ -82,12 +105,19 @@ func run() error {
 		defer cancel()
 		return runMetadata(ctx, args[1:])
 	}
-	c, e := config.Load(*path)
-	if e != nil {
-		return fmt.Errorf("%w; initialize with dune init", e)
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if len(args) > 0 && (args[0] == "login" || args[0] == "logout") {
+		return runLogin(ctx, args[1:], args[0] == "logout")
+	}
+	var c config.Config
+	var e error
+	if *loginPath == "" {
+		c, e = config.Load(*path)
+		if e != nil {
+			return fmt.Errorf("%w; initialize with dune init", e)
+		}
+	}
 	if len(args) == 0 {
 		if e := c.ValidateServer(); e != nil {
 			return e
@@ -153,11 +183,32 @@ func run() error {
 		return runWeb(ctx, c, options, *webListen)
 
 	}
-	tc, e := c.TLS()
-	if e != nil {
-		return e
+	var client *sdk.Client
+	if *loginPath != "" {
+		credentials, err := config.LoadUserCredentials(*loginPath)
+		if err != nil {
+			return err
+		}
+		human, err := loginClient(credentials.Session.Site, credentials.Certificate)
+		if err != nil {
+			return err
+		}
+		defer human.Close()
+		if args[0] == "machines" {
+			machines, err := human.Machines(ctx, credentials.Session)
+			if err != nil {
+				return err
+			}
+			return printJSON(machines)
+		}
+		client, e = human.Dial(ctx, credentials.Session, *target)
+	} else {
+		tc, err := c.TLS()
+		if err != nil {
+			return err
+		}
+		client, e = sdk.Dial(ctx, sdk.Options{Gateway: c.Gateway, Token: c.Token, Target: c.Target, TLSConfig: tc})
 	}
-	client, e := sdk.Dial(ctx, sdk.Options{Gateway: c.Gateway, Token: c.Token, Target: c.Target, TLSConfig: tc})
 	if e != nil {
 		return e
 	}

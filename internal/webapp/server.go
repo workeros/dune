@@ -85,6 +85,13 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	}
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/me", s.me)
+	s.mux.HandleFunc("POST /api/auth/cli/start", s.cliStart)
+	s.mux.HandleFunc("POST /api/auth/cli/consume", s.cliConsume)
+	s.mux.HandleFunc("GET /api/auth/cli/{request}", s.cliReview)
+	s.mux.HandleFunc("POST /api/auth/cli/{request}", s.cliConfirm)
+	s.mux.HandleFunc("GET /api/cli/machines", s.cliMachines)
+	s.mux.HandleFunc("POST /api/cli/access", s.cliAccess)
+	s.mux.HandleFunc("POST /api/cli/logout", s.cliLogout)
 	s.mux.HandleFunc("GET /downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("binary")
 		switch name {
@@ -195,7 +202,11 @@ func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, boo
 }
 
 func (s *Server) authAllowed(w http.ResponseWriter, r *http.Request) bool {
+	return s.authAllowedFor(w, r, "login", 20)
+}
+func (s *Server) authAllowedFor(w http.ResponseWriter, r *http.Request, group string, limit int) bool {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip = group + ":" + ip
 	now := time.Now()
 	s.mu.Lock()
 	rate := s.rates[ip]
@@ -209,7 +220,7 @@ func (s *Server) authAllowed(w http.ResponseWriter, r *http.Request) bool {
 			}
 		}
 	}
-	allow := rate.Count < 20 && len(s.rates) < 10000
+	allow := rate.Count < limit && len(s.rates) < 10000
 	rate.Count++
 	if allow {
 		s.rates[ip] = rate

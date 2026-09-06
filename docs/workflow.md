@@ -66,6 +66,8 @@ go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeou
 
 真实浏览器验收可使用独立 [Dex 2.45.1](https://github.com/dexidp/dex/releases/tag/v2.45.1) 和专用账号，按 [Dex 配置](https://dexidp.io/docs/configuration/) 注册精确 Dune 回调地址，将 client secret 保存在 0600 配置文件中。先验证官方 `web --identity-config` 的登录、退出和部署前缀，再用两个共享 PostgreSQL 的独立 `host.App` 分别接收 start/callback，确认跨实例完成；停用 Dune 用户后验证已有 Cookie 和再次上游登录均被拒绝，启用后仅新登录成功。使用 loopback HTTP 的演练不代表 HTTPS 代理、真实企业 IdP 或 S3 执行路由验收；完成后停止专用身份服务、工作台并清理测试 schema。
 
+人类 CLI 回归使用 `go test ./tests -run TestHumanCLILoginAndExecution -count=1 -timeout=180s`，覆盖正式二进制的浏览器确认、私有文件、实际执行和浏览器退出后 API/现有连接撤销；启用 PostgreSQL 时还验证独立签发与消费宿主。`internal/metadata` 的 `TestCLILoginTransactions` 检查单次消费、确认身份不可替换、父会话与版本、并发和持久化；`pkg/login` 检查 HTTP 模糊失败及重定向不重放。真实 Dex 演练另运行 `dune login --site ... --no-browser`，完成浏览器核对与确认、临时 fabricd 上的实际命令，再退出浏览器验证 CLI 失效。手动启动临时 fabricd 时指定构建产物 `DUNE_TMUX=/absolute/repo/bin/tmux`，结束后清理测试进程和凭据。
+
 以下操作会使用已配置的 Agent 账号或指定远端，仅在任务包含对应验收且已有授权时运行。沿用明确指定的账号、模型和机器；历史文档里的地址与登录状态不是当前授权或可用性证据。环境缺失时报告具体缺口，继续本地检查。
 
 ```sh

@@ -130,3 +130,13 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 原子消费支持 SQLite 重开和 PostgreSQL 独立连接池，并发竞争只有一个成功；30 秒后不能建立新连接，同一会话最多 64 个待消费凭据。连接建立后按固定引用继续复核有效会话与当前绑定，释放 ticket 不撤销已建立访问，退出/停用/关联/解绑会撤销，绑定变化不自动重定向。仍采用默认 owner 策略，完整企业操作级检查尚未完成。
 - 两个独立 `host.App` 共享真实 PostgreSQL，Web 在 A 签发凭据并经网络拨号到 B；fabricd 仅连接 B。真实 PTY 创建、输入输出、停用和身份关联后的空闲撤销、重新登录连接原 Runtime 及历史均通过。测试明确向实际 owner 查询就绪状态，不将本地连接目录当作跨实例目录。
 - 验证：启用 PostgreSQL 17 原生备份工具的全量 `make test`、metadata/Web/host race 和 `make check-go`；签发/消费回执丢失不重放、凭据类型与身份源隔离、会话/机器级联清理、绑定变更拒绝及 SQL 转库/备份恢复回归通过。此能力尚无公共人类 CLI 登录入口，也不构成 S3 自动路由、peer 或接管；下一步补 CLI 浏览器确认及用户会话交换。
+
+### 已完成：人类 CLI 浏览器确认与执行
+
+- `dune login --site` 使用站点现有本地账号或企业 SSO，浏览器明确展示账号、站点和终端核对码，由用户确认或拒绝。客户端 proof 不进入浏览器 URL；跨 OIDC 回调保留待确认请求。schema 6 持久化十分钟请求，确认身份不可替换，原子单次消费与 CLI 子会话创建支持 SQLite 重开及 PostgreSQL 独立连接池。
+- CLI 凭据独立于机器配置，以 0600 文件保存在私有目录；同文件登录/退出持锁且不覆盖已有凭据。会话最长八小时并受父浏览器会话期限约束，退出浏览器、停用或身份关联会撤销相关 CLI 访问。CLI 自身退出只撤销该子会话，已被浏览器撤销时仍可清理本地文件。
+- 公开 `pkg/login` 完成登录请求、等待确认、机器查询、短期目标凭据交换及默认 SDK 拨号；`--login FILE --target ID` 沿用原执行命令。身份逻辑位于执行协议之外，用户令牌不交给 fabricd。HTTPS 校验及精确站点/目标绑定必需，只有数字 loopback 允许明文；HTTP 模糊失败和重定向不自动重放。
+- SQLite 和真实 PostgreSQL 回归均用正式 CLI 二进制、fabricd 和执行链路完成登录与命令，浏览器退出后 API 和已建立 SDK 连接撤销；PostgreSQL 同时验证独立宿主签发与消费。实际 Dex 2.45.1 经宿主 A start、B callback 返回前缀确认页，终端核对成功后执行并显示 `CLI_DEX_EXEC_OK`，浏览器退出后 CLI 被拒绝，CLI 退出清理私有文件。专用进程和测试 schema 随后清理。
+- 验证：启用真实 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/login/config race、`make check-go`、`make web-check web-build` 通过。覆盖消费回执丢失、并发单次消费、事务回滚、凭据类型隔离、父会话与授权版本、私有文件保护及 schema 6 转库/备份恢复；前端仍有既有主 bundle 体积提示。最后的确认版本检查和 CLI 参数校验另经定向回归重验。
+
+下一检查点为完整操作级 AccessChecker、发现与稳定 Runner/绑定边界。当前仍是默认 owner 访问，S1 尚未整体完成；Managed 和 S3 集群继续按方案实施，Dex 本地演练不代表企业 IdP 或集群部署验收。

@@ -197,4 +197,25 @@ func TestCommitAcknowledgementLossIsNotReplayed(t *testing.T) {
 	if _, err := s.ConsumeAccess(ctx, "ticket-hash", "", time.Now().Unix()); !errors.Is(err, identity.ErrUnauthorized) {
 		t.Fatal("uncertain consumption allowed replay", err)
 	}
+	cookie, proof := wire.ID()+wire.ID(), wire.ID()+wire.ID()
+	if err := s.CreateSession(ctx, a.ID, tokenHash(cookie), time.Now().Add(time.Hour).Unix(), 32); err != nil {
+		t.Fatal(err)
+	}
+	cli, err := s.BeginCLI(ctx, tokenHash(proof), "https://cli.test/", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmCLI(ctx, cli.ID, "https://cli.test/", "", cli.Code, cookie, a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if session, err := interrupted.ConsumeCLI(ctx, cli.ID, "https://cli.test/", "", proof); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 5 || session.Token != "" {
+		t.Fatal("CLI commit loss returned or replayed a credential", err)
+	}
+	if _, err := s.ConsumeCLI(ctx, cli.ID, "https://cli.test/", "", proof); !errors.Is(err, identity.ErrUnauthorized) {
+		t.Fatal("uncertain CLI consumption allowed replay", err)
+	}
+	var children int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE parent_hash=$1`, tokenHash(cookie)).Scan(&children); err != nil || children != 1 {
+		t.Fatal("CLI commit did not persist exactly one child", err)
+	}
 }
