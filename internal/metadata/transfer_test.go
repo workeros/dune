@@ -116,6 +116,9 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			if _, err := source.db.Exec(`INSERT INTO dune_login_transactions(state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at) VALUES('state','proof','issuer','https://dune.test/callback','nonce','verifier',9999999999)`); err != nil {
 				t.Fatal(err)
 			}
+			if _, err := source.db.Exec(`INSERT INTO dune_access_tickets(hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at) SELECT 'access-hash',s.hash,s.principal_id,s.identity_namespace,m.id,r.id,r.fabric_id,r.binding_revision,s.auth_version,9999999999 FROM dune_sessions s JOIN dune_runners r ON r.owner_id=s.principal_id JOIN dune_machines m ON m.runner_id=r.id LIMIT 1`); err != nil {
+				t.Fatal(err)
+			}
 			before := snapshotRecords(t, source)
 			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "target")}
 			if backend == "postgres" {

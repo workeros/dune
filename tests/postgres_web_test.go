@@ -13,7 +13,12 @@ import (
 
 func TestPostgresWorkbenchEnrollmentAndTerminal(t *testing.T) {
 	database := postgresWorkbenchConfig(t)
-	testPrefixedWorkbench(t, false, false, &database)
+	testPrefixedWorkbench(t, workbenchCase{database: &database})
+}
+
+func TestPostgresAccessIssuerAndGateway(t *testing.T) {
+	database := postgresWorkbenchConfig(t)
+	testPrefixedWorkbench(t, workbenchCase{database: &database, separateGateway: true})
 }
 
 func postgresWorkbenchConfig(t *testing.T) storage.Config {

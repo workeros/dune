@@ -19,6 +19,7 @@ var transferTables = []struct{ name, columns string }{
 	{"dune_enrollments", "hash,principal_id,name,expires_at"},
 	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
+	{"dune_access_tickets", "hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at"},
 }
 
 func (s *Store) emptyImportTarget(ctx context.Context, tx *sql.Tx) error {

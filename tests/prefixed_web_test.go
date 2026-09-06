@@ -3,9 +3,11 @@ package tests
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -24,28 +26,53 @@ import (
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
+	"github.com/aiomni/dune/pkg/transport/ws"
 	"github.com/fasthttp/websocket"
 )
 
 func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
-	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, false, false, nil) })
-	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, true, false, nil) })
-	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, false, true, nil) })
+	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{}) })
+	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{override: true}) })
+	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{external: true}) })
 }
 
-func testPrefixedWorkbench(t *testing.T, override, external bool, database *storage.Config) {
+type workbenchCase struct {
+	override, external, separateGateway bool
+	database                            *storage.Config
+}
+
+func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	dir := t.TempDir()
 	server := httptest.NewUnstartedServer(nil)
 	origin := "http://" + server.Listener.Addr().String()
 	site := origin + "/tools/dune/"
+	onlineSite := site
 	var app *host.App
 	options := host.Options{PublicURL: site, DataDir: filepath.Join(dir, "accounts")}
-	if database != nil {
-		options.DataDir, options.Database = "", database
+	if mode.database != nil {
+		options.DataDir, options.Database = "", mode.database
 	}
-	if override {
+	if mode.separateGateway {
+		if mode.database == nil {
+			t.Fatal("separate gateway requires PostgreSQL")
+		}
+		remote := httptest.NewUnstartedServer(nil)
+		remoteSite := "http://" + remote.Listener.Addr().String() + "/tools/dune/"
+		onlineSite = remoteSite
+		remoteApp, err := host.Open(ctx, host.Options{PublicURL: remoteSite, Database: mode.database})
+		must(t, err)
+		defer remoteApp.Close()
+		remote.Config.Handler = remoteApp
+		remote.Start()
+		defer remote.Close()
+		options.GatewayURL = "ws" + strings.TrimPrefix(remoteSite, "http") + "tunnel"
+		options.DialGateway = func(ctx context.Context, token string) (net.Conn, error) {
+			return ws.Dial(ctx, options.GatewayURL, token, &tls.Config{MinVersion: tls.VersionTLS12})
+		}
+	}
+	if mode.override {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/private/connect" {
 				http.NotFound(w, r)
@@ -59,7 +86,7 @@ func testPrefixedWorkbench(t *testing.T, override, external bool, database *stor
 		defer proxy.Close()
 		options.GatewayURL = "ws" + strings.TrimPrefix(proxy.URL, "http") + "/private/connect"
 	}
-	if external {
+	if mode.external {
 		address := server.Listener.Addr().String()
 		must(t, server.Listener.Close())
 		stop := externalWorkbench(t, ctx, address, options)
@@ -130,7 +157,17 @@ func testPrefixedWorkbench(t *testing.T, override, external bool, database *stor
 			ID     string
 			Online bool
 		}
-		do("GET", "api/machines", nil, &machines)
+		// The directory is still local at S1. In the separate-Gateway case,
+		// wait for fabricd on its actual owner; execution below goes through A.
+		response, err := browser.Get(onlineSite + "api/machines")
+		must(t, err)
+		if response.StatusCode != 200 {
+			response.Body.Close()
+			t.Fatalf("machine readiness: %d", response.StatusCode)
+		}
+		err = json.NewDecoder(response.Body).Decode(&machines)
+		response.Body.Close()
+		must(t, err)
 		if len(machines) == 1 && machines[0].Online {
 			break
 		}

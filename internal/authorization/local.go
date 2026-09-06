@@ -5,7 +5,7 @@ package authorization
 import (
 	"context"
 	"errors"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
@@ -18,23 +18,17 @@ var ErrNotFound = errors.New("machine not found")
 
 type Sessions interface {
 	Authenticate(context.Context, string) (identity.User, error)
-}
-
-type Bindings interface {
-	Owns(context.Context, string, string) (bool, error)
-	MachineCredential(context.Context, string) (string, error)
+	Namespace() string
 }
 
 type Local struct {
 	ctx      context.Context
 	sessions Sessions
-	bindings Bindings
-	mu       sync.Mutex
-	tickets  map[string]access.Grant
+	bindings Repository
 }
 
-func NewLocal(ctx context.Context, sessions Sessions, bindings Bindings) *Local {
-	return &Local{ctx: ctx, sessions: sessions, bindings: bindings, tickets: make(map[string]access.Grant)}
+func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Local {
+	return &Local{ctx: ctx, sessions: sessions, bindings: bindings}
 }
 
 // ClientGrant permits only the initial authenticated connection. Close removes
@@ -58,36 +52,31 @@ func (l *Local) Client(ctx context.Context, session, target string) (*ClientGran
 	if err != nil {
 		return nil, err
 	}
-	owns, err := l.bindings.Owns(ctx, user.ID, target)
+	token := ticketPrefix + wire.ID() + wire.ID()
+	record, err := l.bindings.CreateAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, target, time.Now().Add(TicketLifetime).Unix())
 	if err != nil {
 		return nil, err
 	}
-	if !owns {
-		return nil, ErrNotFound
-	}
+	return &ClientGrant{token: token, valid: l.validAccess(record), release: func() {
+		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
+		defer cancel()
+		// Cleanup is best-effort; expiry bounds an unconsumed ticket if storage
+		// is unavailable. Consumed tickets have already been deleted atomically.
+		_ = l.bindings.DeleteAccess(ctx, credentialHash(token))
+	}}, nil
+}
+
+func (l *Local) validAccess(record ConnectionAccess) func() bool {
 	// Captured values cannot be replaced by a request payload or another login.
-	valid := func() bool {
-		if l.ctx.Err() != nil {
+	return func() bool {
+		if l.ctx.Err() != nil || record.Namespace != l.sessions.Namespace() {
 			return false
 		}
 		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
 		defer cancel()
-		current, err := l.sessions.Authenticate(ctx, session)
-		if err != nil || current.ID != user.ID {
-			return false
-		}
-		owns, err := l.bindings.Owns(ctx, user.ID, target)
-		return err == nil && owns
+		valid, err := l.bindings.CheckAccess(ctx, record, time.Now().Unix())
+		return err == nil && valid
 	}
-	token := wire.ID() + wire.ID()
-	l.mu.Lock()
-	l.tickets[token] = access.Grant{Target: target, Role: gateway.RoleSDK, Valid: valid}
-	l.mu.Unlock()
-	return &ClientGrant{token: token, valid: valid, release: func() {
-		l.mu.Lock()
-		delete(l.tickets, token)
-		l.mu.Unlock()
-	}}, nil
 }
 
 // Authorize is used only by the connection-authentication entry point. Browser
@@ -96,17 +85,21 @@ func (l *Local) Authorize(token string) (gateway.BindingContext, gateway.Connect
 	if err := l.ctx.Err(); err != nil {
 		return gateway.BindingContext{}, nil, err
 	}
-	l.mu.Lock()
-	grant, ok := l.tickets[token]
-	if ok {
-		delete(l.tickets, token)
-	}
-	l.mu.Unlock()
-	if ok {
-		return grant.Bind()
-	}
 	ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
 	defer cancel()
+	if strings.HasPrefix(token, ticketPrefix) {
+		if len(token) != len(ticketPrefix)+64 {
+			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
+		}
+		record, err := l.bindings.ConsumeAccess(ctx, credentialHash(token), l.sessions.Namespace(), time.Now().Unix())
+		if err != nil {
+			return gateway.BindingContext{}, nil, err
+		}
+		if record.ExpiresAt <= time.Now().Unix() {
+			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
+		}
+		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Valid: l.validAccess(record)}).Bind()
+	}
 	target, err := l.bindings.MachineCredential(ctx, token)
 	if err != nil {
 		return gateway.BindingContext{}, nil, err

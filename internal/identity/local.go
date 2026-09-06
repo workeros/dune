@@ -40,6 +40,7 @@ type Service interface {
 	Authenticate(context.Context, string) (User, error)
 	Logout(context.Context, string) error
 	RegistrationAllowed() bool
+	Namespace() string
 }
 
 type Account struct {
@@ -68,6 +69,7 @@ func NewLocal(store Repository, registration bool) *Local {
 }
 
 func (l *Local) RegistrationAllowed() bool { return l.registration }
+func (*Local) Namespace() string           { return "" }
 
 func digest(value string) string {
 	sum := sha256.Sum256([]byte(value))

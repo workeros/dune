@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/jackc/pgx/v5"
 )
@@ -46,6 +47,10 @@ func TestPostgresBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	machine, credential, err := s.Enroll(ctx, enrollment, "linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := authorization.NewLocal(ctx, local, s).Client(ctx, cookie, machine.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,5 +112,8 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if id, err := s.MachineCredential(ctx, credential); err != nil || id != machine.ID {
 		t.Fatal("restored machine identity invalid", err)
+	}
+	if binding, _, err := authorization.NewLocal(ctx, local, s).Authorize(ticket.Token()); err != nil || binding.Target != machine.ID {
+		t.Fatal("restored unexpired access ticket invalid", err)
 	}
 }

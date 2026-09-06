@@ -97,6 +97,7 @@ func (e *External) Finish(ctx context.Context, state, proof, code, redirect stri
 }
 
 func (e *External) SessionLifetime() time.Duration { return e.lifetime }
+func (e *External) Namespace() string              { return e.namespace }
 
 func (e *External) Authenticate(ctx context.Context, token string) (User, error) {
 	if len(token) != 64 {

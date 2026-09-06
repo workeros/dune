@@ -180,4 +180,21 @@ func TestCommitAcknowledgementLossIsNotReplayed(t *testing.T) {
 	if _, err := s.ReadSession(ctx, "fresh-session", time.Now().Unix()); err != nil {
 		t.Fatal("reconciled retry revoked new session", err)
 	}
+	enrollment, _, err := s.IssueEnrollment(ctx, a.ID, "access machine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, _, err := s.Enroll(ctx, enrollment, "linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := interrupted.CreateAccess(ctx, "ticket-hash", "fresh-session", a.ID, "", machine.ID, time.Now().Add(time.Minute).Unix()); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 3 {
+		t.Fatal("access issuance commit loss was hidden or replayed", err)
+	}
+	if _, err := interrupted.ConsumeAccess(ctx, "ticket-hash", "", time.Now().Unix()); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 4 {
+		t.Fatal("access consumption commit loss was hidden or replayed", err)
+	}
+	if _, err := s.ConsumeAccess(ctx, "ticket-hash", "", time.Now().Unix()); !errors.Is(err, identity.ErrUnauthorized) {
+		t.Fatal("uncertain consumption allowed replay", err)
+	}
 }
