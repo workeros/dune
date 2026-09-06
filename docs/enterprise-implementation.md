@@ -96,3 +96,13 @@
 - 验证：启用真实 PostgreSQL 及其备份工具的全量 `make test` 通过；SQL/迁移 `make test-race` 和 `make check-go` 通过。材料明确限定当前 schema 1、SQLite 与 PostgreSQL 17 的已验收组合，不承诺任意未来版本混用或降级。
 
 S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器及人类 CLI 登录、短期访问凭据、稳定 Runner/绑定和全部操作的访问检查。真实身份源及后续 Managed/集群仍需对应实现和实际环境证据。
+
+## S1：身份与 Attached（实施中）
+
+### 已完成：Dune 用户停用与会话授权版本
+
+- schema 2 持久化 principal 启用状态和单调授权版本，会话记录签发时版本。停用原子更新 principal、删除全部会话与待消费 enrollment；与并发登录/绑定共用 principal 行锁。重新启用只允许新登录，旧 Cookie、残留旧版本会话和安装命令都不能恢复。现有 MachineIdentity 与任务不随用户停用销毁。
+- 公开宿主 `App.SetPrincipalEnabled` 提供可信管理入口，调用方须完成管理员授权；没有新增普通用户 HTTP 管理入口。操作响应 context，应用关闭会取消并等待已受理管理工作。上游身份停用同步、企业 IdentityProvider/AccessChecker 和人类 CLI 登录尚未实现，不将此能力视为完整企业身份验收。
+- schema 1 → 2 通过事务和迁移锁升级，已有账号/会话默认保持有效。SQLite/PostgreSQL 均验证中途 ALTER 失败完整回滚、并发登录不能越过停用、其他用户不受影响。转库清单同步覆盖新增字段，按 SQLite 声明的 BOOLEAN 类型转换 PostgreSQL 参数，保留停用状态及版本。
+- 真实 PTY 测试中，SQLite 和 PostgreSQL 停用后分别约 0.98 秒关闭空闲用户终端；重新启用后的旧 Cookie 仍拒绝，新登录可连接原 Runtime 并读取原历史。测量来自本机单机器测试，不作为任意部署规模下的延迟承诺。旧 schema 1 CLI 工作台到新二进制的升级演练也保留原 Cookie/密码、机器配置、Runtime ID、incarnation/generation 和 PTY 历史。
+- 验证：启用真实 PostgreSQL 17 和备份工具的全量 `make test`、metadata/host/Web/migrate `make test-race`、`make check-go` 通过。升级演练的测试 Runtime、fabricd 和工作台已清理；schema 2 的 JSON 导入、SQL 转库与原生备份恢复随回归重验通过。

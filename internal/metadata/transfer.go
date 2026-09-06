@@ -10,9 +10,9 @@ import (
 // Transfer tables follow foreign-key order. Keep every persisted domain column
 // here when advancing the schema; TestTransferSchemaCoverage prevents omissions.
 var transferTables = []struct{ name, columns string }{
-	{"dune_principals", "id,email"},
+	{"dune_principals", "id,email,enabled,auth_version"},
 	{"dune_local_accounts", "principal_id,email,salt,password_hash"},
-	{"dune_sessions", "hash,principal_id,expires_at"},
+	{"dune_sessions", "hash,principal_id,expires_at,auth_version"},
 	{"dune_enrollments", "hash,principal_id,name,expires_at"},
 	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
@@ -81,6 +81,10 @@ func copyTable(ctx context.Context, source, target *sql.Tx, name, columns string
 		return 0, err
 	}
 	defer rows.Close()
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return 0, err
+	}
 	n := len(strings.Split(columns, ","))
 	values, pointers, parameters := make([]any, n), make([]any, n), make([]string, n)
 	for i := range n {
@@ -96,6 +100,17 @@ func copyTable(ctx context.Context, source, target *sql.Tx, name, columns string
 	for rows.Next() {
 		if err := rows.Scan(pointers...); err != nil {
 			return 0, err
+		}
+		// SQLite stores BOOLEAN as integers; pgx requires a Go bool for the
+		// PostgreSQL BOOLEAN parameter. Preserve the declared logical type.
+		for i, value := range values {
+			if strings.EqualFold(types[i].DatabaseTypeName(), "BOOLEAN") {
+				if number, ok := value.(int64); ok && (number == 0 || number == 1) {
+					values[i] = number == 1
+				} else if _, ok := value.(bool); !ok {
+					return 0, fmt.Errorf("invalid boolean in SQLite metadata")
+				}
+			}
 		}
 		if _, err := insert.ExecContext(ctx, values...); err != nil {
 			return 0, err

@@ -66,6 +66,8 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
 
+可信宿主可调用 `App.SetPrincipalEnabled(ctx, principalID, false)` 停用 Dune 用户；宿主负责校验管理员权限。停用在同一事务中撤销该用户的全部会话与待消费安装命令，已有用户连接会关闭，机器身份和远端任务保留。传入 `true` 重新启用后必须重新登录，旧 Cookie 不会恢复。此接口没有对应的匿名或普通用户 HTTP 管理入口，也不等同于上游企业身份源的停用同步。
+
 ## 开发与验证
 
 构建、依赖准备、按改动选择测试及真实 Agent/远端验收统一见 [开发流程](docs/workflow.md)。常用入口：`make test`、`make check`；前端依赖已安装时使用 `make web-check web-build`。`make web` 保留锁文件安装、类型检查和构建的完整流程。

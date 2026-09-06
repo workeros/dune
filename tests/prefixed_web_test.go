@@ -94,7 +94,8 @@ func testPrefixedWorkbench(t *testing.T, override, external bool, database *stor
 			must(t, json.NewDecoder(response.Body).Decode(out))
 		}
 	}
-	do("POST", "api/auth/register", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, nil)
+	var user struct{ ID string }
+	do("POST", "api/auth/register", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, &user)
 	var enrollment struct{ Token string }
 	do("POST", "api/enrollments", map[string]string{"name": "prefixed machine"}, &enrollment)
 	machinePath := filepath.Join(dir, "machine", "config.yaml")
@@ -141,44 +142,93 @@ func testPrefixedWorkbench(t *testing.T, override, external bool, database *stor
 	var runtime api.Runtime
 	do("POST", "api/machines/"+machineConfig.Target+"/sessions", profile(dir, "pty", "/bin/sh"), &runtime)
 	events := site + "api/machines/" + machineConfig.Target + "/sessions/" + runtime.ID + "/events"
-	request, err := http.NewRequest("GET", events, nil)
-	must(t, err)
-	for _, cookie := range jar.Cookies(request.URL) {
-		request.AddCookie(cookie)
+	connect := func() *websocket.Conn {
+		request, err := http.NewRequest("GET", events, nil)
+		must(t, err)
+		for _, cookie := range jar.Cookies(request.URL) {
+			request.AddCookie(cookie)
+		}
+		request.Header.Set("Origin", origin)
+		wsURL, _ := url.Parse(events)
+		wsURL.Scheme = "ws"
+		var connection *websocket.Conn
+		// Creating a PTY releases its initial input subscription asynchronously.
+		// As the browser does, retry only subscription to the same Runtime after an
+		// explicit INPUT_OWNED refusal; never repeat creation or a submitted input.
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			var response *http.Response
+			connection, response, err = websocket.DefaultDialer.DialContext(ctx, wsURL.String(), request.Header)
+			if err == nil {
+				break
+			}
+			if response == nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+			response.Body.Close()
+			var failure struct{ Code string }
+			_ = json.Unmarshal(body, &failure)
+			if response.StatusCode != 422 || failure.Code != "INPUT_OWNED" || time.Now().After(deadline) {
+				t.Fatalf("terminal handshake: %v (%d): %s", err, response.StatusCode, body)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(25 * time.Millisecond):
+			}
+		}
+		return connection
 	}
-	request.Header.Set("Origin", origin)
-	wsURL, _ := url.Parse(events)
-	wsURL.Scheme = "ws"
-	var connection *websocket.Conn
-	// Creating a PTY releases its initial input subscription asynchronously.
-	// As the browser does, retry only subscription to the same Runtime after an
-	// explicit INPUT_OWNED refusal; never repeat creation or a submitted input.
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		var response *http.Response
-		connection, response, err = websocket.DefaultDialer.DialContext(ctx, wsURL.String(), request.Header)
-		if err == nil {
-			break
-		}
-		if response == nil {
-			t.Fatal(err)
-		}
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		response.Body.Close()
-		var failure struct{ Code string }
-		_ = json.Unmarshal(body, &failure)
-		if response.StatusCode != 422 || failure.Code != "INPUT_OWNED" || time.Now().After(deadline) {
-			t.Fatalf("terminal handshake: %v (%d): %s", err, response.StatusCode, body)
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		case <-time.After(25 * time.Millisecond):
-		}
-	}
-	defer connection.Close()
+	connection := connect()
+	defer func() { connection.Close() }()
 	must(t, connection.SetReadDeadline(time.Now().Add(5*time.Second)))
 	must(t, connection.WriteJSON(map[string]string{"type": "input", "data": "printf 'PREFIX_TERMINAL_%s\\n' OK\n"}))
+	readPrefixedTerminalMarker(t, connection)
+	awaitRevocation := func() {
+		must(t, connection.SetReadDeadline(time.Now().Add(3*time.Second)))
+		for {
+			if _, _, err := connection.ReadMessage(); err != nil {
+				if timeout, ok := err.(interface{ Timeout() bool }); ok && timeout.Timeout() {
+					t.Fatal("idle terminal was not revoked")
+				}
+				return
+			}
+		}
+	}
+	if app != nil {
+		started := time.Now()
+		must(t, app.SetPrincipalEnabled(ctx, user.ID, false))
+		awaitRevocation()
+		t.Logf("principal suspension closed idle terminal in %s", time.Since(started))
+		for _, reenable := range []bool{false, true} {
+			if reenable {
+				must(t, app.SetPrincipalEnabled(ctx, user.ID, true))
+			}
+			response, err := browser.Get(site + "api/me")
+			must(t, err)
+			response.Body.Close()
+			if response.StatusCode != http.StatusUnauthorized {
+				t.Fatal("suspended session revived")
+			}
+		}
+		do("POST", "api/auth/login", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, nil)
+		var remaining []api.Runtime
+		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
+		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
+			t.Fatal("principal suspension changed the running PTY")
+		}
+		connection.Close()
+		connection = connect()
+		readPrefixedTerminalMarker(t, connection)
+	}
+	do("POST", "api/auth/logout", struct{}{}, nil)
+	awaitRevocation()
+}
+
+func readPrefixedTerminalMarker(t *testing.T, connection *websocket.Conn) {
+	t.Helper()
+	must(t, connection.SetReadDeadline(time.Now().Add(5*time.Second)))
 	var output strings.Builder
 	for !strings.Contains(output.String(), "PREFIX_TERMINAL_OK") {
 		var event struct {
@@ -192,21 +242,11 @@ func testPrefixedWorkbench(t *testing.T, override, external bool, database *stor
 		if event.Type == "data" {
 			data := []byte(event.Data)
 			if event.Binary {
-				data, err = base64.StdEncoding.DecodeString(event.Data)
+				decoded, err := base64.StdEncoding.DecodeString(event.Data)
+				data = decoded
 				must(t, err)
 			}
 			output.Write(data)
-		}
-	}
-	do("POST", "api/auth/logout", struct{}{}, nil)
-	must(t, connection.SetReadDeadline(time.Now().Add(3*time.Second)))
-	for {
-		_, _, err := connection.ReadMessage()
-		if err != nil {
-			if networkError, ok := err.(interface{ Timeout() bool }); ok && networkError.Timeout() {
-				t.Fatal("logout did not revoke the idle prefixed terminal")
-			}
-			break
 		}
 	}
 }

@@ -55,6 +55,14 @@ func snapshotRecords(t *testing.T, s *Store) map[string]string {
 			if err := rows.Scan(pointers...); err != nil {
 				t.Fatal(err)
 			}
+			for i, value := range values {
+				if boolean, ok := value.(bool); ok {
+					values[i] = int64(0)
+					if boolean {
+						values[i] = int64(1)
+					}
+				}
+			}
 			records = append(records, values)
 		}
 		err = rows.Err()
@@ -92,6 +100,9 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			}
 			// These SQL fields have no JSON equivalent: transfer must preserve them.
 			if _, err := source.db.ExecContext(ctx, `UPDATE dune_runners SET fabric_id='attached-review',binding_revision=7`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := source.db.ExecContext(ctx, `UPDATE dune_principals SET enabled=FALSE,auth_version=7`); err != nil {
 				t.Fatal(err)
 			}
 			before := snapshotRecords(t, source)

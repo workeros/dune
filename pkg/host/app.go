@@ -191,3 +191,24 @@ func (a *App) Close() error {
 
 // Done is closed after all application-owned resources have been released.
 func (a *App) Done() <-chan struct{} { return a.done }
+
+// SetPrincipalEnabled lets a trusted host administrator suspend or re-enable a
+// Dune principal. The caller must authorize its administrator; this is not a
+// user HTTP endpoint. Suspension revokes sessions, pending enrollments and user access,
+// while preserving machines and their running work. Re-enabling requires a new
+// login. Close cancels and waits for this operation as for accepted HTTP work.
+func (a *App) SetPrincipalEnabled(ctx context.Context, principalID string, enabled bool) error {
+	a.mu.Lock()
+	if a.closed || a.ctx.Err() != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("Dune is closed")
+	}
+	a.active.Add(1)
+	a.mu.Unlock()
+	defer a.active.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(a.ctx, cancel)
+	defer stop()
+	return a.store.SetPrincipalEnabled(ctx, principalID, enabled)
+}

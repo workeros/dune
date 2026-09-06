@@ -79,4 +79,12 @@ pg_restore --dbname=service=dune_restore --single-transaction --exit-on-error \
 
 `dune_backup` 和 `dune_restore` 分别指向源库和新恢复库；恢复账号须具有建表权限，目标服务账号的权限由部署方配置。核对 schema 版本、各表数据、原登录与机器身份，再切换应用。恢复不会延长已过期会话或凭据，也不能恢复备份之后的新增记录。保留原库直到验收完成，禁止用恢复备份的方式隐式丢弃已开放的新写入。
 
-当前已验证 schema 1 的 JSON 导入、SQLite 转 PostgreSQL、SQLite 复制恢复及 PostgreSQL 17 的原生备份恢复。后续 schema/版本升级必须补充对应验证，不能据此承诺任意版本可混用或回退。
+当前已验证 schema 2 的 JSON 导入、SQLite 转 PostgreSQL、SQLite 复制恢复及 PostgreSQL 17 的原生备份恢复。后续 schema/版本升级必须补充对应验证，不能据此承诺任意版本可混用或回退。
+
+## 从 schema 1 升级到 2
+
+schema 2 增加用户启用状态和授权版本；现有用户默认启用，原会话、密码、机器和 Runner 身份保持有效。停用后的授权版本和会话版本不匹配时拒绝访问，重新启用不能恢复旧会话或已撤销安装命令。
+
+停止旧工作台并备份后，再启动新二进制。首次打开数据库会在迁移锁和一个事务内升级到 schema 2；中途失败会回滚全部 ALTER 和版本标记。SQLite 停站备份可复制完整私有目录，或用旧二进制的 `copy-sqlite`；新版本的 `copy-sqlite` 只接受当前 schema 的源库，不在备份过程中升级源库。PostgreSQL 须停止所有旧应用实例后再升级，此版本组合不支持混合运行。
+
+升级后检查原账号、机器自动重连和现有 Runtime，再开放写入。旧二进制不能打开 schema 2；回退须遵守前述停写和恢复边界。已验证 schema 1 → 2 在 SQLite/PostgreSQL 上的事务回滚与身份保留，并通过旧 schema 1 工作台二进制到当前版本的真实 PTY 升级演练；没有承诺任意降级路径。

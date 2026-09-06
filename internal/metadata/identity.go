@@ -12,7 +12,7 @@ import (
 var _ identity.Repository = (*Store)(nil)
 
 func (s *Store) lockPrincipal(ctx context.Context, tx *sql.Tx, id string) error {
-	query := `SELECT id FROM dune_principals WHERE id = $1`
+	query := `SELECT id FROM dune_principals WHERE id = $1 AND enabled=TRUE`
 	if s.postgres {
 		query += ` FOR UPDATE`
 	}
@@ -39,7 +39,7 @@ func (s *Store) RegisterAccount(ctx context.Context, account identity.Account, h
 
 func (s *Store) ReadAccount(ctx context.Context, email string) (identity.Account, error) {
 	var a identity.Account
-	err := s.db.QueryRowContext(ctx, `SELECT principal_id,email,salt,password_hash FROM dune_local_accounts WHERE email=$1`, email).Scan(&a.ID, &a.Email, &a.Salt, &a.PasswordHash)
+	err := s.db.QueryRowContext(ctx, `SELECT a.principal_id,a.email,a.salt,a.password_hash FROM dune_local_accounts a JOIN dune_principals p ON p.id=a.principal_id WHERE a.email=$1 AND p.enabled=TRUE`, email).Scan(&a.ID, &a.Email, &a.Salt, &a.PasswordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
@@ -61,14 +61,14 @@ func (s *Store) CreateSession(ctx context.Context, id, hash string, expires int6
 		if count >= limit {
 			return identity.ErrSessionLimit
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO dune_sessions(hash,principal_id,expires_at) VALUES($1,$2,$3)`, hash, id, expires)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dune_sessions(hash,principal_id,expires_at,auth_version) SELECT $1,id,$3,auth_version FROM dune_principals WHERE id=$2 AND enabled=TRUE`, hash, id, expires)
 		return err
 	})
 }
 
 func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (identity.User, error) {
 	var user identity.User
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.expires_at>$2`, hash, now).Scan(&user.ID, &user.Email)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.expires_at>$2 AND p.enabled=TRUE AND s.auth_version=p.auth_version`, hash, now).Scan(&user.ID, &user.Email)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
@@ -79,5 +79,36 @@ func (s *Store) DeleteSession(ctx context.Context, hash string) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM dune_sessions WHERE hash=$1`, hash)
 		return err
+	})
+}
+
+// SetPrincipalEnabled is a trusted administrative operation. Disabling and
+// revoking every session commit together; re-enabling cannot revive old tokens.
+// The row lock serializes this operation with login and enrollment creation.
+func (s *Store) SetPrincipalEnabled(ctx context.Context, id string, enabled bool) error {
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		query := `SELECT enabled FROM dune_principals WHERE id=$1`
+		if s.postgres {
+			query += ` FOR UPDATE`
+		}
+		var current bool
+		if err := tx.QueryRowContext(ctx, query, id).Scan(&current); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if current == enabled {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE dune_principals SET enabled=$2,auth_version=auth_version+1 WHERE id=$1`, id, enabled); err != nil {
+			return err
+		}
+		for _, table := range []string{"dune_sessions", "dune_enrollments"} {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE principal_id=$1", id); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
