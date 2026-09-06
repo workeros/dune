@@ -58,6 +58,10 @@ go run ./samples/client
 
 SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway URL、token 和目标。`ws://` 不需要 `TLSConfig`；显式使用 `wss://` 时才提供经过验证的 TLS 配置。`Start` 返回 Runtime 和交互 Stream，`Input` 返回请求 ID，需要从 `Recv` 收到对应 `written` 才确认输入写入。所有 API 均经真实网络链路，不直接访问 daemon。
 
+宿主已有字节连接时可使用 `pkg/client.Connect(ctx, conn, target)`，该协议包不依赖 HTTP 或 WebSocket 实现。`pkg/sdk` 保留原有默认拨号及执行 API。
+
+公开的 `pkg/gateway` 和 `pkg/fabricd` 可分别嵌入服务端和执行环境，无需产品数据库；参考 [Gateway 示例](samples/gateway/main.go)和 [fabricd 示例](samples/fabricd/main.go)。应用负责连接认证、HTTP 挂载及监听；core 持有连接和流，关闭规则见对应 Go API 注释。完整产品的宿主 SDK、SQL、企业身份与集群进展见[实施记录](docs/enterprise-implementation.md)。
+
 ## 开发与验证
 
 构建、依赖准备、按改动选择测试及真实 Agent/远端验收统一见 [开发流程](docs/workflow.md)。常用入口：`make test`、`make check`；前端依赖已安装时使用 `make web-check web-build`。`make web` 保留锁文件安装、类型检查和构建的完整流程。
