@@ -51,4 +51,12 @@
 - 工作台先读取启动信息再显示入口，失败提供明确错误和重试。`--disable-registration` 同时关闭页面注册入口与服务端注册操作，保留已有账号登录。
 - 验证：Web 后端回归覆盖公开字段白名单、可信地址、关闭注册不创建账号、已有账号登录；`make check-go`、`make web-check web-build` 通过。在独立 Chrome 会话中通过真实登录、退出及前缀页面验证，并注入一次 bootstrap 网络失败，确认错误页重试后恢复登录表单。构建仍报告现有 bundle 体积提示。
 
-S0b 剩余：可复用身份与 Web/API 模块、公开宿主组装及独立宿主工作台验证。登录回调的前缀行为随 S1 身份实现再验收。
+### 已完成：基础宿主装配与独立工作台
+
+- `pkg/host.Open` 显式装配现有本地账号、owner 检查、Attached、Gateway 和工作台。公开参数不暴露应用配置、内部 Store 或企业依赖；过渡 JSON 留在内部，后续 S0c 替换运行时存储。
+- `App` 可挂载到宿主已有 HTTP 服务，或通过 `Serve` 接管传入 listener。外部 context 取消和幂等 `Close` 停止准入、取消请求及连接，关闭自有 listener，等待已接收处理结束后释放元数据锁；`Done` 可等待实际完成。HTTP 中间件须保留升级与 ResponseController 能力，以解除未发完请求体等 I/O 等待。
+- Web/API 处理不再读取 CLI 配置、推断监听地址或管理 HTTP 服务。`cmd/dune/web.go` 负责官方配置与 TLS/loopback 地址，并通过同一宿主入口启动。`DialGateway` 只建立认证字节连接，Web 仍通过真实 Gateway 网络链路执行协议握手与请求，不绕过处理器。
+- `samples/workbench` 在宿主自有 `/health` 路由旁挂载前缀工作台。进程回归将源码复制到独立 Go module，以 race 构建并完成静态挂载、注册、CLI 绑定、fabricd、PTY 输入输出和退出撤销；浏览器在该示例中登录并运行真实终端，显示 `DUNE_HOST_UI_OK`。
+- 验证：全量本地 `make test`、host/Web race、vet 通过；新增父 context 取消、多 listener 关闭、存储独占及重开、关闭后拒绝请求、外部 HTTP 未完成请求取消与宿主路由保留测试。
+
+S0b 剩余：身份/访问业务模块的进一步分离与显式依赖装配；当前公开宿主仍只组装默认本地身份与 owner 检查。SQL 事务边界随 S0c 落地，企业身份与登录回调随 S1 验收。

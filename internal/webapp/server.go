@@ -2,7 +2,6 @@ package webapp
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
@@ -33,16 +31,15 @@ import (
 const cookieName = "dune_session"
 
 type Options struct {
-	DataDir    string
 	Binaries   string
 	Assets     string
 	PublicURL  string
 	GatewayURL string
 	// DisableRegistration closes local sign-up while preserving existing accounts.
 	DisableRegistration bool
-	// Optional extra loopback-only HTTP listener for local browser validation
-	// while remote machines connect through the primary verified TLS endpoint.
-	WebListen string
+	// DialGateway establishes the authenticated byte connection; the server
+	// owns the returned connection and performs the execution protocol handshake.
+	DialGateway func(context.Context, string) (net.Conn, error)
 }
 
 type authRate struct {
@@ -54,7 +51,6 @@ type Server struct {
 	store     *Store
 	urls      deployment.URLs
 	gateway   *gateway.Gateway
-	config    config.Config
 	options   Options
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -65,14 +61,17 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, c config.Config, options Options, store *Store) (*Server, error) {
+func NewServer(parent context.Context, options Options, store *Store) (*Server, error) {
+	if options.DialGateway == nil {
+		return nil, fmt.Errorf("Gateway dialer required")
+	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
 	if err != nil {
 		return nil, err
 	}
 	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
-	s := &Server{urls: addresses, store: store, config: c, options: options, ctx: ctx, cancel: cancel, tickets: map[string]access.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	s := &Server{urls: addresses, store: store, options: options, ctx: ctx, cancel: cancel, tickets: map[string]access.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = gateway.New()
 	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		grant, ok := s.authorize(token)
@@ -391,34 +390,12 @@ func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Cli
 	s.tickets[ticket] = access.Grant{Target: machineID, Role: "sdk", Valid: valid}
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.tickets, ticket); s.mu.Unlock() }()
-	tc, err := s.config.TLS()
+	conn, err := s.options.DialGateway(r.Context(), ticket)
 	if err != nil {
-		writeError(w, 500, "TLS_FAILED", err.Error())
+		writeError(w, 503, "OFFLINE", err.Error())
 		return nil, nil, false
 	}
-	// Browser adapter and Gateway are one server. Use its local listener
-	// instead of hairpinning through a changing VPN/public route. TLS still
-	// verifies the advertised Gateway identity against the pinned certificate.
-	localURL, _ := url.Parse(s.config.Gateway)
-	localURL.Path = s.urls.Path + "tunnel"
-	localURL.RawPath = ""
-	endpoint := localURL.String()
-	if host, port, e := net.SplitHostPort(s.config.Listen); e == nil {
-		u, _ := url.Parse(endpoint)
-		if tc != nil {
-			tc.ServerName = u.Hostname()
-		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
-			if ip.To4() != nil {
-				host = "127.0.0.1"
-			} else {
-				host = "::1"
-			}
-		}
-		u.Host = net.JoinHostPort(host, port)
-		endpoint = u.String()
-	}
-	client, err := sdk.Dial(r.Context(), sdk.Options{Gateway: endpoint, Token: ticket, Target: machineID, TLSConfig: tc})
+	client, err := sdk.Connect(r.Context(), conn, machineID)
 	if err != nil {
 		writeError(w, 503, "OFFLINE", err.Error())
 		return nil, nil, false
@@ -659,75 +636,4 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-}
-
-func Run(ctx context.Context, c config.Config, options Options) error {
-	if err := c.ValidateServer(); err != nil {
-		return err
-	}
-	if options.PublicURL == "" {
-		if !strings.HasSuffix(c.Gateway, "/tunnel") {
-			return fmt.Errorf("public browser URL required when configured gateway uses a nonstandard connection path")
-		}
-		options.PublicURL = strings.Replace(strings.TrimSuffix(c.Gateway, "/tunnel"), "ws", "http", 1)
-	}
-	dataDir, err := filepath.Abs(options.DataDir)
-	if err != nil {
-		return err
-	}
-	store, err := OpenStore(dataDir)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	app, err := NewServer(ctx, c, options, store)
-	if err != nil {
-		return err
-	}
-	defer app.Close()
-	primary, err := net.Listen("tcp", c.Listen)
-	if err != nil {
-		return err
-	}
-	defer primary.Close()
-	if strings.HasPrefix(c.Gateway, "wss://") {
-		cert, err := tls.LoadX509KeyPair(c.Certificate, c.Key)
-		if err != nil {
-			return err
-		}
-		primary = tls.NewListener(primary, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
-	}
-	listeners := []net.Listener{primary}
-	if options.WebListen != "" {
-		host, _, err := net.SplitHostPort(options.WebListen)
-		if err != nil || !net.ParseIP(host).IsLoopback() {
-			return fmt.Errorf("extra web listener must bind a loopback IP")
-		}
-		ln, err := net.Listen("tcp", options.WebListen)
-		if err != nil {
-			return err
-		}
-		defer ln.Close()
-		listeners = append(listeners, ln)
-	}
-	errors := make(chan error, len(listeners))
-	servers := []*http.Server{}
-	for _, ln := range listeners {
-		srv := &http.Server{Handler: app, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
-		servers = append(servers, srv)
-		go func() { errors <- srv.Serve(ln) }()
-	}
-	fmt.Printf("Dune Web: %s\n", options.PublicURL)
-	select {
-	case <-ctx.Done():
-	case err = <-errors:
-	}
-	app.Close()
-	for _, srv := range servers {
-		_ = srv.Close()
-	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	return err
 }

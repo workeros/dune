@@ -60,7 +60,11 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 宿主已有字节连接时可使用 `pkg/client.Connect(ctx, conn, target)`，该协议包不依赖 HTTP 或 WebSocket 实现。`pkg/sdk` 保留原有默认拨号及执行 API。
 
-公开的 `pkg/gateway` 和 `pkg/fabricd` 可分别嵌入服务端和执行环境，无需产品数据库；参考 [Gateway 示例](samples/gateway/main.go)和 [fabricd 示例](samples/fabricd/main.go)。应用负责连接认证、HTTP 挂载及监听；core 持有连接和流，关闭规则见对应 Go API 注释。完整产品的宿主 SDK、SQL、企业身份与集群进展见[实施记录](docs/enterprise-implementation.md)。
+公开的 `pkg/gateway` 和 `pkg/fabricd` 可分别嵌入服务端和执行环境，无需产品数据库；参考 [Gateway 示例](samples/gateway/main.go)和 [fabricd 示例](samples/fabricd/main.go)。应用负责连接认证、HTTP 挂载及监听；core 持有连接和流，关闭规则见对应 Go API 注释。
+
+`pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)。
+
+宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 是 Dune 管理的私有元数据目录，不是可替换 JSON Store 的公开契约；SQL、可替换企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
 
 ## 开发与验证
 

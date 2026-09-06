@@ -17,6 +17,7 @@ import (
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/fabricd"
+	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/sdk"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -118,7 +119,7 @@ func run() error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return webapp.Run(ctx, c, webapp.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, WebListen: *webListen, Binaries: *binaries, DisableRegistration: *disableRegistration})
+		return runWeb(ctx, c, host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}, *webListen)
 
 	}
 	tc, e := c.TLS()

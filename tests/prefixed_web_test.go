@@ -21,26 +21,25 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/host"
 	"github.com/fasthttp/websocket"
 )
 
 func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
-	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, false) })
-	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, true) })
+	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, false, false) })
+	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, true, false) })
+	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, false, true) })
 }
 
-func testPrefixedWorkbench(t *testing.T, override bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func testPrefixedWorkbench(t *testing.T, override, external bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	dir := t.TempDir()
-	store, err := webapp.OpenStore(filepath.Join(dir, "accounts"))
-	must(t, err)
-	defer store.Close()
 	server := httptest.NewUnstartedServer(nil)
 	origin := "http://" + server.Listener.Addr().String()
 	site := origin + "/tools/dune/"
-	var app *webapp.Server
-	options := webapp.Options{PublicURL: site}
+	var app *host.App
+	options := host.Options{PublicURL: site, DataDir: filepath.Join(dir, "accounts")}
 	if override {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/private/connect" {
@@ -55,12 +54,20 @@ func testPrefixedWorkbench(t *testing.T, override bool) {
 		defer proxy.Close()
 		options.GatewayURL = "ws" + strings.TrimPrefix(proxy.URL, "http") + "/private/connect"
 	}
-	app, err = webapp.NewServer(ctx, config.Config{Gateway: "ws" + strings.TrimPrefix(origin, "http") + "/tunnel", Listen: server.Listener.Addr().String()}, options, store)
-	must(t, err)
-	defer app.Close()
-	server.Config.Handler = app
-	server.Start()
-	defer server.Close()
+	if external {
+		address := server.Listener.Addr().String()
+		must(t, server.Listener.Close())
+		stop := externalWorkbench(t, ctx, address, options)
+		defer stop()
+	} else {
+		var err error
+		app, err = host.Open(ctx, options)
+		must(t, err)
+		defer app.Close()
+		server.Config.Handler = app
+		server.Start()
+		defer server.Close()
+	}
 	jar, err := cookiejar.New(nil)
 	must(t, err)
 	browser := &http.Client{Jar: jar, Timeout: 10 * time.Second}

@@ -3,12 +3,12 @@ package webapp
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
-
-	"github.com/aiomni/dune/internal/config"
 )
 
 func TestHTTPRoutesWithStaticAssets(t *testing.T) {
@@ -17,7 +17,7 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	app, err := NewServer(context.Background(), config.Config{Gateway: "ws://127.0.0.1:1/tunnel"}, Options{PublicURL: "http://dune.example.test:17443", Assets: t.TempDir()}, store)
+	app, err := NewServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test:17443", Assets: t.TempDir()}, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	app, err := NewServer(context.Background(), config.Config{Gateway: "ws://127.0.0.1:1/tunnel"}, Options{PublicURL: "http://dune.example.test:17443"}, store)
+	app, err := NewServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test:17443"}, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,4 +135,8 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if out.Code != 401 {
 		t.Fatal("revoked browser session still works")
 	}
+}
+
+func noGateway(context.Context, string) (net.Conn, error) {
+	return nil, fmt.Errorf("no test execution connection")
 }

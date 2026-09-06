@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/aiomni/dune/internal/config"
 )
 
 func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
@@ -32,7 +30,7 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 				t.Fatal(err)
 			}
 			origin := "https://example.test"
-			app, err := NewServer(context.Background(), config.Config{Gateway: "ws://127.0.0.1:1/tunnel"}, Options{PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/private/connect", Assets: assets, Binaries: binaries}, store)
+			app, err := NewServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/private/connect", Assets: assets, Binaries: binaries}, store)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -8,8 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/aiomni/dune/internal/config"
 )
 
 func TestStartupCapabilitiesAndRegistration(t *testing.T) {
@@ -27,7 +25,7 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 			if _, _, err := store.Register("existing@example.test", "a-strong-test-password"); err != nil {
 				t.Fatal(err)
 			}
-			app, err := NewServer(context.Background(), config.Config{}, Options{
+			app, err := NewServer(context.Background(), Options{DialGateway: noGateway,
 				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/private/connect", DisableRegistration: disabled,
 			}, store)
 			if err != nil {
