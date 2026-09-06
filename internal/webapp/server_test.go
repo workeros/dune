@@ -118,7 +118,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte(pair.own)) || bytes.Contains(out.Body.Bytes(), []byte(pair.other)) {
 			t.Fatal("machine listing leaked ownership")
 		}
-		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events", ""}, {"DELETE", "", ""}} {
+		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events?incarnation=guessed&generation=1", ""}, {"DELETE", "", ""}} {
 			req := httptest.NewRequest(route.method, "/api/machines/"+pair.other+route.suffix, bytes.NewBufferString(route.body))
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 			req.Header.Set("Origin", app.urls.Origin)

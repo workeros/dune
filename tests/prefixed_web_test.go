@@ -234,7 +234,40 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	var runtime api.Runtime
 	do("POST", executionRoute("sessions"), profile(dir, "pty", "/bin/sh"), &runtime)
-	events := site + executionRoute("sessions/"+runtime.ID+"/events")
+	eventURL, err := url.Parse(site + executionRoute("sessions/"+runtime.ID+"/events"))
+	must(t, err)
+	query := eventURL.Query()
+	query.Set("incarnation", runtime.Incarnation)
+	query.Set("generation", fmt.Sprint(runtime.Generation))
+	eventURL.RawQuery = query.Encode()
+	events := eventURL.String()
+	// These are deliberately rejected before a WebSocket upgrade. The old ID-only
+	// lookup would silently substitute the current execution identity here.
+	for _, bad := range []struct {
+		key, value, code string
+		status           int
+	}{
+		{"incarnation", "previous-incarnation", "STALE_RUNTIME", 422},
+		{"generation", fmt.Sprint(runtime.Generation + 1), "STALE_RUNTIME", 422},
+		{"incarnation", "", "INVALID_RUNTIME", 400},
+		{"generation", "0", "INVALID_RUNTIME", 400},
+	} {
+		modified := *eventURL
+		query := modified.Query()
+		query.Set(bad.key, bad.value)
+		modified.RawQuery = query.Encode()
+		request, err := http.NewRequestWithContext(ctx, "GET", modified.String(), nil)
+		must(t, err)
+		request.Header.Set("Origin", origin)
+		response, err := browser.Do(request)
+		must(t, err)
+		var failure struct{ Code string }
+		must(t, json.NewDecoder(response.Body).Decode(&failure))
+		response.Body.Close()
+		if response.StatusCode != bad.status || failure.Code != bad.code {
+			t.Fatal("subscription did not retain selected Runtime identity", bad.key, response.StatusCode, failure.Code)
+		}
+	}
 	connect := func() *websocket.Conn {
 		request, err := http.NewRequest("GET", events, nil)
 		must(t, err)

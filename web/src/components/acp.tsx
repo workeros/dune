@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
-import { socketURL, call, errorText, runnerPath, type Binding, type Runtime } from "@/lib/api";
+import { socketURL, call, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
 
 type Permission = { id: string; params: { toolCall: { title?: string; [key: string]: unknown }; options: { optionId: string; name: string; kind: string }[] } };
 type State = { revision: number; ready: boolean; busy: string; session_id: string; cwd: string; can_list: boolean; can_load: boolean; error?: string; stop_reason?: string; permissions: Permission[]; list?: { sessions: { sessionId: string; cwd: string; title?: string }[]; nextCursor?: string } };
@@ -17,7 +17,7 @@ export function ACPPane({ binding, runtime }: { binding: Binding; runtime: Runti
   setEnded(finished);
   const connect = () => {
    if (disposed || finished) return;
-   const url = socketURL(runnerPath(binding, `sessions/${encodeURIComponent(runtime.id)}/events`));
+   const url = socketURL(eventPath(binding, runtime));
    socket = new WebSocket(url);
    socket.onopen = () => setConnected(true);
    socket.onmessage = (event) => {
@@ -49,7 +49,7 @@ export function ACPPane({ binding, runtime }: { binding: Binding; runtime: Runti
   };
   connect();
   return () => { disposed = true; clearTimeout(retry); socket?.close(); };
- }, [binding, runtime.id, runtime.state]);
+ }, [binding, runtime.id, runtime.incarnation, runtime.generation, runtime.state]);
  useEffect(() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight }); }, [entries.length, entries[entries.length - 1]?.text]);
  const act = async (action: string, extra: Record<string, string> = {}) => {
   setSending(true); setError("");

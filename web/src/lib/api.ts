@@ -9,7 +9,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   const response = await fetch(siteURL(path), { credentials: "same-origin", ...options, headers: { "Content-Type": "application/json", "X-Dune-Request": "1", ...options.headers } });
   let body: unknown;
   try { body = await response.json(); } catch { throw new APIError(`服务返回了无效响应（${response.status}）`, response.status, "INVALID_RESPONSE"); }
-  if (!response.ok) { const error = body as { error?: string; code?: string }; throw new APIError(error.code === "BINDING_CHANGED" ? "环境绑定已变化，请刷新列表并重新选择环境。" : error.error ?? "请求失败", response.status, error.code ?? "FAILED"); }
+  if (!response.ok) { const error = body as { error?: string; code?: string }; throw new APIError(error.code === "BINDING_CHANGED" ? "环境绑定已变化，请刷新列表并重新选择环境。" : error.code === "STALE_RUNTIME" ? "会话执行身份已变化，请重新选择会话。" : error.error ?? "请求失败", response.status, error.code ?? "FAILED"); }
   return body as T;
 }
 export function post<T>(path: string, body: unknown) { return request<T>(path, { method: "POST", body: JSON.stringify(body) }); }
@@ -28,6 +28,10 @@ export function runnerPath(binding: Binding, suffix: string): string {
   return `/api/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
 }
 export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; title?: string; working_directory?: string };
+export function runtimeKey(runtime: Runtime): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }
+export function eventPath(binding: Binding, runtime: Runtime): string {
+  return runnerPath(binding, `sessions/${encodeURIComponent(runtime.id)}/events`) + "&" + new URLSearchParams({ incarnation: runtime.incarnation, generation: String(runtime.generation) });
+}
 export type AgentConfig = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; adapter: "pty" | "acp"; history_lines?: number };
 
 export type Page<T> = { items: T[]; next_cursor?: string };

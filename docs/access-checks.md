@@ -61,6 +61,8 @@ app, err := host.Open(ctx, host.Options{
 
 前端发现刷新不覆盖用户选中的绑定。发现绑定变化后卸载旧工作区和订阅，明确确认后才使用当前绑定；进入环境后仍需点选已有 Runtime，不自动重放创建、输入或其他写入。旧机器路径作为具体机器 API 保留，工作台自身所有执行与订阅均使用上述 Runner 路径。
 
+Runner 和旧机器路径的事件订阅还必须携带用户选定的 `incarnation`、`generation`（正整数且各出现一次）。服务端先以完整 Runtime 身份执行有五秒期限的 `runtime.get`，确认返回身份一致后才执行 `runtime.attach`；企业策略须允许这两个操作。缺失或歧义身份返回 `400 INVALID_RUNTIME`，旧执行身份返回 `STALE_RUNTIME`，不再列出会话后按 ID 补齐最新身份。前端保留选择时的完整 Runtime，自动重连沿用原身份；刷新发现同 ID 的身份变化时关闭旧视图，用户重新点选后才连接新身份。升级须同步部署静态资源及事件 API 客户端，仅提供 Runtime ID 的旧订阅会被拒绝。
+
 ## 决定及期限
 
 `Checker.Check(ctx, Request)` 返回 `Decision`：`Allowed`、受控的 `Reason`（1–64 位大写字母、数字或下划线）、非空决定 `ID`（最多 128 字节）和 `ValidUntil`。检查器须并发安全并响应 context。宿主将并发调用限制为 64，等待名额也计入检查期限。错误、超时、无效或过期决定均拒绝，不将上游错误详情传给执行客户端，也不回退到 owner 检查。

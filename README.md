@@ -148,6 +148,8 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 
 工作台以逻辑 Runner（开发环境）为入口。选择环境后，页面固定当时的机器、Fabric 和绑定修订；刷新可以更新在线状态，绑定变化则关闭旧工作区并要求明确进入当前环境。进入环境或刷新页面不会自动连接已有终端/Agent，会话仍需点选；解绑只撤销 Dune 接入，不删除开发机文件或停止远端任务。
 
+会话选择同时固定 Runtime 的 ID、incarnation 和 generation；同 ID 的执行身份变化后需要重新点选，自动重连不能跟随新身份。Runner 与旧机器事件 API 都要求完整 Runtime 查询参数，升级时须同步后端、静态资源和自定义订阅客户端，详见[浏览器入口契约](docs/access-checks.md#浏览器-runner-入口)。
+
 工作台默认使用 `--data` 目录内的 SQLite，无需安装数据库服务；同一目录只允许一个实例持有。使用 PostgreSQL 时传入 `--database-config /absolute/private/database.yaml`，文件须属于当前用户且权限为 0600，内容为 `postgres: {url: "postgres://…"}`，不能同时指定 `--data`。两种后端使用同一套业务事务。旧 `accounts.json` 必须先[离线导入 SQL](docs/metadata-migration.md)，新版本不会将旧数据静默替换为空库。
 
 `web --url` 可包含部署前缀，例如 `https://example.com/tools/dune/`。API、静态文件、Cookie、浏览器 WebSocket 和安装引导均使用该前缀；机器默认连接 `wss://example.com/tools/dune/tunnel`。反向代理须保留前缀交给当前官方 Web 入口，末尾缺少 `/` 的浏览器入口会跳转到规范地址。

@@ -179,3 +179,12 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 验证：启用 PostgreSQL 17 与原生备份工具的全量 `make test`、Web/host/access race、`make build`、`make check-go`、`make web-check web-build` 通过。`TestBrowserRunnerBindingIsFixed` 覆盖四个入口的固定绑定及无拨号拒绝；真实 PTY 前缀回归新增 Runner 入口，SQLite/PostgreSQL 企业共享回归均改由同一 Runner 路径执行并验证写入拒绝与撤销。前端仍有既有主 bundle 体积提示。
 
 下一检查点逐项核对 S1 的身份、访问和执行身份契约，再继续 S2 Managed、持久操作及续期。S1 尚未据此标记整体完成；S2/S3 和真实企业集成的部署证据仍须按原方案取得。
+
+### 已完成：浏览器订阅固定 Runtime 执行身份
+
+- Runner 及原机器事件入口均要求完整 Runtime ID、incarnation、generation，以该身份执行有界 `runtime.get` 后再 attach；不再按 ID 查询并填充最新身份。缺失、重复或非法选择值在拨号前拒绝，实际执行引擎拒绝旧 incarnation/generation。协议核心及 SQL schema 无变更。
+- 工作台保存选中的 Runtime 快照，PTY 和 ACP 订阅及重连均携带原身份；列表刷新可以更新状态，不能替换所选执行身份。身份变化或不可用时卸载旧视图，用户明确重新点选后才连接，不重放输入或创建请求。旧事件客户端须与静态资源、后端同步升级。
+- 真实浏览器创建 PTY 并输出 `RUNTIME_FIXED_OK`；在专用 fabricd 停止期间用测试夹具改变原 Runtime 的持久 incarnation，再启动同一 fabricd，浏览器自动重连仍使用旧身份并关闭旧视图。记录的 WebSocket URL 确认重新点选前未使用新身份；点选后原历史保留并输出 `RUNTIME_RESELECT_OK`。夹具模拟同 ID 的执行身份变更，不是生产重建入口或 Managed 验收。
+- 验证：定向 Web/前缀进程回归、Web/host/access race、Go 静态检查、Go/Web 构建通过。启用真实 PostgreSQL 17 和备份工具的全量测试中，tmux 环境隔离和 access 执行测试各出现一次 tmux 操作确认超时，其余包（含完整跨进程测试）通过；两处失败包随后以 `-p=1 -count=1` 串行复验通过。前端仍有既有 bundle 体积提示。
+
+S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace，无法取得这次登录已验证的外部 subject；下一检查点补齐稳定身份归属，确保关联多个外部身份时不猜测身份、不传递上游令牌。S2/S3 和真实企业集成证据继续按原方案推进。

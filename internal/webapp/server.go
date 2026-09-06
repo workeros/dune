@@ -519,25 +519,24 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "ORIGIN", "same-origin browser required")
 		return
 	}
+	selected, ok := selectedRuntime(w, r)
+	if !ok {
+		return
+	}
 	client, valid, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}
 	defer client.Close()
-	list, err := client.List(r.Context())
+	lookupCtx, cancelLookup := context.WithTimeout(r.Context(), 5*time.Second)
+	runtime, err := client.Get(lookupCtx, selected)
+	cancelLookup()
 	if err != nil {
 		operationError(w, err)
 		return
 	}
-	var runtime api.Runtime
-	for _, rt := range list {
-		if rt.ID == r.PathValue("runtime") {
-			runtime = rt
-			break
-		}
-	}
-	if runtime.ID == "" {
-		writeError(w, 404, "NOT_FOUND", "session not found")
+	if !sameRuntime(runtime, selected) || (runtime.Adapter != "pty" && runtime.Adapter != "acp") {
+		writeError(w, 409, "STALE_RUNTIME", "Runtime identity changed; select the current session")
 		return
 	}
 	var stream *sdk.Stream

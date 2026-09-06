@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aiomni/dune/internal/identity"
@@ -49,6 +50,13 @@ func TestBrowserRunnerBindingIsFixed(t *testing.T) {
 	defer app.Close()
 	request := func(method, route, session string) *httptest.ResponseRecorder {
 		t.Helper()
+		if method == "GET" && strings.Contains(route, "/events") {
+			separator := "?"
+			if strings.Contains(route, "?") {
+				separator = "&"
+			}
+			route += separator + "incarnation=selected&generation=1"
+		}
 		r := httptest.NewRequest(method, "/tools/dune/api/"+route, bytes.NewBufferString(`{"operation":"runtime.list"}`))
 		r.AddCookie(&http.Cookie{Name: cookieName, Value: session})
 		r.Header.Set("Origin", app.urls.Origin)

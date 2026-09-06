@@ -101,3 +101,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 `TestEnterpriseSharedExecutionAndRevocation` 验证所选企业检查器允许跨 owner 的真实 Web 终端及 CLI 执行，同时拒绝文件写入、关闭策略撤销后的空闲流，保留父会话和身份停用撤销。PostgreSQL 子例使用两个独立宿主签发/消费凭据，并不代表 S3 自动路由。`TestAuthorizedDiscoveryAndWrites` 验证 128 候选扫描上限、分页游标的用户/身份源/用途隔离、SQLite 重开和跨 PostgreSQL 池恢复、绑定及会话写入竞争。浏览器分页改动还需在实际工作台验证空页继续、前后翻页、过期恢复及策略故障反馈。
 
 `TestBrowserRunnerBindingIsFixed` 逐一检查浏览器 Runner 的 call、sessions、events 和解绑入口，覆盖绑定缺失/歧义、错误 Runner/Fabric/修订、会话缺失及修订变化后不拨号替代目标。`TestPrefixedWorkbenchEnrollmentAndTerminal/runner-entry` 和企业共享回归通过同一 Runner 快照路径使用真实 fabricd/PTY；浏览器需额外检查环境选择、绑定变化提示、明确重新进入后保留原会话及历史，不自动重连或重复创建。直接修改测试数据库的绑定修订只模拟已提交事实，不代表 Managed 生命周期验收。
+
+`TestRuntimeSelection` 检查事件订阅的完整执行身份及重复、缺失、溢出参数；前缀工作台与企业共享进程回归在实际 PTY 上拒绝错误 incarnation/generation，并验证随后合法订阅可用。浏览器验收还需确认刷新及自动重连保留选定 Runtime 身份，同 ID 身份变化后必须重新点选。仅在专用测试进程中改变持久 Runtime 身份的夹具用于模拟执行身份变化，不代表生产生命周期支持直接修改该字段。

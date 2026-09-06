@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Icon } from "@iconify/react";
 import historyIcon from "@iconify-icons/ri/history-line";
 import { Button } from "./ui/button";
-import { socketURL, call, errorText, runnerPath, type Binding, type Runtime } from "@/lib/api";
+import { socketURL, call, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
 
 export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: Runtime }) {
   const container = useRef<HTMLDivElement>(null);
@@ -23,7 +23,7 @@ export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: 
     const connect = () => {
       if (disposed) return;
       setStatus("连接中");
-      const url = socketURL(runnerPath(binding, `sessions/${encodeURIComponent(runtime.id)}/events`));
+      const url = socketURL(eventPath(binding, runtime));
 
       socket = new WebSocket(url);
       socket.onopen = () => { retry = 300; setConnected(true); setStatus("已连接"); setError(""); term.reset(); resize(); term.focus(); };
@@ -47,7 +47,7 @@ export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: 
     const observer = new ResizeObserver(resize); observer.observe(container.current);
     connect();
     return () => { disposed = true; clearTimeout(reconnect); observer.disconnect(); input.dispose(); binary.dispose(); socket?.close(); term.dispose(); terminal.current = undefined; };
-  }, [binding, runtime.id]);
+  }, [binding, runtime.id, runtime.incarnation, runtime.generation]);
   const browse = async (action: "older" | "newer" | "close") => {
     try { await call(binding, "runtime.history", { action }, runtime); setError(""); terminal.current?.focus(); }
     catch (e) { setError(errorText(e)); }
