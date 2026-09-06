@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
@@ -20,8 +21,8 @@ type Sessions interface {
 }
 
 type Bindings interface {
-	Owns(string, string) bool
-	MachineCredential(string) (string, bool)
+	Owns(context.Context, string, string) (bool, error)
+	MachineCredential(context.Context, string) (string, error)
 }
 
 type Local struct {
@@ -57,7 +58,11 @@ func (l *Local) Client(ctx context.Context, session, target string) (*ClientGran
 	if err != nil {
 		return nil, err
 	}
-	if !l.bindings.Owns(user.ID, target) {
+	owns, err := l.bindings.Owns(ctx, user.ID, target)
+	if err != nil {
+		return nil, err
+	}
+	if !owns {
 		return nil, ErrNotFound
 	}
 	// Captured values cannot be replaced by a request payload or another login.
@@ -65,8 +70,14 @@ func (l *Local) Client(ctx context.Context, session, target string) (*ClientGran
 		if l.ctx.Err() != nil {
 			return false
 		}
-		current, err := l.sessions.Authenticate(l.ctx, session)
-		return err == nil && current.ID == user.ID && l.bindings.Owns(user.ID, target)
+		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
+		defer cancel()
+		current, err := l.sessions.Authenticate(ctx, session)
+		if err != nil || current.ID != user.ID {
+			return false
+		}
+		owns, err := l.bindings.Owns(ctx, user.ID, target)
+		return err == nil && owns
 	}
 	token := wire.ID() + wire.ID()
 	l.mu.Lock()
@@ -94,15 +105,19 @@ func (l *Local) Authorize(token string) (gateway.BindingContext, gateway.Connect
 	if ok {
 		return grant.Bind()
 	}
-	target, ok := l.bindings.MachineCredential(token)
-	if !ok {
-		return gateway.BindingContext{}, nil, identity.ErrUnauthorized
+	ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
+	defer cancel()
+	target, err := l.bindings.MachineCredential(ctx, token)
+	if err != nil {
+		return gateway.BindingContext{}, nil, err
 	}
 	return (access.Grant{Target: target, Role: gateway.RoleDaemon, Valid: func() bool {
 		if l.ctx.Err() != nil {
 			return false
 		}
-		current, ok := l.bindings.MachineCredential(token)
-		return ok && current == target
+		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
+		defer cancel()
+		current, err := l.bindings.MachineCredential(ctx, token)
+		return err == nil && current == target
 	}}).Bind()
 }

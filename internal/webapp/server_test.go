@@ -12,6 +12,8 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/pkg/storage"
 )
 
 func TestHTTPRoutesWithStaticAssets(t *testing.T) {
@@ -91,19 +93,19 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bind, _, err := store.IssueEnrollment(a.ID, "machine-a")
+	bind, _, err := store.IssueEnrollment(context.Background(), a.ID, "machine-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ma, _, err := store.Enroll(bind, "linux", "amd64")
+	ma, _, err := store.Enroll(context.Background(), bind, "linux", "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bind, _, err = store.IssueEnrollment(b.ID, "machine-b")
+	bind, _, err = store.IssueEnrollment(context.Background(), b.ID, "machine-b")
 	if err != nil {
 		t.Fatal(err)
 	}
-	mb, _, err := store.Enroll(bind, "darwin", "arm64")
+	mb, _, err := store.Enroll(context.Background(), bind, "darwin", "arm64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +146,10 @@ func noGateway(context.Context, string) (net.Conn, error) {
 	return nil, fmt.Errorf("no test execution connection")
 }
 
-func newTestServer(ctx context.Context, options Options, store *Store, local *identity.Local) (*Server, error) {
+func newTestServer(ctx context.Context, options Options, store *metadata.Store, local *identity.Local) (*Server, error) {
 	return NewServer(ctx, options, store, local, authorization.NewLocal(ctx, local, store))
+}
+
+func OpenStore(dir string) (*metadata.Store, error) {
+	return metadata.Open(context.Background(), storage.Config{SQLiteDir: dir})
 }

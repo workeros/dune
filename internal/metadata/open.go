@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	ErrConflict      = errors.New("metadata conflict")
-	ErrNotFound      = errors.New("not found")
-	ErrCommitUnknown = errors.New("metadata commit outcome unknown; do not automatically replay")
+	ErrInvalidArgument = errors.New("invalid argument")
+	ErrConflict        = errors.New("metadata conflict")
+	ErrNotFound        = errors.New("not found")
+	ErrCommitUnknown   = errors.New("metadata commit outcome unknown; do not automatically replay")
 )
 
 type Store struct {
@@ -142,7 +143,7 @@ func lockDirectory(dir string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		lock.Close()
-		return nil, fmt.Errorf("SQLite metadata is already open: %w", err)
+		return nil, fmt.Errorf("metadata directory is already open: %w", err)
 	}
 	return lock, nil
 }

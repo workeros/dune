@@ -53,9 +53,10 @@ SQL 后端使用 `internal/metadata` 的同一组业务契约测试 SQLite 和 P
 ```sh
 go test ./internal/metadata -v -count=1 -timeout=90s
 go test -race ./internal/metadata -count=1 -timeout=180s
+go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeout=180s
 ```
 
-运行前从私有配置设置 `DUNE_TEST_POSTGRES` 为测试连接 URL。测试创建随机 `dune_test_` schema，结束后删除；密码轮换测试还创建并清理随机测试角色，因此测试账号需要创建 schema 和角色的权限，服务器须实际使用密码认证。不要使用业务数据库。SQLite 的私有目录、独占锁、schema 校验、并发与事务失败测试始终在临时目录运行。
+运行前从私有配置设置 `DUNE_TEST_POSTGRES` 为测试连接 URL。测试创建随机 `dune_test_` 或 `dune_workbench_` schema，结束后删除；密码轮换测试还创建并清理随机测试角色，因此测试账号需要创建 schema 和角色的权限，服务器须实际使用密码认证。不要使用业务数据库。SQLite 的私有目录、独占锁、schema 校验、并发与事务失败测试始终在临时目录运行。PostgreSQL 工作台测试与 SQLite 复用同一注册、CLI enrollment、fabricd 接入、真实 PTY 和退出撤销流程。
 
 以下操作会使用已配置的 Agent 账号或指定远端，仅在任务包含对应验收且已有授权时运行。沿用明确指定的账号、模型和机器；历史文档里的地址与登录状态不是当前授权或可用性证据。环境缺失时报告具体缺口，继续本地检查。
 

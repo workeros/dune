@@ -64,7 +64,7 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 `pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)。
 
-宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 是 Dune 管理的私有元数据目录，不是可替换 JSON Store 的公开契约；SQL、可替换企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
+宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
 
 ## 开发与验证
 
@@ -121,6 +121,8 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 ```
 
 示例使用 HTTP/WS，无需证书。浏览器注册后选择接入开发机，执行网页给出的同站安装命令。安装脚本不需要 sudo 或预装 Agent；首次绑定写入私有机器配置，随后启动用户后台服务。
+
+工作台默认使用 `--data` 目录内的 SQLite，无需安装数据库服务；同一目录只允许一个实例持有。使用 PostgreSQL 时传入 `--database-config /absolute/private/database.yaml`，文件须属于当前用户且权限为 0600，内容为 `postgres: {url: "postgres://…"}`，不能同时指定 `--data`。两种后端使用同一套业务事务。旧 `accounts.json` 必须先[离线导入 SQL](docs/metadata-migration.md)，新版本不会将旧数据静默替换为空库。
 
 `web --url` 可包含部署前缀，例如 `https://example.com/tools/dune/`。API、静态文件、Cookie、浏览器 WebSocket 和安装引导均使用该前缀；机器默认连接 `wss://example.com/tools/dune/tunnel`。反向代理须保留前缀交给当前官方 Web 入口，末尾缺少 `/` 的浏览器入口会跳转到规范地址。
 

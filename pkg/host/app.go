@@ -6,6 +6,7 @@ package host
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -14,16 +15,21 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/deployment"
+	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/ws"
 )
 
 type Options struct {
-	// DataDir must be an absolute, private directory owned by the current user.
+	// DataDir selects SQLite in an absolute, private directory owned by the current user.
 	// The application holds it exclusively until Close has completed. The on-disk
 	// format is managed by Dune and is not a public storage extension interface.
 	DataDir string
+	// Database selects a SQL backend instead of the default SQLite DataDir.
+	// It cannot be combined with DataDir. The application owns the connection pool.
+	Database *storage.Config
 	// Assets and Binaries contain the built workbench and installation archives.
 	Assets, Binaries string
 	// PublicURL is the browser HTTP(S) deployment directory. GatewayURL optionally
@@ -48,7 +54,7 @@ type App struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	web     *webapp.Server
-	store   *webapp.Store
+	store   *metadata.Store
 	mu      sync.Mutex
 	closed  bool
 	servers map[*http.Server]struct{}
@@ -75,7 +81,14 @@ func Open(parent context.Context, options Options) (*App, error) {
 			return ws.Dial(ctx, endpoint, token, &tls.Config{MinVersion: tls.VersionTLS12})
 		}
 	}
-	store, err := webapp.OpenStore(options.DataDir)
+	database := storage.Config{SQLiteDir: options.DataDir}
+	if options.Database != nil {
+		if options.DataDir != "" {
+			return nil, fmt.Errorf("DataDir and Database cannot be combined")
+		}
+		database = *options.Database
+	}
+	store, err := metadata.Open(parent, database)
 	if err != nil {
 		return nil, err
 	}

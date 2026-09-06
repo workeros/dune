@@ -19,6 +19,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
@@ -47,7 +48,7 @@ type authRate struct {
 }
 
 type Server struct {
-	store     *Store
+	store     *metadata.Store
 	identity  *identity.Local
 	access    *authorization.Local
 	urls      deployment.URLs
@@ -61,7 +62,7 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, options Options, store *Store, local *identity.Local, owner *authorization.Local) (*Server, error) {
+func NewServer(parent context.Context, options Options, store *metadata.Store, local *identity.Local, owner *authorization.Local) (*Server, error) {
 	if options.DialGateway == nil || local == nil || owner == nil {
 		return nil, fmt.Errorf("Gateway dialer, identity and access modules required")
 	}
@@ -242,16 +243,8 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 	} else {
 		user, token, err = s.identity.Login(r.Context(), request.Email, request.Password)
 	}
-	if errors.Is(err, identity.ErrRegistrationDisabled) {
-		writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", err.Error())
-		return
-	}
 	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, ErrUnauthorized) {
-			status = http.StatusUnauthorized
-		}
-		writeError(w, status, "AUTH_FAILED", err.Error())
+		writeMetadataError(w, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: int(identity.SessionLifetime.Seconds())})
@@ -270,7 +263,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.identity.Logout(r.Context(), token); err != nil {
-		writeError(w, 500, "STORE_FAILED", err.Error())
+		writeMetadataError(w, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: s.urls.CookiePath, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, MaxAge: -1})
@@ -287,7 +280,12 @@ func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
 		Online bool `json:"online"`
 	}
 	out := []machineView{}
-	for _, machine := range s.store.Machines(user.ID) {
+	machines, err := s.store.Machines(r.Context(), user.ID)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	for _, machine := range machines {
 		out = append(out, machineView{machine, s.gateway.Online(machine.ID)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
@@ -305,9 +303,9 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	token, expires, err := s.store.IssueEnrollment(user.ID, request.Name)
+	token, expires, err := s.store.IssueEnrollment(r.Context(), user.ID, request.Name)
 	if err != nil {
-		writeError(w, 400, "BINDING_FAILED", err.Error())
+		writeMetadataError(w, err)
 		return
 	}
 	endpoint := strings.TrimSuffix(s.urls.PublicURL, "/")
@@ -330,9 +328,9 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	machine, credential, err := s.store.Enroll(request.Token, request.OS, request.Arch)
+	machine, credential, err := s.store.Enroll(r.Context(), request.Token, request.OS, request.Arch)
 	if err != nil {
-		writeError(w, 400, "BINDING_FAILED", err.Error())
+		writeMetadataError(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"machine": machine, "credential": credential, "gateway": s.urls.GatewayURL})
@@ -344,8 +342,8 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	machineID := r.PathValue("machine")
-	if err := s.store.Revoke(user.ID, machineID); err != nil {
-		writeError(w, 404, "NOT_FOUND", "machine not found")
+	if err := s.store.Revoke(r.Context(), user.ID, machineID); err != nil {
+		writeMetadataError(w, err)
 		return
 	}
 	s.gateway.Disconnect(machineID)
@@ -535,7 +533,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !valid() {
-				done <- ErrUnauthorized
+				done <- identity.ErrUnauthorized
 				return
 			}
 			var err error

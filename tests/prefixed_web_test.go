@@ -22,16 +22,17 @@ import (
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/storage"
 	"github.com/fasthttp/websocket"
 )
 
 func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
-	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, false, false) })
-	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, true, false) })
-	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, false, true) })
+	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, false, false, nil) })
+	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, true, false, nil) })
+	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, false, true, nil) })
 }
 
-func testPrefixedWorkbench(t *testing.T, override, external bool) {
+func testPrefixedWorkbench(t *testing.T, override, external bool, database *storage.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	dir := t.TempDir()
@@ -40,6 +41,9 @@ func testPrefixedWorkbench(t *testing.T, override, external bool) {
 	site := origin + "/tools/dune/"
 	var app *host.App
 	options := host.Options{PublicURL: site, DataDir: filepath.Join(dir, "accounts")}
+	if database != nil {
+		options.DataDir, options.Database = "", database
+	}
 	if override {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/private/connect" {

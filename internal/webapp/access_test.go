@@ -34,11 +34,11 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		token, _, err := store.IssueEnrollment(c.user.ID, "machine")
+		token, _, err := store.IssueEnrollment(context.Background(), c.user.ID, "machine")
 		if err != nil {
 			t.Fatal(err)
 		}
-		c.machine, c.credential, err = store.Enroll(token, "linux", "amd64")
+		c.machine, c.credential, err = store.Enroll(context.Background(), token, "linux", "amd64")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +80,7 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 	if a.grant.Valid() || !b.grant.Valid() {
 		t.Fatal("revocation was not isolated to its original user session")
 	}
-	if err := store.Revoke(b.user.ID, b.machine.ID); err != nil {
+	if err := store.Revoke(context.Background(), b.user.ID, b.machine.ID); err != nil {
 		t.Fatal(err)
 	}
 	if b.grant.Valid() {

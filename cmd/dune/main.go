@@ -49,7 +49,7 @@ func run() error {
 	}
 	args := fs.Args()
 	if len(args) > 0 && (args[0] == "help" || args[0] == "version") {
-		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config must precede the subcommand.")
+		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL]\n  dune metadata import-json --source DIR [--data DIR | --database-config FILE]\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config must precede the subcommand.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "init" {
@@ -76,6 +76,11 @@ func run() error {
 			return err
 		}
 		return webapp.EnrollMachine(context.Background(), *path, *site, *token, *certificate)
+	}
+	if len(args) > 0 && args[0] == "metadata" {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		return runMetadata(ctx, args[1:])
 	}
 	c, e := config.Load(*path)
 	if e != nil {
@@ -109,7 +114,8 @@ func run() error {
 		return daemon.Run(ctx, c)
 	case "web":
 		flags := flag.NewFlagSet("web", flag.ContinueOnError)
-		data := flags.String("data", ".local/web-accounts", "private account metadata directory")
+		data := flags.String("data", ".local/web-accounts", "private SQLite metadata directory")
+		databaseFile := flags.String("database-config", "", "private SQL configuration; replaces the default SQLite data directory")
 		assets := flags.String("assets", "web/dist", "built React assets directory")
 		binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 		publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
@@ -119,7 +125,24 @@ func run() error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return runWeb(ctx, c, host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}, *webListen)
+		options := host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
+		if *databaseFile != "" {
+			dataSet := false
+			flags.Visit(func(f *flag.Flag) {
+				if f.Name == "data" {
+					dataSet = true
+				}
+			})
+			if dataSet {
+				return fmt.Errorf("--data and --database-config cannot be combined")
+			}
+			database, err := config.Database(*databaseFile)
+			if err != nil {
+				return err
+			}
+			options.DataDir, options.Database = "", &database
+		}
+		return runWeb(ctx, c, options, *webListen)
 
 	}
 	tc, e := c.TLS()

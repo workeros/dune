@@ -31,7 +31,7 @@ func tokenHash(token string) string {
 func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (string, int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 120 || strings.ContainsFunc(name, unicode.IsControl) {
-		return "", 0, fmt.Errorf("machine name must be 1..120 bytes without control characters")
+		return "", 0, fmt.Errorf("%w: machine name must be 1..120 bytes without control characters", ErrInvalidArgument)
 	}
 	token := wire.ID() + wire.ID()
 	expires := time.Now().Add(10 * time.Minute).Unix()
@@ -47,7 +47,7 @@ func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (strin
 			return err
 		}
 		if count >= 5 {
-			return fmt.Errorf("at most five pending binding commands; existing commands expire after ten minutes")
+			return fmt.Errorf("%w: at most five pending binding commands; existing commands expire after ten minutes", ErrInvalidArgument)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,principal_id,name,expires_at) VALUES($1,$2,$3,$4)`, tokenHash(token), userID, name, expires)
 		return err
@@ -63,7 +63,7 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 		return Machine{}, "", identity.ErrUnauthorized
 	}
 	if (osName != "linux" && osName != "darwin") || (arch != "amd64" && arch != "arm64") {
-		return Machine{}, "", fmt.Errorf("supported platforms: Linux/macOS on amd64/arm64")
+		return Machine{}, "", fmt.Errorf("%w: supported platforms: Linux/macOS on amd64/arm64", ErrInvalidArgument)
 	}
 	credential := wire.ID() + wire.ID()
 	machine := Machine{ID: wire.ID(), OS: osName, Arch: arch, CreatedAt: time.Now().Unix()}
@@ -97,7 +97,7 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 			return err
 		}
 		if count >= 32 {
-			return fmt.Errorf("machine limit reached (32 per account)")
+			return fmt.Errorf("%w: machine limit reached (32 per account)", ErrInvalidArgument)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'attached','attached',1,$4)`, machine.ID, owner, machine.Name, machine.CreatedAt); err != nil {
 			return err

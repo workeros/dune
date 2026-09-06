@@ -29,9 +29,11 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 		return err
 	}
 	options.PublicURL = addresses.PublicURL
-	options.DataDir, err = filepath.Abs(options.DataDir)
-	if err != nil {
-		return err
+	if options.Database == nil {
+		options.DataDir, err = filepath.Abs(options.DataDir)
+		if err != nil {
+			return err
+		}
 	}
 	tc, err := c.TLS()
 	if err != nil {

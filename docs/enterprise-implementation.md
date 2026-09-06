@@ -53,7 +53,7 @@
 
 ### 已完成：基础宿主装配与独立工作台
 
-- `pkg/host.Open` 显式装配现有本地账号、owner 检查、Attached、Gateway 和工作台。公开参数不暴露应用配置、内部 Store 或企业依赖；过渡 JSON 留在内部，后续 S0c 替换运行时存储。
+- `pkg/host.Open` 显式装配现有本地账号、owner 检查、Attached、Gateway 和工作台。公开参数不暴露应用配置、内部 Store 或企业依赖；S0b 的过渡存储已在 S0c 替换为 SQL。
 - `App` 可挂载到宿主已有 HTTP 服务，或通过 `Serve` 接管传入 listener。外部 context 取消和幂等 `Close` 停止准入、取消请求及连接，关闭自有 listener，等待已接收处理结束后释放元数据锁；`Done` 可等待实际完成。HTTP 中间件须保留升级与 ResponseController 能力，以解除未发完请求体等 I/O 等待。
 - Web/API 处理不再读取 CLI 配置、推断监听地址或管理 HTTP 服务。`cmd/dune/web.go` 负责官方配置与 TLS/loopback 地址，并通过同一宿主入口启动。`DialGateway` 只建立认证字节连接，Web 仍通过真实 Gateway 网络链路执行协议握手与请求，不绕过处理器。
 - `samples/workbench` 在宿主自有 `/health` 路由旁挂载前缀工作台。进程回归将源码复制到独立 Go module，以 race 构建并完成静态挂载、注册、CLI 绑定、fabricd、PTY 输入输出和退出撤销；浏览器在该示例中登录并运行真实终端，显示 `DUNE_HOST_UI_OK`。
@@ -78,4 +78,11 @@
 - 本机独立 PostgreSQL 17 实例使用真实 SCRAM 密码认证。共同契约已验证跨对象失败回滚、并发单次消费、跨池会话上限、重启恢复和撤销；另外验证并发 schema 初始化、实际密码轮换及池恢复。提交丢失测试在真实 SQLite 提交之后注入回执错误，确认只提交一次并保留已落库状态。
 - 验证：启用该独立 PostgreSQL 的全量 `make test`、SQL `make test-race` 和 `make check-go` 通过；新增存储包以 `CGO_ENABLED=0` 交叉编译通过 Linux amd64/arm64、macOS amd64，本机 macOS arm64 完成运行测试。交叉编译不代替目标平台运行验收。
 
-本检查点尚未切换官方运行时：现有 Web 仍临时使用旧存储。下一功能点完成 JSON 导入、宿主/CLI 接入新后端、默认 SQLite 与运行时 JSON 移除，再验收完整 SQL 工作台链路。
+### 已完成：离线 JSON 导入与 SQL 工作台
+
+- `pkg/migrate.JSON` 和 `dune metadata import-json` 将旧目录导入空 SQLite/PostgreSQL 目标。离线命令不要求 Gateway 配置；源目录持锁至结束，严格校验重复键（含大小写字段别名）、版本、凭据唯一性及关联，失败不改源文件。所有业务记录同事务导入，保留账号、密码/凭据哈希、原机器 ID 和会话/enrollment 到期时间。
+- 官方 CLI 与 `pkg/host` 默认使用 SQLite，另可通过私有 `--database-config` 文件或 Go `Options.Database` 选择 PostgreSQL。旧 JSON 运行时和相关内存保存代码已删除；有旧数据但未导入的目录明确拒绝启动。身份策略测试迁至同一 SQL 契约，覆盖错误密码、取消、过期、会话上限与凭据哈希。
+- SQL 故障不会伪装成账号错误或机器不存在；提交确认丢失返回 `RESULT_UNKNOWN`，普通后端故障返回 503，禁止自动重放。连接期间的持久访问查询有界，注销后空闲终端仍会被撤销。
+- 两种后端均通过注册、CLI enrollment、真实 fabricd 接入、PTY 输入输出和退出撤销；外部 Go module 宿主继续使用同一 SQL 应用。真实 PostgreSQL 启用下的全量 `make test`、metadata/Web/host `make test-race` 和 `make check-go` 通过；最后新增的 JSON 字段别名回归也通过。
+- 真实升级演练使用 `8aba205` 的旧 JSON 工作台建立账号、机器和 PTY，停站备份并导入 SQLite 后在原地址启动新版本。原 Cookie/密码、机器配置、Runtime ID、incarnation/generation 及终端历史保持不变，fabricd 无需重装或重新签发凭据；浏览器登录并连接该原会话，看到 `BEFORE_SQL_IMPORT_OK`、`AFTER_SQL_IMPORT_OK`，输入后显示 `SQL_MIGRATION_UI_OK`。完成后已停止测试 Runtime、fabricd 和站点。
+- 安装配置、导入顺序和回退边界见[元数据迁移](metadata-migration.md)。SQL 转库与备份恢复仍待下一功能点，S1–S3 仍未交付。

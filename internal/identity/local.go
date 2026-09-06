@@ -18,6 +18,7 @@ import (
 )
 
 var (
+	ErrInvalidArgument      = errors.New("invalid argument")
 	ErrUnauthorized         = errors.New("invalid credentials or expired session")
 	ErrRegistrationDisabled = errors.New("此站点未开放本地注册，请使用已有账号登录。")
 	ErrSessionLimit         = errors.New("active login session limit reached; log out of another browser or wait for expiry")
@@ -75,7 +76,7 @@ func normalizedEmail(email string) (string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	address, err := mail.ParseAddress(email)
 	if err != nil || address.Address != email || len(email) > 254 {
-		return "", fmt.Errorf("valid email address required")
+		return "", fmt.Errorf("%w: valid email address required", ErrInvalidArgument)
 	}
 	return email, nil
 }
@@ -92,7 +93,7 @@ func (l *Local) Register(ctx context.Context, email, password string) (User, str
 		return User{}, "", err
 	}
 	if len(password) < 12 || len(password) > 256 {
-		return User{}, "", fmt.Errorf("password must be 12..256 bytes")
+		return User{}, "", fmt.Errorf("%w: password must be 12..256 bytes", ErrInvalidArgument)
 	}
 	account := Account{User: User{ID: wire.ID(), Email: email}, Salt: wire.ID()}
 	account.PasswordHash, err = passwordHash(password, account.Salt)
