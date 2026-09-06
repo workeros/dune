@@ -3,7 +3,6 @@ package sdk
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"github.com/aiomni/dune/internal/wire"
@@ -11,33 +10,35 @@ import (
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
 	"io"
-	"net/url"
+	"net"
 	"sync"
 )
 
-type Options struct {
-	Gateway, Token, Target string
-	TLSConfig              *tls.Config
-}
 type Client struct {
 	s       *yamux.Session
 	control *wire.Stream
 	Binding api.Binding
 }
 
-func Dial(ctx context.Context, o Options) (*Client, error) {
-	u, e := url.Parse(o.Gateway)
-	if e != nil || u == nil || (u.Scheme != "ws" && u.Scheme != "wss") {
-		return nil, fmt.Errorf("Gateway must use ws:// or wss://")
+// Connect performs the Dune client handshake on an established byte connection.
+// It takes ownership of conn, including on error. ctx bounds the handshake;
+// Close ends the client lifetime, and individual calls have their own contexts.
+func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("nil connection")
 	}
-	if u.Scheme == "wss" && (o.TLSConfig == nil || o.TLSConfig.InsecureSkipVerify) {
-		return nil, fmt.Errorf("verified TLS configuration required")
+	if err := ctx.Err(); err != nil {
+		conn.Close()
+		return nil, err
 	}
-	s, e := wire.Dial(ctx, o.Gateway, o.Token, o.TLSConfig)
+	s, e := yamux.Client(conn, wire.Config())
 	if e != nil {
+		conn.Close()
 		return nil, e
 	}
-	ctrl, m, e := wire.Handshake(s, &pb.Message{Kind: "hello", Target: o.Target, Payload: api.Payload(api.Hello{Version: api.Version, Role: "sdk"})})
+	stop := context.AfterFunc(ctx, func() { s.Close() })
+	defer stop()
+	ctrl, m, e := wire.Handshake(s, &pb.Message{Kind: "hello", Target: target, Payload: api.Payload(api.Hello{Version: api.Version, Role: "sdk"})})
 	if e != nil {
 		s.Close()
 		return nil, e

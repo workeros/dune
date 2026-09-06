@@ -9,6 +9,7 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/sdk"
+	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
 	"github.com/hashicorp/yamux"
@@ -32,7 +33,7 @@ func TestHandshakeAndWSFragments(t *testing.T) {
 	w, _, e := dialer.DialContext(h.ctx, h.c.Gateway, http.Header{"Authorization": []string{"Bearer " + h.c.Token}})
 	must(t, e)
 	defer w.Close()
-	sess, e := yamux.Client(wire.NetConn(w), wire.Config())
+	sess, e := yamux.Client(ws.NetConn(w), wire.Config())
 	must(t, e)
 	defer sess.Close()
 	raw, e := sess.OpenStream()
@@ -50,7 +51,7 @@ func TestHandshakeAndWSFragments(t *testing.T) {
 	// The real WS endpoint carries Yamux headers fragmented at every byte.
 	w2, _, e := dialer.DialContext(h.ctx, h.c.Gateway, http.Header{"Authorization": []string{"Bearer " + h.c.Token}})
 	must(t, e)
-	fragmented := &fragmentConn{interfaceConn: wire.NetConn(w2)}
+	fragmented := &fragmentConn{interfaceConn: ws.NetConn(w2)}
 	s2, e := yamux.Client(fragmented, wire.Config())
 	must(t, e)
 	defer s2.Close()
@@ -366,7 +367,11 @@ func TestPendingStreamLimit(t *testing.T) {
 	h := start(t)
 	tc, e := h.c.TLS()
 	must(t, e)
-	sess, e := wire.Dial(h.ctx, h.c.Gateway, h.c.Token, tc)
+	conn, e := ws.Dial(h.ctx, h.c.Gateway, h.c.Token, tc)
+	if e != nil {
+		t.Fatal(e)
+	}
+	sess, e := yamux.Client(conn, wire.Config())
 	must(t, e)
 	defer sess.Close()
 	ctrl, _, e := wire.Handshake(sess, &pb.Message{Kind: "hello", Target: h.c.Target, Payload: api.Payload(api.Hello{Version: api.Version, Role: "sdk"})})

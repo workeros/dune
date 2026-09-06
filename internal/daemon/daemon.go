@@ -9,8 +9,8 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
-	"log"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -88,35 +88,11 @@ func Run(ctx context.Context, c config.Config) error {
 	}
 	delay := 100 * time.Millisecond
 	for ctx.Err() == nil {
-		sess, e := wire.Dial(ctx, c.Gateway, c.Token, tc)
+		conn, e := ws.Dial(ctx, c.Gateway, c.Token, tc)
 		if e == nil {
-			d.mu.Lock()
-			d.generation++
-			gen := d.generation
-			d.mu.Unlock()
-			b := api.Binding{Capabilities: capabilities, Limits: map[string]int{"message_bytes": wire.MaxMessage, "streams": wire.MaxStreams, "bulk": 4, "runtimes": 64, "uploads": 64, "dedup_entries": 256, "chunk_bytes": wire.ChunkSize}}
-			ctrl, _, err := wire.Handshake(sess, &pb.Message{Kind: "hello", Target: c.Target, Incarnation: d.inc, ConnectionGeneration: gen, Payload: api.Payload(api.Hello{Version: api.Version, Role: "daemon"}), Data: api.Payload(b)})
-			if err == nil {
-				log.Printf("fabricd connected incarnation=%s generation=%d", d.inc, gen)
+			if d.ServeConn(ctx, conn, c.Target) == nil {
 				delay = 100 * time.Millisecond
-				stop := context.AfterFunc(ctx, func() { sess.Close() })
-				go func() { _, _ = ctrl.Recv(); sess.Close() }()
-				sem := make(chan struct{}, wire.MaxStreams)
-				for {
-					raw, err := sess.AcceptStream()
-					if err != nil {
-						break
-					}
-					select {
-					case sem <- struct{}{}:
-						go func() { defer func() { <-sem }(); d.handle(wire.Wrap(raw), c.Target, gen) }()
-					default:
-						raw.Close()
-					}
-				}
-				stop()
 			}
-			sess.Close()
 		}
 		select {
 		case <-ctx.Done():

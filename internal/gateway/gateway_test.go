@@ -12,6 +12,7 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/sdk"
+	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
 	"github.com/hashicorp/yamux"
@@ -35,7 +36,11 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/tunnel"
 	register := func(target string) *yamux.Session {
 		t.Helper()
-		s, err := wire.Dial(ctx, endpoint, "machine-"+target, nil)
+		conn, err := ws.Dial(ctx, endpoint, "machine-"+target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := yamux.Client(conn, wire.Config())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +107,11 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 		{"machine-a", "a", "sdk"},
 		{"browser-a", "a", "daemon"},
 	} {
-		s, err := wire.Dial(ctx, endpoint, attempt.token, nil)
+		conn, err := ws.Dial(ctx, endpoint, attempt.token, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := yamux.Client(conn, wire.Config())
 		if err != nil {
 			t.Fatal(err)
 		}

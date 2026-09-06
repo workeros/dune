@@ -10,6 +10,7 @@ import (
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
 	"github.com/hashicorp/yamux"
@@ -175,7 +176,7 @@ func (g *Gateway) handle(ctx *fasthttp.RequestCtx) {
 }
 func (g *Gateway) session(w *websocket.Conn, grant Grant) {
 	defer w.Close()
-	s, e := yamux.Server(wire.NetConn(w), wire.Config())
+	s, e := yamux.Server(ws.NetConn(w), wire.Config())
 	if e != nil {
 		return
 	}

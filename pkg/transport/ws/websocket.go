@@ -1,10 +1,15 @@
-package wire
+// Package ws adapts the default Dune WebSocket transport to net.Conn.
+package ws
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/fasthttp/websocket"
 	"io"
 	"net"
+	"net/http"
 	"time"
 )
 
@@ -15,7 +20,7 @@ type wsConn struct {
 	r io.Reader
 }
 
-func NetConn(w *websocket.Conn) net.Conn { w.SetReadLimit(MaxMessage); return &wsConn{w: w} }
+func NetConn(w *websocket.Conn) net.Conn { w.SetReadLimit(wire.MaxMessage); return &wsConn{w: w} }
 func (c *wsConn) Read(p []byte) (int, error) {
 	for {
 		if c.r == nil {
@@ -51,3 +56,17 @@ func (c *wsConn) RemoteAddr() net.Addr               { return c.w.RemoteAddr() }
 func (c *wsConn) SetDeadline(t time.Time) error      { return c.w.UnderlyingConn().SetDeadline(t) }
 func (c *wsConn) SetReadDeadline(t time.Time) error  { return c.w.UnderlyingConn().SetReadDeadline(t) }
 func (c *wsConn) SetWriteDeadline(t time.Time) error { return c.w.UnderlyingConn().SetWriteDeadline(t) }
+
+// Dial establishes an authenticated WebSocket byte connection. The caller owns
+// the returned connection. ctx bounds dialing, not the connection lifetime.
+func Dial(ctx context.Context, url, token string, tlsConfig *tls.Config) (net.Conn, error) {
+	if token == "" {
+		return nil, fmt.Errorf("empty token")
+	}
+	d := websocket.Dialer{TLSClientConfig: tlsConfig, HandshakeTimeout: 5 * time.Second}
+	w, _, e := d.DialContext(ctx, url, http.Header{"Authorization": []string{"Bearer " + token}})
+	if e != nil {
+		return nil, e
+	}
+	return NetConn(w), nil
+}

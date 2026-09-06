@@ -1,21 +1,17 @@
 package wire
 
 import (
-	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
-	"github.com/fasthttp/websocket"
 	"github.com/hashicorp/yamux"
 	"google.golang.org/protobuf/proto"
 )
@@ -117,21 +113,6 @@ func Error(m *pb.Message) error {
 		return &api.Error{Code: m.Code, Detail: m.Detail}
 	}
 	return nil
-}
-func Dial(ctx context.Context, url, token string, tlsConfig *tls.Config) (*yamux.Session, error) {
-	if token == "" {
-		return nil, fmt.Errorf("empty token")
-	}
-	d := websocket.Dialer{TLSClientConfig: tlsConfig, HandshakeTimeout: 5 * time.Second}
-	w, _, e := d.DialContext(ctx, url, http.Header{"Authorization": []string{"Bearer " + token}})
-	if e != nil {
-		return nil, e
-	}
-	s, e := yamux.Client(NetConn(w), Config())
-	if e != nil {
-		w.Close()
-	}
-	return s, e
 }
 func Handshake(s *yamux.Session, m *pb.Message) (*Stream, *pb.Message, error) {
 	raw, e := s.OpenStream()
