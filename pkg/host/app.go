@@ -18,6 +18,7 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/deployment"
+	externalidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/ws"
 )
@@ -36,6 +37,9 @@ type Options struct {
 	// overrides the full machine WS(S) entry point without changing browser URLs.
 	PublicURL, GatewayURL string
 	DisableRegistration   bool
+	// Identity selects a trusted external browser login provider instead of
+	// local password login. Nil preserves the default local account behavior.
+	Identity *externalidentity.Options
 	// DialGateway optionally connects the workbench to this application's tunnel
 	// using the supplied short-lived credential. The returned connection belongs
 	// to Dune. It must honor context cancellation and must not replay requests.
@@ -93,13 +97,27 @@ func Open(parent context.Context, options Options) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	local := identity.NewLocal(store, !options.DisableRegistration)
-	owner := authorization.NewLocal(ctx, local, store)
+	local := identity.NewLocal(store, !options.DisableRegistration && options.Identity == nil)
+	var external *identity.External
+	if options.Identity != nil {
+		external, err = identity.NewExternal(store, *options.Identity)
+		if err != nil {
+			cancel()
+			store.Close()
+			return nil, err
+		}
+	}
+	var service identity.Service = local
+	if external != nil {
+		service = external
+	}
+	owner := authorization.NewLocal(ctx, service, store)
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		Assets: options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway: dial,
-	}, store, local, owner)
+		External:    external,
+	}, store, service, owner)
 	if err != nil {
 		cancel()
 		store.Close()

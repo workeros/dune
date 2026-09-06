@@ -116,6 +116,7 @@ func run() error {
 		flags := flag.NewFlagSet("web", flag.ContinueOnError)
 		data := flags.String("data", ".local/web-accounts", "private SQLite metadata directory")
 		databaseFile := flags.String("database-config", "", "private SQL configuration; replaces the default SQLite data directory")
+		identityFile := flags.String("identity-config", "", "private OIDC configuration; replaces local password login")
 		assets := flags.String("assets", "web/dist", "built React assets directory")
 		binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 		publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
@@ -126,6 +127,13 @@ func run() error {
 			return err
 		}
 		options := host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
+		if *identityFile != "" {
+			identity, err := config.Identity(ctx, *identityFile)
+			if err != nil {
+				return err
+			}
+			options.Identity = &identity
+		}
 		if *databaseFile != "" {
 			dataSet := false
 			flags.Visit(func(f *flag.Flag) {

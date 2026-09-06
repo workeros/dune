@@ -19,8 +19,12 @@ type loginMethod struct {
 }
 
 func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
+	methods := []loginMethod{{Kind: "password", URL: s.urls.PublicURL + "api/auth/login"}}
+	if s.options.External != nil {
+		methods = []loginMethod{{Kind: "external", URL: s.urls.PublicURL + "api/auth/external/start"}}
+	}
 	writeJSON(w, http.StatusOK, startupInfo{
-		LoginMethods:      []loginMethod{{Kind: "password", URL: s.urls.PublicURL + "api/auth/login"}},
+		LoginMethods:      methods,
 		LocalRegistration: s.identity.RegistrationAllowed(),
 		Attached:          true,
 		Managed:           false,

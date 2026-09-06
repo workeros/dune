@@ -22,14 +22,24 @@ var (
 	ErrUnauthorized         = errors.New("invalid credentials or expired session")
 	ErrRegistrationDisabled = errors.New("此站点未开放本地注册，请使用已有账号登录。")
 	ErrSessionLimit         = errors.New("active login session limit reached; log out of another browser or wait for expiry")
+	ErrLoginLimit           = errors.New("login service busy; retry later")
 )
 
 const SessionLifetime = 7 * 24 * time.Hour
 const maxSessions = 32
 
 type User struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Namespace string `json:"-"`
+}
+
+type Service interface {
+	Register(context.Context, string, string) (User, string, error)
+	Login(context.Context, string, string) (User, string, error)
+	Authenticate(context.Context, string) (User, error)
+	Logout(context.Context, string) error
+	RegistrationAllowed() bool
 }
 
 type Account struct {
@@ -144,7 +154,11 @@ func (l *Local) Authenticate(ctx context.Context, token string) (User, error) {
 	if len(token) != 64 {
 		return User{}, ErrUnauthorized
 	}
-	return l.store.ReadSession(ctx, digest(token), time.Now().Unix())
+	user, err := l.store.ReadSession(ctx, digest(token), time.Now().Unix())
+	if err == nil && user.Namespace != "" {
+		return User{}, ErrUnauthorized
+	}
+	return user, err
 }
 
 func (l *Local) Logout(ctx context.Context, token string) error {

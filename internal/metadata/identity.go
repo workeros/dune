@@ -48,27 +48,31 @@ func (s *Store) ReadAccount(ctx context.Context, email string) (identity.Account
 
 func (s *Store) CreateSession(ctx context.Context, id, hash string, expires int64, limit int) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
-		if err := s.lockPrincipal(ctx, tx, id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_sessions WHERE principal_id=$1 AND expires_at<=$2`, id, time.Now().Unix()); err != nil {
-			return err
-		}
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_sessions WHERE principal_id=$1`, id).Scan(&count); err != nil {
-			return err
-		}
-		if count >= limit {
-			return identity.ErrSessionLimit
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO dune_sessions(hash,principal_id,expires_at,auth_version) SELECT $1,id,$3,auth_version FROM dune_principals WHERE id=$2 AND enabled=TRUE`, hash, id, expires)
-		return err
+		return s.createSession(ctx, tx, id, hash, expires, limit, "")
 	})
+}
+
+func (s *Store) createSession(ctx context.Context, tx *sql.Tx, id, hash string, expires int64, limit int, namespace string) error {
+	if err := s.lockPrincipal(ctx, tx, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM dune_sessions WHERE principal_id=$1 AND expires_at<=$2`, id, time.Now().Unix()); err != nil {
+		return err
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_sessions WHERE principal_id=$1`, id).Scan(&count); err != nil {
+		return err
+	}
+	if count >= limit {
+		return identity.ErrSessionLimit
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO dune_sessions(hash,principal_id,expires_at,auth_version,identity_namespace) SELECT $1,id,$3,auth_version,$4 FROM dune_principals WHERE id=$2 AND enabled=TRUE`, hash, id, expires, namespace)
+	return err
 }
 
 func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (identity.User, error) {
 	var user identity.User
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.expires_at>$2 AND p.enabled=TRUE AND s.auth_version=p.auth_version`, hash, now).Scan(&user.ID, &user.Email)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email,s.identity_namespace FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.expires_at>$2 AND p.enabled=TRUE AND s.auth_version=p.auth_version`, hash, now).Scan(&user.ID, &user.Email, &user.Namespace)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}

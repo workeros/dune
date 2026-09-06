@@ -130,7 +130,21 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 
 机器使用独立入口时显式传入 `--gateway-url wss://machines.example.com/private/connect`，并将该入口代理到 Web 服务的 `/tools/dune/tunnel`。此覆盖只改变安装绑定返回的机器地址，不改变浏览器或内部工作台连接的路径。原有 `--url` 与机器配置中 `gateway` 不同的部署（例如额外 loopback 浏览器入口），升级时也应显式填写 `--gateway-url`。省略 `--url` 时仍从原配置的 `gateway` 派生浏览器地址。
 
-工作台从部署目录下的 `api/bootstrap` 读取登录方式、注册状态、Attached/Managed 能力和公开地址。当前装配本地账号与 Attached，Managed 尚不可用。添加 `--disable-registration` 可关闭本地注册，已有账号仍可登录；服务端同步拒绝注册请求。启动信息读取失败时页面提示重试，不假定所有功能可用。
+工作台从部署目录下的 `api/bootstrap` 读取登录方式、注册状态、Attached/Managed 能力和公开地址。默认装配本地账号与 Attached，Managed 尚不可用。添加 `--disable-registration` 可关闭本地注册，已有账号仍可登录；服务端同步拒绝注册请求。启动信息读取失败时页面提示重试，不假定所有功能可用。
+
+企业浏览器登录可添加 `web --identity-config /absolute/private/identity.yaml`，配置如下。文件须属于当前用户且权限为 0600；部署到 HTTPS，并在身份源注册精确回调地址，例如 `https://example.com/tools/dune/api/auth/external/callback`。仅数字 loopback 地址允许 HTTP 本地调试。
+
+```yaml
+oidc:
+  issuer: https://identity.example.com
+  client_id: dune
+  client_secret: REPLACE_WITH_PRIVATE_SECRET
+session_lifetime: 8h
+```
+
+配置后页面只显示企业登录，本地密码登录和注册均关闭。会话期限默认 8 小时，可设为 1 分钟至 24 小时；不会保存上游 access/refresh token。Dune 按 issuer 和 subject 识别用户，邮箱只作展示，不自动合并同邮箱账号。退出撤销 Dune 会话，不注销身份源会话。上游停用尚无自动同步，已有 Dune 会话以配置期限为界，宿主也可主动停用用户。身份源切换和旧数据升级见[迁移说明](docs/metadata-migration.md)。
+
+Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。身份提供方不决定 Runner 访问权限，企业操作级授权仍在实施中。
 
 也可在已安装 Dune 的机器手动绑定：
 

@@ -106,3 +106,12 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - schema 1 → 2 通过事务和迁移锁升级，已有账号/会话默认保持有效。SQLite/PostgreSQL 均验证中途 ALTER 失败完整回滚、并发登录不能越过停用、其他用户不受影响。转库清单同步覆盖新增字段，按 SQLite 声明的 BOOLEAN 类型转换 PostgreSQL 参数，保留停用状态及版本。
 - 真实 PTY 测试中，SQLite 和 PostgreSQL 停用后分别约 0.98 秒关闭空闲用户终端；重新启用后的旧 Cookie 仍拒绝，新登录可连接原 Runtime 并读取原历史。测量来自本机单机器测试，不作为任意部署规模下的延迟承诺。旧 schema 1 CLI 工作台到新二进制的升级演练也保留原 Cookie/密码、机器配置、Runtime ID、incarnation/generation 和 PTY 历史。
 - 验证：启用真实 PostgreSQL 17 和备份工具的全量 `make test`、metadata/host/Web/migrate `make test-race`、`make check-go` 通过。升级演练的测试 Runtime、fabricd 和工作台已清理；schema 2 的 JSON 导入、SQL 转库与原生备份恢复随回归重验通过。
+
+### 已完成：外部身份与 OIDC 浏览器登录
+
+- 公开 `pkg/identity.Provider` 只验证上游身份，宿主通过 `Options.Identity` 显式装配。内置 OIDC 适配器使用固定版本 go-oidc 和 oauth2，执行 Authorization Code + PKCE、签名、issuer/audience、nonce、有效期、azp 和可选 at_hash 校验，支持 JWKS 密钥轮换。令牌交换选择确定的客户端认证方式并禁止 HTTP 重定向，不因模糊失败自动重放授权码。
+- schema 3 持久化 namespace + subject 到 Dune principal 的关联、会话身份源及十分钟登录事务。state 和浏览器 proof 只保存哈希，nonce/verifier 用于一次交换；回调绑定身份源、浏览器 proof 和精确部署地址，原子消费后才调用外部服务。并发首次登录只创建一个身份，账号与会话同事务提交；同邮箱不合并，邮箱变化不改变稳定用户 ID。
+- 官方 `web --identity-config` 从私有文件构造同一适配器。企业模式关闭本地密码入口并拒绝本地/其他身份源 Cookie；工作台显示有限的企业登录按钮。Dune Cookie 为 HttpOnly、SameSite Strict 和部署路径，跨站回调 proof 为 SameSite Lax 和回调路径，HTTPS 下均为 Secure。退出仅撤销 Dune 会话；上游令牌不持久化。
+- SQLite 验证关闭并重开应用后完成待处理回调；真实 PostgreSQL 验证独立连接池之间单次消费和并发身份注册。实际 Dex 2.45.1 浏览器演练将 start 固定交给宿主 A、callback 固定交给独立宿主 B，在 `/tools/dune/` 完成认证和回调；停用后旧 Cookie 返回 401，Dex 再次认证也无法越过 Dune 停用，重新启用后必须新登录。另通过正式 CLI、SQLite、私有配置在 `/enterprise/` 完成登录和退出。
+- 验证：真实 PostgreSQL 17 和原生备份工具启用的全量 `make test`、metadata/Web/host/identity/migrate race、`make check-go`、`make web-check web-build` 通过。签名协议测试覆盖拒绝非法 token、轮换密钥和模糊交换不重放；转库清单与备份恢复覆盖 schema 3 新字段。Dex 是本机独立真实身份服务，此证据不代表某个企业 IdP 的部署已验收，也不代表跨节点执行路由已经实现。
+- 上游停用尚无自动通知/轮询同步，默认八小时 Dune 会话（可设一分钟至二十四小时）提供到期边界；可信宿主可更早调用用户停用入口。明确审计的身份关联、人类 CLI 登录、跨实例访问凭据、完整操作级 AccessChecker、Runner/绑定公开边界仍待实现，S1 尚未整体完成。

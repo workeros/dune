@@ -42,14 +42,18 @@ func TestSchemaOneUpgradePreservesIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			fixture, cookie, credential, _ := legacyFixture(t)
-			dir, _ := writeLegacy(t, fixture)
-			legacy, err := ReadLegacy(ctx, dir)
-			if err != nil {
-				t.Fatal(err)
+			for _, a := range fixture.Accounts {
+				if err := s.RegisterAccount(ctx, a, tokenHash(cookie), fixture.Sessions[tokenHash(cookie)].ExpiresAt); err != nil {
+					t.Fatal(err)
+				}
 			}
-			defer legacy.Close()
-			if _, err := s.ImportLegacy(ctx, legacy); err != nil {
-				t.Fatal(err)
+			for _, m := range fixture.Machines {
+				if _, err := s.db.Exec(`INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'attached','attached',1,$4)`, m.ID, m.OwnerID, m.Name, m.CreatedAt); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.db.Exec(`INSERT INTO dune_machines(id,runner_id,credential_hash,os,arch) VALUES($1,$1,$2,$3,$4)`, m.ID, m.CredentialHash, m.OS, m.Arch); err != nil {
+					t.Fatal(err)
+				}
 			}
 			// A failure midway through ALTERs must not leave a half-upgraded schema.
 			if _, err := s.db.Exec(`ALTER TABLE dune_principals ADD COLUMN auth_version BIGINT`); err != nil {

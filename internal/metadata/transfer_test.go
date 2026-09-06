@@ -41,7 +41,7 @@ func snapshotRecords(t *testing.T, s *Store) map[string]string {
 	t.Helper()
 	result := make(map[string]string)
 	for _, table := range transferTables {
-		rows, err := s.db.Query("SELECT " + table.columns + " FROM " + table.name + " ORDER BY " + strings.Split(table.columns, ",")[0])
+		rows, err := s.db.Query("SELECT " + table.columns + " FROM " + table.name + " ORDER BY " + table.columns)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,6 +103,14 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := source.db.ExecContext(ctx, `UPDATE dune_principals SET enabled=FALSE,auth_version=7`); err != nil {
+				t.Fatal(err)
+			}
+			for _, subject := range []string{"z-subject", "a-subject"} {
+				if _, err := source.db.Exec(`INSERT INTO dune_external_identities(namespace,subject,principal_id) SELECT 'issuer',$1,id FROM dune_principals`, subject); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := source.db.Exec(`INSERT INTO dune_login_transactions(state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at) VALUES('state','proof','issuer','https://dune.test/callback','nonce','verifier',9999999999)`); err != nil {
 				t.Fatal(err)
 			}
 			before := snapshotRecords(t, source)

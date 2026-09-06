@@ -33,6 +33,7 @@ import (
 const cookieName = "dune_session"
 
 type Options struct {
+	External   *identity.External
 	Binaries   string
 	Assets     string
 	PublicURL  string
@@ -49,7 +50,7 @@ type authRate struct {
 
 type Server struct {
 	store     *metadata.Store
-	identity  *identity.Local
+	identity  identity.Service
 	access    *authorization.Local
 	urls      deployment.URLs
 	gateway   *gateway.Gateway
@@ -62,7 +63,7 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, options Options, store *metadata.Store, local *identity.Local, owner *authorization.Local) (*Server, error) {
+func NewServer(parent context.Context, options Options, store *metadata.Store, local identity.Service, owner *authorization.Local) (*Server, error) {
 	if options.DialGateway == nil || local == nil || owner == nil {
 		return nil, fmt.Errorf("Gateway dialer, identity and access modules required")
 	}
@@ -78,6 +79,10 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
+	if options.External != nil {
+		s.mux.HandleFunc("GET /api/auth/external/start", s.externalStart)
+		s.mux.HandleFunc("GET /api/auth/external/callback", s.externalCallback)
+	}
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/me", s.me)
 	s.mux.HandleFunc("GET /downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +229,10 @@ func (s *Server) authAllowed(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
+	if s.options.External != nil {
+		writeError(w, 403, "LOCAL_LOGIN_DISABLED", "此站点使用企业登录。")
+		return
+	}
 	if !s.authAllowed(w, r) {
 		return
 	}
@@ -247,7 +256,7 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 		writeMetadataError(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: int(identity.SessionLifetime.Seconds())})
+	s.setSession(w, token, identity.SessionLifetime)
 	writeJSON(w, http.StatusOK, user)
 }
 func (s *Server) register(w http.ResponseWriter, r *http.Request) { s.auth(w, r, true) }

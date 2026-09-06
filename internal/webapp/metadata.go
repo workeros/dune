@@ -24,6 +24,8 @@ func writeMetadataError(w http.ResponseWriter, err error) {
 		writeError(w, 409, "CONFLICT", "metadata conflict")
 	case errors.Is(err, identity.ErrSessionLimit):
 		writeError(w, 429, "SESSION_LIMIT", err.Error())
+	case errors.Is(err, identity.ErrLoginLimit):
+		writeError(w, 429, "LOGIN_LIMIT", err.Error())
 	case errors.Is(err, identity.ErrInvalidArgument), errors.Is(err, metadata.ErrInvalidArgument):
 		writeError(w, 400, "INVALID_ARGUMENT", err.Error())
 	default:
