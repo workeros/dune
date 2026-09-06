@@ -105,3 +105,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 `TestRuntimeSelection` 检查事件订阅的完整执行身份及重复、缺失、溢出参数；前缀工作台与企业共享进程回归在实际 PTY 上拒绝错误 incarnation/generation，并验证随后合法订阅可用。浏览器验收还需确认刷新及自动重连保留选定 Runtime 身份，同 ID 身份变化后必须重新点选。仅在专用测试进程中改变持久 Runtime 身份的夹具用于模拟执行身份变化，不代表生产生命周期支持直接修改该字段。
 
 `TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份；`TestSchemaSevenRequiresKnownLoginSubject` 检查旧企业会话及安装材料撤销、本地访问和机器身份保留、迁移失败回滚。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
+
+`make test TEST_PKGS=./internal/lifecycle` 验证个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实及配置边界。当前只有纯策略计算，没有提供方调用或持久调度；这些测试不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
