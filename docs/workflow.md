@@ -103,3 +103,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 `TestBrowserRunnerBindingIsFixed` 逐一检查浏览器 Runner 的 call、sessions、events 和解绑入口，覆盖绑定缺失/歧义、错误 Runner/Fabric/修订、会话缺失及修订变化后不拨号替代目标。`TestPrefixedWorkbenchEnrollmentAndTerminal/runner-entry` 和企业共享回归通过同一 Runner 快照路径使用真实 fabricd/PTY；浏览器需额外检查环境选择、绑定变化提示、明确重新进入后保留原会话及历史，不自动重连或重复创建。直接修改测试数据库的绑定修订只模拟已提交事实，不代表 Managed 生命周期验收。
 
 `TestRuntimeSelection` 检查事件订阅的完整执行身份及重复、缺失、溢出参数；前缀工作台与企业共享进程回归在实际 PTY 上拒绝错误 incarnation/generation，并验证随后合法订阅可用。浏览器验收还需确认刷新及自动重连保留选定 Runtime 身份，同 ID 身份变化后必须重新点选。仅在专用测试进程中改变持久 Runtime 身份的夹具用于模拟执行身份变化，不代表生产生命周期支持直接修改该字段。
+
+`TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份；`TestSchemaSevenRequiresKnownLoginSubject` 检查旧企业会话及安装材料撤销、本地访问和机器身份保留、迁移失败回滚。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。

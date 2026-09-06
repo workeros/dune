@@ -143,6 +143,10 @@ func TestSchemaSixPreservesPendingAccess(t *testing.T) {
 			// its authoritative owner without changing credentials or binding.
 			err = s.transaction(ctx, func(tx *sql.Tx) error {
 				for _, statement := range []string{
+					`ALTER TABLE dune_enrollments DROP COLUMN identity_subject`,
+					`ALTER TABLE dune_enrollments DROP COLUMN identity_namespace`,
+					`ALTER TABLE dune_access_tickets DROP COLUMN identity_subject`,
+					`ALTER TABLE dune_sessions DROP COLUMN identity_subject`,
 					`DROP TABLE dune_discovery_cursors`,
 					`ALTER TABLE dune_access_tickets DROP COLUMN owner_id`,
 					`DROP INDEX dune_runners_owner`,

@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
+	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -71,6 +72,32 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	provider := &testIdentityProvider{}
+	externalCookie := wire.ID() + wire.ID()
+	externalUser, err := s.ExternalLogin(ctx, provider.Namespace(), public.Subject{ID: "restore-subject"}, wire.ID(), tokenHash(externalCookie), time.Now().Add(time.Hour).Unix(), 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := s.IssueEnrollmentForSession(ctx, externalUser, "external machine", tokenHash(externalCookie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalMachine, _, err := s.Enroll(ctx, token, "linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := s.IssueEnrollmentForSession(ctx, externalUser, "pending external machine", tokenHash(externalCookie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := identity.NewExternal(s, public.Options{Provider: provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalTicket, err := authorization.NewLocal(ctx, external, s).Client(ctx, externalCookie, externalMachine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -125,6 +152,19 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if position, err := s.ReadCursor(ctx, user.ID, "", "runner.list", cursor); err != nil || position != machine.RunnerID {
 		t.Fatal("restored cursor invalid", err)
+	}
+	external, err = identity.NewExternal(s, public.Options{Provider: provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := external.Authenticate(ctx, externalCookie); err != nil || got.Subject != "restore-subject" {
+		t.Fatal("restored external session lost subject", err)
+	}
+	if got, err := s.EnrollmentUser(ctx, pending); err != nil || got.Subject != "restore-subject" {
+		t.Fatal("restored enrollment lost subject", err)
+	}
+	if binding, _, err := authorization.NewLocal(ctx, external, s).Authorize(externalTicket.Token()); err != nil || binding.Target != externalMachine.ID {
+		t.Fatal("restored external access lost subject", err)
 	}
 	local = identity.NewLocal(s, true)
 	if got, err := local.AuthenticateCLI(ctx, cliSession.Token); err != nil || got.ID != user.ID {

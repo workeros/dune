@@ -32,6 +32,7 @@ type User struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Namespace string `json:"-"`
+	Subject   string `json:"-"`
 	Kind      string `json:"-"`
 }
 

@@ -23,8 +23,11 @@ var ErrUnavailable = fmt.Errorf("access checker unavailable: %w", ErrDenied)
 type Scope struct {
 	PrincipalID string
 	Namespace   string
-	OwnerID     string
-	Binding     runner.Binding
+	// Subject is the verified external ID within Namespace for this login.
+	// Both are empty for local login; email and upstream tokens are excluded.
+	Subject string
+	OwnerID string
+	Binding runner.Binding
 }
 
 // RuntimeIdentity identifies a selected runtime; the protocol and fabricd still

@@ -97,7 +97,7 @@ func (l *Service) client(ctx context.Context, session, target string, authentica
 	if err != nil {
 		return nil, err
 	}
-	if record.OwnerID != resource.OwnerID {
+	if record.OwnerID != resource.OwnerID || record.Subject != user.Subject {
 		_ = l.bindings.DeleteAccess(ctx, credentialHash(token))
 		return nil, runner.ErrBindingChanged
 	}
@@ -142,7 +142,7 @@ func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.Conne
 		if record.ExpiresAt <= time.Now().Unix() {
 			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
-		fixed := access.Scope{PrincipalID: record.PrincipalID, Namespace: record.Namespace, OwnerID: record.OwnerID, Binding: runner.Binding{RunnerID: record.RunnerID, FabricID: record.FabricID, MachineID: record.Target, Revision: record.BindingRevision}}
+		fixed := access.Scope{PrincipalID: record.PrincipalID, Namespace: record.Namespace, Subject: record.Subject, OwnerID: record.OwnerID, Binding: runner.Binding{RunnerID: record.RunnerID, FabricID: record.FabricID, MachineID: record.Target, Revision: record.BindingRevision}}
 		if _, err := access.Evaluate(ctx, l.checker, access.Request{Scope: fixed, RequestID: wire.ID(), Operation: "runner.connect", Suboperation: "attached"}); err != nil {
 			return gateway.BindingContext{}, nil, err
 		}

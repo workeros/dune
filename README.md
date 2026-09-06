@@ -172,6 +172,8 @@ session_lifetime: 8h
 
 Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。迁移已有账号时，可信管理员可按[身份关联流程](docs/metadata-migration.md#schema-4显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限。通过 `host.Options.AccessChecker` 选择企业检查器，统一控制发现、Attached 管理、Web/CLI 执行和持续流；拒绝或故障不回退到 owner 规则。公开契约、操作映射与分页规则见[访问检查](docs/access-checks.md)。
 
+企业检查器取得本次登录验证过的 `Namespace` / `Subject` 与 Dune principal，CLI、连接凭据和安装材料保留同一引用，不按邮箱或关联列表猜测身份。[schema 8 升级](docs/metadata-migration.md#schema-8本次登录的外部主体)会要求旧企业会话重新登录、旧安装材料重新签发，保留已接入机器及其工作内容。
+
 也可在已安装 Dune 的机器手动绑定：
 
 ```sh

@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -63,6 +63,18 @@ var schema7 = []string{
 	`UPDATE dune_access_tickets SET owner_id=(SELECT owner_id FROM dune_runners WHERE id=dune_access_tickets.runner_id)`,
 	`CREATE TABLE dune_discovery_cursors (id TEXT PRIMARY KEY,principal_id TEXT NOT NULL REFERENCES dune_principals(id) ON DELETE CASCADE,identity_namespace TEXT NOT NULL,operation TEXT NOT NULL,after_id TEXT NOT NULL,expires_at BIGINT NOT NULL,UNIQUE(principal_id,identity_namespace,operation,after_id))`,
 	`CREATE INDEX dune_discovery_expiry ON dune_discovery_cursors(expires_at)`,
+}
+
+// Prior external sessions did not record which linked subject logged in. Never
+// infer one from the current mapping. Existing enrollment issuers are similarly
+// unknown. Machine identities, local sessions and their tickets remain valid.
+var schema8 = []string{
+	`ALTER TABLE dune_sessions ADD COLUMN identity_subject TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE dune_access_tickets ADD COLUMN identity_subject TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE dune_enrollments ADD COLUMN identity_namespace TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE dune_enrollments ADD COLUMN identity_subject TEXT NOT NULL DEFAULT ''`,
+	`DELETE FROM dune_sessions WHERE identity_namespace<>''`,
+	`DELETE FROM dune_enrollments`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -158,6 +170,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=7 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 7
+		}
+		if version == 7 {
+			for _, statement := range schema8 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=8 WHERE id=1`); err != nil {
 				return err
 			}
 		}

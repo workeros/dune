@@ -29,14 +29,14 @@ func (s *Store) createAccess(ctx context.Context, hash, sessionHash, principal, 
 			return err
 		}
 		now := time.Now().Unix()
-		sessionQuery := `SELECT s.auth_version FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.expires_at>$4 AND p.enabled=TRUE AND p.auth_version=s.auth_version` + liveSessionParent("$4")
+		sessionQuery := `SELECT s.auth_version,s.identity_subject FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.expires_at>$4 AND p.enabled=TRUE AND p.auth_version=s.auth_version` + liveSessionParent("$4")
 		if s.postgres {
 			// Lock parents before touching tickets, consistently with cascading
 			// logout/revocation. Otherwise cleanup followed by FK insertion can
 			// deadlock with a concurrent parent deletion waiting for that cleanup.
 			sessionQuery += ` FOR KEY SHARE OF s`
 		}
-		if err := tx.QueryRowContext(ctx, sessionQuery, sessionHash, principal, namespace, now).Scan(&record.AuthVersion); err != nil {
+		if err := tx.QueryRowContext(ctx, sessionQuery, sessionHash, principal, namespace, now).Scan(&record.AuthVersion, &record.Subject); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return identity.ErrUnauthorized
 			}
@@ -74,7 +74,7 @@ func (s *Store) createAccess(ctx context.Context, hash, sessionHash, principal, 
 		if count >= 64 {
 			return identity.ErrLoginLimit
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO dune_access_tickets(hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, hash, sessionHash, principal, namespace, target, record.RunnerID, record.FabricID, record.BindingRevision, record.AuthVersion, expires, record.OwnerID)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dune_access_tickets(hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id,identity_subject) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, hash, sessionHash, principal, namespace, target, record.RunnerID, record.FabricID, record.BindingRevision, record.AuthVersion, expires, record.OwnerID, record.Subject)
 		return err
 	})
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *Store) createAccess(ctx context.Context, hash, sessionHash, principal, 
 func (s *Store) ConsumeAccess(ctx context.Context, hash, namespace string, now int64) (authorization.ConnectionAccess, error) {
 	var record authorization.ConnectionAccess
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		err := tx.QueryRowContext(ctx, `DELETE FROM dune_access_tickets WHERE hash=$1 AND identity_namespace=$2 AND expires_at>$3 RETURNING session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id`, hash, namespace, now).Scan(&record.SessionHash, &record.PrincipalID, &record.Namespace, &record.Target, &record.RunnerID, &record.FabricID, &record.BindingRevision, &record.AuthVersion, &record.ExpiresAt, &record.OwnerID)
+		err := tx.QueryRowContext(ctx, `DELETE FROM dune_access_tickets WHERE hash=$1 AND identity_namespace=$2 AND expires_at>$3 RETURNING session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id,identity_subject`, hash, namespace, now).Scan(&record.SessionHash, &record.PrincipalID, &record.Namespace, &record.Target, &record.RunnerID, &record.FabricID, &record.BindingRevision, &record.AuthVersion, &record.ExpiresAt, &record.OwnerID, &record.Subject)
 		if errors.Is(err, sql.ErrNoRows) {
 			return identity.ErrUnauthorized
 		}
@@ -100,7 +100,7 @@ func (s *Store) ConsumeAccess(ctx context.Context, hash, namespace string, now i
 
 func (s *Store) CheckAccess(ctx context.Context, record authorization.ConnectionAccess, now int64) (bool, error) {
 	var found int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id JOIN dune_machines m ON m.id=$1 JOIN dune_runners r ON r.id=m.runner_id WHERE s.hash=$2 AND s.principal_id=$3 AND s.identity_namespace=$4 AND s.expires_at>$5 AND s.auth_version=$6 AND p.enabled=TRUE AND p.auth_version=$6 AND r.owner_id=$10 AND r.id=$7 AND r.fabric_id=$8 AND r.binding_revision=$9`+liveSessionParent("$5"), record.Target, record.SessionHash, record.PrincipalID, record.Namespace, now, record.AuthVersion, record.RunnerID, record.FabricID, record.BindingRevision, record.OwnerID).Scan(&found)
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id JOIN dune_machines m ON m.id=$1 JOIN dune_runners r ON r.id=m.runner_id WHERE s.hash=$2 AND s.principal_id=$3 AND s.identity_namespace=$4 AND s.identity_subject=$11 AND s.expires_at>$5 AND s.auth_version=$6 AND p.enabled=TRUE AND p.auth_version=$6 AND r.owner_id=$10 AND r.id=$7 AND r.fabric_id=$8 AND r.binding_revision=$9`+liveSessionParent("$5"), record.Target, record.SessionHash, record.PrincipalID, record.Namespace, now, record.AuthVersion, record.RunnerID, record.FabricID, record.BindingRevision, record.OwnerID, record.Subject).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

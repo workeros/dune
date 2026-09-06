@@ -18,8 +18,8 @@ const ticketPrefix = "dune_access_"
 // Ticket expiry limits connection establishment; a live connection continually
 // rechecks the current session and binding instead of extending the ticket.
 type ConnectionAccess struct {
-	SessionHash, PrincipalID, Namespace, Target, RunnerID, FabricID, OwnerID string
-	BindingRevision, AuthVersion, ExpiresAt                                  int64
+	SessionHash, PrincipalID, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
+	BindingRevision, AuthVersion, ExpiresAt                                           int64
 }
 
 type Repository interface {

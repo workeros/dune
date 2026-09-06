@@ -29,7 +29,7 @@ type checkFunc func(context.Context, Request) (Decision, error)
 
 func (f checkFunc) Check(ctx context.Context, r Request) (Decision, error) { return f(ctx, r) }
 func testScope() Scope {
-	return Scope{PrincipalID: "alice", OwnerID: "alice", Binding: runner.Binding{RunnerID: "logical", FabricID: "attached", MachineID: "machine", Revision: 7}}
+	return Scope{PrincipalID: "alice", Namespace: "verified-issuer", Subject: "verified-subject", OwnerID: "alice", Binding: runner.Binding{RunnerID: "logical", FabricID: "attached", MachineID: "machine", Revision: 7}}
 }
 func allow(r Request, duration time.Duration) Decision {
 	return Decision{Allowed: true, Reason: "TEST_ALLOW", ID: r.RequestID, ValidUntil: time.Now().Add(duration)}
@@ -89,6 +89,8 @@ func policyFixture(t *testing.T, checker Checker, valid func() bool) (context.Co
 	}
 	// Caller mutation must not replace the authenticated scope after Bind.
 	policy.Scope.PrincipalID = "mallory"
+	policy.Scope.Namespace = "forged-issuer"
+	policy.Scope.Subject = "forged-subject"
 	policy.Scope.Binding.Revision = 99
 	left, right = net.Pipe()
 	wg.Go(func() { g.ServeConn(ctx, left, binding, handler) })

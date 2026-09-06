@@ -108,6 +108,7 @@ func (s *Store) ConsumeCLI(ctx context.Context, id, site, namespace, verifier st
 		return login.Session{}, identity.ErrUnauthorized
 	}
 	var session login.Session
+	var subject string
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		var parent sql.NullString
 		if err := tx.QueryRowContext(ctx, `SELECT session_hash FROM dune_cli_logins WHERE id=$1 AND site=$2 AND identity_namespace=$3 AND challenge=$4 AND expires_at>$5`, id, site, namespace, tokenHash(verifier), time.Now().Unix()).Scan(&parent); err != nil {
@@ -128,11 +129,11 @@ func (s *Store) ConsumeCLI(ctx context.Context, id, site, namespace, verifier st
 		if err := s.lockPrincipal(ctx, tx, session.PrincipalID); err != nil {
 			return err
 		}
-		query := `SELECT s.expires_at FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.kind='browser' AND s.parent_hash IS NULL AND s.identity_namespace=$2 AND s.expires_at>$3 AND s.auth_version=p.auth_version AND p.enabled=TRUE`
+		query := `SELECT s.expires_at,s.identity_subject FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.kind='browser' AND s.parent_hash IS NULL AND s.identity_namespace=$2 AND s.expires_at>$3 AND s.auth_version=p.auth_version AND p.enabled=TRUE`
 		if s.postgres {
 			query += ` FOR KEY SHARE OF s`
 		}
-		if err := tx.QueryRowContext(ctx, query, parent.String, namespace, time.Now().Unix()).Scan(&session.ExpiresAt); err != nil {
+		if err := tx.QueryRowContext(ctx, query, parent.String, namespace, time.Now().Unix()).Scan(&session.ExpiresAt, &subject); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return identity.ErrUnauthorized
 			}
@@ -147,7 +148,7 @@ func (s *Store) ConsumeCLI(ctx context.Context, id, site, namespace, verifier st
 		}
 		session.Site, session.Token = site, identity.CLIPrefix+wire.ID()+wire.ID()
 		session.ExpiresAt = min(session.ExpiresAt, time.Now().Add(identity.CLISessionLifetime).Unix())
-		if err := s.createSession(ctx, tx, session.PrincipalID, tokenHash(session.Token), session.ExpiresAt, 32, namespace); err != nil {
+		if err := s.createSession(ctx, tx, session.PrincipalID, tokenHash(session.Token), session.ExpiresAt, 32, namespace, subject); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE dune_sessions SET kind='cli',parent_hash=$2 WHERE hash=$1`, tokenHash(session.Token), parent.String)

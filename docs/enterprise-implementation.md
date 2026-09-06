@@ -188,3 +188,13 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 验证：定向 Web/前缀进程回归、Web/host/access race、Go 静态检查、Go/Web 构建通过。启用真实 PostgreSQL 17 和备份工具的全量测试中，tmux 环境隔离和 access 执行测试各出现一次 tmux 操作确认超时，其余包（含完整跨进程测试）通过；两处失败包随后以 `-p=1 -count=1` 串行复验通过。前端仍有既有 bundle 体积提示。
 
 S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace，无法取得这次登录已验证的外部 subject；下一检查点补齐稳定身份归属，确保关联多个外部身份时不猜测身份、不传递上游令牌。S2/S3 和真实企业集成证据继续按原方案推进。
+
+### 已完成：企业访问检查保留本次验证的 subject
+
+- `access.Scope` 新增本次登录验证的 `Subject`，与 `Namespace` 共同标识外部身份；Dune principal 仍为稳定产品用户，本地登录的两个外部字段为空。身份引用不含原始声明、邮箱或上游令牌，不暴露到浏览器用户 JSON。企业适配器可以同时实现身份验证和权限检查，不需要反查或猜测同一 principal 的多个关联身份。
+- schema 8 随浏览器会话保存 subject，CLI 复制确认的父会话引用，短期连接凭据在事务中捕获同一引用；父子会话、原访问凭据及持续流不能更换 subject。发现、管理和流检查均取得这一身份。Attached 材料保存实际签发者的 namespace/subject，消费时使用原引用并拒绝跨身份源；仍保持独立十分钟单次能力的原有退出边界。
+- 旧企业会话和旧安装材料缺少可靠的签发身份，升级分别要求重新登录和重新签发，不按映射猜测。原本地访问、外部关联、机器凭据、Runner 绑定及远端 Runtime 保留。迁移、转库、备份与回退边界见[元数据迁移](metadata-migration.md#schema-8本次登录的外部主体)。
+- SQLite 重开和真实 PostgreSQL 跨池回归验证同一 principal/namespace 关联两个 subject 时的明确允许/拒绝隔离，CLI/凭据/安装材料持久身份、错误父子引用及写入身份拒绝。真实宿主浏览器回调将已验证 subject 交给同一提供方实现的 Checker；执行流回归验证 Bind 后修改原对象不能替换身份。schema 7 升级及失败回滚、SQLite 转库和 PostgreSQL 17 原生备份恢复均覆盖新增字段。
+- 验证：启用 PostgreSQL 17 与备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、metadata/Web/host/access race、`make build check-go` 通过。最后补充的写入身份隔离及宿主回调定向回归通过。本次没有前端改动，身份适配器为可信测试实现，没有重复声称企业 IdP 或私有权限 SDK 已取得新的部署证据。
+
+下一检查点继续核对 S1 验收矩阵，并推进真实提供方驱动的 S2 Managed 闭环。完整目标中的持久生命周期、续期及 S3 集群仍未交付。

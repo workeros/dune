@@ -32,15 +32,15 @@ func tokenHash(token string) string {
 }
 
 func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (string, int64, error) {
-	return s.issueEnrollment(ctx, userID, name, "", "")
+	return s.issueEnrollment(ctx, userID, name, "", "", "")
 }
 func (s *Store) IssueEnrollmentForSession(ctx context.Context, user identity.User, name, hash string) (string, int64, error) {
 	if hash == "" {
 		return "", 0, identity.ErrUnauthorized
 	}
-	return s.issueEnrollment(ctx, user.ID, name, hash, user.Namespace)
+	return s.issueEnrollment(ctx, user.ID, name, hash, user.Namespace, user.Subject)
 }
-func (s *Store) issueEnrollment(ctx context.Context, userID, name, hash, namespace string) (string, int64, error) {
+func (s *Store) issueEnrollment(ctx context.Context, userID, name, hash, namespace, subject string) (string, int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 120 || strings.ContainsFunc(name, unicode.IsControl) {
 		return "", 0, fmt.Errorf("%w: machine name must be 1..120 bytes without control characters", ErrInvalidArgument)
@@ -52,7 +52,7 @@ func (s *Store) issueEnrollment(ctx context.Context, userID, name, hash, namespa
 			return err
 		}
 		if hash != "" {
-			if err := s.checkBrowserSession(ctx, tx, userID, hash, namespace); err != nil {
+			if err := s.checkBrowserSession(ctx, tx, userID, hash, namespace, subject); err != nil {
 				return err
 			}
 		}
@@ -66,7 +66,7 @@ func (s *Store) issueEnrollment(ctx context.Context, userID, name, hash, namespa
 		if count >= 5 {
 			return fmt.Errorf("%w: at most five pending binding commands; existing commands expire after ten minutes", ErrInvalidArgument)
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,principal_id,name,expires_at) VALUES($1,$2,$3,$4)`, tokenHash(token), userID, name, expires)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,principal_id,name,expires_at,identity_namespace,identity_subject) VALUES($1,$2,$3,$4,$5,$6)`, tokenHash(token), userID, name, expires, namespace, subject)
 		return err
 	})
 	if err != nil {
@@ -191,7 +191,7 @@ func (s *Store) EnrollmentUser(ctx context.Context, token string) (identity.User
 	if len(token) != 64 {
 		return user, identity.ErrUnauthorized
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email FROM dune_enrollments e JOIN dune_principals p ON p.id=e.principal_id WHERE e.hash=$1 AND e.expires_at>$2 AND p.enabled=TRUE`, tokenHash(token), time.Now().Unix()).Scan(&user.ID, &user.Email)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email,e.identity_namespace,e.identity_subject FROM dune_enrollments e JOIN dune_principals p ON p.id=e.principal_id WHERE e.hash=$1 AND e.expires_at>$2 AND p.enabled=TRUE`, tokenHash(token), time.Now().Unix()).Scan(&user.ID, &user.Email, &user.Namespace, &user.Subject)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
@@ -206,7 +206,7 @@ func (s *Store) RevokeAuthorized(ctx context.Context, user identity.User, hash s
 		if err := s.lockPrincipal(ctx, tx, user.ID); err != nil {
 			return err
 		}
-		if err := s.checkBrowserSession(ctx, tx, user.ID, hash, user.Namespace); err != nil {
+		if err := s.checkBrowserSession(ctx, tx, user.ID, hash, user.Namespace, user.Subject); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM dune_runners WHERE id=$1 AND owner_id=$2 AND kind='attached' AND fabric_id=$3 AND binding_revision=$4 AND EXISTS(SELECT 1 FROM dune_machines WHERE runner_id=$1 AND id=$5)`, b.RunnerID, expected.OwnerID, b.FabricID, b.Revision, b.MachineID)

@@ -28,6 +28,10 @@ app, err := host.Open(ctx, host.Options{
 
 `companyAccessChecker` 是宿主实现的 `access.Checker`，可调用企业私有 SDK；官方二进制仍采用默认 owner 规则，不内置企业依赖或共享管理 UI。`pkg/access` 也继续支持上面的独立协议宿主用法。工作台使用逻辑 Runner 和固定绑定；Managed 生命周期和集群自动路由属于后续检查点。
 
+`Scope.PrincipalID` 是稳定 Dune 用户 ID；`Namespace`、`Subject` 是本次登录由提供方验证的外部身份引用（OIDC issuer/sub），本地密码登录时两者为空。企业检查器可用该引用查询自己的权限系统；不要将 Dune ID 当成上游 subject，也不要按邮箱或当前关联列表猜测本次身份。同一 principal 关联的不同 subject 可以取得不同企业决定。引用随浏览器会话持久化，CLI 复制已确认父会话的引用，短期凭据在签发事务中捕获并在消费及持续流复核时保持不变，不传递上游 token、原始声明或登录时的 group 快照，也不向浏览器用户 JSON 暴露该引用。
+
+Attached 安装材料另保存签发者的身份引用，消费时以原引用检查 `runner.create`，不能切换到宿主当前配置的其他身份源。它仍是独立的十分钟单次能力，浏览器退出不会删除已签发材料；到期、用户停用或显式身份关联使其失效，消费时的企业拒绝也会阻止接入。
+
 ## 产品入口与发现
 
 | 产品操作 | 检查 operation / suboperation |

@@ -128,6 +128,11 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			if _, err := source.db.Exec(`INSERT INTO dune_discovery_cursors(id,principal_id,identity_namespace,operation,after_id,expires_at) SELECT 'opaque-cursor',id,'issuer','runner.list','denied-position',9999999999 FROM dune_principals`); err != nil {
 				t.Fatal(err)
 			}
+			for _, table := range []string{"dune_sessions", "dune_access_tickets", "dune_enrollments"} {
+				if _, err := source.db.Exec("UPDATE " + table + " SET identity_namespace='issuer',identity_subject='z-subject'"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			before := snapshotRecords(t, source)
 			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "target")}
 			if backend == "postgres" {

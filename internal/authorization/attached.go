@@ -3,6 +3,8 @@ package authorization
 import (
 	"context"
 
+	"github.com/aiomni/dune/internal/identity"
+
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -25,7 +27,9 @@ func (l *Service) EnrollmentDecision(ctx context.Context, token string) (access.
 	if err != nil {
 		return access.Decision{}, err
 	}
-	user.Namespace = l.sessions.Namespace()
+	if user.Namespace != l.sessions.Namespace() {
+		return access.Decision{}, identity.ErrUnauthorized
+	}
 	return l.Check(ctx, user, Resource{OwnerID: user.ID, Runner: runner.Runner{Kind: "attached"}}, "runner.create", "attached")
 }
 func (l *Service) Revoke(ctx context.Context, cookie, target string) error {

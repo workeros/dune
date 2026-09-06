@@ -11,12 +11,14 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/identity"
 )
 
-type browserIdentityFixture struct{ exchanged atomic.Int32 }
+type browserIdentityFixture struct{ exchanged, checked atomic.Int32 }
 
 func (*browserIdentityFixture) Namespace() string { return "https://identity.example.test" }
 func (*browserIdentityFixture) Begin(ctx context.Context, c identity.Challenge) (string, error) {
@@ -30,13 +32,18 @@ func (p *browserIdentityFixture) Verify(ctx context.Context, c identity.Challeng
 	return identity.Subject{ID: "browser-subject", Email: "browser@example.test"}, nil
 }
 
+func (p *browserIdentityFixture) Check(ctx context.Context, request access.Request) (access.Decision, error) {
+	p.checked.Add(1)
+	return access.Decision{Allowed: request.PrincipalID != "" && request.Namespace == p.Namespace() && request.Subject == "browser-subject", ID: request.RequestID, Reason: "VERIFIED_SUBJECT", ValidUntil: time.Now().Add(access.MaxLease)}, nil
+}
+
 func TestExternalBrowserLoginCallbacks(t *testing.T) {
 	for _, backend := range []string{"sqlite-restart", "postgres-two-apps"} {
 		t.Run(backend, func(t *testing.T) {
 			const site = "https://dune.example.test/tools/dune/"
 			const callback = site + "api/auth/external/callback"
 			providerA, providerB := &browserIdentityFixture{}, &browserIdentityFixture{}
-			options := host.Options{PublicURL: site, DataDir: filepath.Join(t.TempDir(), "metadata"), Identity: &identity.Options{Provider: providerA}}
+			options := host.Options{PublicURL: site, DataDir: filepath.Join(t.TempDir(), "metadata"), Identity: &identity.Options{Provider: providerA}, AccessChecker: providerA}
 			if backend == "postgres-two-apps" {
 				database := postgresWorkbenchConfig(t)
 				options.DataDir = ""
@@ -61,6 +68,7 @@ func TestExternalBrowserLoginCallbacks(t *testing.T) {
 				must(t, a.Close())
 			}
 			options.Identity = &identity.Options{Provider: providerB}
+			options.AccessChecker = providerB
 			b, err := host.Open(context.Background(), options)
 			must(t, err)
 			defer b.Close()
@@ -118,6 +126,19 @@ func TestExternalBrowserLoginCallbacks(t *testing.T) {
 				if out.Code != 403 {
 					t.Fatal("local password route bypassed external identity")
 				}
+			}
+			if strings.Contains(out.Body.String(), "browser-subject") {
+				t.Fatal("subject exposed in bootstrap")
+			}
+			enrollment := httptest.NewRequest("POST", site+"api/enrollments", strings.NewReader(`{"name":"subject machine"}`))
+			enrollment.Header.Set("Content-Type", "application/json")
+			enrollment.Header.Set("X-Dune-Request", "1")
+			enrollment.Header.Set("Origin", "https://dune.example.test")
+			enrollment.AddCookie(session)
+			created := httptest.NewRecorder()
+			b.ServeHTTP(created, enrollment)
+			if created.Code != 200 || providerB.checked.Load() != 1 {
+				t.Fatal("verified callback subject did not reach host checker", created.Code, providerB.checked.Load())
 			}
 			must(t, b.SetPrincipalEnabled(context.Background(), user.ID, false))
 			if out := request(site+"api/me", session); out.Code != 401 {
