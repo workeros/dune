@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"encoding/json"

@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"crypto/sha256"
@@ -17,7 +17,7 @@ import (
 func fileInfo(i os.FileInfo) api.FileInfo {
 	return api.FileInfo{Name: i.Name(), Size: i.Size(), Mode: uint32(i.Mode()), IsDir: i.IsDir()}
 }
-func (d *Daemon) files(a api.File) (any, error) {
+func (d *Engine) files(a api.File) (any, error) {
 	if a.Path == "" {
 		return nil, fmt.Errorf("path required")
 	}
@@ -145,7 +145,7 @@ func validHash(s string) bool {
 	b, e := hex.DecodeString(s)
 	return e == nil && len(b) == 32 && s == strings.ToLower(s)
 }
-func (d *Daemon) uploadOp(a api.Upload) (any, error) {
+func (d *Engine) uploadOp(a api.Upload) (any, error) {
 	select {
 	case d.bulk <- struct{}{}:
 		defer func() { <-d.bulk }()

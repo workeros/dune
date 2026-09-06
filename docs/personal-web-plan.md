@@ -143,7 +143,7 @@ PTY 跨 daemon 重启的强保证不自动扩展为任意 ACP Agent 的原进程
 | Web 产品 | 未提供 | 工作台、机器/项目/配置/会话入口与只读 diff |
 | 发布 | 手动构建与部署；完整验收主要为 macOS arm64 | Linux/macOS 发布安装及目标环境验证 |
 
-代码依据：[Gateway](../internal/gateway/gateway.go)、[daemon](../internal/daemon/daemon.go)、[runtime](../internal/daemon/runtime.go)、[进程管理](../internal/process/process.go)、[Profile/API](../pkg/api/types.go)。
+代码依据：[Gateway](../pkg/gateway/gateway.go)、[daemon](../pkg/fabricd/daemon.go)、[runtime](../pkg/fabricd/runtime.go)、[进程管理](../internal/process/process.go)、[Profile/API](../pkg/api/types.go)。
 
 ## 7. 实施顺序
 

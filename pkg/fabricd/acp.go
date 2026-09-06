@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 // ACP state lives beside the Agent on the development machine. Only pending
 // RPCs, capability/session metadata and permissions are retained; message

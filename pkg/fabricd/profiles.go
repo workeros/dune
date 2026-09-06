@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
-func (d *Daemon) agentConfig(req api.AgentConfigRequest) (any, error) {
+func (d *Engine) agentConfig(req api.AgentConfigRequest) (any, error) {
 	if d.stateDir == "" {
 		return nil, &api.Error{Code: "UNSUPPORTED", Detail: "saved Agent configurations require an session directory"}
 	}

@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestAgentConfigurationDoesNotRequireInstalledAgent(t *testing.T) {
-	d := New(context.Background())
+	d := newEngine(context.Background())
 	d.stateDir = t.TempDir()
 	config := api.AgentConfig{Name: "My custom Agent", Command: "/missing/agent-for-configuration-test", Args: []string{"--acp"}, Adapter: "acp", Env: map[string]string{"API_KEY": "test-developer-machine-secret"}}
 	result, err := d.agentConfig(api.AgentConfigRequest{Action: "save", Config: &config})

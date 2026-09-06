@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"fmt"
@@ -181,7 +181,7 @@ func gitArgs(a api.Git) ([]string, error) {
 	}
 	return args, nil
 }
-func (d *Daemon) git(a api.Git) (any, error) {
+func (d *Engine) git(a api.Git) (any, error) {
 	argv, e := gitArgs(a)
 	if e != nil {
 		return nil, e

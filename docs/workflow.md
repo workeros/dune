@@ -21,7 +21,7 @@ CLI 启动、Web 后端配置与部署参数见 [README](../README.md)。前端�
 | 文档或指令 | 校验引用路径、命令与实际实现，审阅差异；无需仅为文字改动运行 Go/Web 全量测试 |
 | 单个 Go 模块 | `gofmt` 修改文件；`make test TEST_PKGS=./internal/wire`（替换为受影响包）；`make check-go` |
 | 跨包 Go 行为 | `make test`；`make check-go`，结合相关 e2e 验证网络或进程行为 |
-| 并发、订阅或状态生命周期 | `make test-race TEST_PKGS='./internal/daemon ./internal/webapp ./internal/gateway ./internal/tmux'`，缩小或调整为实际涉及包；涉及进程边界再选 `tests/` 回归 |
+| 并发、订阅或状态生命周期 | `make test-race TEST_PKGS='./pkg/fabricd ./internal/webapp ./pkg/gateway ./pkg/transport/tunnel ./internal/tmux'`，缩小或调整为实际涉及包；涉及进程边界再选 `tests/` 回归 |
 | protobuf/schema | 工具缺失时 `make tools`；`make proto`，审阅生成差异，再执行 wire 和受影响调用方测试 |
 | 前端代码或样式 | 依赖已安装时 `make web-check web-build`；交互或视觉变化在浏览器验证相关路径，视觉要求见 [DESIGN.md](../DESIGN.md) |
 | 前端依赖 | `make web`，执行锁文件安装、类型检查和生产构建 |

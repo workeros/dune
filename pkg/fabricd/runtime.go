@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"bufio"
@@ -73,7 +73,7 @@ func (r *runtime) stop() error {
 
 // Explicit PTY stop destroys the native session and its history. Naturally
 // exited panes remain listed until runtime.forget.
-func (d *Daemon) stop(r *runtime) error {
+func (d *Engine) stop(r *runtime) error {
 	if err := r.stop(); err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func validateRPC(b []byte) error {
 	}
 	return nil
 }
-func (d *Daemon) lookup(m *pb.Message) (*runtime, error) {
+func (d *Engine) lookup(m *pb.Message) (*runtime, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r := d.runtimes[m.RuntimeId]
@@ -251,7 +251,7 @@ func (d *Daemon) lookup(m *pb.Message) (*runtime, error) {
 	}
 	return r, nil
 }
-func (d *Daemon) list() []api.Runtime {
+func (d *Engine) list() []api.Runtime {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := []api.Runtime{}
@@ -278,7 +278,7 @@ func environment(extra map[string]string) []string {
 	}
 	return out
 }
-func (d *Daemon) start(s *wire.Stream, m *pb.Message) {
+func (d *Engine) start(s *wire.Stream, m *pb.Message) {
 	select {
 	case d.starts <- struct{}{}:
 
@@ -425,7 +425,7 @@ func (d *Daemon) start(s *wire.Stream, m *pb.Message) {
 	}
 	d.interact(s, r, sub)
 }
-func (d *Daemon) attach(s *wire.Stream, m *pb.Message) {
+func (d *Engine) attach(s *wire.Stream, m *pb.Message) {
 	r, e := d.lookup(m)
 	if e != nil {
 		s.Fail("STALE_RUNTIME", e)
@@ -458,7 +458,7 @@ func (d *Daemon) attach(s *wire.Stream, m *pb.Message) {
 	}
 	d.interact(s, r, sub)
 }
-func (d *Daemon) interact(s *wire.Stream, r *runtime, sub *subscription) {
+func (d *Engine) interact(s *wire.Stream, r *runtime, sub *subscription) {
 	if r.tmux != nil {
 		d.interactTmux(s, r, sub)
 		return
@@ -567,7 +567,7 @@ func (b *bounded) Write(p []byte) (int, error) {
 	b.b.Write(p)
 	return n, nil
 }
-func (d *Daemon) exec(a api.Exec) (api.ExecResult, error) {
+func (d *Engine) exec(a api.Exec) (api.ExecResult, error) {
 	var out api.ExecResult
 	argv, e := a.Command.Args()
 	if e != nil {

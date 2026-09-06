@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
-func (d *Daemon) watchTmux() {
+func (d *Engine) watchTmux() {
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -44,7 +44,7 @@ func (d *Daemon) watchTmux() {
 		}
 	}
 }
-func (d *Daemon) interactTmux(s *wire.Stream, r *runtime, sub *subscription) {
+func (d *Engine) interactTmux(s *wire.Stream, r *runtime, sub *subscription) {
 	defer func() { r.mu.Lock(); delete(r.subs, sub); r.mu.Unlock() }()
 	view, err := r.tmux.Attach(!sub.owner)
 	if err != nil {

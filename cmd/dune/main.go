@@ -12,11 +12,11 @@ import (
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/daemon"
 	"github.com/aiomni/dune/internal/gateway"
-	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/internal/supervisor"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/sdk"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -31,11 +31,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "_cleanup" {
-		os.Exit(process.CleanupGuard())
-	}
-	if len(os.Args) > 1 && os.Args[1] == "_guard" {
-		os.Exit(process.Guard(os.Args[2:]))
+	if code, handled := fabricd.RunHelper(os.Args[1:]); handled {
+		os.Exit(code)
 	}
 
 	if e := run(); e != nil {

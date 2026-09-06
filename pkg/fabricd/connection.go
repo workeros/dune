@@ -1,4 +1,4 @@
-package daemon
+package fabricd
 
 import (
 	"context"
@@ -15,11 +15,26 @@ import (
 // ServeConn serves one reverse connection, taking ownership of conn even on
 // failure. Cancellation closes the tunnel without destroying tmux sessions.
 // Callers reconnect sequentially; reconnection never replays business requests.
-func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn, target string) error {
+func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) error {
 	if conn == nil {
 		return fmt.Errorf("nil connection")
 	}
 	defer conn.Close()
+	d.mu.Lock()
+	if err := d.ctx.Err(); err != nil {
+		d.mu.Unlock()
+		return err
+	}
+	d.active.Add(1)
+	d.mu.Unlock()
+	defer d.active.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopEngine := context.AfterFunc(d.ctx, cancel)
+	defer stopEngine()
+	if err := d.ctx.Err(); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -49,7 +64,20 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn, target string) er
 		}
 		select {
 		case sem <- struct{}{}:
-			go func() { defer func() { <-sem }(); d.handle(wire.Wrap(raw), target, gen) }()
+			d.mu.Lock()
+			if d.ctx.Err() != nil {
+				d.mu.Unlock()
+				<-sem
+				raw.Close()
+				continue
+			}
+			d.active.Add(1)
+			d.mu.Unlock()
+			go func() {
+				defer d.active.Done()
+				defer func() { <-sem }()
+				d.handle(wire.Wrap(raw), target, gen)
+			}()
 		default:
 			raw.Close()
 		}

@@ -1,18 +1,15 @@
-package daemon
+package fabricd
 
 import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
-	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"os"
-	"path/filepath"
 	goruntime "runtime"
 	"sync"
 	"syscall"
@@ -26,7 +23,7 @@ type cached struct {
 	result *pb.Message
 	at     time.Time
 }
-type Daemon struct {
+type Engine struct {
 	cleaner    *process.Cleaner
 	starts     chan struct{}
 	mu         sync.Mutex
@@ -41,89 +38,50 @@ type Daemon struct {
 	tmux       *tmux.Server
 	stateDir   string
 	profileMu  sync.Mutex
+	cancel     context.CancelFunc
+	closeOnce  sync.Once
+	active     sync.WaitGroup
+	lock       *os.File
 }
 
-func New(ctx context.Context) *Daemon {
-	return &Daemon{inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, bulk: make(chan struct{}, 4), ctx: ctx}
+func newEngine(parent context.Context) *Engine {
+	ctx, cancel := context.WithCancel(parent)
+	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, bulk: make(chan struct{}, 4), ctx: ctx}
 }
-func Run(ctx context.Context, c config.Config) error {
-	if e := c.Validate(); e != nil {
-		return e
-	}
-	d := New(ctx)
-	manager, e := tmux.Open(c.SessionDir)
-	if e != nil {
-		return e
-	}
-	d.tmux = manager
-	d.stateDir = c.SessionDir
-	lock, e := os.OpenFile(filepath.Join(c.SessionDir, "fabricd.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
-	if e != nil {
-		return e
-	}
-	defer lock.Close()
-	if e = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		return fmt.Errorf("fabricd already running: %w", e)
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	sessions, e := manager.Restore()
-	if e != nil {
-		return e
-	}
-	for _, session := range sessions {
-		m := session.Runtime
-		d.runtimes[m.ID] = &runtime{id: m.ID, inc: m.Incarnation, title: m.Title, cwd: m.WorkingDirectory, adapter: "pty", tmux: session, subs: map[*subscription]bool{}, done: make(chan struct{})}
-	}
-	go d.watchTmux()
-	cleaner, e := process.NewCleaner()
-	if e != nil {
-		return e
-	}
-	d.cleaner = cleaner
-	defer d.Close()
-	go d.expire(ctx)
-	tc, e := c.TLS()
-	if e != nil {
-		return e
-	}
-	delay := 100 * time.Millisecond
-	for ctx.Err() == nil {
-		conn, e := ws.Dial(ctx, c.Gateway, c.Token, tc)
-		if e == nil {
-			if d.ServeConn(ctx, conn, c.Target) == nil {
-				delay = 100 * time.Millisecond
+
+// Close stops the connector and owned ACP processes and releases its state lock.
+// It is idempotent and preserves tmux sessions and their working content.
+func (d *Engine) Close() {
+	d.closeOnce.Do(func() {
+		d.mu.Lock()
+		d.cancel()
+		d.mu.Unlock()
+		// Stop admission before waiting, and retain the state lock until all
+		// accepted work has left the old engine.
+		d.active.Wait()
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for _, r := range d.runtimes {
+			if r.tmux == nil {
+				_ = r.stop()
+				if r.p != nil {
+					<-r.p.Done
+				}
 			}
 		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(delay):
+		for _, u := range d.uploads {
+			u.cleanup()
 		}
-		if delay < 5*time.Second {
-			delay *= 2
-			if delay > 5*time.Second {
-				delay = 5 * time.Second
-			}
+		if d.cleaner != nil {
+			d.cleaner.Close()
 		}
-	}
-	return nil
+		if d.lock != nil {
+			_ = syscall.Flock(int(d.lock.Fd()), syscall.LOCK_UN)
+			_ = d.lock.Close()
+		}
+	})
 }
-func (d *Daemon) Close() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, r := range d.runtimes {
-		if r.tmux == nil {
-			_ = r.stop()
-		}
-	}
-	for _, u := range d.uploads {
-		u.cleanup()
-	}
-	if d.cleaner != nil {
-		d.cleaner.Close()
-	}
-}
-func (d *Daemon) handle(s *wire.Stream, target string, gen uint64) {
+func (d *Engine) handle(s *wire.Stream, target string, gen uint64) {
 	defer s.Close()
 	_ = s.SetReadDeadline(time.Now().Add(5 * time.Second))
 	m, e := s.Recv()
@@ -301,7 +259,7 @@ func (d *Daemon) handle(s *wire.Stream, target string, gen uint64) {
 	d.mu.Unlock()
 	_ = s.Send(res)
 }
-func (d *Daemon) expire(ctx context.Context) {
+func (d *Engine) expire(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
@@ -329,7 +287,7 @@ func (d *Daemon) expire(ctx context.Context) {
 }
 
 // Completed results have a maximum 60s/256-entry retention, whichever ends first.
-func (d *Daemon) cacheRoomLocked() bool {
+func (d *Engine) cacheRoomLocked() bool {
 	if len(d.cache) < 256 {
 		return true
 	}

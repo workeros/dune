@@ -15,8 +15,8 @@ Dune 用 Go 提供 Agent 执行、PTY/ACP、文件、Git 和端口能力，包�
 | --- | --- |
 | 构建、测试、运行 | [开发流程](docs/workflow.md)、[Makefile](Makefile)、[README](README.md) |
 | CLI / SDK / API | `cmd/dune/`、`pkg/sdk/`、`pkg/api/types.go` |
-| 隧道、鉴权、协议 | `internal/gateway/`、`internal/wire/`、`proto/dune/dtp/v1/message.proto` |
-| 执行、PTY、ACP、进程生命周期 | `internal/daemon/`、`internal/process/`、`internal/tmux/`、`internal/service/`、`internal/supervisor/` |
+| 隧道、鉴权、协议 | `pkg/gateway/`、`pkg/transport/`、`internal/gateway/`（启动装配）、`internal/wire/`、`proto/dune/dtp/v1/message.proto` |
+| 执行、PTY、ACP、进程生命周期 | `pkg/fabricd/`、`internal/daemon/`（启动装配）、`internal/process/`、`internal/tmux/`、`internal/service/`、`internal/supervisor/` |
 | Web 功能 | `internal/webapp/`、`web/src/`、[Web 方案](docs/personal-web-plan.md) |
 | UI 样式和交互 | [DESIGN.md](DESIGN.md)、`web/src/components/`、`web/src/styles.css` |
 | 跨进程回归 | `tests/`；针对具体模块再读对应测试 |
