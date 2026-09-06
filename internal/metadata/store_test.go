@@ -140,7 +140,7 @@ func TestBusinessTransactions(t *testing.T) {
 			}
 			var runner, kind string
 			var revision int64
-			if err := s.db.QueryRowContext(ctx, `SELECT r.id,r.kind,r.binding_revision FROM dune_runners r JOIN dune_machines m ON m.runner_id=r.id WHERE m.id=$1`, machine.ID).Scan(&runner, &kind, &revision); err != nil || runner != machine.ID || kind != "attached" || revision != 1 {
+			if err := s.db.QueryRowContext(ctx, `SELECT r.id,r.kind,r.binding_revision FROM dune_runners r JOIN dune_machines m ON m.runner_id=r.id WHERE m.id=$1`, machine.ID).Scan(&runner, &kind, &revision); err != nil || runner != machine.RunnerID || runner == machine.ID || kind != "attached" || revision != 1 {
 				t.Fatal("initial Runner binding was not committed", err)
 			}
 			if id, err := other.MachineCredential(ctx, credential); err != nil || id != machine.ID {

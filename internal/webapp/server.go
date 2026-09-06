@@ -90,6 +90,11 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	s.mux.HandleFunc("GET /api/auth/cli/{request}", s.cliReview)
 	s.mux.HandleFunc("POST /api/auth/cli/{request}", s.cliConfirm)
 	s.mux.HandleFunc("GET /api/cli/machines", s.cliMachines)
+	s.mux.HandleFunc("GET /api/runners", s.runners)
+	s.mux.HandleFunc("GET /api/runners/{runner}", s.runner)
+	s.mux.HandleFunc("GET /api/cli/runners", s.cliRunners)
+	s.mux.HandleFunc("GET /api/cli/runners/{runner}", s.cliRunner)
+	s.mux.HandleFunc("POST /api/cli/runner-access", s.cliRunnerAccess)
 	s.mux.HandleFunc("POST /api/cli/access", s.cliAccess)
 	s.mux.HandleFunc("POST /api/cli/logout", s.cliLogout)
 	s.mux.HandleFunc("GET /downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {

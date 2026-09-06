@@ -18,6 +18,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/deployment"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/sdk"
 )
 
@@ -63,7 +64,14 @@ type APIError struct {
 	Code   string
 }
 
+func (e *APIError) Is(target error) bool {
+	return target == runner.ErrBindingChanged && e.Code == "BINDING_CHANGED"
+}
+
 func (e *APIError) Error() string {
+	if e.Code == "BINDING_CHANGED" {
+		return runner.ErrBindingChanged.Error()
+	}
 	if e.Code == "RESULT_UNKNOWN" {
 		return "Dune result is unknown; do not automatically retry"
 	}
@@ -216,9 +224,56 @@ func (c *Client) Dial(ctx context.Context, session Session, target string) (*sdk
 	if err != nil {
 		return nil, err
 	}
+	return c.dialAccess(ctx, access, target)
+}
+
+func (c *Client) dialAccess(ctx context.Context, access Access, target string) (*sdk.Client, error) {
 	u, err := deployment.Gateway(access.Gateway)
 	if err != nil || !secureURL(u) || access.Target != target || access.ExpiresAt <= time.Now().Unix() || access.Credential == "" {
 		return nil, errors.New("invalid Dune access credential")
 	}
 	return sdk.Dial(ctx, sdk.Options{Gateway: access.Gateway, Token: access.Credential, Target: target, TLSConfig: c.tls})
+}
+
+// Runners lists the environments visible through this user session.
+func (c *Client) Runners(ctx context.Context, session Session) ([]runner.Runner, error) {
+	if err := c.validateSession(session); err != nil {
+		return nil, err
+	}
+	var rows []runner.Runner
+	_, err := c.request(ctx, "GET", "api/cli/runners", session.Token, nil, &rows)
+	return rows, err
+}
+
+func (c *Client) Runner(ctx context.Context, session Session, id string) (runner.Runner, error) {
+	if err := c.validateSession(session); err != nil {
+		return runner.Runner{}, err
+	}
+	if id == "" {
+		return runner.Runner{}, errors.New("Dune runner is required")
+	}
+	var row runner.Runner
+	_, err := c.request(ctx, "GET", "api/cli/runners/"+url.PathEscape(id), session.Token, nil, &row)
+	if err == nil && (row.ID != id || (row.Binding != nil && (!row.Binding.Valid() || row.Binding.RunnerID != id))) {
+		err = errors.New("invalid Dune runner response")
+	}
+	return row, err
+}
+
+// DialRunner uses the caller's selected binding. It never resolves a replacement
+// or retries an exchange after an uncertain result. A new environment requires
+// an explicit fresh selection by the caller.
+func (c *Client) DialRunner(ctx context.Context, session Session, binding runner.Binding) (*sdk.Client, error) {
+	if err := c.validateSession(session); err != nil {
+		return nil, err
+	}
+	if !binding.Valid() {
+		return nil, errors.New("Dune runner has no valid binding")
+	}
+	var access Access
+	_, err := c.request(ctx, "POST", "api/cli/runner-access", session.Token, binding, &access)
+	if err != nil {
+		return nil, err
+	}
+	return c.dialAccess(ctx, access, binding.MachineID)
 }

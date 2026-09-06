@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 // Database failures must not masquerade as bad credentials or missing objects.
@@ -18,8 +20,10 @@ func writeMetadataError(w http.ResponseWriter, err error) {
 		writeError(w, 403, "REGISTRATION_DISABLED", err.Error())
 	case errors.Is(err, identity.ErrUnauthorized):
 		writeError(w, 401, "UNAUTHORIZED", identity.ErrUnauthorized.Error())
-	case errors.Is(err, metadata.ErrNotFound):
-		writeError(w, 404, "NOT_FOUND", "machine not found")
+	case errors.Is(err, runner.ErrBindingChanged):
+		writeError(w, 409, "BINDING_CHANGED", runner.ErrBindingChanged.Error())
+	case errors.Is(err, metadata.ErrNotFound), errors.Is(err, authorization.ErrNotFound):
+		writeError(w, 404, "NOT_FOUND", "resource not found")
 	case errors.Is(err, metadata.ErrConflict):
 		writeError(w, 409, "CONFLICT", "metadata conflict")
 	case errors.Is(err, identity.ErrSessionLimit):

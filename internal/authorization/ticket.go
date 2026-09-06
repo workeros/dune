@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/aiomni/dune/pkg/runner"
 	"time"
 )
 
@@ -22,6 +23,7 @@ type ConnectionAccess struct {
 type Repository interface {
 	MachineCredential(context.Context, string) (string, error)
 	CreateAccess(context.Context, string, string, string, string, string, int64) (ConnectionAccess, error)
+	CreateRunnerAccess(context.Context, string, string, string, string, runner.Binding, int64) (ConnectionAccess, error)
 	ConsumeAccess(context.Context, string, string, int64) (ConnectionAccess, error)
 	CheckAccess(context.Context, ConnectionAccess, int64) (bool, error)
 	DeleteAccess(context.Context, string) error

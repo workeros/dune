@@ -46,6 +46,8 @@ func run() error {
 	path := fs.String("config", config.DefaultPath(), "machine config path")
 	loginPath := fs.String("login", "", "private human CLI credential file; replaces machine config for execution")
 	target := fs.String("target", "", "machine target for --login execution")
+	runnerID := fs.String("runner", "", "logical Runner for --login execution; resolves one binding")
+
 	if e := fs.Parse(os.Args[1:]); e != nil {
 		return e
 	}
@@ -61,18 +63,21 @@ func run() error {
 			return fmt.Errorf("--login and --config cannot be combined")
 		}
 		if len(args) == 0 {
-			return fmt.Errorf("an execution command or machines is required with --login")
+			return fmt.Errorf("an execution command, machines or runners is required with --login")
 		}
 		switch args[0] {
-		case "machines", "capabilities", "profile", "runtime", "exec", "files", "upload", "git", "upload-file", "ports":
+		case "runners", "machines", "capabilities", "profile", "runtime", "exec", "files", "upload", "git", "upload-file", "ports":
 		default:
-			return fmt.Errorf("--login is only for human execution commands and machines")
+			return fmt.Errorf("--login is only for human execution commands, machines and runners")
 		}
-	} else if *target != "" {
-		return fmt.Errorf("--target requires --login")
+	} else if *target != "" || *runnerID != "" {
+		return fmt.Errorf("--target and --runner require --login")
+	}
+	if *target != "" && *runnerID != "" {
+		return fmt.Errorf("--target and --runner cannot be combined")
 	}
 	if len(args) > 0 && (args[0] == "help" || args[0] == "version") {
-		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login and --target must precede the subcommand; --login and --config are mutually exclusive.")
+		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines|runners\n  dune --login FILE --runner RUNNER_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login, --runner and --target must precede the subcommand; --login and --config are mutually exclusive.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "init" {
@@ -201,7 +206,25 @@ func run() error {
 			}
 			return printJSON(machines)
 		}
-		client, e = human.Dial(ctx, credentials.Session, *target)
+		if args[0] == "runners" {
+			rows, err := human.Runners(ctx, credentials.Session)
+			if err != nil {
+				return err
+			}
+			return printJSON(rows)
+		}
+		if *runnerID != "" {
+			row, err := human.Runner(ctx, credentials.Session, *runnerID)
+			if err != nil {
+				return err
+			}
+			if row.Binding == nil {
+				return fmt.Errorf("runner has no current machine binding")
+			}
+			client, e = human.DialRunner(ctx, credentials.Session, *row.Binding)
+		} else {
+			client, e = human.Dial(ctx, credentials.Session, *target)
+		}
 	} else {
 		tc, err := c.TLS()
 		if err != nil {

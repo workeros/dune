@@ -12,6 +12,7 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 var ErrNotFound = errors.New("machine not found")
@@ -48,12 +49,15 @@ func (g *ClientGrant) Valid() bool      { return g.valid() }
 func (g *ClientGrant) Close()           { g.release() }
 
 func (l *Local) Client(ctx context.Context, session, target string) (*ClientGrant, error) {
-	return l.client(ctx, session, target, l.sessions.Authenticate)
+	return l.client(ctx, session, target, l.sessions.Authenticate, nil)
 }
 func (l *Local) ClientCLI(ctx context.Context, session, target string) (*ClientGrant, error) {
-	return l.client(ctx, session, target, l.sessions.AuthenticateCLI)
+	return l.client(ctx, session, target, l.sessions.AuthenticateCLI, nil)
 }
-func (l *Local) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error)) (*ClientGrant, error) {
+func (l *Local) ClientRunnerCLI(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
+	return l.client(ctx, session, binding.MachineID, l.sessions.AuthenticateCLI, &binding)
+}
+func (l *Local) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error), binding *runner.Binding) (*ClientGrant, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -62,7 +66,13 @@ func (l *Local) client(ctx context.Context, session, target string, authenticate
 		return nil, err
 	}
 	token := ticketPrefix + wire.ID() + wire.ID()
-	record, err := l.bindings.CreateAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, target, time.Now().Add(TicketLifetime).Unix())
+	var record ConnectionAccess
+	expires := time.Now().Add(TicketLifetime).Unix()
+	if binding == nil {
+		record, err = l.bindings.CreateAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, target, expires)
+	} else {
+		record, err = l.bindings.CreateRunnerAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, *binding, expires)
+	}
 	if err != nil {
 		return nil, err
 	}

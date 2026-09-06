@@ -8,9 +8,21 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 func (s *Store) CreateAccess(ctx context.Context, hash, sessionHash, principal, namespace, target string, expires int64) (authorization.ConnectionAccess, error) {
+	return s.createAccess(ctx, hash, sessionHash, principal, namespace, target, expires, nil)
+}
+
+func (s *Store) CreateRunnerAccess(ctx context.Context, hash, sessionHash, principal, namespace string, binding runner.Binding, expires int64) (authorization.ConnectionAccess, error) {
+	if !binding.Valid() {
+		return authorization.ConnectionAccess{}, ErrInvalidArgument
+	}
+	return s.createAccess(ctx, hash, sessionHash, principal, namespace, binding.MachineID, expires, &binding)
+}
+
+func (s *Store) createAccess(ctx context.Context, hash, sessionHash, principal, namespace, target string, expires int64, expected *runner.Binding) (authorization.ConnectionAccess, error) {
 	record := authorization.ConnectionAccess{SessionHash: sessionHash, PrincipalID: principal, Namespace: namespace, Target: target, ExpiresAt: expires}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		if err := s.lockPrincipal(ctx, tx, principal); err != nil {
@@ -32,13 +44,16 @@ func (s *Store) CreateAccess(ctx context.Context, hash, sessionHash, principal, 
 		}
 		bindingQuery := `SELECT r.id,r.fabric_id,r.binding_revision FROM dune_machines m JOIN dune_runners r ON r.id=m.runner_id WHERE m.id=$1 AND r.owner_id=$2`
 		if s.postgres {
-			bindingQuery += ` FOR KEY SHARE OF r`
+			bindingQuery += ` FOR SHARE OF r`
 		}
 		if err := tx.QueryRowContext(ctx, bindingQuery, target, principal).Scan(&record.RunnerID, &record.FabricID, &record.BindingRevision); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return authorization.ErrNotFound
 			}
 			return err
+		}
+		if expected != nil && (expected.RunnerID != record.RunnerID || expected.FabricID != record.FabricID || expected.MachineID != record.Target || expected.Revision != record.BindingRevision) {
+			return runner.ErrBindingChanged
 		}
 		if s.postgres {
 			var machine string

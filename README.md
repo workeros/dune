@@ -42,8 +42,8 @@ mkdir -p /tmp/dune-demo
 ```sh
 dune login --site https://example.com/tools/dune/
 # 在浏览器登录，核对终端与页面的代码，再确认。
-dune --login ~/.config/dune/login.json machines
-dune --login ~/.config/dune/login.json --target MACHINE_ID exec --cwd /tmp -- /usr/bin/uname -s
+dune --login ~/.config/dune/login.json runners
+dune --login ~/.config/dune/login.json --runner RUNNER_ID exec --cwd /tmp -- /usr/bin/uname -s
 dune logout
 ```
 
@@ -51,7 +51,9 @@ dune logout
 
 CLI 会话最长八小时，也不超过确认它的浏览器会话期限；浏览器退出、用户停用或身份关联会撤销相关 CLI 会话及已建立访问。`logout` 只撤销这份 CLI 会话，不退出浏览器。每次执行交换一个三十秒内单次使用的目标凭据；不把用户会话交给 fabricd。登录确认或交换结果未知时不会自动重放，应重新发起登录或明确核对结果。
 
-`--login` 与显式 `--config` 互斥，放在命令前；执行还须指定 `--target`，可用的命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。当前机器列表和访问采用 owner 策略，企业操作级授权及集群路由仍在实施。
+`--login` 与显式 `--config` 互斥，放在命令前；执行使用 `--runner` 选择逻辑环境，也可用 `machines` 和 `--target MACHINE_ID` 直接选择机器，两种选择不可同时传入。可用命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。当前发现和访问采用 owner 策略，企业操作级授权及集群路由仍在实施。
+
+Runner 是稳定的产品身份；其绑定快照包含 Runner、Fabric、机器及单调修订。CLI 每次命令只解析一次，交换凭据时核对完整快照，绑定变化后拒绝旧请求并要求重新选择。SDK 的 `Client.Runners` / `Client.Runner` 查询 `pkg/runner.Runner`，`Client.DialRunner(ctx, session, *selected.Binding)` 仅连接该快照，不自动解析替代环境。新注册的 Runner 与机器 ID 不同，已有机器的原 ID、凭据和 Runtime 不改变。
 
 ## Files、Git、Ports
 

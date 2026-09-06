@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aiomni/dune/internal/authorization"
@@ -127,6 +128,30 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 			app.ServeHTTP(out, req)
 			if out.Code != 404 {
 				t.Fatalf("cross-account %s %s: %d", route.method, route.suffix, out.Code)
+			}
+		}
+	}
+	for _, pair := range []struct{ token, own, other string }{{at, ma.RunnerID, mb.RunnerID}, {bt, mb.RunnerID, ma.RunnerID}} {
+		for _, path := range []string{"/api/runners", "/api/runners/" + pair.own, "/api/runners/" + pair.other} {
+			req := httptest.NewRequest("GET", path, nil)
+			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
+			out := httptest.NewRecorder()
+			app.ServeHTTP(out, req)
+			if strings.HasSuffix(path, pair.other) {
+				if out.Code != 404 {
+					t.Fatal("runner lookup leaked ownership", out.Code)
+				}
+			} else if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte(pair.own)) || bytes.Contains(out.Body.Bytes(), []byte(pair.other)) {
+				t.Fatal("runner discovery leaked ownership", out.Code)
+			}
+		}
+		for _, path := range []string{"/api/cli/runners", "/api/cli/runners/" + pair.own} {
+			req := httptest.NewRequest("GET", path, nil)
+			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
+			out := httptest.NewRecorder()
+			app.ServeHTTP(out, req)
+			if out.Code != 401 {
+				t.Fatal("browser cookie accepted as CLI credential", out.Code)
 			}
 		}
 	}

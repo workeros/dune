@@ -34,8 +34,14 @@ type legacyEnrollment struct {
 	Name      string `json:"name"`
 	ExpiresAt int64  `json:"expires_at"`
 }
+
+// Keep the legacy wire shape frozen when the current Machine view grows.
 type legacyMachine struct {
-	Machine
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	CreatedAt      int64  `json:"created_at"`
 	OwnerID        string `json:"owner_id"`
 	CredentialHash string `json:"credential_hash"`
 }

@@ -17,6 +17,7 @@ import (
 
 type Machine struct {
 	ID        string `json:"id"`
+	RunnerID  string `json:"runner_id"`
 	Name      string `json:"name"`
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
@@ -66,7 +67,7 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 		return Machine{}, "", fmt.Errorf("%w: supported platforms: Linux/macOS on amd64/arm64", ErrInvalidArgument)
 	}
 	credential := wire.ID() + wire.ID()
-	machine := Machine{ID: wire.ID(), OS: osName, Arch: arch, CreatedAt: time.Now().Unix()}
+	machine := Machine{ID: wire.ID(), RunnerID: wire.ID(), OS: osName, Arch: arch, CreatedAt: time.Now().Unix()}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		var owner string
 		hash := tokenHash(token)
@@ -99,10 +100,10 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 		if count >= 32 {
 			return fmt.Errorf("%w: machine limit reached (32 per account)", ErrInvalidArgument)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'attached','attached',1,$4)`, machine.ID, owner, machine.Name, machine.CreatedAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'attached','attached',1,$4)`, machine.RunnerID, owner, machine.Name, machine.CreatedAt); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_machines(id,runner_id,credential_hash,os,arch) VALUES($1,$1,$2,$3,$4)`, machine.ID, tokenHash(credential), osName, arch); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_machines(id,runner_id,credential_hash,os,arch) VALUES($1,$2,$3,$4,$5)`, machine.ID, machine.RunnerID, tokenHash(credential), osName, arch); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE hash=$1`, hash)
@@ -115,7 +116,7 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 }
 
 func (s *Store) Machines(ctx context.Context, userID string) ([]Machine, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id,r.name,m.os,m.arch,r.created_at FROM dune_machines m JOIN dune_runners r ON r.id=m.runner_id WHERE r.owner_id=$1 ORDER BY r.created_at,m.id`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,r.id,r.name,m.os,m.arch,r.created_at FROM dune_machines m JOIN dune_runners r ON r.id=m.runner_id WHERE r.owner_id=$1 ORDER BY r.created_at,m.id`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func (s *Store) Machines(ctx context.Context, userID string) ([]Machine, error) 
 	out := []Machine{}
 	for rows.Next() {
 		var m Machine
-		if err := rows.Scan(&m.ID, &m.Name, &m.OS, &m.Arch, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.RunnerID, &m.Name, &m.OS, &m.Arch, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

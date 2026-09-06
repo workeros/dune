@@ -33,7 +33,7 @@ func legacyFixture(t *testing.T) (legacyData, string, string, string) {
 		Accounts:    map[string]identity.Account{id: {User: identity.User{ID: id, Email: "legacy@example.test"}, Salt: salt, PasswordHash: hex.EncodeToString(password)}},
 		Sessions:    map[string]legacySession{tokenHash(cookie): {UserID: id, ExpiresAt: time.Now().Add(time.Hour).Unix()}, tokenHash("expired"): {UserID: id, ExpiresAt: 1}},
 		Enrollments: map[string]legacyEnrollment{tokenHash(enrollment): {UserID: id, Name: "pending machine", ExpiresAt: time.Now().Add(time.Hour).Unix()}},
-		Machines:    map[string]legacyMachine{machineID: {Machine: Machine{ID: machineID, Name: "existing machine", OS: "linux", Arch: "amd64", CreatedAt: 1700000000}, OwnerID: id, CredentialHash: tokenHash(credential)}},
+		Machines:    map[string]legacyMachine{machineID: {ID: machineID, Name: "existing machine", OS: "linux", Arch: "amd64", CreatedAt: 1700000000, OwnerID: id, CredentialHash: tokenHash(credential)}},
 	}
 	return d, cookie, credential, enrollment
 }
@@ -122,6 +122,9 @@ func TestLegacyImportTransactionsAndPreservedIdentities(t *testing.T) {
 			if err := s.db.QueryRow(`SELECT runner_id FROM dune_machines WHERE id=$1`, id).Scan(&runner); err != nil || runner != id {
 				t.Fatal("legacy machine did not become a stable Attached Runner", err)
 			}
+			if row, err := s.Runner(ctx, user.ID, id); err != nil || row.ID != id || row.Binding == nil || row.Binding.MachineID != id || row.Binding.Revision != 1 {
+				t.Fatal("legacy Runner lookup changed identity", err)
+			}
 			if _, _, err := s.Enroll(ctx, enrollment, "darwin", "arm64"); err != nil {
 				t.Fatal("pending enrollment was lost", err)
 			}
@@ -149,6 +152,7 @@ func TestLegacyValidationBeforeImport(t *testing.T) {
 		"bad reference":   bytes.ReplaceAll(contents, []byte(`"user_id":"`+strings.Repeat("1", 32)+`"`), []byte(`"user_id":"missing"`)),
 		"bad identity":    bytes.Replace(contents, []byte(`"id":"`+strings.Repeat("1", 32)+`"`), []byte(`"id":"missing"`), 1),
 		"trailing object": append(append([]byte{}, contents...), []byte(`{}`)...),
+		"future binding":  bytes.Replace(contents, []byte(`"credential_hash":`), []byte(`"runner_id":"another-runner","credential_hash":`), 1),
 		"deep nesting":    []byte(strings.Repeat("[", 70) + "0" + strings.Repeat("]", 70)),
 	} {
 		t.Run(name, func(t *testing.T) {

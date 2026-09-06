@@ -6,6 +6,8 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"github.com/aiomni/dune/pkg/runner"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,5 +106,35 @@ func TestClientRequiresVerifiedTransport(t *testing.T) {
 		if _, err := New(options); err == nil {
 			t.Fatal("unsafe login endpoint accepted")
 		}
+	}
+}
+
+func TestRunnerDoesNotFollowReplacement(t *testing.T) {
+	binding := runner.Binding{RunnerID: "logical", FabricID: "attached", MachineID: "selected", Revision: 7}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != "POST" || r.URL.Path != "/tools/api/cli/runner-access" {
+			t.Error("client attempted replacement resolution", r.Method, r.URL.Path)
+		}
+		var got runner.Binding
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got != binding {
+			t.Error("selected binding changed", err)
+		}
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte(`{"code":"BINDING_CHANGED"}`))
+	}))
+	defer server.Close()
+	client, err := New(Options{Site: server.URL + "/tools/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	session := Session{Site: server.URL + "/tools/", Token: "dune_cli_" + strings.Repeat("b", 64), PrincipalID: "principal"}
+	if conn, err := client.DialRunner(context.Background(), session, binding); conn != nil || !errors.Is(err, runner.ErrBindingChanged) {
+		t.Fatal("stale binding was not reported", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatal("stale binding exchange retried", requests.Load())
 	}
 }

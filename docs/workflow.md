@@ -68,6 +68,8 @@ go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeou
 
 人类 CLI 回归使用 `go test ./tests -run TestHumanCLILoginAndExecution -count=1 -timeout=180s`，覆盖正式二进制的浏览器确认、私有文件、实际执行和浏览器退出后 API/现有连接撤销；启用 PostgreSQL 时还验证独立签发与消费宿主。`internal/metadata` 的 `TestCLILoginTransactions` 检查单次消费、确认身份不可替换、父会话与版本、并发和持久化；`pkg/login` 检查 HTTP 模糊失败及重定向不重放。真实 Dex 演练另运行 `dune login --site ... --no-browser`，完成浏览器核对与确认、临时 fabricd 上的实际命令，再退出浏览器验证 CLI 失效。手动启动临时 fabricd 时指定构建产物 `DUNE_TMUX=/absolute/repo/bin/tmux`，结束后清理测试进程和凭据。
 
+`TestRunnerBindingSnapshot` 在 SQLite/PostgreSQL 验证逻辑 Runner 与机器 ID 分离、owner 隔离、绑定修订变化后旧访问失效及重开恢复；替换环境在测试中直接构造数据库事实，不代表 Managed 生命周期已经实现。`TestHumanCLILoginAndExecution` 另通过正式 CLI 的 `runners`、`--runner` 和 `DialRunner` 执行真实命令。`TestRunnerDoesNotFollowReplacement` 验证过期快照不会触发 SDK 自动重新解析或重放。
+
 以下操作会使用已配置的 Agent 账号或指定远端，仅在任务包含对应验收且已有授权时运行。沿用明确指定的账号、模型和机器；历史文档里的地址与登录状态不是当前授权或可用性证据。环境缺失时报告具体缺口，继续本地检查。
 
 ```sh

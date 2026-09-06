@@ -13,6 +13,7 @@ import (
 
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/pkg/login"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 func TestHumanCLILoginAndExecution(t *testing.T) {
@@ -89,10 +90,20 @@ func exerciseHumanCLI(t *testing.T, ctx context.Context, site, dir, target strin
 	if !strings.Contains(string(out), "CLI_LOGIN_EXEC_OK") {
 		t.Fatal("CLI execution did not reach fabricd")
 	}
+	out = invoke("--login", file, "runners")
+	var runners []runner.Runner
+	must(t, json.Unmarshal(out, &runners))
+	if len(runners) != 1 || runners[0].ID == target || runners[0].Binding == nil || runners[0].Binding.MachineID != target {
+		t.Fatal("Runner discovery confused logical and machine identity")
+	}
+	out = invoke("--login", file, "--runner", runners[0].ID, "exec", "--cwd", dir, "--", "/bin/sh", "-c", "printf CLI_RUNNER_EXEC_OK")
+	if !strings.Contains(string(out), "CLI_RUNNER_EXEC_OK") {
+		t.Fatal("Runner execution did not reach fabricd")
+	}
 	human, err := login.New(login.Options{Site: site})
 	must(t, err)
 	t.Cleanup(human.Close)
-	client, err := human.Dial(ctx, credentials.Session, target)
+	client, err := human.DialRunner(ctx, credentials.Session, *runners[0].Binding)
 	must(t, err)
 	t.Cleanup(func() { client.Close() })
 	if _, err := client.List(ctx); err != nil {

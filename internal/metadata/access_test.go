@@ -137,7 +137,7 @@ func TestDurableAccessCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := other.db.Exec(`UPDATE dune_runners SET binding_revision=binding_revision+1 WHERE id=$1`, machine.ID); err != nil {
+			if _, err := other.db.Exec(`UPDATE dune_runners SET binding_revision=binding_revision+1 WHERE id=$1`, machine.RunnerID); err != nil {
 				t.Fatal(err)
 			}
 			if active.Valid() {

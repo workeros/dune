@@ -140,3 +140,12 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 验证：启用真实 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/login/config race、`make check-go`、`make web-check web-build` 通过。覆盖消费回执丢失、并发单次消费、事务回滚、凭据类型隔离、父会话与授权版本、私有文件保护及 schema 6 转库/备份恢复；前端仍有既有主 bundle 体积提示。最后的确认版本检查和 CLI 参数校验另经定向回归重验。
 
 下一检查点为完整操作级 AccessChecker、发现与稳定 Runner/绑定边界。当前仍是默认 owner 访问，S1 尚未整体完成；Managed 和 S3 集群继续按方案实施，Dex 本地演练不代表企业 IdP 或集群部署验收。
+
+### 已完成：公开 Runner 查询与固定绑定访问
+
+- `pkg/runner` 提供逻辑 Runner 与绑定快照，包含 Runner、Fabric、机器和单调修订；不进入协议 core。浏览器及人类 CLI 可查询自己的 Runner，`pkg/login` 和正式 CLI `runners` / `--runner` 使用同一模型。新 Attached 注册在原事务内分别生成 Runner ID 与机器 ID，既有 SQL 和 JSON 导入的原 ID 保持不变，机器配置与 Runtime 无需重建。
+- `DialRunner` 接收调用方选定的完整快照，服务端在访问凭据签发事务内复核归属及绑定，PostgreSQL 行锁覆盖修订。快照不匹配返回拒绝，SDK 不重新解析替代环境或自动重放；已建立访问持续检查原绑定。原 `--target` 机器入口保持可用，与 `--runner` 互斥。
+- SQLite/PostgreSQL 验证发现和查询的 owner 隔离、Runner 与机器 ID 分离、错误 Fabric/修订拒绝、同一 Runner 更换机器后旧授权失效、关闭重开及显式选择新快照。替换环境由测试直接构造数据库事实，没有新增可绕过生命周期的绑定编辑入口，也不代表 Managed 已实现。旧 JSON 的数据形状独立固定，新增 Runner 字段不会放宽导入校验。
+- 验证：启用真实 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/login race 和 `make check-go` 通过；正式 CLI 与独立 Gateway 经真实 fabricd 执行并返回 `CLI_RUNNER_EXEC_OK`，父浏览器退出撤销相应 SDK 连接。最后的旧 JSON 字段拒绝及保留原 Runner/机器身份另经定向迁移回归验证。
+
+下一步将企业 AccessChecker 接入完整操作映射及有界发现，并把工作台产品入口统一到 Runner。当前公开 Runner 发现仍采用默认 owner 策略；Managed 绑定变更、生命周期及 S3 集群仍未交付，S1 未整体完成。
