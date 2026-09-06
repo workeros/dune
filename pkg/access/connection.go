@@ -17,6 +17,8 @@ type Grant struct {
 	Target string
 	Role   string
 	Valid  func() bool
+	// Policy optionally enforces per-operation checks on an authenticated SDK connection.
+	Policy *Policy
 }
 
 func (g Grant) check() error {
@@ -31,15 +33,26 @@ func (g Grant) Bind() (gateway.BindingContext, gateway.ConnectionHandler, error)
 	if g.Target == "" || (g.Role != gateway.RoleSDK && g.Role != gateway.RoleDaemon && g.Role != gateway.RoleEither) {
 		return gateway.BindingContext{}, nil, fmt.Errorf("invalid grant")
 	}
+	if g.Policy != nil {
+		policy := *g.Policy
+		if g.Role != gateway.RoleSDK || policy.Checker == nil || policy.Scope.PrincipalID == "" || !policy.Scope.Binding.Valid() || policy.Scope.Binding.MachineID != g.Target {
+			return gateway.BindingContext{}, nil, fmt.Errorf("invalid access policy")
+		}
+		g.Policy = &policy
+	}
 	if err := g.check(); err != nil {
 		return gateway.BindingContext{}, nil, err
 	}
 	return gateway.BindingContext{Target: g.Target, Role: g.Role}, &connection{grant: g}, nil
 }
 
-type connection struct{ grant Grant }
+type connection struct {
+	grant Grant
+	ctx   context.Context
+}
 
 func (c *connection) Connected(ctx context.Context, conn *gateway.Connection) error {
+	c.ctx = ctx
 	if err := c.grant.check(); err != nil {
 		return err
 	}
@@ -69,6 +82,9 @@ func (c *connection) Open(ctx context.Context, request *pb.Message, stream *gate
 	}
 	if err := c.grant.check(); err != nil {
 		return nil, err
+	}
+	if c.grant.Policy != nil {
+		return c.openChecked(ctx, request, stream)
 	}
 	if err := stream.Forward(); err != nil {
 		return nil, err

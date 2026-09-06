@@ -149,3 +149,12 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 验证：启用真实 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/login race 和 `make check-go` 通过；正式 CLI 与独立 Gateway 经真实 fabricd 执行并返回 `CLI_RUNNER_EXEC_OK`，父浏览器退出撤销相应 SDK 连接。最后的旧 JSON 字段拒绝及保留原 Runner/机器身份另经定向迁移回归验证。
 
 下一步将企业 AccessChecker 接入完整操作映射及有界发现，并把工作台产品入口统一到 Runner。当前公开 Runner 发现仍采用默认 owner 策略；Managed 绑定变更、生命周期及 S3 集群仍未交付，S1 未整体完成。
+
+### 已完成：可复用的执行流 AccessChecker
+
+- `pkg/access.Grant.Policy` 在既有 core 钩子上装配一个检查器，复制可信用户、owner 与 Runner 绑定；请求体及后续消息不能替换关联。检查器接收实际 operation、子操作、Runtime 身份和有界选择属性，不取得命令、终端内容、文件/Git 正文、环境变量、prompt 或凭据。未知操作拒绝，企业检查没有 owner 回退。
+- 首条请求先检查再转发；持续 input/resize/signal、端口 data/eof 分别取得该流的短期决定。只读订阅独立禁止所有输入类型，原始 ACP 输入整体映射为 `acp.raw/exchange`，托管 ACP 动作按实际 action 区分。上传提交单独检查，非 create 请求中伪填的路径不会被当作有效资源属性。详细契约与映射见[执行流访问检查](access-checks.md)。
+- 检查最多一秒，决定最多三十秒，外部到期时间转换为本机单调期限。后台提前复核并独立执行截止时间，空闲流及阻塞的检查器不能延长已过期授权，迟到 allow 不恢复旧流。会话/机器/绑定有效性仍由独立 Grant.Valid 约束；访问撤销不回滚已受理操作或停止远端任务。
+- 独立 Gateway、真实临时 fabricd/PTY 验证拒绝写入、上传提交和 Git 暂存不产生副作用，拒绝端口输入时字节未到目标服务，只读 attach 不能输入、resize 或 signal，重复终端输入复用决定，空闲复核失败及迟到检查器关闭流。全量本地 `make test`、access/Gateway/host/Web race 和 `make check-go` 通过；最后补充的 Git/端口及资源属性语义另经 access race 重验。本次不涉及 SQL 变更，未重新启用外部 PostgreSQL 或真实 Agent 验收。
+
+本检查点交付可独立装配的执行流处理器，尚未向 `host.Options` 暴露覆盖不完整的企业开关。下一步将同一检查器接入 Web/CLI 发现和管理入口、权威目标解析及默认宿主装配，再完成 S1 的端到端企业授权验收。工作台 Runner 入口、Managed 与集群继续推进。
