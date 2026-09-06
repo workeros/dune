@@ -10,18 +10,26 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // wsConn erases WebSocket message boundaries. Yamux owns the single reader and
 // writer; deadlines go to the socket to avoid racing websocket's write state.
 type wsConn struct {
-	w *websocket.Conn
-	r io.Reader
+	w         *websocket.Conn
+	r         io.Reader
+	closed    atomic.Bool
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NetConn(w *websocket.Conn) net.Conn { w.SetReadLimit(wire.MaxMessage); return &wsConn{w: w} }
 func (c *wsConn) Read(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, net.ErrClosed
+	}
 	for {
 		if c.r == nil {
 			k, r, e := c.w.NextReader()
@@ -45,12 +53,25 @@ func (c *wsConn) Read(p []byte) (int, error) {
 	}
 }
 func (c *wsConn) Write(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, net.ErrClosed
+	}
 	if e := c.w.WriteMessage(websocket.BinaryMessage, p); e != nil {
 		return 0, e
 	}
 	return len(p), nil
 }
-func (c *wsConn) Close() error                       { return c.w.Close() }
+func (c *wsConn) Close() error {
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		// fasthttp's default hijacked Conn defers physical Close until its
+		// handler returns. Expiring I/O first breaks the otherwise circular
+		// wait between that handler and Yamux's reader shutdown.
+		_ = c.w.UnderlyingConn().SetDeadline(time.Now())
+		c.closeErr = c.w.Close()
+	})
+	return c.closeErr
+}
 func (c *wsConn) LocalAddr() net.Addr                { return c.w.LocalAddr() }
 func (c *wsConn) RemoteAddr() net.Addr               { return c.w.RemoteAddr() }
 func (c *wsConn) SetDeadline(t time.Time) error      { return c.w.UnderlyingConn().SetDeadline(t) }

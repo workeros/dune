@@ -1,7 +1,12 @@
-package gateway
+package tunnel_test
 
 import (
 	"context"
+	"fmt"
+	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/transport/tunnel"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +21,7 @@ import (
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
 	"github.com/hashicorp/yamux"
+	"github.com/valyala/fasthttp"
 )
 
 func TestHostedRoutesAndCredentialRoles(t *testing.T) {
@@ -23,14 +29,21 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 	defer cancel()
 	var aValid atomic.Bool
 	aValid.Store(true)
-	grants := map[string]Grant{
+	grants := map[string]access.Grant{
 		"machine-a": {Target: "a", Role: "daemon", Valid: aValid.Load},
 		"machine-b": {Target: "b", Role: "daemon"},
 		"browser-a": {Target: "a", Role: "sdk", Valid: aValid.Load},
 		"browser-b": {Target: "b", Role: "sdk"},
 	}
-	g := New(func(token string) (Grant, bool) { a, ok := grants[token]; return a, ok })
-	server := httptest.NewServer(g)
+	g := gateway.New()
+	handler := tunnel.NewHandler(ctx, g, func(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+		a, ok := grants[token]
+		if !ok {
+			return gateway.BindingContext{}, nil, fmt.Errorf("unauthorized")
+		}
+		return a.Bind()
+	})
+	server := httptest.NewServer(handler)
 	defer server.Close()
 	defer g.Close()
 	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/tunnel"
@@ -136,7 +149,13 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 		response.Body.Close()
 	}
 	aValid.Store(false)
-	g.Disconnect("a")
+	// No traffic or explicit Disconnect: the access module must revoke idle
+	// tunnels as well as streams carrying new input.
+	select {
+	case <-a.CloseChan():
+	case <-time.After(3 * time.Second):
+		t.Fatal("idle revoked tunnel remained connected")
+	}
 	if err := ca.Call(ctx, "runtime.list", struct{}{}, nil); err == nil {
 		t.Fatal("revoked connection can still issue requests")
 	}
@@ -147,5 +166,54 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 	if c, err := sdk.Dial(ctx, sdk.Options{Gateway: endpoint, Token: "browser-a", Target: "a"}); err == nil {
 		c.Close()
 		t.Fatal("revoked credential can reconnect")
+	}
+	g.Disconnect("b")
+	if g.Online("b") {
+		t.Fatal("explicit disconnect left route online")
+	}
+}
+
+func TestFastHTTPGatewayCloseUnblocksHijackedConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	g := gateway.New()
+	defer g.Close()
+	handler := tunnel.NewHandler(ctx, g, func(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+		return (access.Grant{Target: "machine", Role: gateway.RoleDaemon}).Bind()
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	// KeepHijackedConns intentionally retains fasthttp's default false value.
+	server := &fasthttp.Server{Handler: handler.ServeFastHTTP}
+	go func() { _ = server.Serve(listener) }()
+	conn, err := ws.Dial(ctx, "ws://"+listener.Addr().String()+"/tunnel", "token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := yamux.Client(conn, wire.Config())
+	if err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	defer session.Close()
+	_, _, err = wire.Handshake(session, &pb.Message{Kind: "hello", Target: "machine", Incarnation: "boot", ConnectionGeneration: 1,
+		Payload: api.Payload(api.Hello{Version: api.Version, Role: gateway.RoleDaemon}), Data: api.Payload(api.Binding{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { g.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateway shutdown waited for hijack handler to return")
+	}
+	select {
+	case <-session.CloseChan():
+	case <-time.After(time.Second):
+		t.Fatal("gateway shutdown left the tunnel connected")
 	}
 }

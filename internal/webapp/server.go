@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/config"
-	"github.com/aiomni/dune/internal/gateway"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/sdk"
+	"github.com/aiomni/dune/pkg/transport/tunnel"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
 )
@@ -51,7 +53,7 @@ type Server struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.Mutex
-	tickets   map[string]gateway.Grant
+	tickets   map[string]access.Grant
 	rates     map[string]authRate
 	hashSlots chan struct{}
 	mux       *http.ServeMux
@@ -66,9 +68,15 @@ func NewServer(parent context.Context, c config.Config, options Options, store *
 		return nil, fmt.Errorf("public URL must use HTTP or HTTPS")
 	}
 	ctx, cancel := context.WithCancel(parent)
-	s := &Server{store: store, config: c, options: options, ctx: ctx, cancel: cancel, tickets: map[string]gateway.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
-	s.gateway = gateway.New(s.authorize)
-	s.mux.Handle("GET /tunnel", s.gateway)
+	s := &Server{store: store, config: c, options: options, ctx: ctx, cancel: cancel, tickets: map[string]access.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	s.gateway = gateway.New()
+	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+		grant, ok := s.authorize(token)
+		if !ok {
+			return gateway.BindingContext{}, nil, fmt.Errorf("unauthorized")
+		}
+		return grant.Bind()
+	}))
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
@@ -321,7 +329,7 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func (s *Server) authorize(token string) (gateway.Grant, bool) {
+func (s *Server) authorize(token string) (access.Grant, bool) {
 	s.mu.Lock()
 	grant, ok := s.tickets[token]
 	s.mu.Unlock()
@@ -330,9 +338,9 @@ func (s *Server) authorize(token string) (gateway.Grant, bool) {
 	}
 	machineID, ok := s.store.MachineCredential(token)
 	if !ok {
-		return gateway.Grant{}, false
+		return access.Grant{}, false
 	}
-	return gateway.Grant{Target: machineID, Role: "daemon", Valid: func() bool { id, ok := s.store.MachineCredential(token); return ok && id == machineID }}, true
+	return access.Grant{Target: machineID, Role: "daemon", Valid: func() bool { id, ok := s.store.MachineCredential(token); return ok && id == machineID }}, true
 }
 
 func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, func() bool, bool) {
@@ -351,7 +359,7 @@ func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Cli
 	}
 	ticket := randomToken()
 	s.mu.Lock()
-	s.tickets[ticket] = gateway.Grant{Target: machineID, Role: "sdk", Valid: valid}
+	s.tickets[ticket] = access.Grant{Target: machineID, Role: "sdk", Valid: valid}
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.tickets, ticket); s.mu.Unlock() }()
 	tc, err := s.config.TLS()

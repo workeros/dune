@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aiomni/dune/pkg/api"
@@ -41,7 +43,8 @@ func Config() *yamux.Config {
 
 type Stream struct {
 	*yamux.Stream
-	mu sync.Mutex
+	mu     sync.Mutex
+	closed atomic.Bool
 }
 
 func Wrap(s *yamux.Stream) *Stream { return &Stream{Stream: s} }
@@ -95,10 +98,28 @@ func writeAll(w io.Writer, b []byte) error {
 func (s *Stream) Send(m *pb.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed.Load() {
+		return net.ErrClosed
+	}
 	_ = s.SetWriteDeadline(time.Now().Add(WriteTimeout))
 	return Write(s.Stream, m)
 }
-func (s *Stream) Recv() (*pb.Message, error) { return Read(s.Stream) }
+func (s *Stream) Recv() (*pb.Message, error) {
+	if s.closed.Load() {
+		return nil, net.ErrClosed
+	}
+	return Read(s.Stream)
+}
+
+// Close cancels both directions. Yamux's Close alone is a local half-close and
+// can leave an idle reader blocked until the peer responds or a timer expires.
+func (s *Stream) Close() error {
+	if s.closed.Swap(true) {
+		return nil
+	}
+	_ = s.Stream.SetDeadline(time.Now())
+	return s.Stream.Close()
+}
 func (s *Stream) Fail(code string, e error) {
 	_ = s.Send(&pb.Message{Kind: "error", Code: code, Detail: e.Error()})
 }
