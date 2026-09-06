@@ -115,7 +115,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events", ""}, {"DELETE", "", ""}} {
 			req := httptest.NewRequest(route.method, "/api/machines/"+pair.other+route.suffix, bytes.NewBufferString(route.body))
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
-			req.Header.Set("Origin", app.options.PublicURL)
+			req.Header.Set("Origin", app.urls.Origin)
 			req.Header.Set("X-Dune-Request", "1")
 			req.Header.Set("Content-Type", "application/json")
 			out := httptest.NewRecorder()

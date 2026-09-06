@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/deployment"
 	"gopkg.in/yaml.v3"
 	"math/big"
 	"net"
@@ -57,22 +58,7 @@ func Load(path string) (Config, error) {
 	}
 	return c, c.Validate()
 }
-func gatewayURL(address string) (*url.URL, error) {
-	u, e := url.Parse(address)
-	if e != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Path != "/tunnel" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("gateway must be ws://HOST:PORT/tunnel (or wss://)")
-	}
-	if u.Port() != "" {
-		port, e := strconv.Atoi(u.Port())
-		if e != nil || port < 1 || port > 65535 {
-			return nil, fmt.Errorf("gateway port must be 1..65535")
-		}
-	}
-	if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsUnspecified() {
-		return nil, fmt.Errorf("gateway must use a reachable address, not a wildcard")
-	}
-	return u, nil
-}
+func gatewayURL(address string) (*url.URL, error) { return deployment.Gateway(address) }
 func listenAddress(address string) error {
 	host, port, e := net.SplitHostPort(address)
 	if e != nil || net.ParseIP(host) == nil {

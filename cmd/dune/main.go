@@ -68,7 +68,7 @@ func run() error {
 	}
 	if len(args) > 0 && args[0] == "enroll" {
 		flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
-		site := flags.String("site", "", "Dune HTTP or HTTPS site origin")
+		site := flags.String("site", "", "Dune HTTP(S) site URL, including its deployment prefix")
 		token := flags.String("token", "", "one-time machine binding token")
 		certificate := flags.String("certificate", "", "optional custom trust certificate")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -111,12 +111,13 @@ func run() error {
 		data := flags.String("data", ".local/web-accounts", "private account metadata directory")
 		assets := flags.String("assets", "web/dist", "built React assets directory")
 		binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
-		publicURL := flags.String("url", "", "public browser origin")
+		publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
+		gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + tunnel")
 		webListen := flags.String("web-listen", "", "optional extra loopback HTTP listener for local validation")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return webapp.Run(ctx, c, webapp.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, WebListen: *webListen, Binaries: *binaries})
+		return webapp.Run(ctx, c, webapp.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, WebListen: *webListen, Binaries: *binaries})
 
 	}
 	tc, e := c.TLS()

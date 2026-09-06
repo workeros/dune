@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
-import { call, errorText, type Runtime } from "@/lib/api";
+import { socketURL, call, errorText, type Runtime } from "@/lib/api";
 
 type Permission = { id: string; params: { toolCall: { title?: string; [key: string]: unknown }; options: { optionId: string; name: string; kind: string }[] } };
 type State = { revision: number; ready: boolean; busy: string; session_id: string; cwd: string; can_list: boolean; can_load: boolean; error?: string; stop_reason?: string; permissions: Permission[]; list?: { sessions: { sessionId: string; cwd: string; title?: string }[]; nextCursor?: string } };
@@ -17,7 +17,7 @@ export function ACPPane({ machine, runtime }: { machine: string; runtime: Runtim
   setEnded(finished);
   const connect = () => {
    if (disposed || finished) return;
-   const url = new URL(`/api/machines/${machine}/sessions/${runtime.id}/events`, location.href); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+   const url = socketURL(`/api/machines/${encodeURIComponent(machine)}/sessions/${encodeURIComponent(runtime.id)}/events`);
    socket = new WebSocket(url);
    socket.onopen = () => setConnected(true);
    socket.onmessage = (event) => {

@@ -118,6 +118,10 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 
 示例使用 HTTP/WS，无需证书。浏览器注册后选择接入开发机，执行网页给出的同站安装命令。安装脚本不需要 sudo 或预装 Agent；首次绑定写入私有机器配置，随后启动用户后台服务。
 
+`web --url` 可包含部署前缀，例如 `https://example.com/tools/dune/`。API、静态文件、Cookie、浏览器 WebSocket 和安装引导均使用该前缀；机器默认连接 `wss://example.com/tools/dune/tunnel`。反向代理须保留前缀交给当前官方 Web 入口，末尾缺少 `/` 的浏览器入口会跳转到规范地址。
+
+机器使用独立入口时显式传入 `--gateway-url wss://machines.example.com/private/connect`，并将该入口代理到 Web 服务的 `/tools/dune/tunnel`。此覆盖只改变安装绑定返回的机器地址，不改变浏览器或内部工作台连接的路径。原有 `--url` 与机器配置中 `gateway` 不同的部署（例如额外 loopback 浏览器入口），升级时也应显式填写 `--gateway-url`。省略 `--url` 时仍从原配置的 `gateway` 派生浏览器地址。
+
 也可在已安装 Dune 的机器手动绑定：
 
 ```sh

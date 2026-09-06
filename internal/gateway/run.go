@@ -12,6 +12,7 @@ import (
 	"github.com/valyala/fasthttp"
 	"log"
 	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -40,8 +41,9 @@ func Run(ctx context.Context, c config.Config) error {
 		}
 		return (access.Grant{Target: c.Target, Role: gateway.RoleEither}).Bind()
 	})
+	endpoint, _ := url.Parse(c.Gateway)
 	srv := &fasthttp.Server{Handler: func(c *fasthttp.RequestCtx) {
-		if string(c.Path()) != "/tunnel" {
+		if string(c.Path()) != endpoint.Path {
 			c.Error("not found", 404)
 			return
 		}

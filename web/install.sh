@@ -2,6 +2,7 @@
 # Download from the same HTTP or HTTPS site. No sudo and no Agent dependency.
 set -eu
 site=${1:?Usage: sh dune-install.sh SITE ONE_TIME_TOKEN [CA_CERT]}
+site=${site%/}
 token=${2:?one-time token required}
 cert=${3:-}
 case "$site" in http://*|https://*) ;; *) echo 'HTTP or HTTPS site required' >&2; exit 1;; esac

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,16 +16,15 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/config"
+	"github.com/aiomni/dune/pkg/deployment"
 )
 
 func EnrollMachine(ctx context.Context, path, site, token, certificate string) error {
-	u, err := url.Parse(site)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
-		return fmt.Errorf("site must be an HTTP or HTTPS origin")
+	u, err := deployment.Public(site)
+	if err != nil {
+		return err
 	}
-	if u.Scheme != "https" && u.Scheme != "http" {
-		return fmt.Errorf("machine binding requires HTTP or HTTPS")
-	}
+	site = u.String()
 	if len(token) != 64 {
 		return fmt.Errorf("one-time binding token required")
 	}

@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Icon } from "@iconify/react";
 import historyIcon from "@iconify-icons/ri/history-line";
 import { Button } from "./ui/button";
-import { call, errorText, type Runtime } from "@/lib/api";
+import { socketURL, call, errorText, type Runtime } from "@/lib/api";
 
 export function TerminalPane({ machine, runtime }: { machine: string; runtime: Runtime }) {
   const container = useRef<HTMLDivElement>(null);
@@ -23,8 +23,8 @@ export function TerminalPane({ machine, runtime }: { machine: string; runtime: R
     const connect = () => {
       if (disposed) return;
       setStatus("连接中");
-      const url = new URL(`/api/machines/${machine}/sessions/${runtime.id}/events`, location.href);
-      url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const url = socketURL(`/api/machines/${encodeURIComponent(machine)}/sessions/${encodeURIComponent(runtime.id)}/events`);
+
       socket = new WebSocket(url);
       socket.onopen = () => { retry = 300; setConnected(true); setStatus("已连接"); setError(""); term.reset(); resize(); term.focus(); };
       socket.onmessage = (event) => {

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
@@ -31,10 +33,11 @@ import (
 const cookieName = "dune_session"
 
 type Options struct {
-	DataDir   string
-	Binaries  string
-	Assets    string
-	PublicURL string
+	DataDir    string
+	Binaries   string
+	Assets     string
+	PublicURL  string
+	GatewayURL string
 	// Optional extra loopback-only HTTP listener for local browser validation
 	// while remote machines connect through the primary verified TLS endpoint.
 	WebListen string
@@ -47,6 +50,7 @@ type authRate struct {
 
 type Server struct {
 	store     *Store
+	urls      deployment.URLs
 	gateway   *gateway.Gateway
 	config    config.Config
 	options   Options
@@ -60,15 +64,13 @@ type Server struct {
 }
 
 func NewServer(parent context.Context, c config.Config, options Options, store *Store) (*Server, error) {
-	u, err := url.Parse(options.PublicURL)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
-		return nil, fmt.Errorf("public URL must be an origin without a path")
+	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
+	if err != nil {
+		return nil, err
 	}
-	if u.Scheme != "https" && u.Scheme != "http" {
-		return nil, fmt.Errorf("public URL must use HTTP or HTTPS")
-	}
+	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
-	s := &Server{store: store, config: c, options: options, ctx: ctx, cancel: cancel, tickets: map[string]access.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	s := &Server{urls: addresses, store: store, config: c, options: options, ctx: ctx, cancel: cancel, tickets: map[string]access.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = gateway.New()
 	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		grant, ok := s.authorize(token)
@@ -112,6 +114,24 @@ func NewServer(parent context.Context, c config.Config, options Options, store *
 func (s *Server) Close() { s.cancel(); s.gateway.Close() }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// This entry point expects the deployment prefix to be preserved by the
+	// proxy. Map it exactly once, before handing fixed relative routes to mux.
+	if s.urls.Path != "/" && r.URL.Path == strings.TrimSuffix(s.urls.Path, "/") && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		target := &url.URL{Path: s.urls.Path, RawQuery: r.URL.RawQuery}
+		http.Redirect(w, r, target.String(), http.StatusPermanentRedirect)
+		return
+	}
+	clean := path.Clean(r.URL.Path)
+	if strings.HasSuffix(r.URL.Path, "/") && clean != "/" {
+		clean += "/"
+	}
+	if !strings.HasPrefix(r.URL.Path, s.urls.Path) || clean != r.URL.Path {
+		http.NotFound(w, r)
+		return
+	}
+	r = r.Clone(r.Context())
+	r.URL.Path = "/" + strings.TrimPrefix(r.URL.Path, s.urls.Path)
+	r.URL.RawPath = ""
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -122,7 +142,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		origin := r.Header.Get("Origin")
 		_, cookieErr := r.Cookie(cookieName)
-		if r.Header.Get("X-Dune-Request") != "1" || (origin != "" && origin != s.options.PublicURL) || (origin == "" && cookieErr == nil) {
+		if r.Header.Get("X-Dune-Request") != "1" || (origin != "" && origin != s.urls.Origin) || (origin == "" && cookieErr == nil) {
 			writeError(w, http.StatusForbidden, "ORIGIN", "same-origin Dune request required")
 			return
 		}
@@ -231,7 +251,7 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 		writeError(w, status, "AUTH_FAILED", err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: 7 * 24 * 3600})
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: 7 * 24 * 3600})
 	writeJSON(w, http.StatusOK, user)
 }
 func (s *Server) register(w http.ResponseWriter, r *http.Request) { s.auth(w, r, true) }
@@ -250,7 +270,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "STORE_FAILED", err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: s.urls.CookiePath, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -287,9 +307,9 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "BINDING_FAILED", err.Error())
 		return
 	}
-	endpoint := strings.Replace(strings.TrimSuffix(s.config.Gateway, "/tunnel"), "ws", "http", 1)
+	endpoint := strings.TrimSuffix(s.urls.PublicURL, "/")
 	writeJSON(w, 200, map[string]any{"token": token, "expires_at": expires, "endpoint": endpoint,
-		"command": fmt.Sprintf("curl --fail --show-error --proto '=http,https' %s/install.sh -o dune-install.sh && sh dune-install.sh %s %s", shellQuote(endpoint), shellQuote(endpoint), shellQuote(token))})
+		"command": fmt.Sprintf("curl --fail --show-error --proto '=http,https' %s -o dune-install.sh && sh dune-install.sh %s %s", shellQuote(endpoint+"/install.sh"), shellQuote(endpoint), shellQuote(token))})
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
@@ -312,7 +332,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "BINDING_FAILED", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"machine": machine, "credential": credential, "gateway": s.config.Gateway})
+	writeJSON(w, 200, map[string]any{"machine": machine, "credential": credential, "gateway": s.urls.GatewayURL})
 }
 
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
@@ -370,7 +390,10 @@ func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Cli
 	// Browser adapter and Gateway are one server. Use its local listener
 	// instead of hairpinning through a changing VPN/public route. TLS still
 	// verifies the advertised Gateway identity against the pinned certificate.
-	endpoint := s.config.Gateway
+	localURL, _ := url.Parse(s.config.Gateway)
+	localURL.Path = s.urls.Path + "tunnel"
+	localURL.RawPath = ""
+	endpoint := localURL.String()
 	if host, port, e := net.SplitHostPort(s.config.Listen); e == nil {
 		u, _ := url.Parse(endpoint)
 		if tc != nil {
@@ -481,7 +504,7 @@ type browserEvent struct {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Origin") != s.options.PublicURL {
+	if r.Header.Get("Origin") != s.urls.Origin {
 		writeError(w, 403, "ORIGIN", "same-origin browser required")
 		return
 	}
@@ -517,7 +540,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer stream.Close()
-	u := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == s.options.PublicURL }}
+	u := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == s.urls.Origin }}
 	wc, err := u.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -634,6 +657,9 @@ func Run(ctx context.Context, c config.Config, options Options) error {
 		return err
 	}
 	if options.PublicURL == "" {
+		if !strings.HasSuffix(c.Gateway, "/tunnel") {
+			return fmt.Errorf("public browser URL required when configured gateway uses a nonstandard connection path")
+		}
 		options.PublicURL = strings.Replace(strings.TrimSuffix(c.Gateway, "/tunnel"), "ws", "http", 1)
 	}
 	dataDir, err := filepath.Abs(options.DataDir)
