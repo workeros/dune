@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +50,7 @@ type authRate struct {
 type Server struct {
 	store     *metadata.Store
 	identity  identity.Service
-	access    *authorization.Local
+	access    *authorization.Service
 	urls      deployment.URLs
 	gateway   *gateway.Gateway
 	options   Options
@@ -63,8 +62,8 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, options Options, store *metadata.Store, local identity.Service, owner *authorization.Local) (*Server, error) {
-	if options.DialGateway == nil || local == nil || owner == nil {
+func NewServer(parent context.Context, options Options, store *metadata.Store, local identity.Service, authorizer *authorization.Service) (*Server, error) {
+	if options.DialGateway == nil || local == nil || authorizer == nil {
 		return nil, fmt.Errorf("Gateway dialer, identity and access modules required")
 	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
@@ -73,9 +72,9 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	}
 	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
-	s := &Server{urls: addresses, store: store, identity: local, access: owner, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	s := &Server{urls: addresses, store: store, identity: local, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = gateway.New()
-	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, owner.Authorize))
+	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, authorizer.Authorize))
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
@@ -300,25 +299,32 @@ func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	type machineView struct {
-		Machine
-		Online bool `json:"online"`
+	query, ok := pageQuery(w, r)
+	if !ok {
+		return
 	}
-	out := []machineView{}
-	machines, err := s.store.Machines(r.Context(), user.ID)
+	page, err := s.access.Discover(r.Context(), user, query, true)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
 	}
-	for _, machine := range machines {
-		out = append(out, machineView{machine, s.gateway.Online(machine.ID)})
+	type machineView struct {
+		Machine
+		Online bool `json:"online"`
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
+	out := struct {
+		Items      []machineView `json:"items"`
+		NextCursor string        `json:"next_cursor,omitempty"`
+	}{Items: []machineView{}, NextCursor: page.NextCursor}
+	for _, resource := range page.Items {
+		b := resource.Runner.Binding
+		out.Items = append(out.Items, machineView{Machine: Machine{ID: b.MachineID, RunnerID: resource.Runner.ID, Name: resource.Runner.Name, OS: resource.OS, Arch: resource.Arch, CreatedAt: resource.Runner.CreatedAt}, Online: s.gateway.Online(b.MachineID)})
+	}
 	writeJSON(w, 200, out)
 }
 
 func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.user(w, r)
+	_, cookie, ok := s.user(w, r)
 	if !ok {
 		return
 	}
@@ -328,7 +334,7 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	token, expires, err := s.store.IssueEnrollment(r.Context(), user.ID, request.Name)
+	token, expires, err := s.access.IssueEnrollment(r.Context(), cookie, request.Name)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -353,7 +359,14 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	machine, credential, err := s.store.Enroll(r.Context(), request.Token, request.OS, request.Arch)
+	decision, err := s.access.EnrollmentDecision(r.Context(), request.Token)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), decision.ValidUntil)
+	defer cancel()
+	machine, credential, err := s.store.Enroll(ctx, request.Token, request.OS, request.Arch)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -362,12 +375,12 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.user(w, r)
+	_, cookie, ok := s.user(w, r)
 	if !ok {
 		return
 	}
 	machineID := r.PathValue("machine")
-	if err := s.store.Revoke(r.Context(), user.ID, machineID); err != nil {
+	if err := s.access.Revoke(r.Context(), cookie, machineID); err != nil {
 		writeMetadataError(w, err)
 		return
 	}
@@ -383,14 +396,7 @@ func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Cli
 	machineID := r.PathValue("machine")
 	grant, err := s.access.Client(r.Context(), cookie, machineID)
 	if err != nil {
-		switch {
-		case errors.Is(err, authorization.ErrNotFound):
-			writeError(w, 404, "NOT_FOUND", "machine not found")
-		case errors.Is(err, identity.ErrUnauthorized):
-			writeError(w, 401, "UNAUTHORIZED", "please sign in")
-		default:
-			writeError(w, 503, "IDENTITY_UNAVAILABLE", "identity service unavailable")
-		}
+		writeMetadataError(w, err)
 		return nil, nil, false
 	}
 	defer grant.Close()

@@ -1,4 +1,4 @@
-// Package authorization binds local user or machine authentication to a fixed
+// Package authorization binds user or machine authentication to a fixed
 // Gateway connection. It contains product access policy, not protocol logic.
 package authorization
 
@@ -23,14 +23,23 @@ type Sessions interface {
 	Namespace() string
 }
 
-type Local struct {
-	ctx      context.Context
-	sessions Sessions
-	bindings Repository
+type Service struct {
+	checker   access.Checker
+	ownerOnly bool
+	ctx       context.Context
+	sessions  Sessions
+	bindings  Repository
 }
 
-func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Local {
-	return &Local{ctx: ctx, sessions: sessions, bindings: bindings}
+func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Service {
+	return New(ctx, sessions, bindings, nil)
+}
+func New(ctx context.Context, sessions Sessions, bindings Repository, checker access.Checker) *Service {
+	ownerOnly := checker == nil
+	if checker == nil {
+		checker = access.Owner{}
+	}
+	return &Service{ctx: ctx, sessions: sessions, bindings: bindings, ownerOnly: ownerOnly, checker: &boundedChecker{Checker: checker, slots: make(chan struct{}, 64)}}
 }
 
 // ClientGrant permits only the initial authenticated connection. Close removes
@@ -48,16 +57,16 @@ func (g *ClientGrant) ExpiresAt() int64 { return g.expires }
 func (g *ClientGrant) Valid() bool      { return g.valid() }
 func (g *ClientGrant) Close()           { g.release() }
 
-func (l *Local) Client(ctx context.Context, session, target string) (*ClientGrant, error) {
+func (l *Service) Client(ctx context.Context, session, target string) (*ClientGrant, error) {
 	return l.client(ctx, session, target, l.sessions.Authenticate, nil)
 }
-func (l *Local) ClientCLI(ctx context.Context, session, target string) (*ClientGrant, error) {
+func (l *Service) ClientCLI(ctx context.Context, session, target string) (*ClientGrant, error) {
 	return l.client(ctx, session, target, l.sessions.AuthenticateCLI, nil)
 }
-func (l *Local) ClientRunnerCLI(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
+func (l *Service) ClientRunnerCLI(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
 	return l.client(ctx, session, binding.MachineID, l.sessions.AuthenticateCLI, &binding)
 }
-func (l *Local) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error), binding *runner.Binding) (*ClientGrant, error) {
+func (l *Service) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error), binding *runner.Binding) (*ClientGrant, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -65,16 +74,29 @@ func (l *Local) client(ctx context.Context, session, target string, authenticate
 	if err != nil {
 		return nil, err
 	}
+	resource, decision, err := l.Resource(ctx, user, target, true, "runner.connect")
+	if err != nil {
+		return nil, err
+	}
+	if resource.Runner.Binding == nil {
+		return nil, ErrNotFound
+	}
+	if binding != nil && *binding != *resource.Runner.Binding {
+		return nil, runner.ErrBindingChanged
+	}
+	expected := *resource.Runner.Binding
+	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
+	defer cancel()
 	token := ticketPrefix + wire.ID() + wire.ID()
 	var record ConnectionAccess
 	expires := time.Now().Add(TicketLifetime).Unix()
-	if binding == nil {
-		record, err = l.bindings.CreateAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, target, expires)
-	} else {
-		record, err = l.bindings.CreateRunnerAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, *binding, expires)
-	}
+	record, err = l.bindings.CreateRunnerAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, expected, expires)
 	if err != nil {
 		return nil, err
+	}
+	if record.OwnerID != resource.OwnerID {
+		_ = l.bindings.DeleteAccess(ctx, credentialHash(token))
+		return nil, runner.ErrBindingChanged
 	}
 	return &ClientGrant{token: token, expires: record.ExpiresAt, valid: l.validAccess(record), release: func() {
 		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
@@ -85,7 +107,7 @@ func (l *Local) client(ctx context.Context, session, target string, authenticate
 	}}, nil
 }
 
-func (l *Local) validAccess(record ConnectionAccess) func() bool {
+func (l *Service) validAccess(record ConnectionAccess) func() bool {
 	// Captured values cannot be replaced by a request payload or another login.
 	return func() bool {
 		if l.ctx.Err() != nil || record.Namespace != l.sessions.Namespace() {
@@ -100,11 +122,11 @@ func (l *Local) validAccess(record ConnectionAccess) func() bool {
 
 // Authorize is used only by the connection-authentication entry point. Browser
 // sessions are never machine credentials and tickets never authenticate fabricd.
-func (l *Local) Authorize(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 	if err := l.ctx.Err(); err != nil {
 		return gateway.BindingContext{}, nil, err
 	}
-	ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(l.ctx, access.CheckTimeout+500*time.Millisecond)
 	defer cancel()
 	if strings.HasPrefix(token, ticketPrefix) {
 		if len(token) != len(ticketPrefix)+64 {
@@ -117,7 +139,11 @@ func (l *Local) Authorize(token string) (gateway.BindingContext, gateway.Connect
 		if record.ExpiresAt <= time.Now().Unix() {
 			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
-		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Valid: l.validAccess(record)}).Bind()
+		fixed := access.Scope{PrincipalID: record.PrincipalID, Namespace: record.Namespace, OwnerID: record.OwnerID, Binding: runner.Binding{RunnerID: record.RunnerID, FabricID: record.FabricID, MachineID: record.Target, Revision: record.BindingRevision}}
+		if _, err := access.Evaluate(ctx, l.checker, access.Request{Scope: fixed, RequestID: wire.ID(), Operation: "runner.connect", Suboperation: "attached"}); err != nil {
+			return gateway.BindingContext{}, nil, err
+		}
+		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Valid: l.validAccess(record), Policy: &access.Policy{Scope: fixed, Checker: l.checker}}).Bind()
 	}
 	target, err := l.bindings.MachineCredential(ctx, token)
 	if err != nil {
@@ -132,4 +158,19 @@ func (l *Local) Authorize(token string) (gateway.BindingContext, gateway.Connect
 		current, err := l.bindings.MachineCredential(ctx, token)
 		return err == nil && current == target
 	}}).Bind()
+}
+
+type boundedChecker struct {
+	Checker access.Checker
+	slots   chan struct{}
+}
+
+func (c *boundedChecker) Check(ctx context.Context, r access.Request) (access.Decision, error) {
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	case <-ctx.Done():
+		return access.Decision{}, ctx.Err()
+	}
+	return c.Checker.Check(ctx, r)
 }

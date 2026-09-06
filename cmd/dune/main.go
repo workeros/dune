@@ -18,6 +18,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/sdk"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -77,7 +78,7 @@ func run() error {
 		return fmt.Errorf("--target and --runner cannot be combined")
 	}
 	if len(args) > 0 && (args[0] == "help" || args[0] == "version") {
-		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines|runners\n  dune --login FILE --runner RUNNER_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login, --runner and --target must precede the subcommand; --login and --config are mutually exclusive.")
+		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines|runners [--limit 1..100] [--cursor CURSOR]\n  dune --login FILE --runner RUNNER_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login, --runner and --target must precede the subcommand; --login and --config are mutually exclusive.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "init" {
@@ -199,20 +200,31 @@ func run() error {
 			return err
 		}
 		defer human.Close()
-		if args[0] == "machines" {
-			machines, err := human.Machines(ctx, credentials.Session)
+		if args[0] == "machines" || args[0] == "runners" {
+			flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+			cursor := flags.String("cursor", "", "opaque continuation from the preceding page")
+			limit := flags.Int("limit", 32, "page size (1..100)")
+			if err := flags.Parse(args[1:]); err != nil {
+				return err
+			}
+			if flags.NArg() != 0 || *limit < 1 || *limit > 100 {
+				return fmt.Errorf("invalid discovery arguments")
+			}
+			query := runner.Query{Cursor: *cursor, Limit: *limit}
+			if args[0] == "machines" {
+				page, err := human.Machines(ctx, credentials.Session, query)
+				if err != nil {
+					return err
+				}
+				return printJSON(page)
+			}
+			page, err := human.Runners(ctx, credentials.Session, query)
 			if err != nil {
 				return err
 			}
-			return printJSON(machines)
+			return printJSON(page)
 		}
-		if args[0] == "runners" {
-			rows, err := human.Runners(ctx, credentials.Session)
-			if err != nil {
-				return err
-			}
-			return printJSON(rows)
-		}
+
 		if *runnerID != "" {
 			row, err := human.Runner(ctx, credentials.Session, *runnerID)
 			if err != nil {

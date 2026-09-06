@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/aiomni/dune/internal/config"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/login"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -24,7 +25,7 @@ func TestHumanCLILoginAndExecution(t *testing.T) {
 	})
 }
 
-func exerciseHumanCLI(t *testing.T, ctx context.Context, site, dir, target string, confirm func(string, string)) func() {
+func exerciseHumanCLI(t *testing.T, ctx context.Context, site, dir, target string, denyFileWrite bool, confirm func(string, string)) func() {
 	t.Helper()
 	file := filepath.Join(dir, "human", "login.json")
 	command := exec.CommandContext(ctx, binary, "login", "--site", site, "--file", file, "--no-browser")
@@ -81,8 +82,9 @@ func exerciseHumanCLI(t *testing.T, ctx context.Context, site, dir, target strin
 		return out
 	}
 	out := invoke("--login", file, "machines")
-	var machines []login.Machine
-	must(t, json.Unmarshal(out, &machines))
+	var machinePage login.MachinePage
+	must(t, json.Unmarshal(out, &machinePage))
+	machines := machinePage.Items
 	if len(machines) != 1 || machines[0].ID != target {
 		t.Fatal("CLI discovery lost owner or target")
 	}
@@ -91,8 +93,9 @@ func exerciseHumanCLI(t *testing.T, ctx context.Context, site, dir, target strin
 		t.Fatal("CLI execution did not reach fabricd")
 	}
 	out = invoke("--login", file, "runners")
-	var runners []runner.Runner
-	must(t, json.Unmarshal(out, &runners))
+	var runnerPage runner.Page
+	must(t, json.Unmarshal(out, &runnerPage))
+	runners := runnerPage.Items
 	if len(runners) != 1 || runners[0].ID == target || runners[0].Binding == nil || runners[0].Binding.MachineID != target {
 		t.Fatal("Runner discovery confused logical and machine identity")
 	}
@@ -109,9 +112,24 @@ func exerciseHumanCLI(t *testing.T, ctx context.Context, site, dir, target strin
 	if _, err := client.List(ctx); err != nil {
 		t.Fatal("human SDK cannot use CLI session", err)
 	}
+	if denyFileWrite {
+		destination := filepath.Join(dir, "must-not-be-written")
+		input := filepath.Join(dir, "denied-file-request.json")
+		body, err := json.Marshal(api.File{Action: "write", Path: destination, Data: []byte("enterprise denied content")})
+		must(t, err)
+		must(t, os.WriteFile(input, body, 0600))
+		cmd := exec.CommandContext(ctx, binary, "--login", file, "--target", target, "files", input)
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "ACCESS_DENIED") {
+			t.Fatalf("enterprise file write was not rejected: %v %s", err, out)
+		}
+		if _, err := os.Stat(destination); !os.IsNotExist(err) {
+			t.Fatal("denied CLI file write changed the target")
+		}
+	}
 	return func() {
 		t.Helper()
-		if _, err := human.Machines(ctx, credentials.Session); err == nil {
+		if _, err := human.Machines(ctx, credentials.Session, runner.Query{}); err == nil {
 			t.Fatal("CLI session survived browser logout")
 		}
 		if _, err := client.List(ctx); err == nil {

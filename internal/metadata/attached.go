@@ -11,8 +11,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 type Machine struct {
@@ -30,6 +32,15 @@ func tokenHash(token string) string {
 }
 
 func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (string, int64, error) {
+	return s.issueEnrollment(ctx, userID, name, "", "")
+}
+func (s *Store) IssueEnrollmentForSession(ctx context.Context, user identity.User, name, hash string) (string, int64, error) {
+	if hash == "" {
+		return "", 0, identity.ErrUnauthorized
+	}
+	return s.issueEnrollment(ctx, user.ID, name, hash, user.Namespace)
+}
+func (s *Store) issueEnrollment(ctx context.Context, userID, name, hash, namespace string) (string, int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 120 || strings.ContainsFunc(name, unicode.IsControl) {
 		return "", 0, fmt.Errorf("%w: machine name must be 1..120 bytes without control characters", ErrInvalidArgument)
@@ -39,6 +50,11 @@ func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (strin
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		if err := s.lockPrincipal(ctx, tx, userID); err != nil {
 			return err
+		}
+		if hash != "" {
+			if err := s.checkBrowserSession(ctx, tx, userID, hash, namespace); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE principal_id=$1 AND expires_at<=$2`, userID, time.Now().Unix()); err != nil {
 			return err
@@ -165,6 +181,44 @@ func (s *Store) Revoke(ctx context.Context, userID, machineID string) error {
 		}
 		if count == 0 {
 			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+func (s *Store) EnrollmentUser(ctx context.Context, token string) (identity.User, error) {
+	var user identity.User
+	if len(token) != 64 {
+		return user, identity.ErrUnauthorized
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email FROM dune_enrollments e JOIN dune_principals p ON p.id=e.principal_id WHERE e.hash=$1 AND e.expires_at>$2 AND p.enabled=TRUE`, tokenHash(token), time.Now().Unix()).Scan(&user.ID, &user.Email)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = identity.ErrUnauthorized
+	}
+	return user, err
+}
+func (s *Store) RevokeAuthorized(ctx context.Context, user identity.User, hash string, expected authorization.Resource) error {
+	if expected.Runner.Binding == nil || expected.Runner.Kind != "attached" {
+		return ErrInvalidArgument
+	}
+	b := *expected.Runner.Binding
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		if err := s.lockPrincipal(ctx, tx, user.ID); err != nil {
+			return err
+		}
+		if err := s.checkBrowserSession(ctx, tx, user.ID, hash, user.Namespace); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `DELETE FROM dune_runners WHERE id=$1 AND owner_id=$2 AND kind='attached' AND fabric_id=$3 AND binding_revision=$4 AND EXISTS(SELECT 1 FROM dune_machines WHERE runner_id=$1 AND id=$5)`, b.RunnerID, expected.OwnerID, b.FabricID, b.Revision, b.MachineID)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return runner.ErrBindingChanged
 		}
 		return nil
 	})

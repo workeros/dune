@@ -13,6 +13,7 @@ var transferTables = []struct{ name, columns string }{
 	{"dune_principals", "id,email,enabled,auth_version"},
 	{"dune_external_identities", "namespace,subject,principal_id"},
 	{"dune_identity_links", "request_id,actor,principal_id,namespace,subject,reason,created_at"},
+	{"dune_discovery_cursors", "id,principal_id,identity_namespace,operation,after_id,expires_at"},
 	{"dune_local_accounts", "principal_id,email,salt,password_hash"},
 	{"dune_sessions", "hash,principal_id,expires_at,auth_version,identity_namespace,kind,parent_hash"},
 	{"dune_cli_logins", "id,challenge,site,identity_namespace,expires_at,session_hash"},
@@ -20,7 +21,7 @@ var transferTables = []struct{ name, columns string }{
 	{"dune_enrollments", "hash,principal_id,name,expires_at"},
 	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
-	{"dune_access_tickets", "hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at"},
+	{"dune_access_tickets", "hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id"},
 }
 
 func (s *Store) emptyImportTarget(ctx context.Context, tx *sql.Tx) error {

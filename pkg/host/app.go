@@ -17,6 +17,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/deployment"
 	externalidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
@@ -40,6 +41,9 @@ type Options struct {
 	// Identity selects a trusted external browser login provider instead of
 	// local password login. Nil preserves the default local account behavior.
 	Identity *externalidentity.Options
+	// AccessChecker selects enterprise policy instead of the default owner check.
+	// It must honor cancellation and must not retain credentials or work content.
+	AccessChecker access.Checker
 	// DialGateway optionally connects the workbench to this application's tunnel
 	// using the supplied short-lived credential. The returned connection belongs
 	// to Dune. It must honor context cancellation and must not replay requests.
@@ -111,13 +115,13 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if external != nil {
 		service = external
 	}
-	owner := authorization.NewLocal(ctx, service, store)
+	authorizer := authorization.New(ctx, service, store, options.AccessChecker)
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		Assets: options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway: dial,
 		External:    external,
-	}, store, service, owner)
+	}, store, service, authorizer)
 	if err != nil {
 		cancel()
 		store.Close()

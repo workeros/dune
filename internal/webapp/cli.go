@@ -114,14 +114,18 @@ func (s *Server) cliMachines(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	machines, err := s.store.Machines(r.Context(), user.ID)
+	query, ok := pageQuery(w, r)
+	if !ok {
+		return
+	}
+	page, err := s.access.Discover(r.Context(), user, query, true)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
 	}
-	out := make([]login.Machine, 0, len(machines))
-	for _, machine := range machines {
-		out = append(out, login.Machine{ID: machine.ID, Name: machine.Name, Online: s.gateway.Online(machine.ID)})
+	out := login.MachinePage{Items: []login.Machine{}, NextCursor: page.NextCursor}
+	for _, resource := range page.Items {
+		out.Items = append(out.Items, login.Machine{ID: resource.Runner.Binding.MachineID, Name: resource.Runner.Name, Online: s.gateway.Online(resource.Runner.Binding.MachineID)})
 	}
 	writeJSON(w, 200, out)
 }

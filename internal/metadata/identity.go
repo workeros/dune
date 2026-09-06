@@ -123,3 +123,16 @@ func (s *Store) SetPrincipalEnabled(ctx context.Context, id string, enabled bool
 		return nil
 	})
 }
+
+func (s *Store) checkBrowserSession(ctx context.Context, tx *sql.Tx, principal, hash, namespace string) error {
+	query := `SELECT s.hash FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.kind='browser' AND s.parent_hash IS NULL AND s.expires_at>$4 AND s.auth_version=p.auth_version AND p.enabled=TRUE`
+	if s.postgres {
+		query += ` FOR KEY SHARE OF s`
+	}
+	var found string
+	err := tx.QueryRowContext(ctx, query, hash, principal, namespace, time.Now().Unix()).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = identity.ErrUnauthorized
+	}
+	return err
+}

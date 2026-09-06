@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/identity"
@@ -39,6 +41,7 @@ func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 type workbenchCase struct {
 	override, external, separateGateway bool
 	humanCLI                            bool
+	enterprise                          bool
 	database                            *storage.Config
 }
 
@@ -52,6 +55,24 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	onlineSite := site
 	var app *host.App
 	options := host.Options{PublicURL: site, DataDir: filepath.Join(dir, "accounts")}
+	var sharedPrincipal atomic.Value
+	var policyRevoked, sharedExecution atomic.Bool
+	if mode.enterprise {
+		options.AccessChecker = enterpriseCheck(func(ctx context.Context, r access.Request) (access.Decision, error) {
+			shared, _ := sharedPrincipal.Load().(string)
+			allowed := r.PrincipalID == r.OwnerID || (shared != "" && r.PrincipalID == shared)
+			if shared != "" && r.PrincipalID == shared && r.PrincipalID != r.OwnerID && (r.Operation == "profile.start" || r.Operation == "exec") {
+				sharedExecution.Store(true)
+			}
+			allowed = allowed && !policyRevoked.Load() && !(r.Operation == "files" && r.Suboperation == "write") && !(r.Operation == "agent.config" && r.Suboperation == "save")
+			return access.Decision{Allowed: allowed, Reason: "ENTERPRISE_POLICY", ID: r.RequestID, ValidUntil: time.Now().Add(time.Second)}, nil
+		})
+		defer func() {
+			if !sharedExecution.Load() {
+				t.Error("shared execution did not reach the enterprise operation checker")
+			}
+		}()
+	}
 	if mode.database != nil {
 		options.DataDir, options.Database = "", mode.database
 	}
@@ -62,7 +83,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		remote := httptest.NewUnstartedServer(nil)
 		remoteSite := "http://" + remote.Listener.Addr().String() + "/tools/dune/"
 		onlineSite = remoteSite
-		remoteApp, err := host.Open(ctx, host.Options{PublicURL: remoteSite, Database: mode.database})
+		remoteApp, err := host.Open(ctx, host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker})
 		must(t, err)
 		defer remoteApp.Close()
 		remote.Config.Handler = remoteApp
@@ -124,13 +145,19 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 	}
 	var user struct{ ID string }
-	do("POST", "api/auth/register", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, &user)
+	email := "prefix@example.test"
+	do("POST", "api/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
 	var enrollment struct{ Token string }
 	do("POST", "api/enrollments", map[string]string{"name": "prefixed machine"}, &enrollment)
 	machinePath := filepath.Join(dir, "machine", "config.yaml")
 	must(t, webapp.EnrollMachine(ctx, machinePath, site, enrollment.Token, ""))
 	machineConfig, err := config.Load(machinePath)
 	must(t, err)
+	if mode.enterprise {
+		email = "shared@example.test"
+		do("POST", "api/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
+		sharedPrincipal.Store(user.ID)
+	}
 	expectedGateway := options.GatewayURL
 	if expectedGateway == "" {
 		expectedGateway = "ws" + strings.TrimPrefix(site, "http") + "tunnel"
@@ -154,9 +181,11 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 	}()
 	for {
-		var machines []struct {
-			ID     string
-			Online bool
+		var page struct {
+			Items []struct {
+				ID     string
+				Online bool
+			}
 		}
 		// The directory is still local at S1. In the separate-Gateway case,
 		// wait for fabricd on its actual owner; execution below goes through A.
@@ -166,10 +195,10 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			response.Body.Close()
 			t.Fatalf("machine readiness: %d", response.StatusCode)
 		}
-		err = json.NewDecoder(response.Body).Decode(&machines)
+		err = json.NewDecoder(response.Body).Decode(&page)
 		response.Body.Close()
 		must(t, err)
-		if len(machines) == 1 && machines[0].Online {
+		if len(page.Items) == 1 && page.Items[0].Online {
 			break
 		}
 		select {
@@ -235,6 +264,42 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			}
 		}
 	}
+	if mode.enterprise {
+		body, err := json.Marshal(map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "save", Config: &api.AgentConfig{Name: "denied", Command: "/bin/sh", Adapter: "pty"}}})
+		must(t, err)
+		request, err := http.NewRequestWithContext(ctx, "POST", site+"api/machines/"+machineConfig.Target+"/call", bytes.NewReader(body))
+		must(t, err)
+		request.Header.Set("Origin", origin)
+		request.Header.Set("X-Dune-Request", "1")
+		request.Header.Set("Content-Type", "application/json")
+		response, err := browser.Do(request)
+		must(t, err)
+		var failure struct{ Code string }
+		must(t, json.NewDecoder(response.Body).Decode(&failure))
+		response.Body.Close()
+		if response.StatusCode != 422 || failure.Code != "ACCESS_DENIED" {
+			t.Fatal("Web write bypassed enterprise checker", response.StatusCode, failure.Code)
+		}
+		var configs []api.AgentConfig
+		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "list"}}, &configs)
+		if len(configs) != 0 {
+			t.Fatal("denied Web write saved configuration")
+		}
+		policyRevoked.Store(true)
+		awaitRevocation()
+		response, err = browser.Get(site + "api/machines")
+		must(t, err)
+		var page struct{ Items []json.RawMessage }
+		must(t, json.NewDecoder(response.Body).Decode(&page))
+		response.Body.Close()
+		if response.StatusCode != 200 || len(page.Items) != 0 {
+			t.Fatal("enterprise denial fell back to owner discovery")
+		}
+		policyRevoked.Store(false)
+		connection.Close()
+		connection = connect()
+		readPrefixedTerminalMarker(t, connection)
+	}
 	if app != nil {
 		started := time.Now()
 		must(t, app.SetPrincipalEnabled(ctx, user.ID, false))
@@ -251,7 +316,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 				t.Fatal("suspended session revived")
 			}
 		}
-		do("POST", "api/auth/login", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, nil)
+		do("POST", "api/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
 		var remaining []api.Runtime
 		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
@@ -269,7 +334,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		if response.StatusCode != http.StatusUnauthorized {
 			t.Fatal("pre-link session survived")
 		}
-		do("POST", "api/auth/login", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, nil)
+		do("POST", "api/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
 		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
 			t.Fatal("identity link changed the running PTY")
@@ -280,7 +345,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	var checkCLIRevoked func()
 	if mode.humanCLI {
-		checkCLIRevoked = exerciseHumanCLI(t, ctx, site, dir, machineConfig.Target, func(id, code string) {
+		checkCLIRevoked = exerciseHumanCLI(t, ctx, site, dir, machineConfig.Target, mode.enterprise, func(id, code string) {
 			do("POST", "api/auth/cli/"+id, map[string]any{"code": code, "approve": true}, nil)
 		})
 	}

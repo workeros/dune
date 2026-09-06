@@ -38,3 +38,8 @@ type Machine struct {
 	Name   string `json:"name"`
 	Online bool   `json:"online"`
 }
+
+type MachinePage struct {
+	Items      []Machine `json:"items"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+}

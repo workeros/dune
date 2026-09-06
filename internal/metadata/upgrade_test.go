@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/storage"
 )
@@ -103,6 +104,77 @@ func TestSchemaOneUpgradePreservesIdentity(t *testing.T) {
 			}
 			if err := s.db.QueryRow(`SELECT version FROM dune_schema`).Scan(&version); err != nil || version != schemaVersion {
 				t.Fatal("schema not upgraded", err)
+			}
+		})
+	}
+}
+
+func TestSchemaSixPreservesPendingAccess(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
+			if backend == "postgres" {
+				config, _, _ = postgresConfig(t)
+			}
+			s, err := Open(ctx, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { s.Close() }()
+			local := identity.NewLocal(s, true)
+			user, cookie, err := local.Register(ctx, "upgrade-access@example.test", "upgrade-test-password")
+			if err != nil {
+				t.Fatal(err)
+			}
+			token, _, err := s.IssueEnrollment(ctx, user.ID, "unchanged machine")
+			if err != nil {
+				t.Fatal(err)
+			}
+			machine, credential, err := s.Enroll(ctx, token, "linux", "amd64")
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant, err := authorization.NewLocal(ctx, local, s).Client(ctx, cookie, machine.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Reconstruct schema 6 with an unconsumed ticket. Upgrade must populate
+			// its authoritative owner without changing credentials or binding.
+			err = s.transaction(ctx, func(tx *sql.Tx) error {
+				for _, statement := range []string{
+					`DROP TABLE dune_discovery_cursors`,
+					`ALTER TABLE dune_access_tickets DROP COLUMN owner_id`,
+					`DROP INDEX dune_runners_owner`,
+					`CREATE INDEX dune_runners_owner ON dune_runners(owner_id)`,
+					`UPDATE dune_schema SET version=6`,
+				} {
+					if _, err := tx.Exec(statement); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err = Open(ctx, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var owner string
+			if err := s.db.QueryRow(`SELECT owner_id FROM dune_access_tickets WHERE hash=$1`, tokenHash(grant.Token())).Scan(&owner); err != nil || owner != user.ID {
+				t.Fatal("upgrade lost ticket owner", owner, err)
+			}
+			local = identity.NewLocal(s, true)
+			if binding, _, err := authorization.NewLocal(ctx, local, s).Authorize(grant.Token()); err != nil || binding.Target != machine.ID {
+				t.Fatal("upgrade lost pending access", err)
+			}
+			if id, err := s.MachineCredential(ctx, credential); err != nil || id != machine.ID {
+				t.Fatal("upgrade changed machine identity", err)
 			}
 		})
 	}

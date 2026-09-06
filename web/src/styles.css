@@ -10,6 +10,9 @@
 .error-box { border:1px solid var(--coral-deep); background:#fff0ed; color:var(--coral-deep); border-radius:8px; padding:10px 14px; font-size:14px; overflow-wrap:anywhere; }
 .workspace { height:100dvh; display:grid; grid-template-columns:258px minmax(0,1fr); }
 .sidebar { background:var(--paper-deep); border-right:1.5px solid var(--ink); padding:24px 16px 16px; display:flex; flex-direction:column; gap:20px; overflow:auto; }
+.machine-section { display:flex; flex-direction:column; min-height:0; flex:1; }
+.machine-nav { min-height:0; overflow:auto; }
+.machine-section > :not(.machine-nav), .sidebar > :not(.machine-section) { flex-shrink:0; }
 .brand { display:flex; align-items:center; gap:10px; width:fit-content; max-width:100%; padding:4px 2px; }
 .brand-mark { width:68px; height:68px; flex:none; overflow:visible; transform:rotate(-5deg); filter:drop-shadow(1px 3px 1px #35433e18); transition:transform 160ms ease-out; }
 .brand-paper { fill:var(--cream); stroke:#61716a99; stroke-width:1.1; stroke-linejoin:round; }

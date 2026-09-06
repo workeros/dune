@@ -22,3 +22,5 @@ export type StartupInfo = { login_methods: { kind: string; url: string }[]; loca
 export type Machine = { id: string; name: string; os: string; arch: string; online: boolean };
 export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; title?: string; working_directory?: string };
 export type AgentConfig = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; adapter: "pty" | "acp"; history_lines?: number };
+
+export type Page<T> = { items: T[]; next_cursor?: string };

@@ -1,4 +1,4 @@
-# 执行流访问检查
+# 访问检查与有界发现
 
 `pkg/access` 是协议核心之上的访问模块。`Grant.Policy` 为经过认证的 SDK 连接选择一个 `Checker`；`Scope` 来自宿主验证的用户、Runner 及绑定记录，不能来自执行请求体。`Bind` 复制该关联，后续消息不能替换用户或目标。机器连接不接受用户 Policy。
 
@@ -14,11 +14,41 @@ binding, handler, err := (access.Grant{
 
 这里的 `scope`、`checker` 和有效性函数由可信宿主提供。`access.Owner{}` 是默认个人 owner 检查器；企业实现替换它，不采用任意一个允许就放行的组合。`Grant.Valid` 独立复核会话、机器及绑定，企业 allow 不能越过它。单独使用 `Grant` 且不设置 Policy 仍表示宿主明确选择的连接级授权，适用于原有独立协议宿主。
 
-目前这份处理器已通过独立 Gateway、真实 fabricd 和执行客户端验证，尚未装配到 `host.Options` 的企业配置入口。默认工作台仍使用已有 owner 授权。企业开关将在 Web/CLI 发现及管理入口也接入同一检查器后提供；不能将此组件验收视为完整 S1 企业授权已交付。
+默认工作台通过 `host.Options.AccessChecker` 装配同一个检查器，覆盖浏览器、人类 CLI 的发现、Attached 管理、连接交换和执行流。留空选择 `access.Owner{}`；设置企业检查器后由它明确决定共享访问，仍独立核验当前用户会话、身份源、机器和固定绑定。检查器须在共享数据库的每个宿主上采用一致策略；身份提供方不替代此决定。
+
+```go
+app, err := host.Open(ctx, host.Options{
+    DataDir: privateDataDir,
+    PublicURL: publicURL,
+    Assets: webAssets,
+    Identity: companyIdentity,
+    AccessChecker: companyAccessChecker,
+})
+```
+
+`companyAccessChecker` 是宿主实现的 `access.Checker`，可调用企业私有 SDK；官方二进制仍采用默认 owner 规则，不内置企业依赖或共享管理 UI。`pkg/access` 也继续支持上面的独立协议宿主用法。工作台的逻辑 Runner 入口、Managed 生命周期和集群自动路由属于后续检查点。
+
+## 产品入口与发现
+
+| 产品操作 | 检查 operation / suboperation |
+| --- | --- |
+| Web/CLI 机器列表 | `machine.list/attached`，逐候选检查 |
+| Web/CLI Runner 列表和详情 | `runner.list/attached`、`runner.get/attached` |
+| 访问凭据签发与消费 | `runner.connect/attached`，两处都复核 |
+| Attached 接入材料签发与消费 | `runner.create/attached`，两处都复核 |
+| Attached 解绑 | `runner.unbind/attached` |
+
+用户、owner、Runner/Fabric/机器和绑定修订均由当前认证与 SQL 元数据构造；当前只有 Attached。机器身份接入单独校验机器凭据，不把它当作人类登录。所有执行 API 经 Gateway 的同一流处理器再检查实际子操作。绑定位于检查与写入之间发生变化时，事务拒绝旧快照；写入时还复核原浏览器会话，停用后再启用也不恢复旧会话的写入资格。
+
+`GET api/machines`、`api/runners` 及对应 `api/cli/` 列表返回 `{"items": [...], "next_cursor": "..."}`；没有下一页时省略 `next_cursor`。支持 `limit`（默认 32，最大 100）和不透明 `cursor`，单页最多扫描 128 个候选，总期限五秒。默认 owner 模式先按用户筛选候选；企业模式交给所选检查器逐项决定。拒绝项不出现在响应中，也不返回其 ID 或全局总数。达到扫描上限时可能返回空页和下一游标，调用方应继续翻页，不能将空页误认成列表结束。
+
+游标只表示位置，不授予访问，绑定用户、身份源和列表用途。它在 SQL 中保存十分钟，每用户最多 64 个有效位置，相同位置复用已有游标；支持 SQLite 重开和 PostgreSQL 跨实例。每页重新授权，不能利用旧游标恢复旧权限。过期或不匹配返回 400，客户端可回到第一页；检查器故障返回 `503 ACCESS_UNAVAILABLE`，不能伪装成成功的空列表。明确拒绝的资源详情返回 404，避免泄露存在性。
+
+正式 CLI 使用 `runners|machines --limit N --cursor CURSOR`，公开 Go 客户端为 `Runners(ctx, session, runner.Query)` 和 `Machines(ctx, session, runner.Query)`，返回相应 Page。它们不自动遍历全库或重新选择环境。
 
 ## 决定及期限
 
-`Checker.Check(ctx, Request)` 返回 `Decision`：`Allowed`、受控的 `Reason`（1–64 位大写字母、数字或下划线）、非空决定 `ID`（最多 128 字节）和 `ValidUntil`。检查器须并发安全并响应 context。错误、超时、无效或过期决定均拒绝，不将上游错误详情传给执行客户端，也不回退到 owner 检查。
+`Checker.Check(ctx, Request)` 返回 `Decision`：`Allowed`、受控的 `Reason`（1–64 位大写字母、数字或下划线）、非空决定 `ID`（最多 128 字节）和 `ValidUntil`。检查器须并发安全并响应 context。宿主将并发调用限制为 64，等待名额也计入检查期限。错误、超时、无效或过期决定均拒绝，不将上游错误详情传给执行客户端，也不回退到 owner 检查。
 
 每个新流在转发前检查。每种持续操作取得该流自己的短期决定，终端字节不逐个调用检查器。单次检查最多一秒，允许期限最多三十秒；外部绝对时间转换为本机单调期限。后台在有效期中点提前复核，独立定时器在截止时关闭流，因此空闲流或未返回的检查器也不能延长访问。复核失败立即关闭该流，迟到 allow 不恢复旧流。关闭访问不回滚已受理操作，也不停止远端任务。
 
@@ -51,3 +81,5 @@ binding, handler, err := (access.Grant{
 ## 验证
 
 `go test -race ./pkg/access -count=1 -timeout=60s` 使用独立 Gateway 和真实临时 fabricd/PTY，验证拒绝写入与上传提交、只读订阅的三种输入隔离、固定身份、内容裁剪、输入决定复用、空闲撤销以及阻塞/迟到检查器。测试使用构建产物 `bin/tmux`（也可通过 `DUNE_TMUX` 指定），在自身私有目录清理进程和 tmux 会话，不调用真实 Agent 服务。
+
+`TestEnterpriseSharedExecutionAndRevocation` 使用 SQLite 和两个共享 PostgreSQL 的宿主，验证另一个账号的机器只能经企业决定访问，真实 Web PTY/CLI 执行、文件写入拒绝、空闲策略撤销和父会话撤销。`TestAuthorizedDiscoveryAndWrites` 覆盖扫描上限、游标隔离/重开/跨池、拒绝或故障无 owner 回退、固定归属和写入竞争；SQL 转库及 PostgreSQL 原生备份保留归属和游标字段。测试检查器是有意控制允许与拒绝的测试适配器，不代表某个企业权限 SDK 的部署验收。

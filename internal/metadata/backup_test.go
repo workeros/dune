@@ -67,6 +67,10 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cursor, err := s.SaveCursor(ctx, user.ID, "", "runner.list", machine.RunnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -118,6 +122,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, snapshotRecords(t, s)) {
 		t.Fatal("restored metadata differs from backup")
+	}
+	if position, err := s.ReadCursor(ctx, user.ID, "", "runner.list", cursor); err != nil || position != machine.RunnerID {
+		t.Fatal("restored cursor invalid", err)
 	}
 	local = identity.NewLocal(s, true)
 	if got, err := local.AuthenticateCLI(ctx, cliSession.Token); err != nil || got.ID != user.ID {

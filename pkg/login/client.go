@@ -195,13 +195,17 @@ func (c *Client) validateSession(session Session) error {
 	return nil
 }
 
-func (c *Client) Machines(ctx context.Context, session Session) ([]Machine, error) {
+func (c *Client) Machines(ctx context.Context, session Session, query runner.Query) (MachinePage, error) {
 	if err := c.validateSession(session); err != nil {
-		return nil, err
+		return MachinePage{}, err
 	}
-	var machines []Machine
-	_, err := c.request(ctx, "GET", "api/cli/machines", session.Token, nil, &machines)
-	return machines, err
+	suffix, err := pageSuffix(query)
+	if err != nil {
+		return MachinePage{}, err
+	}
+	var page MachinePage
+	_, err = c.request(ctx, "GET", "api/cli/machines"+suffix, session.Token, nil, &page)
+	return page, err
 }
 
 func (c *Client) Logout(ctx context.Context, session Session) error {
@@ -236,13 +240,33 @@ func (c *Client) dialAccess(ctx context.Context, access Access, target string) (
 }
 
 // Runners lists the environments visible through this user session.
-func (c *Client) Runners(ctx context.Context, session Session) ([]runner.Runner, error) {
+func (c *Client) Runners(ctx context.Context, session Session, query runner.Query) (runner.Page, error) {
 	if err := c.validateSession(session); err != nil {
-		return nil, err
+		return runner.Page{}, err
 	}
-	var rows []runner.Runner
-	_, err := c.request(ctx, "GET", "api/cli/runners", session.Token, nil, &rows)
-	return rows, err
+	suffix, err := pageSuffix(query)
+	if err != nil {
+		return runner.Page{}, err
+	}
+	var page runner.Page
+	_, err = c.request(ctx, "GET", "api/cli/runners"+suffix, session.Token, nil, &page)
+	return page, err
+}
+func pageSuffix(query runner.Query) (string, error) {
+	if query.Limit < 0 || query.Limit > 100 || len(query.Cursor) > 128 {
+		return "", errors.New("invalid Dune page query")
+	}
+	values := url.Values{}
+	if query.Cursor != "" {
+		values.Set("cursor", query.Cursor)
+	}
+	if query.Limit != 0 {
+		values.Set("limit", fmt.Sprint(query.Limit))
+	}
+	if len(values) == 0 {
+		return "", nil
+	}
+	return "?" + values.Encode(), nil
 }
 
 func (c *Client) Runner(ctx context.Context, session Session, id string) (runner.Runner, error) {

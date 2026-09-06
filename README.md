@@ -51,7 +51,7 @@ dune logout
 
 CLI 会话最长八小时，也不超过确认它的浏览器会话期限；浏览器退出、用户停用或身份关联会撤销相关 CLI 会话及已建立访问。`logout` 只撤销这份 CLI 会话，不退出浏览器。每次执行交换一个三十秒内单次使用的目标凭据；不把用户会话交给 fabricd。登录确认或交换结果未知时不会自动重放，应重新发起登录或明确核对结果。
 
-`--login` 与显式 `--config` 互斥，放在命令前；执行使用 `--runner` 选择逻辑环境，也可用 `machines` 和 `--target MACHINE_ID` 直接选择机器，两种选择不可同时传入。可用命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。当前发现和访问采用 owner 策略，企业操作级授权及集群路由仍在实施。
+`--login` 与显式 `--config` 互斥，放在命令前；执行使用 `--runner` 选择逻辑环境，也可用 `machines` 和 `--target MACHINE_ID` 直接选择机器，两种选择不可同时传入。可用命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。列表返回 `items` 和可选 `next_cursor`；用 `--limit 1..100` 和 `--cursor` 翻页，空页带游标时可继续查询。默认发现和访问采用 owner 策略，Go 宿主可注入企业检查器；集群自动路由仍在实施。
 
 Runner 是稳定的产品身份；其绑定快照包含 Runner、Fabric、机器及单调修订。CLI 每次命令只解析一次，交换凭据时核对完整快照，绑定变化后拒绝旧请求并要求重新选择。SDK 的 `Client.Runners` / `Client.Runner` 查询 `pkg/runner.Runner`，`Client.DialRunner(ctx, session, *selected.Binding)` 仅连接该快照，不自动解析替代环境。新注册的 Runner 与机器 ID 不同，已有机器的原 ID、凭据和 Runtime 不改变。
 
@@ -166,7 +166,7 @@ session_lifetime: 8h
 
 配置后页面只显示企业登录，本地密码登录和注册均关闭。会话期限默认 8 小时，可设为 1 分钟至 24 小时；不会保存上游 access/refresh token。Dune 按 issuer 和 subject 识别用户，邮箱只作展示，不自动合并同邮箱账号。退出撤销 Dune 会话，不注销身份源会话。上游停用尚无自动同步，已有 Dune 会话以配置期限为界，宿主也可主动停用用户。身份源切换和旧数据升级见[迁移说明](docs/metadata-migration.md)。
 
-Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。迁移已有账号时，可信管理员可按[身份关联流程](docs/metadata-migration.md#schema-4显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限，企业操作级授权仍在实施中。
+Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。迁移已有账号时，可信管理员可按[身份关联流程](docs/metadata-migration.md#schema-4显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限。通过 `host.Options.AccessChecker` 选择企业检查器，统一控制发现、Attached 管理、Web/CLI 执行和持续流；拒绝或故障不回退到 owner 规则。公开契约、操作映射与分页规则见[访问检查](docs/access-checks.md)。
 
 也可在已安装 Dune 的机器手动绑定：
 

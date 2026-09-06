@@ -122,7 +122,10 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			if _, err := source.db.Exec(`INSERT INTO dune_cli_logins(id,challenge,site,identity_namespace,expires_at,session_hash) SELECT 'cli-request','proof-hash','https://dune.test/',identity_namespace,9999999999,hash FROM dune_sessions WHERE kind='browser' LIMIT 1`); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := source.db.Exec(`INSERT INTO dune_access_tickets(hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at) SELECT 'access-hash',s.hash,s.principal_id,s.identity_namespace,m.id,r.id,r.fabric_id,r.binding_revision,s.auth_version,9999999999 FROM dune_sessions s JOIN dune_runners r ON r.owner_id=s.principal_id JOIN dune_machines m ON m.runner_id=r.id LIMIT 1`); err != nil {
+			if _, err := source.db.Exec(`INSERT INTO dune_access_tickets(hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id) SELECT 'access-hash',s.hash,s.principal_id,s.identity_namespace,m.id,r.id,r.fabric_id,r.binding_revision,s.auth_version,9999999999,r.owner_id FROM dune_sessions s JOIN dune_runners r ON r.owner_id=s.principal_id JOIN dune_machines m ON m.runner_id=r.id LIMIT 1`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := source.db.Exec(`INSERT INTO dune_discovery_cursors(id,principal_id,identity_namespace,operation,after_id,expires_at) SELECT 'opaque-cursor',id,'issuer','runner.list','denied-position',9999999999 FROM dune_principals`); err != nil {
 				t.Fatal(err)
 			}
 			before := snapshotRecords(t, source)

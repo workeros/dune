@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -54,6 +54,15 @@ var schema6 = []string{
 	`CREATE TABLE dune_cli_logins (id TEXT PRIMARY KEY, challenge TEXT NOT NULL, site TEXT NOT NULL, identity_namespace TEXT NOT NULL, expires_at BIGINT NOT NULL, session_hash TEXT REFERENCES dune_sessions(hash) ON DELETE CASCADE)`,
 	`CREATE INDEX dune_cli_expiry ON dune_cli_logins(expires_at)`,
 	`CREATE INDEX dune_cli_parent ON dune_cli_logins(session_hash)`,
+}
+
+var schema7 = []string{
+	`DROP INDEX dune_runners_owner`,
+	`CREATE INDEX dune_runners_owner ON dune_runners(owner_id,id)`,
+	`ALTER TABLE dune_access_tickets ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+	`UPDATE dune_access_tickets SET owner_id=(SELECT owner_id FROM dune_runners WHERE id=dune_access_tickets.runner_id)`,
+	`CREATE TABLE dune_discovery_cursors (id TEXT PRIMARY KEY,principal_id TEXT NOT NULL REFERENCES dune_principals(id) ON DELETE CASCADE,identity_namespace TEXT NOT NULL,operation TEXT NOT NULL,after_id TEXT NOT NULL,expires_at BIGINT NOT NULL,UNIQUE(principal_id,identity_namespace,operation,after_id))`,
+	`CREATE INDEX dune_discovery_expiry ON dune_discovery_cursors(expires_at)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -138,6 +147,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=6 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 6
+		}
+		if version == 6 {
+			for _, statement := range schema7 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=7 WHERE id=1`); err != nil {
 				return err
 			}
 		}

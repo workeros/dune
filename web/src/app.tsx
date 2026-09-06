@@ -19,11 +19,14 @@ import { ACPPane } from "@/components/acp";
 import { TerminalPane } from "@/components/terminal";
 import { Brand } from "@/components/brand";
 import { CLILogin, pendingCLIRequest } from "@/components/cli-login";
-import { APIError, request, post, call, errorText, type User, type Machine, type Runtime, type AgentConfig, type StartupInfo } from "@/lib/api";
+import { APIError, request, post, call, errorText, type Page, type User, type Machine, type Runtime, type AgentConfig, type StartupInfo } from "@/lib/api";
 
 export function App() {
   const [cliRequest, setCLIRequest] = useState(pendingCLIRequest);
   const [user, setUser] = useState<User | null>(), [machines, setMachines] = useState<Machine[]>([]), [selected, setSelected] = useState(""), [adding, setAdding] = useState(false), [error, setError] = useState(new URL(window.location.href).searchParams.get("login_error") === "1" ? "企业登录未完成或已过期，请重新登录。" : "");
+  const [pageCursor, setPageCursor] = useState(""), [nextCursor, setNextCursor] = useState(""), [previousCursors, setPreviousCursors] = useState<string[]>([]);
+  const discoveryEpoch = useRef(0);
+  const [discoveryLoading, setDiscoveryLoading] = useState(true);
   const [startup, setStartup] = useState<StartupInfo>(), [startupError, setStartupError] = useState("");
   const loadStartup = async () => {
     setStartupError("");
@@ -32,16 +35,27 @@ export function App() {
   };
   useEffect(() => { void loadStartup(); }, []);
   useEffect(() => { request<User>("/api/me").then(setUser).catch((e) => { setUser(null); if (!(e instanceof APIError && e.status === 401)) setError(errorText(e)); }); }, []);
-  const refresh = async () => { try { const list = await request<Machine[]>("/api/machines"); setMachines(list); setSelected((old) => list.some((m) => m.id === old) ? old : list[0]?.id ?? ""); setError(""); } catch (e) { if (e instanceof APIError && e.status === 401) setUser(null); else setError(errorText(e)); } };
-  useEffect(() => { if (!user || cliRequest) return; void refresh(); const timer = setInterval(refresh, 5000); return () => clearInterval(timer); }, [user?.id, cliRequest]);
+  const refresh = async () => {
+    const epoch = ++discoveryEpoch.current;
+    setDiscoveryLoading(true);
+    try {
+      const page = await request<Page<Machine>>(`/api/machines?cursor=${encodeURIComponent(pageCursor)}`);
+      if (epoch !== discoveryEpoch.current) return;
+      setMachines(page.items); setNextCursor(page.next_cursor ?? "");
+      setSelected((old) => page.items.some((m) => m.id === old) ? old : page.items[0]?.id ?? ""); setError("");
+    } catch (e) { if (epoch !== discoveryEpoch.current) return; setMachines([]); setNextCursor(""); if (e instanceof APIError && e.status === 401) setUser(null); else setError(e instanceof APIError && e.status === 400 && pageCursor ? "分页已失效，请刷新列表回到第一页。" : errorText(e)); }
+    finally { if (epoch === discoveryEpoch.current) setDiscoveryLoading(false); }
+  };
+  const resetPage = () => { setPreviousCursors([]); if (pageCursor) setPageCursor(""); else void refresh(); };
+  useEffect(() => { if (!user || cliRequest) return; void refresh(); const timer = setInterval(refresh, 5000); return () => { clearInterval(timer); discoveryEpoch.current++; }; }, [user?.id, cliRequest, pageCursor]);
   if (startupError) return <main className="paper-grid grid min-h-screen place-items-center p-6"><section className="paper-card grid max-w-md gap-4 p-8"><Brand /><h1 className="text-xl font-bold">暂时无法打开工作台</h1><p className="error-box" role="alert">{startupError}</p><Button onClick={() => void loadStartup()}>重试</Button></section></main>;
   if (!startup || user === undefined) return <main className="grid min-h-screen place-items-center paper-grid"><span role="status">正在打开工作台…</span></main>;
-  if (!user) return <Auth startup={startup} onLogin={(user) => { setUser(user); setError(""); }} initialError={error} />;
+  if (!user) return <Auth startup={startup} onLogin={(user) => { discoveryEpoch.current++; setDiscoveryLoading(true); setMachines([]); setSelected(""); setPageCursor(""); setNextCursor(""); setPreviousCursors([]); setUser(user); setError(""); }} initialError={error} />;
   if (cliRequest) return <CLILogin id={cliRequest} user={user} onDone={() => setCLIRequest("")} />;
   const machine = machines.find((m) => m.id === selected);
   return <div className="workspace">
-    <aside className="sidebar"><Brand /><div><div className="mb-3 flex items-center justify-between"><span className="muted font-semibold">我的开发机</span><Button variant="ghost" size="icon" aria-label="刷新机器列表" onClick={() => void refresh()}><Icon icon={refreshIcon} /></Button></div><nav className="machine-nav" aria-label="开发机">{machines.map((m) => <button key={m.id} className={`machine-row ${selected === m.id ? "active" : ""}`} onClick={() => setSelected(m.id)}><Icon icon={serverIcon} width={21} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{m.name}</span><span className="mt-1 block text-xs text-muted-foreground"><i className={`status-dot ${m.online ? "online" : ""}`} />{m.online ? "在线" : "离线"} · {m.os === "darwin" ? "macOS" : "Linux"}</span></span></button>)}</nav>{startup.attached && <Button className="mt-2 w-full" variant="outline" onClick={() => setAdding(true)}><Icon icon={addIcon} />接入开发机</Button>}</div><div className="sidebar-footer mt-auto border-t border-foreground/20 pt-4"><p className="mb-4 text-xs leading-relaxed text-muted-foreground">任务在你的机器上运行。<br />关闭网页，任务继续。</p><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs" title={user.email}>{user.email || "企业用户"}</span><Button variant="ghost" size="icon" aria-label="退出登录" onClick={() => void post("/api/auth/logout", {}).then(() => setUser(null)).catch((e) => setError(errorText(e)))}><Icon icon={logoutIcon} /></Button></div></div></aside>
-    <main className="workbench paper-grid">{error && <div className="error-box m-4" role="alert">{error}</div>}{machine ? <Workspace key={machine.id} machine={machine} onRevoke={refresh} /> : <div className="m-auto max-w-lg p-8"><div className="mb-6 inline-flex rounded-xl border border-foreground bg-mint p-4"><Icon icon={serverIcon} width={30} /></div><h1 className="mb-3 text-3xl font-bold tracking-tight">把开发机带到浏览器里。</h1><p className="muted mb-7 leading-7">接入你的 Linux 或 macOS 开发机，打开终端或启动 Agent。代码和会话历史留在开发机上。</p>{startup.attached ? <Button onClick={() => setAdding(true)}><Icon icon={addIcon} />接入第一台开发机</Button> : <p className="muted">此站点未开放开发机接入。</p>}</div>}</main>
+    <aside className="sidebar"><Brand /><div className="machine-section"><div className="mb-3 flex items-center justify-between"><span className="muted font-semibold">可访问的开发机</span><Button variant="ghost" size="icon" aria-label="刷新机器列表" onClick={resetPage}><Icon icon={refreshIcon} /></Button></div><nav className="machine-nav" aria-label="开发机">{machines.map((m) => <button key={m.id} className={`machine-row ${selected === m.id ? "active" : ""}`} onClick={() => setSelected(m.id)}><Icon icon={serverIcon} width={21} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{m.name}</span><span className="mt-1 block text-xs text-muted-foreground"><i className={`status-dot ${m.online ? "online" : ""}`} />{m.online ? "在线" : "离线"} · {m.os === "darwin" ? "macOS" : "Linux"}</span></span></button>)}</nav>{(previousCursors.length > 0 || nextCursor) && <nav className="mt-3 flex flex-wrap gap-2" aria-label="开发机分页"><Button variant="outline" size="sm" disabled={!previousCursors.length} onClick={() => { setPageCursor(previousCursors.at(-1) ?? ""); setPreviousCursors((items) => items.slice(0, -1)); }}>上一页</Button><Button variant="outline" size="sm" disabled={!nextCursor} onClick={() => { setPreviousCursors((items) => [...items, pageCursor]); setPageCursor(nextCursor); }}>下一页</Button></nav>}{startup.attached && <Button className="mt-2 w-full" variant="outline" onClick={() => setAdding(true)}><Icon icon={addIcon} />接入开发机</Button>}</div><div className="sidebar-footer mt-auto border-t border-foreground/20 pt-4"><p className="mb-4 text-xs leading-relaxed text-muted-foreground">任务在你的机器上运行。<br />关闭网页，任务继续。</p><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs" title={user.email}>{user.email || "企业用户"}</span><Button variant="ghost" size="icon" aria-label="退出登录" onClick={() => void post("/api/auth/logout", {}).then(() => setUser(null)).catch((e) => setError(errorText(e)))}><Icon icon={logoutIcon} /></Button></div></div></aside>
+    <main className="workbench paper-grid">{error && <div className="error-box m-4" role="alert">{error}</div>}{machine ? <Workspace key={machine.id} machine={machine} onRevoke={refresh} /> : discoveryLoading ? <div className="m-auto p-8 muted" role="status">正在加载开发机…</div> : error ? <div className="m-auto p-8"><p className="muted mb-4">暂时无法获取可访问的开发机。</p><Button variant="outline" onClick={resetPage}>重新加载列表</Button></div> : (pageCursor || nextCursor) ? <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">本页暂无可访问的开发机</h1><p className="muted leading-7">可以继续翻页，或刷新列表回到第一页。</p></div> : <div className="m-auto max-w-lg p-8"><div className="mb-6 inline-flex rounded-xl border border-foreground bg-mint p-4"><Icon icon={serverIcon} width={30} /></div><h1 className="mb-3 text-3xl font-bold tracking-tight">把开发机带到浏览器里。</h1><p className="muted mb-7 leading-7">接入你的 Linux 或 macOS 开发机，打开终端或启动 Agent。代码和会话历史留在开发机上。</p>{startup.attached ? <Button onClick={() => setAdding(true)}><Icon icon={addIcon} />接入第一台开发机</Button> : <p className="muted">此站点未开放开发机接入。</p>}</div>}</main>
     {startup.attached && <AddMachine open={adding} onOpenChange={setAdding} />}
   </div>;
 }

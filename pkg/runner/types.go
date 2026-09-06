@@ -28,3 +28,13 @@ type Runner struct {
 	CreatedAt int64    `json:"created_at"`
 	Binding   *Binding `json:"binding,omitempty"`
 }
+
+// Query selects a bounded discovery page. Cursor is opaque and user-scoped.
+type Query struct {
+	Cursor string
+	Limit  int
+}
+type Page struct {
+	Items      []Runner `json:"items"`
+	NextCursor string   `json:"next_cursor,omitempty"`
+}

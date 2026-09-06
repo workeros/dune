@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -15,6 +16,7 @@ const CheckTimeout = time.Second
 const MaxLease = 30 * time.Second
 
 var ErrDenied = errors.New("access denied")
+var ErrUnavailable = fmt.Errorf("access checker unavailable: %w", ErrDenied)
 
 // Scope is supplied from authenticated session and authoritative binding data.
 // None of these fields may be taken from an execution request payload.
@@ -93,15 +95,27 @@ func (Owner) Check(ctx context.Context, r Request) (Decision, error) {
 }
 
 func (p Policy) check(ctx context.Context, r Request) (Decision, error) {
+	return Evaluate(ctx, p.Checker, r)
+}
+
+// Evaluate applies the same bounded decision contract to product API requests.
+// Callers construct operation and scope from authenticated, authoritative data.
+func Evaluate(ctx context.Context, checker Checker, r Request) (Decision, error) {
 	ctx, cancel := context.WithTimeout(ctx, CheckTimeout)
 	defer cancel()
-	decision, err := p.Checker.Check(ctx, r)
-	if err != nil || ctx.Err() != nil || !decision.Allowed || !validCode(decision.Reason) || decision.ID == "" || len(decision.ID) > 128 || strings.ContainsFunc(decision.ID, unicode.IsControl) {
+	if checker == nil {
+		return Decision{}, ErrUnavailable
+	}
+	decision, err := checker.Check(ctx, r)
+	if err != nil || ctx.Err() != nil || !validCode(decision.Reason) || decision.ID == "" || len(decision.ID) > 128 || strings.ContainsFunc(decision.ID, unicode.IsControl) {
+		return Decision{}, ErrUnavailable
+	}
+	if !decision.Allowed {
 		return Decision{}, ErrDenied
 	}
 	now := time.Now()
 	if !decision.ValidUntil.After(now) {
-		return Decision{}, ErrDenied
+		return Decision{}, ErrUnavailable
 	}
 	// Convert an external wall-clock expiry into a local monotonic deadline.
 	decision.ValidUntil = now.Add(min(MaxLease, decision.ValidUntil.Sub(now)))
