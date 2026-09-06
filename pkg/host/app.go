@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aiomni/dune/internal/authorization"
+	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/transport/ws"
@@ -78,11 +80,13 @@ func Open(parent context.Context, options Options) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
+	local := identity.NewLocal(store, !options.DisableRegistration)
+	owner := authorization.NewLocal(ctx, local, store)
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		Assets: options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
-		DisableRegistration: options.DisableRegistration, DialGateway: dial,
-	}, store)
+		DialGateway: dial,
+	}, store, local, owner)
 	if err != nil {
 		cancel()
 		store.Close()

@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/aiomni/dune/internal/identity"
 )
 
 func TestAccountsBindingsAndNoPlaintextCredentials(t *testing.T) {
@@ -18,33 +21,34 @@ func TestAccountsBindingsAndNoPlaintextCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { s.Close() }()
-	a, cookieA, err := s.Register("Alice@example.com", "alice-test-password")
+	local := identity.NewLocal(s, true)
+	a, cookieA, err := local.Register(context.Background(), "Alice@example.com", "alice-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, cookieB, err := s.Register("bob@example.com", "bob-test-password")
+	b, cookieB, err := local.Register(context.Background(), "bob@example.com", "bob-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a.Email != "alice@example.com" || a.ID == b.ID {
 		t.Fatal("invalid account identity")
 	}
-	if _, _, err := s.Register("alice@example.com", "another-password"); err == nil {
+	if _, _, err := local.Register(context.Background(), "alice@example.com", "another-password"); err == nil {
 		t.Fatal("duplicate normalized account accepted")
 	}
-	if user, ok := s.Session(cookieA); !ok || user.ID != a.ID {
+	if user, err := local.Authenticate(context.Background(), cookieA); err != nil || user.ID != a.ID {
 		t.Fatal("valid session missing")
 	}
-	if _, ok := s.Session("bad-cookie"); ok {
+	if _, err := local.Authenticate(context.Background(), "bad-cookie"); err == nil {
 		t.Fatal("invalid cookie accepted")
 	}
-	if _, _, err := s.Login(a.Email, "wrong-password"); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := local.Login(context.Background(), a.Email, "wrong-password"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal("wrong password accepted")
 	}
-	if _, _, err := s.Login("nobody@example.com", "wrong-password"); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := local.Login(context.Background(), "nobody@example.com", "wrong-password"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal("nonexistent account accepted")
 	}
-	_, newCookie, err := s.Login(a.Email, "alice-test-password")
+	_, newCookie, err := local.Login(context.Background(), a.Email, "alice-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,22 +75,22 @@ func TestAccountsBindingsAndNoPlaintextCredentials(t *testing.T) {
 	if _, ok := s.MachineCredential(cookieA); ok {
 		t.Fatal("browser cookie accepted as machine credential")
 	}
-	if _, ok := s.Session(credential); ok {
+	if _, err := local.Authenticate(context.Background(), credential); err == nil {
 		t.Fatal("machine credential accepted as browser login")
 	}
 	if err := s.Revoke(b.ID, machine.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("cross-account revoke succeeded")
 	}
-	if err := s.Logout(cookieA); err != nil {
+	if err := local.Logout(context.Background(), cookieA); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.Session(cookieA); ok {
+	if _, err := local.Authenticate(context.Background(), cookieA); err == nil {
 		t.Fatal("logout did not revoke cookie")
 	}
-	if _, ok := s.Session(cookieB); !ok {
+	if _, err := local.Authenticate(context.Background(), cookieB); err != nil {
 		t.Fatal("logout affected another user")
 	}
-	if _, ok := s.Session(newCookie); !ok {
+	if _, err := local.Authenticate(context.Background(), newCookie); err != nil {
 		t.Fatal("logout affected another browser")
 	}
 	contents, err := os.ReadFile(filepath.Join(dir, "accounts.json"))
@@ -113,10 +117,11 @@ func TestAccountsBindingsAndNoPlaintextCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	local = identity.NewLocal(s, true)
 	if !s.Owns(a.ID, machine.ID) {
 		t.Fatal("binding lost on service restart")
 	}
-	if _, ok := s.Session(newCookie); !ok {
+	if _, err := local.Authenticate(context.Background(), newCookie); err != nil {
 		t.Fatal("login lost on service restart")
 	}
 	if err := s.Revoke(a.ID, machine.ID); err != nil {
@@ -133,7 +138,8 @@ func TestConcurrentEnrollmentAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	u, cookie, err := s.Register("test@example.com", "test-password-1234")
+	local := identity.NewLocal(s, true)
+	u, cookie, err := local.Register(context.Background(), "test@example.com", "test-password-1234")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +178,7 @@ func TestConcurrentEnrollmentAndExpiry(t *testing.T) {
 	if _, _, err := s.Enroll(token, "linux", "amd64"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal("expired enrollment accepted")
 	}
-	if _, ok := s.Session(cookie); ok {
+	if _, err := local.Authenticate(context.Background(), cookie); err == nil {
 		t.Fatal("expired login accepted")
 	}
 }

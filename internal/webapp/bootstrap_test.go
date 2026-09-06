@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/aiomni/dune/internal/identity"
 )
 
 func TestStartupCapabilitiesAndRegistration(t *testing.T) {
@@ -22,12 +24,12 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if _, _, err := store.Register("existing@example.test", "a-strong-test-password"); err != nil {
+			if _, _, err := identity.NewLocal(store, true).Register(context.Background(), "existing@example.test", "a-strong-test-password"); err != nil {
 				t.Fatal(err)
 			}
-			app, err := NewServer(context.Background(), Options{DialGateway: noGateway,
-				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/private/connect", DisableRegistration: disabled,
-			}, store)
+			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway,
+				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/private/connect",
+			}, store, identity.NewLocal(store, !disabled))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,7 +63,7 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 				if response.Code != 403 || !strings.Contains(response.Body.String(), `"code":"REGISTRATION_DISABLED"`) || len(response.Result().Cookies()) != 0 {
 					t.Fatalf("disabled registration: %d %s", response.Code, response.Body.String())
 				}
-				if _, _, err := store.Login("new@example.test", "a-strong-test-password"); err == nil {
+				if _, _, err := identity.NewLocal(store, true).Login(context.Background(), "new@example.test", "a-strong-test-password"); err == nil {
 					t.Fatal("disabled registration created an account")
 				}
 			} else if response.Code != 200 {

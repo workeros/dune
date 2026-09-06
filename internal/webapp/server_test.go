@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/aiomni/dune/internal/authorization"
+	"github.com/aiomni/dune/internal/identity"
 )
 
 func TestHTTPRoutesWithStaticAssets(t *testing.T) {
@@ -17,7 +20,7 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	app, err := NewServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test:17443", Assets: t.TempDir()}, store)
+	app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test:17443", Assets: t.TempDir()}, store, identity.NewLocal(store, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,16 +78,16 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	app, err := NewServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test:17443"}, store)
+	app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test:17443"}, store, identity.NewLocal(store, true))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	a, at, err := store.Register("a@example.test", "a-strong-test-password")
+	a, at, err := app.identity.Register(context.Background(), "a@example.test", "a-strong-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, bt, err := store.Register("b@example.test", "b-strong-test-password")
+	b, bt, err := app.identity.Register(context.Background(), "b@example.test", "b-strong-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +128,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 			}
 		}
 	}
-	if err = store.Logout(at); err != nil {
+	if err = app.identity.Logout(context.Background(), at); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("GET", "/api/machines", nil)
@@ -139,4 +142,8 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 
 func noGateway(context.Context, string) (net.Conn, error) {
 	return nil, fmt.Errorf("no test execution connection")
+}
+
+func newTestServer(ctx context.Context, options Options, store *Store, local *identity.Local) (*Server, error) {
+	return NewServer(ctx, options, store, local, authorization.NewLocal(ctx, local, store))
 }

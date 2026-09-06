@@ -1,6 +1,6 @@
 # 企业扩展方案实施记录
 
-实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a 已通过本地验收；S0b 实施中，S0c–S3 尚未交付。
+实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a、S0b 已通过本地验收；S0c–S3 尚未交付。
 
 ## S0a：连接与传输
 
@@ -59,4 +59,11 @@
 - `samples/workbench` 在宿主自有 `/health` 路由旁挂载前缀工作台。进程回归将源码复制到独立 Go module，以 race 构建并完成静态挂载、注册、CLI 绑定、fabricd、PTY 输入输出和退出撤销；浏览器在该示例中登录并运行真实终端，显示 `DUNE_HOST_UI_OK`。
 - 验证：全量本地 `make test`、host/Web race、vet 通过；新增父 context 取消、多 listener 关闭、存储独占及重开、关闭后拒绝请求、外部 HTTP 未完成请求取消与宿主路由保留测试。
 
-S0b 剩余：身份/访问业务模块的进一步分离与显式依赖装配；当前公开宿主仍只组装默认本地身份与 owner 检查。SQL 事务边界随 S0c 落地，企业身份与登录回调随 S1 验收。
+### 已完成：本地身份与连接访问模块
+
+- `internal/identity` 承担账号规范化、密码验证、会话期限和数量策略。Web 负责 Cookie 与 HTTP，存储按内部领域契约原子提交账号/首个会话及后续会话；注册开关由身份模块执行，启动信息读取同一配置。存储故障与无效登录分开返回。
+- `internal/authorization` 创建固定用户/目标的连接授权，管理一次性临时 Gateway 凭据及其释放。连接建立后继续检查原会话与归属；释放临时凭据不撤销已建立连接，退出登录或解绑则使对应授权失效。机器凭据只能取得 daemon 角色，浏览器 Cookie 不能作为隧道凭据。
+- `pkg/host` 从同一内部后端显式构造身份和访问模块，再交给 Web/API；handler 不再保存临时 SDK ticket 或决定其有效性。协议 core 不新增产品依赖。新内部领域接口不构成宿主可独立替换各个 Store 的承诺。
+- 全量本地 `make test`、身份/访问/Web/host 相关 race 和 vet 通过。定向回归覆盖账号/会话写入失败整体回滚、取消不写入、会话上限、凭据一次消费、凭据类型隔离、两个用户连接及撤销隔离。此处仍是默认本地身份与 owner 策略；企业 IdentityProvider/AccessChecker 和所有子操作映射属于 S1。
+
+下一检查点为 S0c：SQLite/PostgreSQL、统一事务后端、连接鉴权注入和 JSON 导入。企业身份与登录回调随 S1 验收。

@@ -1,7 +1,6 @@
 package webapp
 
 import (
-	"crypto/pbkdf2"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/mail"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,16 +16,14 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
 )
 
-var ErrUnauthorized = errors.New("invalid credentials or expired session")
+var ErrUnauthorized = identity.ErrUnauthorized
 var ErrNotFound = errors.New("not found")
 
-type User struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-}
+type User = identity.User
 
 type Machine struct {
 	ID        string `json:"id"`
@@ -37,11 +33,8 @@ type Machine struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-type account struct {
-	User
-	Salt         string `json:"salt"`
-	PasswordHash string `json:"password_hash"`
-}
+type account = identity.Account
+
 type loginSession struct {
 	UserID    string `json:"user_id"`
 	ExpiresAt int64  `json:"expires_at"`
@@ -210,120 +203,6 @@ func tokenHash(token string) string {
 }
 func randomToken() string { return wire.ID() + wire.ID() }
 
-func passwordHash(password, salt string) (string, error) {
-	b, err := pbkdf2.Key(sha256.New, password, []byte(salt), 600000, 32)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
-func normalizedEmail(email string) (string, error) {
-	email = strings.ToLower(strings.TrimSpace(email))
-	address, err := mail.ParseAddress(email)
-	if err != nil || address.Address != email || len(email) > 254 {
-		return "", fmt.Errorf("valid email address required")
-	}
-	return email, nil
-}
-
-func (s *Store) Register(email, password string) (User, string, error) {
-	email, err := normalizedEmail(email)
-	if err != nil {
-		return User{}, "", err
-	}
-	if len(password) < 12 || len(password) > 256 {
-		return User{}, "", fmt.Errorf("password must be 12..256 bytes")
-	}
-	user := User{ID: wire.ID(), Email: email}
-	salt := wire.ID()
-	hash, err := passwordHash(password, salt)
-	if err != nil {
-		return User{}, "", err
-	}
-	token := randomToken()
-	err = s.update(func(data *metadata) error {
-		for _, a := range data.Accounts {
-			if a.Email == email {
-				return fmt.Errorf("email already registered")
-			}
-		}
-		data.Accounts[user.ID] = account{User: user, Salt: salt, PasswordHash: hash}
-		data.Sessions[tokenHash(token)] = loginSession{UserID: user.ID, ExpiresAt: time.Now().Add(7 * 24 * time.Hour).Unix()}
-		return nil
-	})
-	if err != nil {
-		return User{}, "", err
-	}
-	return user, token, nil
-}
-
-func (s *Store) Login(email, password string) (User, string, error) {
-	if len(password) > 256 {
-		return User{}, "", ErrUnauthorized
-	}
-	email, err := normalizedEmail(email)
-	if err != nil {
-		return User{}, "", ErrUnauthorized
-	}
-	s.mu.RLock()
-	var found account
-	for _, a := range s.data.Accounts {
-		if a.Email == email {
-			found = a
-			break
-		}
-	}
-	s.mu.RUnlock()
-	salt := found.Salt
-	if salt == "" {
-		salt = "dune-nonexistent-account-salt"
-	}
-	hash, err := passwordHash(password, salt)
-	if err != nil {
-		return User{}, "", err
-	}
-	if found.ID == "" || subtle.ConstantTimeCompare([]byte(hash), []byte(found.PasswordHash)) != 1 {
-		return User{}, "", ErrUnauthorized
-	}
-	token := randomToken()
-	err = s.update(func(data *metadata) error {
-		count := 0
-		for _, session := range data.Sessions {
-			if session.UserID == found.ID {
-				count++
-			}
-		}
-		if count >= 32 {
-			return fmt.Errorf("active login session limit reached; log out of another browser or wait for expiry")
-		}
-		data.Sessions[tokenHash(token)] = loginSession{UserID: found.ID, ExpiresAt: time.Now().Add(7 * 24 * time.Hour).Unix()}
-		return nil
-	})
-	if err != nil {
-		return User{}, "", err
-	}
-	return found.User, token, nil
-}
-
-func (s *Store) Session(token string) (User, bool) {
-	if len(token) != 64 {
-		return User{}, false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	session, ok := s.data.Sessions[tokenHash(token)]
-	if !ok || session.ExpiresAt <= time.Now().Unix() {
-		return User{}, false
-	}
-	a, ok := s.data.Accounts[session.UserID]
-	return a.User, ok
-}
-
-func (s *Store) Logout(token string) error {
-	return s.update(func(data *metadata) error { delete(data.Sessions, tokenHash(token)); return nil })
-}
-
 func (s *Store) IssueEnrollment(userID, name string) (string, int64, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 120 || strings.ContainsFunc(name, unicode.IsControl) {
@@ -391,6 +270,9 @@ func (s *Store) Machines(userID string) []Machine {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := []Machine{}
+	if s.lock == nil {
+		return out
+	}
 	for _, m := range s.data.Machines {
 		if m.OwnerID == userID {
 			out = append(out, m.Machine)
@@ -402,6 +284,9 @@ func (s *Store) Machines(userID string) []Machine {
 func (s *Store) Owns(userID, machineID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.lock == nil {
+		return false
+	}
 	m, ok := s.data.Machines[machineID]
 	return ok && m.OwnerID == userID
 }
@@ -413,6 +298,9 @@ func (s *Store) MachineCredential(token string) (string, bool) {
 	hash := tokenHash(token)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.lock == nil {
+		return "", false
+	}
 	for _, m := range s.data.Machines {
 		if subtle.ConstantTimeCompare([]byte(hash), []byte(m.CredentialHash)) == 1 {
 			return m.ID, true

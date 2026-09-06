@@ -17,8 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aiomni/dune/internal/authorization"
+	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
-	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
@@ -35,8 +36,6 @@ type Options struct {
 	Assets     string
 	PublicURL  string
 	GatewayURL string
-	// DisableRegistration closes local sign-up while preserving existing accounts.
-	DisableRegistration bool
 	// DialGateway establishes the authenticated byte connection; the server
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
@@ -49,21 +48,22 @@ type authRate struct {
 
 type Server struct {
 	store     *Store
+	identity  *identity.Local
+	access    *authorization.Local
 	urls      deployment.URLs
 	gateway   *gateway.Gateway
 	options   Options
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.Mutex
-	tickets   map[string]access.Grant
 	rates     map[string]authRate
 	hashSlots chan struct{}
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, options Options, store *Store) (*Server, error) {
-	if options.DialGateway == nil {
-		return nil, fmt.Errorf("Gateway dialer required")
+func NewServer(parent context.Context, options Options, store *Store, local *identity.Local, owner *authorization.Local) (*Server, error) {
+	if options.DialGateway == nil || local == nil || owner == nil {
+		return nil, fmt.Errorf("Gateway dialer, identity and access modules required")
 	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
 	if err != nil {
@@ -71,15 +71,9 @@ func NewServer(parent context.Context, options Options, store *Store) (*Server, 
 	}
 	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
-	s := &Server{urls: addresses, store: store, options: options, ctx: ctx, cancel: cancel, tickets: map[string]access.Grant{}, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	s := &Server{urls: addresses, store: store, identity: local, access: owner, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = gateway.New()
-	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(token string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
-		grant, ok := s.authorize(token)
-		if !ok {
-			return gateway.BindingContext{}, nil, fmt.Errorf("unauthorized")
-		}
-		return grant.Bind()
-	}))
+	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, owner.Authorize))
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
@@ -183,8 +177,11 @@ func readJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, bool) {
 	cookie, err := r.Cookie(cookieName)
 	if err == nil {
-		if user, ok := s.store.Session(cookie.Value); ok {
+		if user, err := s.identity.Authenticate(r.Context(), cookie.Value); err == nil {
 			return user, cookie.Value, true
+		} else if !errors.Is(err, identity.ErrUnauthorized) {
+			writeError(w, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "identity service unavailable")
+			return User{}, "", false
 		}
 	}
 	writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "please sign in")
@@ -241,9 +238,13 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 	var token string
 	var err error
 	if register {
-		user, token, err = s.store.Register(request.Email, request.Password)
+		user, token, err = s.identity.Register(r.Context(), request.Email, request.Password)
 	} else {
-		user, token, err = s.store.Login(request.Email, request.Password)
+		user, token, err = s.identity.Login(r.Context(), request.Email, request.Password)
+	}
+	if errors.Is(err, identity.ErrRegistrationDisabled) {
+		writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", err.Error())
+		return
 	}
 	if err != nil {
 		status := http.StatusBadRequest
@@ -253,17 +254,11 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 		writeError(w, status, "AUTH_FAILED", err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: 7 * 24 * 3600})
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: int(identity.SessionLifetime.Seconds())})
 	writeJSON(w, http.StatusOK, user)
 }
-func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	if s.options.DisableRegistration {
-		writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "此站点未开放本地注册，请使用已有账号登录。")
-		return
-	}
-	s.auth(w, r, true)
-}
-func (s *Server) login(w http.ResponseWriter, r *http.Request) { s.auth(w, r, false) }
+func (s *Server) register(w http.ResponseWriter, r *http.Request) { s.auth(w, r, true) }
+func (s *Server) login(w http.ResponseWriter, r *http.Request)    { s.auth(w, r, false) }
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if user, _, ok := s.user(w, r); ok {
 		writeJSON(w, 200, user)
@@ -274,7 +269,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.Logout(token); err != nil {
+	if err := s.identity.Logout(r.Context(), token); err != nil {
 		writeError(w, 500, "STORE_FAILED", err.Error())
 		return
 	}
@@ -357,40 +352,26 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func (s *Server) authorize(token string) (access.Grant, bool) {
-	s.mu.Lock()
-	grant, ok := s.tickets[token]
-	s.mu.Unlock()
-	if ok {
-		return grant, true
-	}
-	machineID, ok := s.store.MachineCredential(token)
-	if !ok {
-		return access.Grant{}, false
-	}
-	return access.Grant{Target: machineID, Role: "daemon", Valid: func() bool { id, ok := s.store.MachineCredential(token); return ok && id == machineID }}, true
-}
-
 func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, func() bool, bool) {
-	user, cookie, ok := s.user(w, r)
+	_, cookie, ok := s.user(w, r)
 	if !ok {
 		return nil, nil, false
 	}
 	machineID := r.PathValue("machine")
-	if !s.store.Owns(user.ID, machineID) {
-		writeError(w, 404, "NOT_FOUND", "machine not found")
+	grant, err := s.access.Client(r.Context(), cookie, machineID)
+	if err != nil {
+		switch {
+		case errors.Is(err, authorization.ErrNotFound):
+			writeError(w, 404, "NOT_FOUND", "machine not found")
+		case errors.Is(err, identity.ErrUnauthorized):
+			writeError(w, 401, "UNAUTHORIZED", "please sign in")
+		default:
+			writeError(w, 503, "IDENTITY_UNAVAILABLE", "identity service unavailable")
+		}
 		return nil, nil, false
 	}
-	valid := func() bool {
-		u, ok := s.store.Session(cookie)
-		return ok && u.ID == user.ID && s.store.Owns(user.ID, machineID)
-	}
-	ticket := randomToken()
-	s.mu.Lock()
-	s.tickets[ticket] = access.Grant{Target: machineID, Role: "sdk", Valid: valid}
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.tickets, ticket); s.mu.Unlock() }()
-	conn, err := s.options.DialGateway(r.Context(), ticket)
+	defer grant.Close()
+	conn, err := s.options.DialGateway(r.Context(), grant.Token())
 	if err != nil {
 		writeError(w, 503, "OFFLINE", err.Error())
 		return nil, nil, false
@@ -400,7 +381,7 @@ func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Cli
 		writeError(w, 503, "OFFLINE", err.Error())
 		return nil, nil, false
 	}
-	return client, valid, true
+	return client, grant.Valid, true
 }
 
 func (s *Server) call(w http.ResponseWriter, r *http.Request) {

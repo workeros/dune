@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aiomni/dune/internal/identity"
 )
 
 func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
@@ -30,7 +32,7 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 				t.Fatal(err)
 			}
 			origin := "https://example.test"
-			app, err := NewServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/private/connect", Assets: assets, Binaries: binaries}, store)
+			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/private/connect", Assets: assets, Binaries: binaries}, store, identity.NewLocal(store, true))
 			if err != nil {
 				t.Fatal(err)
 			}
