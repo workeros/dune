@@ -118,6 +118,10 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	s.mux.HandleFunc("POST /api/machines/{machine}/call", s.call)
 	s.mux.HandleFunc("POST /api/machines/{machine}/sessions", s.start)
 	s.mux.HandleFunc("GET /api/machines/{machine}/sessions/{runtime}/events", s.events)
+	s.mux.HandleFunc("DELETE /api/runners/{runner}/binding", s.revokeRunner)
+	s.mux.HandleFunc("POST /api/runners/{runner}/call", s.call)
+	s.mux.HandleFunc("POST /api/runners/{runner}/sessions", s.start)
+	s.mux.HandleFunc("GET /api/runners/{runner}/sessions/{runtime}/events", s.events)
 	if options.Assets != "" {
 		s.mux.Handle("GET /", http.FileServer(http.Dir(options.Assets)))
 	}
@@ -388,13 +392,24 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, func() bool, bool) {
+func (s *Server) executionClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, func() bool, bool) {
 	_, cookie, ok := s.user(w, r)
 	if !ok {
 		return nil, nil, false
 	}
 	machineID := r.PathValue("machine")
-	grant, err := s.access.Client(r.Context(), cookie, machineID)
+	var grant *authorization.ClientGrant
+	var err error
+	if r.PathValue("runner") != "" {
+		binding, ok := selectedBinding(w, r)
+		if !ok {
+			return nil, nil, false
+		}
+		machineID = binding.MachineID
+		grant, err = s.access.ClientRunner(r.Context(), cookie, binding)
+	} else {
+		grant, err = s.access.Client(r.Context(), cookie, machineID)
+	}
 	if err != nil {
 		writeMetadataError(w, err)
 		return nil, nil, false
@@ -414,7 +429,7 @@ func (s *Server) machineClient(w http.ResponseWriter, r *http.Request) (*sdk.Cli
 }
 
 func (s *Server) call(w http.ResponseWriter, r *http.Request) {
-	client, _, ok := s.machineClient(w, r)
+	client, _, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}
@@ -468,7 +483,7 @@ func operationError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
-	client, _, ok := s.machineClient(w, r)
+	client, _, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}
@@ -504,7 +519,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "ORIGIN", "same-origin browser required")
 		return
 	}
-	client, valid, ok := s.machineClient(w, r)
+	client, valid, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}

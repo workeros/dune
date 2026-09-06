@@ -26,7 +26,7 @@ app, err := host.Open(ctx, host.Options{
 })
 ```
 
-`companyAccessChecker` 是宿主实现的 `access.Checker`，可调用企业私有 SDK；官方二进制仍采用默认 owner 规则，不内置企业依赖或共享管理 UI。`pkg/access` 也继续支持上面的独立协议宿主用法。工作台的逻辑 Runner 入口、Managed 生命周期和集群自动路由属于后续检查点。
+`companyAccessChecker` 是宿主实现的 `access.Checker`，可调用企业私有 SDK；官方二进制仍采用默认 owner 规则，不内置企业依赖或共享管理 UI。`pkg/access` 也继续支持上面的独立协议宿主用法。工作台使用逻辑 Runner 和固定绑定；Managed 生命周期和集群自动路由属于后续检查点。
 
 ## 产品入口与发现
 
@@ -45,6 +45,21 @@ app, err := host.Open(ctx, host.Options{
 游标只表示位置，不授予访问，绑定用户、身份源和列表用途。它在 SQL 中保存十分钟，每用户最多 64 个有效位置，相同位置复用已有游标；支持 SQLite 重开和 PostgreSQL 跨实例。每页重新授权，不能利用旧游标恢复旧权限。过期或不匹配返回 400，客户端可回到第一页；检查器故障返回 `503 ACCESS_UNAVAILABLE`，不能伪装成成功的空列表。明确拒绝的资源详情返回 404，避免泄露存在性。
 
 正式 CLI 使用 `runners|machines --limit N --cursor CURSOR`，公开 Go 客户端为 `Runners(ctx, session, runner.Query)` 和 `Machines(ctx, session, runner.Query)`，返回相应 Page。它们不自动遍历全库或重新选择环境。
+
+## 浏览器 Runner 入口
+
+浏览器 `GET api/runners` 和详情在 Runner 模型上补充当前绑定的 `online`、`os`、`arch` 展示事实；未绑定时不允许执行。用户点击环境后保留完整绑定快照，后续请求不能只按 Runner ID 重新解析目标：
+
+| 请求 | 路径 |
+| --- | --- |
+| 工作台操作 | `POST api/runners/{runner}/call` |
+| 创建 PTY/托管 ACP 会话 | `POST api/runners/{runner}/sessions` |
+| 事件订阅 | `GET api/runners/{runner}/sessions/{runtime}/events` |
+| Attached 解绑 | `DELETE api/runners/{runner}/binding` |
+
+这些入口均要求查询参数 `machine_id`、`fabric_id`、`revision`，Runner ID 由路径给定。参数是选择约束，不是凭据或权威身份；仍必须有当前浏览器会话，再由元数据、检查器及绑定事务验证。缺失或重复字段返回 400，已解析资源的过期/不匹配快照返回 `409 BINDING_CHANGED`（资源不可访问或不存在时返回 404），不会拨号到替代环境。解绑在事务内比较同一快照，成功后撤销对应机器身份及连接。
+
+前端发现刷新不覆盖用户选中的绑定。发现绑定变化后卸载旧工作区和订阅，明确确认后才使用当前绑定；进入环境后仍需点选已有 Runtime，不自动重放创建、输入或其他写入。旧机器路径作为具体机器 API 保留，工作台自身所有执行与订阅均使用上述 Runner 路径。
 
 ## 决定及期限
 

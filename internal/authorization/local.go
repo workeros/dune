@@ -63,6 +63,9 @@ func (l *Service) Client(ctx context.Context, session, target string) (*ClientGr
 func (l *Service) ClientCLI(ctx context.Context, session, target string) (*ClientGrant, error) {
 	return l.client(ctx, session, target, l.sessions.AuthenticateCLI, nil)
 }
+func (l *Service) ClientRunner(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
+	return l.client(ctx, session, binding.MachineID, l.sessions.Authenticate, &binding)
+}
 func (l *Service) ClientRunnerCLI(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
 	return l.client(ctx, session, binding.MachineID, l.sessions.AuthenticateCLI, &binding)
 }

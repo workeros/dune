@@ -2,6 +2,7 @@ package authorization
 
 import (
 	"context"
+
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -28,6 +29,12 @@ func (l *Service) EnrollmentDecision(ctx context.Context, token string) (access.
 	return l.Check(ctx, user, Resource{OwnerID: user.ID, Runner: runner.Runner{Kind: "attached"}}, "runner.create", "attached")
 }
 func (l *Service) Revoke(ctx context.Context, cookie, target string) error {
+	return l.revoke(ctx, cookie, target, nil)
+}
+func (l *Service) RevokeRunner(ctx context.Context, cookie string, binding runner.Binding) error {
+	return l.revoke(ctx, cookie, binding.MachineID, &binding)
+}
+func (l *Service) revoke(ctx context.Context, cookie, target string, expected *runner.Binding) error {
 	user, err := l.sessions.Authenticate(ctx, cookie)
 	if err != nil {
 		return err
@@ -35,6 +42,9 @@ func (l *Service) Revoke(ctx context.Context, cookie, target string) error {
 	resource, decision, err := l.Resource(ctx, user, target, true, "runner.unbind")
 	if err != nil {
 		return err
+	}
+	if expected != nil && (resource.Runner.Binding == nil || *resource.Runner.Binding != *expected) {
+		return runner.ErrBindingChanged
 	}
 	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
 	defer cancel()

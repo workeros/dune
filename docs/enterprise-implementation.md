@@ -169,3 +169,13 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 验证：启用 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/access/login race、`make check-go`、`make web-check web-build` 及实际浏览器交互通过。最后的分页索引、配额和 Web 写入拒绝另经对应 SQL race 与企业进程回归验证；前端保留既有主 bundle 体积提示。升级须同步部署分页客户端和后端，按 schema 7 停站备份，不支持混合旧版本运行。
 
 下一检查点将工作台的产品入口统一到逻辑 Runner 和固定绑定，再核对 S1 验收矩阵。企业检查器在此使用明确允许/拒绝的测试适配器，不声称验证某个企业私有权限 SDK；Managed、续期及 S3 自动路由/接管尚未交付，完整目标继续推进。
+
+### 已完成：工作台 Runner 入口与明确绑定选择
+
+- 工作台按逻辑 Runner 发现和选择环境，浏览器列表/详情展示当前绑定的在线、系统和架构事实。点击环境保存完整绑定，call、创建会话、事件订阅及 Attached 解绑统一使用 Runner 路径和 `machine_id/fabric_id/revision` 选择约束；前端不再通过机器路径执行。原具体机器 API 保留，公开 CLI/SDK 绑定契约不变，无需新增 schema 或重装既有 fabricd。
+- 后端把选择值与权威元数据、当前用户和企业决定核对，再按固定快照签发访问或提交解绑；缺失/歧义参数、错误 Runner/Fabric/修订和已变化绑定均不会拨号新目标。解绑在事务内再次比较同一绑定，其他执行与持续流继续通过已有 Gateway 检查链，协议 core 未新增产品依赖。
+- 列表刷新只更新发现事实，不覆盖选中的绑定；变化时卸载旧工作区与订阅，明确进入当前环境后才使用新快照。环境不可访问或未绑定时不提供执行工作区，进入环境仍需点选已有 Runtime。后台刷新保持变化提示及操作按钮稳定，不用加载态反复替换用户正操作的提示。
+- 真实前缀浏览器创建终端并显示 `RUNNER_BROWSER_OK`，模拟 SQL 已提交绑定修订后观察到旧工作区关闭和明确重新进入提示；选择当前环境及原会话后保留原历史并显示 `RUNNER_REENTER_OK`。浏览器实际解绑后单独检查原 tmux pane 仍存活，输出 `RUNNER_UNBIND_PRESERVES_PTY_OK`，随后停止专用进程和清理测试会话。修订变更只模拟生命周期模块提交事实，不代表 Managed 创建或重绑能力已实现。
+- 验证：启用 PostgreSQL 17 与原生备份工具的全量 `make test`、Web/host/access race、`make build`、`make check-go`、`make web-check web-build` 通过。`TestBrowserRunnerBindingIsFixed` 覆盖四个入口的固定绑定及无拨号拒绝；真实 PTY 前缀回归新增 Runner 入口，SQLite/PostgreSQL 企业共享回归均改由同一 Runner 路径执行并验证写入拒绝与撤销。前端仍有既有主 bundle 体积提示。
+
+下一检查点逐项核对 S1 的身份、访问和执行身份契约，再继续 S2 Managed、持久操作及续期。S1 尚未据此标记整体完成；S2/S3 和真实企业集成的部署证据仍须按原方案取得。

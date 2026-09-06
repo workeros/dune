@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/identity"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/ws"
 	"github.com/fasthttp/websocket"
@@ -34,6 +36,7 @@ import (
 
 func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{}) })
+	t.Run("runner-entry", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{runnerEntry: true}) })
 	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{override: true}) })
 	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{external: true}) })
 }
@@ -41,7 +44,7 @@ func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 type workbenchCase struct {
 	override, external, separateGateway bool
 	humanCLI                            bool
-	enterprise                          bool
+	enterprise, runnerEntry             bool
 	database                            *storage.Config
 }
 
@@ -207,9 +210,31 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
+	var selected runner.Runner
+	if mode.runnerEntry {
+		var page runner.Page
+		do("GET", "api/runners", nil, &page)
+		for _, row := range page.Items {
+			if row.Binding != nil && row.Binding.MachineID == machineConfig.Target {
+				selected = row
+				break
+			}
+		}
+		if selected.Binding == nil {
+			t.Fatal("Runner discovery lost selected machine")
+		}
+	}
+	executionRoute := func(suffix string) string {
+		if !mode.runnerEntry {
+			return "api/machines/" + machineConfig.Target + "/" + suffix
+		}
+		b := selected.Binding
+		query := url.Values{"machine_id": {b.MachineID}, "fabric_id": {b.FabricID}, "revision": {fmt.Sprint(b.Revision)}}
+		return "api/runners/" + selected.ID + "/" + suffix + "?" + query.Encode()
+	}
 	var runtime api.Runtime
-	do("POST", "api/machines/"+machineConfig.Target+"/sessions", profile(dir, "pty", "/bin/sh"), &runtime)
-	events := site + "api/machines/" + machineConfig.Target + "/sessions/" + runtime.ID + "/events"
+	do("POST", executionRoute("sessions"), profile(dir, "pty", "/bin/sh"), &runtime)
+	events := site + executionRoute("sessions/"+runtime.ID+"/events")
 	connect := func() *websocket.Conn {
 		request, err := http.NewRequest("GET", events, nil)
 		must(t, err)
@@ -267,7 +292,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	if mode.enterprise {
 		body, err := json.Marshal(map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "save", Config: &api.AgentConfig{Name: "denied", Command: "/bin/sh", Adapter: "pty"}}})
 		must(t, err)
-		request, err := http.NewRequestWithContext(ctx, "POST", site+"api/machines/"+machineConfig.Target+"/call", bytes.NewReader(body))
+		request, err := http.NewRequestWithContext(ctx, "POST", site+executionRoute("call"), bytes.NewReader(body))
 		must(t, err)
 		request.Header.Set("Origin", origin)
 		request.Header.Set("X-Dune-Request", "1")
@@ -281,7 +306,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			t.Fatal("Web write bypassed enterprise checker", response.StatusCode, failure.Code)
 		}
 		var configs []api.AgentConfig
-		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "list"}}, &configs)
+		do("POST", executionRoute("call"), map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "list"}}, &configs)
 		if len(configs) != 0 {
 			t.Fatal("denied Web write saved configuration")
 		}
@@ -318,7 +343,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 		do("POST", "api/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
 		var remaining []api.Runtime
-		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
+		do("POST", executionRoute("call"), map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
 			t.Fatal("principal suspension changed the running PTY")
 		}
@@ -335,7 +360,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			t.Fatal("pre-link session survived")
 		}
 		do("POST", "api/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
-		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
+		do("POST", executionRoute("call"), map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
 			t.Fatal("identity link changed the running PTY")
 		}
