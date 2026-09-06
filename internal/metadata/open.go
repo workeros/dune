@@ -40,6 +40,15 @@ func Open(ctx context.Context, config storage.Config) (*Store, error) {
 	return open(ctx, config, true)
 }
 
+// OpenPostgresSource opens an existing current schema without initialization or
+// migration. Offline recovery inspection must not silently upgrade a database.
+func OpenPostgresSource(ctx context.Context, config *storage.Postgres) (*Store, error) {
+	if config == nil {
+		return nil, fmt.Errorf("PostgreSQL configuration required")
+	}
+	return open(ctx, storage.Config{Postgres: config}, false)
+}
+
 // OpenSQLiteSource takes the normal exclusive lock but never initializes or
 // upgrades a source database. A typo or unrelated SQLite file must fail closed.
 func OpenSQLiteSource(ctx context.Context, dir string) (*Store, error) {

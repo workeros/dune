@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/gateway"
 	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/jackc/pgx/v5"
 )
@@ -110,6 +112,18 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err := s.RecordOperationUncertainty(ctx, claim, "unknown"); err != nil {
 		t.Fatal(err)
 	}
+	recovery := wire.ID()
+	directory, err := s.ConnectionDirectory(ctx, recovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := directory.Acquire(ctx, directoryClaim(t, s, recovery), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := directory.Publish(ctx, owner.Route); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -161,6 +175,23 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, snapshotRecords(t, s)) {
 		t.Fatal("restored metadata differs from backup")
+	}
+	// A native restore preserves historical ownership bytes. Rotate recovery
+	// before allowing service startup; old terms cannot become live again.
+	next, err := s.RotateConnectionRecovery(ctx, recovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ConnectionDirectory(ctx, recovery); !errors.Is(err, gateway.ErrRouteStale) {
+		t.Fatal("restored old service identity remained usable", err)
+	}
+	recovered, err := s.ConnectionDirectory(ctx, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := recovered.Resolve(ctx, owner.Target)
+	if err != nil || stale.ValidFor != 0 || stale.Published || stale.Epoch != owner.Epoch {
+		t.Fatal("restore revived historical route", err)
 	}
 	if op, err := s.Operation(ctx, operationIntent.ID); err != nil || op.Intent != operationIntent || op.Revision != claim.Revision || op.Outcome != "unknown" || op.Finished || !op.Until.Equal(claim.Until) {
 		t.Fatal("restored operation lost ownership or uncertainty", err)

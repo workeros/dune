@@ -235,3 +235,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 真实独立 Gateway/fabricd 进程的 SIGSTOP 回归分别暂停两端超过十五秒，确认恢复后旧终端命令未创建文件，连接 generation 前进、原 PTY 保留且重新订阅可输入。协议回归检查连续续租超过首租约、续租后的原请求去重、缓冲消息过期、未确认路由保留、伪造标识覆盖及控制状态容量；时间边界另由可控本地时间测试。
 - 这是反向连接的输入期限，不是 PostgreSQL owner 租约。目录 Acquire/Publish、恢复代次、epoch 与 peer 转发仍未实现；后续集群发放的输入期限还必须受 owner 保守期限限制。已受理操作不回滚，也不将进程暂停演练称为三节点分区或主机时钟修改验收。S3 保持实施中。
 - 验证：全量本地 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、wire/fabricd/gateway/access/tunnel 竞态检查、`make build check` 和 `make proto` 通过。最后补充的旧协议拒绝、续租去重和取消缓冲消息回归已通过相关 race。未启用 PostgreSQL、真实 Agent 或远端测试；本功能未改动数据库与前端。
+
+### 已完成组件：PostgreSQL 连接目录与离线恢复代次
+
+- `gateway.Directory` 定义 Acquire、确认后 Publish、Resolve、Renew、Release 的协议层契约，独立于账户与 SQL。第二层使用当前元数据后端实现，拒绝 SQLite；schema 10 保存机器归属、完整执行绑定、owner 启动身份、定向地址、单调 epoch 与发布状态，普通单机迁移不启用集群。
+- 同一机器的首次插入和后续变更串行化；有效 owner 不能被另一个连接或同一启动身份抢占。释放保留 epoch，更新比较恢复代次、owner、epoch、地址及绑定。期限以数据库时间为准，续约/发布在实际 UPDATE 复核未过期；返回剩余时长供核心按调用起点折算保守本地期限，不能按响应收到时间增加执行权。
+- 所有目录事务核对恢复代次；初次选择可创建指定代次，已有代次不在启动时替换。离线 `metadata cluster-recovery` 支持读取及按原代次条件旋转，生成新随机身份；结果未知会输出候选值供只读核对，不自动再旋转。旧目录对象在旋转后失效，恢复后的历史 route 不可发布或续约。管理员仍须先停止旧实例，再配置新代次并重启。
+- 真实 PostgreSQL 跨池回归覆盖并发唯一 owner、两阶段发布、完整绑定、释放后的 epoch、旧进程迟到清理与续约、代次恢复及溢出；锁等待跨越期限不能复活租约。提交回执丢失覆盖 Acquire/Publish/Renew/Release/恢复旋转，均只提交一次并可独立读取核对；原生备份包含实际归属，恢复后旋转隔离历史路由。正式 CLI 验证读取、旋转及旧条件重试拒绝。
+- 此检查点尚未把目录装配到 Gateway/host：下一步须在握手时领取 owner，确认 epoch 后发布，将现有输入期限限制在 owner 期限内，并补齐 peer、恢复身份接入与三节点验证。目录接口或 SQL 测试本身不证明集群执行已经交付。
+- 验证：启用 PostgreSQL 17 的 metadata 全包及 migrate/host/Web 回归、目录/恢复/转库/原生备份定向 race、正式恢复 CLI 与 PostgreSQL 工作台及跨宿主 PTY 回归、`make build check-go` 通过。最后的现有 schema 只读打开与类型拆分已复验；未执行完整真实 Agent 任务、三节点故障注入或对现有部署进行恢复操作。

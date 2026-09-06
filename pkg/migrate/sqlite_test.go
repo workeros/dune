@@ -58,3 +58,15 @@ func TestSQLiteBackupAndRestore(t *testing.T) {
 		t.Fatal("backup lost password", err)
 	}
 }
+
+func TestClusterRecoveryRejectsSQLiteBeforeCreatingState(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "must-not-create")
+	for _, expected := range []string{"", "old-generation"} {
+		if _, err := ClusterRecovery(context.Background(), storage.Config{SQLiteDir: dir}, expected); err == nil {
+			t.Fatal("SQLite accepted cluster recovery")
+		}
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("rejected recovery created a SQLite directory", err)
+	}
+}

@@ -298,6 +298,11 @@ func TestOperationSchemaUpgrade(t *testing.T) {
 			defer func() { s.Close() }()
 			intent := operationFixture(t, s)
 			if err := s.transaction(ctx, func(tx *sql.Tx) error {
+				for _, table := range []string{"dune_routes", "dune_cluster"} {
+					if _, err := tx.Exec("DROP TABLE " + table); err != nil {
+						return err
+					}
+				}
 				if _, err := tx.Exec(`DROP TABLE dune_operations`); err != nil {
 					return err
 				}

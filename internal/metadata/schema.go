@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 9
+const schemaVersion = 10
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -80,6 +80,11 @@ var schema8 = []string{
 var schema9 = []string{
 	`CREATE TABLE dune_operations (id TEXT PRIMARY KEY,request_key TEXT NOT NULL,request_digest TEXT NOT NULL,principal_id TEXT NOT NULL REFERENCES dune_principals(id),identity_namespace TEXT NOT NULL,identity_subject TEXT NOT NULL,runner_id TEXT NOT NULL REFERENCES dune_runners(id),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),action TEXT NOT NULL CHECK(action IN ('create','renew','destroy')),created_at BIGINT NOT NULL,finished BOOLEAN NOT NULL DEFAULT FALSE,outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','unknown','timed_out','succeeded','failed')),worker TEXT NOT NULL DEFAULT '',execution_revision BIGINT NOT NULL DEFAULT 0 CHECK(execution_revision>=0),lease_until BIGINT NOT NULL DEFAULT 0,exclusive BOOLEAN NOT NULL DEFAULT TRUE,UNIQUE(principal_id,request_key),CHECK(finished=FALSE OR exclusive=FALSE),CHECK((finished=FALSE AND outcome IN ('','unknown','timed_out')) OR (finished=TRUE AND outcome IN ('succeeded','failed'))))`,
 	`CREATE UNIQUE INDEX dune_operations_active_runner ON dune_operations(runner_id) WHERE exclusive=TRUE`,
+}
+
+var schema10 = []string{
+	`CREATE TABLE dune_cluster (id INTEGER PRIMARY KEY CHECK(id=1),recovery_generation TEXT NOT NULL)`,
+	`CREATE TABLE dune_routes (machine_id TEXT PRIMARY KEY REFERENCES dune_machines(id) ON DELETE CASCADE,recovery_generation TEXT NOT NULL,epoch BIGINT NOT NULL CHECK(epoch>0),owner_boot_id TEXT NOT NULL,owner_address TEXT NOT NULL,binding TEXT NOT NULL,published BOOLEAN NOT NULL DEFAULT FALSE,expires_at BIGINT NOT NULL)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -197,6 +202,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=9 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 9
+		}
+		if version == 9 {
+			for _, statement := range schema10 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=10 WHERE id=1`); err != nil {
 				return err
 			}
 		}

@@ -163,3 +163,21 @@ CLI 子会话最长八小时，且不得超过父浏览器会话期限；认证�
 Operation 完成、业务互斥和 worker 租约是三个不同状态。等待连接的未完成操作在外部变更已确认结束后可释放互斥，让续期串行进入；unknown、timed_out 和 worker 租约过期都不会释放未决变更。读取或接管原 Operation 不意味着可以重新调用提供方。当前内部表不自动清理，未知和未完成记录随转库、备份保留；后续保留策略必须另行定义，不据此承诺提供方去重记录永久有效。
 
 从 schema 8 协调停站、备份并升级时只新增空表和索引，不撤销既有用户、机器或 Runner。SQLite 转库与 PostgreSQL 原生恢复保留原租约期限、执行修订和业务互斥，不重置时间或触发调用。恢复服务仍需按原操作核对外部事实；恢复旧备份不能证明备份之后的调用没有发生。Managed 生命周期入口、阶段事实、提供方动作键及调度尚未装配，本次迁移不启用 Managed。
+
+## schema 10：连接目录与集群恢复代次
+
+新增 `dune_cluster` 和 `dune_routes`，保存恢复代次、机器连接归属 epoch、owner 启动身份与定向地址、协议绑定、是否已发布及数据库到期时间。机器重连不复用已释放的 epoch；已取得但未确认的归属不可路由。表随两种 SQL 后端迁移和备份，连接目录只接受 PostgreSQL，不允许 SQLite 冒充集群目录。
+
+从 schema 9 停站、备份并升级，只新增空表，保留身份、凭据、Runner 和生命周期操作。失败时整体回滚；旧二进制不支持新 schema，回退须恢复协调备份。目录实现尚未由官方 Gateway/host 装配，本次迁移不启用集群、peer 或自动转发。首次集群配置和连接握手仍在后续实现范围。
+
+已有集群记录的 PostgreSQL 备份恢复后，须停止所有旧实例，核对数据库，生成新的恢复代次并更新所有实例配置，再允许机器重连。不能直接使用备份中的代次启动服务。离线工具支持先读取，再对明确的原代次进行一次条件旋转：
+
+```sh
+dune metadata cluster-recovery --database-config /absolute/private/database.yaml
+dune metadata cluster-recovery --database-config /absolute/private/database.yaml \
+  --rotate-from ORIGINAL_GENERATION
+```
+
+成功返回 `outcome: changed` 和新 `generation`；工具自己生成随机新代次，不接受指定历史代次。未初始化集群记录的单机数据库和 SQLite 会拒绝旋转。原机器、用户及工作内容不删除，历史 route 留作核对，但不具有新代次的路由权限。数据库事务不能停止外部旧服务；停站、配置更新和重新接入仍是恢复流程的一部分。
+
+提交回执丢失时，命令以非零状态返回，并输出 `outcome: unknown` 与本次候选代次。此时只运行不带 `--rotate-from` 的读取命令：若数据库已是候选代次，则原操作已提交；不要盲目再旋转。若读取失败或出现第三个代次，先核对恢复操作的并发与数据库状态。该工具不恢复 Agent 或上游资源，也不替代 S3 的 owner 期限和 epoch 握手。

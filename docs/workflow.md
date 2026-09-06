@@ -113,3 +113,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 `make test TEST_PKGS=./internal/lifecycle` 验证个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实及配置边界。当前只有纯策略计算，没有提供方调用或持久调度；这些测试不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
 
 生命周期 SQL 协调使用 `make test-race TEST_PKGS=./internal/metadata TEST_FLAGS='-run Operation -count=1 -timeout=180s'`，启用上述 PostgreSQL 配置后验证跨连接池领取、重开恢复、业务互斥、数据库租约到期、暂停后的条件写入、旧 worker 拒绝和等待连接时的维护串行化。`TestCommitAcknowledgementLossIsNotReplayed` 另覆盖意图、领取及完成的回执丢失；转库和原生备份测试保存实际 unknown 操作行。协调夹具使用已有 Runner 元数据，没有模拟或调用 Managed 提供方，不能用这些结果替代外部副作用与完整阶段恢复验收。
+
+连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock` 和 `TestPostgresDirectoryCommitLoss`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查及回执丢失不重放。`TestDirectoryBackendAndSchemaUpgrade` 检查 SQLite 拒绝集群、schema 9 升级与失败回滚；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCLI` 执行正式离线读取/旋转命令。它们仅证明目录事务与恢复工具，不代表 Gateway 已使用目录或三节点转发已经通过。
