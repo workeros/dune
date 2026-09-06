@@ -204,22 +204,8 @@ func (l *Legacy) Close() error { return l.lock.Close() }
 func (s *Store) ImportLegacy(ctx context.Context, source *Legacy) (ImportCounts, error) {
 	d := source.data
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		if s.postgres {
-			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(1146441285)`); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `LOCK TABLE dune_principals,dune_local_accounts,dune_sessions,dune_enrollments,dune_runners,dune_machines IN ACCESS EXCLUSIVE MODE`); err != nil {
-				return err
-			}
-		}
-		for _, table := range []string{"dune_principals", "dune_local_accounts", "dune_sessions", "dune_enrollments", "dune_runners", "dune_machines"} {
-			var count int
-			if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
-				return err
-			}
-			if count != 0 {
-				return fmt.Errorf("import requires an empty SQL target; existing metadata was not changed")
-			}
+		if err := s.emptyImportTarget(ctx, tx); err != nil {
+			return err
 		}
 		for _, a := range d.Accounts {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_principals(id,email) VALUES($1,$2)`, a.ID, a.Email); err != nil {

@@ -1,6 +1,6 @@
 # 企业扩展方案实施记录
 
-实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a、S0b 已通过本地验收；S0c 实施中，S1–S3 尚未交付。
+实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a、S0b、S0c 已通过本地验收；S1–S3 尚未交付。
 
 ## S0a：连接与传输
 
@@ -85,4 +85,14 @@
 - SQL 故障不会伪装成账号错误或机器不存在；提交确认丢失返回 `RESULT_UNKNOWN`，普通后端故障返回 503，禁止自动重放。连接期间的持久访问查询有界，注销后空闲终端仍会被撤销。
 - 两种后端均通过注册、CLI enrollment、真实 fabricd 接入、PTY 输入输出和退出撤销；外部 Go module 宿主继续使用同一 SQL 应用。真实 PostgreSQL 启用下的全量 `make test`、metadata/Web/host `make test-race` 和 `make check-go` 通过；最后新增的 JSON 字段别名回归也通过。
 - 真实升级演练使用 `8aba205` 的旧 JSON 工作台建立账号、机器和 PTY，停站备份并导入 SQLite 后在原地址启动新版本。原 Cookie/密码、机器配置、Runtime ID、incarnation/generation 及终端历史保持不变，fabricd 无需重装或重新签发凭据；浏览器登录并连接该原会话，看到 `BEFORE_SQL_IMPORT_OK`、`AFTER_SQL_IMPORT_OK`，输入后显示 `SQL_MIGRATION_UI_OK`。完成后已停止测试 Runtime、fabricd 和站点。
-- 安装配置、导入顺序和回退边界见[元数据迁移](metadata-migration.md)。SQL 转库与备份恢复仍待下一功能点，S1–S3 仍未交付。
+- 安装配置、导入顺序和回退边界见[元数据迁移](metadata-migration.md)。SQL 转库与备份恢复验收见下节，S1–S3 仍未交付。
+
+### 已完成：SQLite 转库与 SQL 备份恢复
+
+- `pkg/migrate.SQLite` / `dune metadata copy-sqlite` 将停站 SQLite 的全部当前业务字段复制到空 SQLite/PostgreSQL 目标。源库独占且不会被初始化或升级，复制使用单一源快照和目标事务，按外键顺序逐行传输，不引入双写或外部副作用。固定字段清单有 schema 覆盖回归，避免后续新增持久字段时漏迁移。
+- 两种目标均逐字段验证源与目标一致，包括 JSON 中没有的 Fabric ID 和 binding revision；注入最后一张表的插入失败，确认之前的所有记录完整回滚。目标重启后数据保持一致，重复复制拒绝非空库。不存在/未知源库、源仍运行、源目标相同均明确失败。
+- SQLite 完成离线备份、再复制恢复和原密码/会话验证。真实 PostgreSQL 17 使用 `pg_dump` 归档测试 schema，删除该测试 schema，再以 `pg_restore --single-transaction --exit-on-error --no-owner --no-privileges` 恢复，逐字段验证并确认原 Cookie 和机器凭据有效。未引入自制 PostgreSQL 备份格式。
+- 真实 CLI 演练从旧 JSON 经 SQLite 再切换 PostgreSQL，整个过程保持同一 fabricd、机器配置及部署地址。切换后原会话/密码、机器绑定、Runtime ID、incarnation/generation 和 PTY 历史保留，原终端执行并显示 `AFTER_POSTGRES_TRANSFER_OK`；测试 Runtime、连接进程、站点及专用测试 schema 已清理。
+- 验证：启用真实 PostgreSQL 及其备份工具的全量 `make test` 通过；SQL/迁移 `make test-race` 和 `make check-go` 通过。材料明确限定当前 schema 1、SQLite 与 PostgreSQL 17 的已验收组合，不承诺任意未来版本混用或降级。
+
+S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器及人类 CLI 登录、短期访问凭据、稳定 Runner/绑定和全部操作的访问检查。真实身份源及后续 Managed/集群仍需对应实现和实际环境证据。

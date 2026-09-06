@@ -37,6 +37,22 @@ type Store struct {
 }
 
 func Open(ctx context.Context, config storage.Config) (*Store, error) {
+	return open(ctx, config, true)
+}
+
+// OpenSQLiteSource takes the normal exclusive lock but never initializes or
+// upgrades a source database. A typo or unrelated SQLite file must fail closed.
+func OpenSQLiteSource(ctx context.Context, dir string) (*Store, error) {
+	if _, err := os.Lstat(dir); err != nil {
+		return nil, err
+	}
+	return open(ctx, storage.Config{SQLiteDir: dir}, false)
+}
+
+func open(ctx context.Context, config storage.Config, initialize bool) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if (config.SQLiteDir == "") == (config.Postgres == nil) {
 		return nil, fmt.Errorf("choose exactly one SQLite or PostgreSQL backend")
 	}
@@ -76,13 +92,19 @@ func Open(ctx context.Context, config storage.Config) (*Store, error) {
 				return nil, fmt.Errorf("legacy JSON metadata requires explicit import into a new SQL directory")
 			}
 		}
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+		flags := os.O_RDWR | syscall.O_NOFOLLOW
+		if initialize {
+			flags |= os.O_CREATE
+		}
+		f, err := os.OpenFile(file, flags, 0600)
 		if err == nil {
 			info, statErr := f.Stat()
 			if statErr != nil {
 				err = statErr
 			} else if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Getuid() || stat.Nlink != 1 || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 				err = fmt.Errorf("SQLite file must be private, owned by this user, regular and not hard-linked")
+			} else if !initialize && info.Size() == 0 {
+				err = fmt.Errorf("an existing SQLite metadata source is required")
 			}
 			f.Close()
 		}
@@ -107,11 +129,19 @@ func Open(ctx context.Context, config storage.Config) (*Store, error) {
 	s.db.SetMaxOpenConns(8)
 	s.db.SetMaxIdleConns(4)
 	s.db.SetConnMaxLifetime(30 * time.Minute)
-	if err = s.db.PingContext(ctx); err == nil && !s.postgres {
+	if err = s.db.PingContext(ctx); err == nil && !s.postgres && initialize {
 		_, err = s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
 	}
 	if err == nil {
-		err = s.migrate(ctx)
+		if initialize {
+			err = s.migrate(ctx)
+		} else {
+			var version int
+			err = s.db.QueryRowContext(ctx, `SELECT version FROM dune_schema WHERE id=1`).Scan(&version)
+			if err == nil && version != schemaVersion {
+				err = fmt.Errorf("unsupported metadata schema version %d", version)
+			}
+		}
 	}
 	if err != nil {
 		s.Close()

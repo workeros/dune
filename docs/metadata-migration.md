@@ -39,4 +39,44 @@ dune metadata import-json \
 
 新后端尚未开放写入时，可使用旧二进制和原目录/备份回退。新后端已有写入后，必须停写并显式转换或恢复，不能直接切回旧目录丢弃新增状态。此工具不迁移开发机上的文件、tmux 内容或 Agent 配置；fabricd 重启与资源销毁仍遵守各自生命周期规则。
 
-SQLite 转 PostgreSQL及 SQL 备份恢复工具仍待后续检查点交付，不能将 JSON 导入工具当作通用 SQL 导出工具。
+## SQLite 转 PostgreSQL
+
+停止 SQLite 工作台并备份后，将现有元数据复制到空 PostgreSQL 目标：
+
+```sh
+dune metadata copy-sqlite \
+  --source /absolute/current-sqlite --database-config /absolute/database.yaml
+```
+
+源库须已存在且 schema 与当前二进制匹配；源目录独占锁一直保持到复制结束，不会为缺失或不受支持的源库初始化数据。复制使用一个源快照和一个目标事务，保留全部当前业务字段，包括 Runner/Fabric 关联和绑定修订；输出各表行数。不复制网络连接，不进行双写，也不重放业务动作。
+
+核对行数后，以目标数据库配置和原部署地址启动工作台。检查原会话、机器自动重连、Runtime 身份和 PTY 历史，再开放写入。重复复制到非空目标会失败。结果未知与开放写入后的回退限制同 JSON 导入；本命令不提供 PostgreSQL 到 SQLite 的反向转换。
+
+## 备份与恢复
+
+SQLite 可以在停站后通过同一工具复制到新的私有目录：
+
+```sh
+dune metadata copy-sqlite \
+  --source /absolute/current-sqlite --data /absolute/backup-sqlite
+
+# 恢复到另一个空目录，验证后显式切换 web --data。
+dune metadata copy-sqlite \
+  --source /absolute/backup-sqlite --data /absolute/restored-sqlite
+```
+
+复制得到当前 schema 的独立 SQLite 数据库，原密码、凭据哈希和到期时间不变。不要只复制正在使用的 `metadata.sqlite` 主文件而遗漏 WAL；本工具要求源工作台退出，通过数据库事务读取一致状态。
+
+PostgreSQL 使用发行版提供的 [pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html) 和 [pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html)。停止 Dune 写入后备份到私有目录，恢复到为本次恢复准备的空数据库；使用匹配服务器版本的工具，连接和密码由私有 libpq service 配置提供。例如：
+
+```sh
+umask 077
+pg_dump --dbname=service=dune_backup --format=custom --file=/private/dune.dump
+pg_restore --list /private/dune.dump
+pg_restore --dbname=service=dune_restore --single-transaction --exit-on-error \
+  --no-owner --no-privileges /private/dune.dump
+```
+
+`dune_backup` 和 `dune_restore` 分别指向源库和新恢复库；恢复账号须具有建表权限，目标服务账号的权限由部署方配置。核对 schema 版本、各表数据、原登录与机器身份，再切换应用。恢复不会延长已过期会话或凭据，也不能恢复备份之后的新增记录。保留原库直到验收完成，禁止用恢复备份的方式隐式丢弃已开放的新写入。
+
+当前已验证 schema 1 的 JSON 导入、SQLite 转 PostgreSQL、SQLite 复制恢复及 PostgreSQL 17 的原生备份恢复。后续 schema/版本升级必须补充对应验证，不能据此承诺任意版本可混用或回退。

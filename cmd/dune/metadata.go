@@ -14,11 +14,11 @@ import (
 )
 
 func runMetadata(ctx context.Context, args []string) error {
-	if len(args) == 0 || args[0] != "import-json" {
-		return fmt.Errorf("metadata import-json --source LEGACY_DIR [--data SQLITE_DIR | --database-config FILE]")
+	if len(args) == 0 || (args[0] != "import-json" && args[0] != "copy-sqlite") {
+		return fmt.Errorf("metadata import-json|copy-sqlite --source DIR [--data SQLITE_DIR | --database-config FILE]")
 	}
-	flags := flag.NewFlagSet("metadata import-json", flag.ContinueOnError)
-	source := flags.String("source", "", "offline legacy account directory containing accounts.json")
+	flags := flag.NewFlagSet("metadata "+args[0], flag.ContinueOnError)
+	source := flags.String("source", "", "offline source directory")
 	data := flags.String("data", "", "empty target SQLite directory (separate from source)")
 	database := flags.String("database-config", "", "private SQL target configuration file")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -40,7 +40,12 @@ func runMetadata(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := migrate.JSON(ctx, dir, target)
+	var report any
+	if args[0] == "copy-sqlite" {
+		report, err = migrate.SQLite(ctx, dir, target)
+	} else {
+		report, err = migrate.JSON(ctx, dir, target)
+	}
 	if err != nil {
 		return err
 	}

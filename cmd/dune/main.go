@@ -49,7 +49,7 @@ func run() error {
 	}
 	args := fs.Args()
 	if len(args) > 0 && (args[0] == "help" || args[0] == "version") {
-		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL]\n  dune metadata import-json --source DIR [--data DIR | --database-config FILE]\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config must precede the subcommand.")
+		fmt.Println("Dune MVP/1\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config must precede the subcommand.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "init" {
