@@ -57,10 +57,22 @@ func session(t *testing.T, ctx context.Context, g *gateway.Gateway, role string,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	_, _, err = wire.Handshake(s, &pb.Message{Kind: "hello", Target: "machine", Incarnation: "boot", ConnectionGeneration: 1,
+	ctrl, welcome, err := wire.Handshake(s, &pb.Message{Kind: "hello", InputLeaseId: wire.ID(), Target: "machine", Incarnation: "boot", ConnectionGeneration: 1,
 		Payload: api.Payload(api.Hello{Version: api.Version, Role: role}), Data: api.Payload(api.Binding{})})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if role == gateway.RoleDaemon {
+		if err := ctrl.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId}); err != nil {
+			t.Fatal(err)
+		}
+		for !g.Online("machine") {
+			select {
+			case <-ctx.Done():
+				t.Fatal("confirmed route was not published")
+			case <-time.After(time.Millisecond):
+			}
+		}
 	}
 	return s
 }
@@ -237,5 +249,114 @@ func TestLocallyHandledRequestDoesNotForward(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("missing local termination notification")
+	}
+}
+
+func TestDaemonRouteRequiresConfirmedLease(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	g := gateway.New()
+	defer g.Close()
+	_, daemonHandler, err := (access.Grant{Target: "machine", Role: gateway.RoleDaemon}).Bind()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := session(t, ctx, g, gateway.RoleDaemon, daemonHandler)
+	local, remote := net.Pipe()
+	go func() {
+		_ = g.ServeConn(ctx, remote, gateway.BindingContext{Target: "machine", Role: gateway.RoleDaemon}, daemonHandler)
+	}()
+	replacement, err := yamux.Client(local, wire.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	control, welcome, err := wire.Handshake(replacement, &pb.Message{Kind: "hello", InputLeaseId: wire.ID(), Target: "machine", Incarnation: "new-boot", ConnectionGeneration: 2,
+		Payload: api.Payload(api.Hello{Version: api.Version, Role: gateway.RoleDaemon}), Data: api.Payload(api.Binding{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if welcome.InputLeaseId == "" || welcome.InputLeaseMs != uint32(wire.InputLeaseDuration/time.Millisecond) {
+		t.Fatal("missing bounded input grant", welcome)
+	}
+	// A welcome is only an offer. Before confirmation, discovery and SDK routing
+	// must retain the original connection and the original tunnel stays alive.
+	probe, err := func() (*pb.Message, error) {
+		left, right := net.Pipe()
+		go func() {
+			_ = g.ServeConn(ctx, right, gateway.BindingContext{Target: "machine", Role: gateway.RoleSDK}, &handler{})
+		}()
+		peer, err := yamux.Client(left, wire.Config())
+		if err != nil {
+			return nil, err
+		}
+		defer peer.Close()
+		_, reply, err := wire.Handshake(peer, &pb.Message{Kind: "hello", Target: "machine", Payload: api.Payload(api.Hello{Version: api.Version, Role: gateway.RoleSDK})})
+		return reply, err
+	}()
+	var selected api.Binding
+	if err != nil || wire.Decode(probe, &selected) != nil || selected.Incarnation != "boot" || original.IsClosed() {
+		t.Fatal("unconfirmed handshake replaced original route", selected, err)
+	}
+	if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: "wrong-challenge"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = control.SetReadDeadline(time.Now().Add(time.Second))
+	failure, err := control.Recv()
+	if err != nil || failure.Code != "HANDSHAKE" || original.IsClosed() || !g.Online("machine") {
+		t.Fatal("invalid confirmation changed original route", failure, err)
+	}
+}
+
+func TestForwardOverwritesCallerLease(t *testing.T) {
+	c, daemon := fixture(t, &handler{})
+	stream := request(t, c)
+	raw, err := daemon.AcceptStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := wire.Wrap(raw)
+	defer remote.Close()
+	_ = remote.SetReadDeadline(time.Now().Add(time.Second))
+	first, err := remote.Recv()
+	if err != nil || first.InputLeaseId == "" || first.InputLeaseMs != 0 {
+		t.Fatal("first request lacks gateway input grant", first, err)
+	}
+	if err := stream.Send(&pb.Message{Kind: "input", Data: []byte("input"), InputLeaseId: "forged", InputLeaseMs: 999999}); err != nil {
+		t.Fatal(err)
+	}
+	next, err := remote.Recv()
+	if err != nil || next.InputLeaseId != first.InputLeaseId || next.InputLeaseMs != 0 {
+		t.Fatal("caller selected execution input lease", next, err)
+	}
+}
+
+func TestHandshakeRejectsOldOrUnleasedProtocol(t *testing.T) {
+	for _, attempt := range []struct{ version, role string }{
+		{"dune-mvp/1", gateway.RoleDaemon},
+		{"dune-mvp/1", gateway.RoleSDK},
+		{api.Version, gateway.RoleDaemon},
+	} {
+		t.Run(attempt.version+"/"+attempt.role, func(t *testing.T) {
+			g := gateway.New()
+			defer g.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			local, remote := net.Pipe()
+			go func() {
+				_ = g.ServeConn(ctx, remote, gateway.BindingContext{Target: "machine", Role: attempt.role}, &handler{})
+			}()
+			peer, err := yamux.Client(local, wire.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer peer.Close()
+			_, _, err = wire.Handshake(peer, &pb.Message{Kind: "hello", Target: "machine", Incarnation: "boot", ConnectionGeneration: 1,
+				Payload: api.Payload(api.Hello{Version: attempt.version, Role: attempt.role}), Data: api.Payload(api.Binding{})})
+			var denied *api.Error
+			if !errors.As(err, &denied) || denied.Code != "HANDSHAKE" || g.Online("machine") {
+				t.Fatal("incompatible handshake reached business routing", err)
+			}
+		})
 	}
 }

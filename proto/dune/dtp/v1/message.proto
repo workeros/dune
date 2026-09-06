@@ -3,9 +3,10 @@ package dune.dtp.v1;
 option go_package = "github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1";
 
 // Message is one application message, preceded by a 4-byte big-endian size.
-// This MVP wire format is dune-mvp/1, not the historical DTP/1 Frame.
+// This MVP wire format is dune-mvp/2, not the historical DTP/1 Frame.
 // kind: hello, welcome, request, accepted, result, error, data, input,
-// written, resize, signal, eof, exit, stderr. payload is UTF-8 JSON with
+// written, resize, signal, eof, exit, stderr, lease_request, lease_grant,
+// lease_ready. payload is UTF-8 JSON with
 // operation-specific schemas defined by pkg/api; data is uninterpreted bytes.
 // Stream IDs and transport acknowledgements belong exclusively to Yamux.
 message Message {
@@ -22,4 +23,8 @@ message Message {
   string code = 11;
   string detail = 12;
   string runtime_incarnation = 13;
+  // Mandatory on Gateway-to-fabricd business messages and lease control frames.
+  string input_lease_id = 14;
+  // Relative grant duration on welcome/lease_grant only, bounded by the protocol.
+  uint32 input_lease_ms = 15;
 }

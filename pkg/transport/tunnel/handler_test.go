@@ -57,10 +57,20 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, err = wire.Handshake(s, &pb.Message{Kind: "hello", Target: target, Incarnation: target + "-inc", ConnectionGeneration: 1,
+		ctrl, welcome, err := wire.Handshake(s, &pb.Message{Kind: "hello", InputLeaseId: wire.ID(), Target: target, Incarnation: target + "-inc", ConnectionGeneration: 1,
 			Payload: api.Payload(api.Hello{Version: api.Version, Role: "daemon"}), Data: api.Payload(api.Binding{Capabilities: []string{"runtime.list"}})})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if err := ctrl.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId}); err != nil {
+			t.Fatal(err)
+		}
+		for !g.Online(target) {
+			select {
+			case <-ctx.Done():
+				t.Fatal("confirmed route was not published")
+			case <-time.After(time.Millisecond):
+			}
 		}
 		go func() {
 			for {
@@ -199,9 +209,12 @@ func TestFastHTTPGatewayCloseUnblocksHijackedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	_, _, err = wire.Handshake(session, &pb.Message{Kind: "hello", Target: "machine", Incarnation: "boot", ConnectionGeneration: 1,
+	ctrl, welcome, err := wire.Handshake(session, &pb.Message{Kind: "hello", InputLeaseId: wire.ID(), Target: "machine", Incarnation: "boot", ConnectionGeneration: 1,
 		Payload: api.Payload(api.Hello{Version: api.Version, Role: gateway.RoleDaemon}), Data: api.Payload(api.Binding{})})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId}); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})

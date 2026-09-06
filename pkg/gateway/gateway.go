@@ -9,15 +9,15 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
-	"log"
 	"net"
 	"sync"
 	"time"
 )
 
 type route struct {
-	s *yamux.Session
-	b api.Binding
+	s     *yamux.Session
+	b     api.Binding
+	input *wire.InputWindow
 }
 
 type Gateway struct {
@@ -37,7 +37,7 @@ func (g *Gateway) Online(target string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	r := g.routes[target]
-	return r != nil && !r.s.IsClosed()
+	return r != nil && !r.s.IsClosed() && r.inputAlive()
 }
 
 func (g *Gateway) Disconnect(target string) {
@@ -138,51 +138,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	timer.Stop()
 	defer st.Close()
 	if h.Role == "daemon" {
-		if m.Incarnation == "" || m.ConnectionGeneration == 0 {
-			st.Fail("HANDSHAKE", fmt.Errorf("missing incarnation/generation"))
-			return nil
-		}
-		var b api.Binding
-		if len(m.Data) == 0 {
-			return nil
-		}
-		if e := jsonBinding(m.Data, &b); e != nil {
-			return nil
-		}
-		b.Target = binding.Target
-		b.Incarnation = m.Incarnation
-		b.Generation = m.ConnectionGeneration
-		b.Version = api.Version
-		r := &route{s: s, b: b}
-		g.mu.Lock()
-		old := g.routes[binding.Target]
-		g.routes[binding.Target] = r
-		g.mu.Unlock()
-		if old != nil {
-			old.s.Close()
-		}
-		defer func() {
-			g.mu.Lock()
-			if g.routes[binding.Target] == r {
-				delete(g.routes, binding.Target)
-			}
-			g.mu.Unlock()
-		}()
-		if st.Send(&pb.Message{Kind: "welcome", Payload: api.Payload(b)}) != nil {
-			return nil
-		}
-		log.Printf("fabricd registered incarnation=%s generation=%d", b.Incarnation, b.Generation)
-		go func() {
-			for {
-				extra, e := s.AcceptStream()
-				if e != nil {
-					return
-				}
-				extra.Close()
-			}
-		}()
-		_, _ = st.Recv()
-		return nil
+		return g.serveDaemon(ctx, s, st, m, binding.Target)
 	}
 	if h.Role != "sdk" {
 		st.Fail("HANDSHAKE", fmt.Errorf("invalid role"))
@@ -191,7 +147,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	g.mu.Lock()
 	r := g.routes[binding.Target]
 	g.mu.Unlock()
-	if r == nil || r.s.IsClosed() {
+	if r == nil || r.s.IsClosed() || !r.inputAlive() {
 		st.Fail("OFFLINE", fmt.Errorf("fabricd offline"))
 		return nil
 	}

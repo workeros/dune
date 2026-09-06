@@ -1,6 +1,6 @@
 # Dune 单机实现说明
 
-本文件固定 `dune-mvp/1` 的工程语义。实现以 `pkg/api/types.go`、`proto/dune/dtp/v1/message.proto` 为准；不与早期 DTP Frame 兼容。
+本文件固定 `dune-mvp/2` 的工程语义。实现以 `pkg/api/types.go`、`proto/dune/dtp/v1/message.proto` 为准；不与早期 DTP Frame 兼容。
 
 适用范围：下文记录单机 MVP；后续 tmux PTY 后端、Web ACP 控制器和账号层的扩展见 [Web 方案](personal-web-plan.md)。涉及生命周期和历史能力时按对应入口区分，不能把 MVP 限制套用到 Web 扩展。
 
@@ -12,7 +12,13 @@ Gateway HTTP 服务使用 fasthttp，WebSocket 升级使用 fasthttp/websocket�
 
 第一条 stream 必须在 5s 内发送 hello（版本、角色、target）。fabricd 额外提交随机 incarnation、递增 connection generation 和能力清单；SDK 收到当前 daemon 的绑定。之后每条业务 stream 的首消息是 request，含 request_id、operation、target、incarnation、connection_generation；Runtime 操作还需 runtime_id、runtime_incarnation 和 runtime_generation。Gateway 和 daemon 均校验绑定。连接重新建立需新的 SDK Client；旧 stream 不恢复。
 
-fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。该检查尚不包含企业集群方案中的目录 epoch 和有界输入租约。
+fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录 epoch 与集群恢复代次尚未实现。
+
+fabricd 在 hello 中提交随机 `input_lease_id`，Gateway 的 welcome 提供同一标识及最多 15000ms 的相对期限。fabricd 从自己发出 challenge 前的本地单调时间计时，确认仍有效后回复 `lease_ready`；Gateway 收到确认才发布路由。未确认或确认失败的新连接不会替换原路由。此处的租约只限制当前反向连接，不赋予集群机器归属。
+
+控制流每五秒发起新的 `lease_request → lease_grant → lease_ready`，同一时刻只允许一个待确认 challenge。双端检查原有效期，迟到确认不能复活已经过期的连接。Gateway 转发每条业务消息时覆盖 `input_lease_id`，fabricd 解码后按该标识的原期限检查，续租不改变旧消息的期限。保留尚未过期的少量原 grant 供在途消息使用，避免每次续租打断合法传输；没有无限历史。空闲连接也在期限结束时关闭，消息检查不依赖关闭计时器是否及时得到调度。传输状态不参与业务请求去重。
+
+`dune-mvp/2` 与旧版本不混用：Gateway、fabricd、CLI 和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 
 业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 

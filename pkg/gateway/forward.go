@@ -68,7 +68,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	g.mu.Lock()
 	current := g.routes[binding.Target]
 	g.mu.Unlock()
-	if current != r {
+	if current != r || !r.inputAlive() {
 		err = fmt.Errorf("reconnect SDK for current binding")
 		c.Fail("STALE_BINDING", err)
 		return
@@ -85,7 +85,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	defer d.Close()
 	stopFabric := context.AfterFunc(ctx, func() { d.Close() })
 	defer stopFabric()
-	if err = d.Send(m); err != nil {
+	if err = r.send(d, m); err != nil {
 		c.Fail("RESULT_UNKNOWN", err)
 		return
 	}
@@ -97,7 +97,11 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 				e = flow.hook(func(ctx context.Context) error { return policy.Message(ctx, direction, message) })
 			}
 			if e == nil {
-				e = dst.Send(message)
+				if direction == ToFabric {
+					e = r.send(dst, message)
+				} else {
+					e = dst.Send(message)
+				}
 			}
 			if e != nil {
 				done <- e

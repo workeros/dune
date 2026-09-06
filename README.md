@@ -18,6 +18,8 @@ make build
 
 `init` 创建 `~/.config/dune/config.yaml` 和随机 token，文件权限 0600。默认使用 HTTP/WebSocket（`ws://`），在 WebSocket 升级前通过 HTTP Bearer token 鉴权，不生成或要求 TLS 证书。已存在配置不会被覆盖。默认监听 `127.0.0.1:7443`，可显式配置 `0.0.0.0` 对外监听。
 
+当前线协议为 `dune-mvp/2`，执行输入使用有界租约。已有部署须协调升级 Gateway、fabricd、CLI 与 Go SDK，旧协议会在握手时拒绝；保留配置、机器凭据和 tmux PTY，重启 fabricd 会结束其托管 ACP。升级与回退步骤见[协议说明](docs/implementation.md#网络和协议)。
+
 裸命令监督两个独立服务进程，异常退出以 100ms 至 5s 的退避自动重启。Ctrl-C 正常关闭服务与 ACP/Exec 子进程，tmux 托管的 PTY 会话继续运行。不要同时用同一配置启动多个 supervisor。
 
 另开终端：

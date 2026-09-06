@@ -22,9 +22,10 @@ const (
 )
 
 // Message is one application message, preceded by a 4-byte big-endian size.
-// This MVP wire format is dune-mvp/1, not the historical DTP/1 Frame.
+// This MVP wire format is dune-mvp/2, not the historical DTP/1 Frame.
 // kind: hello, welcome, request, accepted, result, error, data, input,
-// written, resize, signal, eof, exit, stderr. payload is UTF-8 JSON with
+// written, resize, signal, eof, exit, stderr, lease_request, lease_grant,
+// lease_ready. payload is UTF-8 JSON with
 // operation-specific schemas defined by pkg/api; data is uninterpreted bytes.
 // Stream IDs and transport acknowledgements belong exclusively to Yamux.
 type Message struct {
@@ -42,8 +43,12 @@ type Message struct {
 	Code                 string                 `protobuf:"bytes,11,opt,name=code,proto3" json:"code,omitempty"`
 	Detail               string                 `protobuf:"bytes,12,opt,name=detail,proto3" json:"detail,omitempty"`
 	RuntimeIncarnation   string                 `protobuf:"bytes,13,opt,name=runtime_incarnation,json=runtimeIncarnation,proto3" json:"runtime_incarnation,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Mandatory on Gateway-to-fabricd business messages and lease control frames.
+	InputLeaseId string `protobuf:"bytes,14,opt,name=input_lease_id,json=inputLeaseId,proto3" json:"input_lease_id,omitempty"`
+	// Relative grant duration on welcome/lease_grant only, bounded by the protocol.
+	InputLeaseMs  uint32 `protobuf:"varint,15,opt,name=input_lease_ms,json=inputLeaseMs,proto3" json:"input_lease_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Message) Reset() {
@@ -167,11 +172,25 @@ func (x *Message) GetRuntimeIncarnation() string {
 	return ""
 }
 
+func (x *Message) GetInputLeaseId() string {
+	if x != nil {
+		return x.InputLeaseId
+	}
+	return ""
+}
+
+func (x *Message) GetInputLeaseMs() uint32 {
+	if x != nil {
+		return x.InputLeaseMs
+	}
+	return 0
+}
+
 var File_dune_dtp_v1_message_proto protoreflect.FileDescriptor
 
 const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\n" +
-	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xa2\x03\n" +
+	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xee\x03\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +
@@ -188,7 +207,9 @@ const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	" \x01(\fR\x04data\x12\x12\n" +
 	"\x04code\x18\v \x01(\tR\x04code\x12\x16\n" +
 	"\x06detail\x18\f \x01(\tR\x06detail\x12/\n" +
-	"\x13runtime_incarnation\x18\r \x01(\tR\x12runtimeIncarnationB0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
+	"\x13runtime_incarnation\x18\r \x01(\tR\x12runtimeIncarnation\x12$\n" +
+	"\x0einput_lease_id\x18\x0e \x01(\tR\finputLeaseId\x12$\n" +
+	"\x0einput_lease_ms\x18\x0f \x01(\rR\finputLeaseMsB0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
 
 var (
 	file_dune_dtp_v1_message_proto_rawDescOnce sync.Once

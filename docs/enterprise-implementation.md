@@ -227,3 +227,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 第二条真实反向连接推进同一引擎的 generation，保持旧 Gateway 及其流存活的回归中，旧终端未创建测试文件，原始 ACP 输入拒绝，端口字节未到目标；现有 PTY/ACP Runtime 保持运行，新连接执行并返回 `CURRENT_CONNECTION_OK`。另一回归先将输入写入 Yamux 缓冲，再取消连接 context，确认消息不被交给处理器。
 - 此处拒绝的是失效连接上的新消息准入，不回滚已受理操作。目录 epoch、恢复代次、接收方有界输入租约、owner 发布与 peer 转发尚未实现，不将 connection generation 等同于集群 epoch。下一步仍须实现这些约束并在三节点、进程暂停、缓冲输入和分区下验证。
 - 验证：全量本地 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、fabricd/access/gateway/wire 竞态回归、`make build check-go` 通过。新增回归使用两个真实协议 Gateway、PTY、原始 ACP 和 TCP 连接；本次未启用 PostgreSQL、真实 Agent 或远端验收。
+
+### 已完成：有界输入租约与确认后发布路由
+
+- 协议升级至 `dune-mvp/2`。fabricd 发起随机 challenge，双方保存本地单调起始时间，最多十五秒输入期限、五秒续租；初始确认后 Gateway 才发布路由，错误或缺失确认不能替换已有连接。旧版本明确拒绝，不隐式允许无租约执行。升级、回退及 PTY/ACP 生命周期边界见[协议说明](implementation.md#网络和协议)。
+- Gateway 为每条转发消息设置当前已确认 grant，覆盖客户端输入的协议字段；fabricd 在解码后检查消息原 grant，传输延迟、阻塞发送或下一次续租均不能延长旧消息期限。允许有限的未过期 grant 重叠，已过期的连接不能靠迟到控制消息复活；空闲隧道也受期限约束。续租不改变 Runtime 身份或业务去重，原始 ACP、PTY 和端口统一经过同一执行读取入口。
+- 真实独立 Gateway/fabricd 进程的 SIGSTOP 回归分别暂停两端超过十五秒，确认恢复后旧终端命令未创建文件，连接 generation 前进、原 PTY 保留且重新订阅可输入。协议回归检查连续续租超过首租约、续租后的原请求去重、缓冲消息过期、未确认路由保留、伪造标识覆盖及控制状态容量；时间边界另由可控本地时间测试。
+- 这是反向连接的输入期限，不是 PostgreSQL owner 租约。目录 Acquire/Publish、恢复代次、epoch 与 peer 转发仍未实现；后续集群发放的输入期限还必须受 owner 保守期限限制。已受理操作不回滚，也不将进程暂停演练称为三节点分区或主机时钟修改验收。S3 保持实施中。
+- 验证：全量本地 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、wire/fabricd/gateway/access/tunnel 竞态检查、`make build check` 和 `make proto` 通过。最后补充的旧协议拒绝、续租去重和取消缓冲消息回归已通过相关 race。未启用 PostgreSQL、真实 Agent 或远端测试；本功能未改动数据库与前端。

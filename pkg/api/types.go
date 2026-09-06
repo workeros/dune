@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const Version = "dune-mvp/1"
+const Version = "dune-mvp/2"
 
 type Hello struct {
 	Version string `json:"version"`

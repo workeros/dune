@@ -17,6 +17,7 @@ type executionStream struct {
 	ctx        context.Context
 	engine     *Engine
 	generation uint64
+	input      *wire.InputWindow
 }
 
 func (s *executionStream) Recv() (*pb.Message, error) {
@@ -27,8 +28,8 @@ func (s *executionStream) Recv() (*pb.Message, error) {
 	s.engine.mu.Lock()
 	current := s.engine.generation
 	s.engine.mu.Unlock()
-	if s.ctx.Err() != nil || s.engine.ctx.Err() != nil || current != s.generation {
-		err := &api.Error{Code: "STALE_BINDING", Detail: "execution connection is no longer current"}
+	if s.ctx.Err() != nil || s.engine.ctx.Err() != nil || current != s.generation || s.input == nil || !s.input.Valid(m.InputLeaseId) {
+		err := &api.Error{Code: "STALE_BINDING", Detail: "execution connection or input lease is no longer current"}
 		s.Fail(err.Code, err)
 		return nil, err
 	}
