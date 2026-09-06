@@ -1,6 +1,6 @@
 # 企业扩展方案实施记录
 
-实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a、S0b 已通过本地验收；S0c–S3 尚未交付。
+实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a、S0b 已通过本地验收；S0c 实施中，S1–S3 尚未交付。
 
 ## S0a：连接与传输
 
@@ -67,3 +67,15 @@
 - 全量本地 `make test`、身份/访问/Web/host 相关 race 和 vet 通过。定向回归覆盖账号/会话写入失败整体回滚、取消不写入、会话上限、凭据一次消费、凭据类型隔离、两个用户连接及撤销隔离。此处仍是默认本地身份与 owner 策略；企业 IdentityProvider/AccessChecker 和所有子操作映射属于 S1。
 
 下一检查点为 S0c：SQLite/PostgreSQL、统一事务后端、连接鉴权注入和 JSON 导入。企业身份与登录回调随 S1 验收。
+
+## S0c：SQL 存储与迁移
+
+### 已完成：统一 SQL 后端基础
+
+- `internal/metadata` 实现同一组身份、会话、Attached Runner/机器及 enrollment 事务，使用一个 SQL 连接池和内部事务入口；不开放可分别替换的领域 Store。账号与首个会话、消费 enrollment 与 Runner/机器身份均一起提交。提交确认丢失返回明确的结果未知错误，不自动重放。
+- SQLite 使用私有文件、WAL、外键和完整同步，沿用原 `accounts.lock` 排斥同目录的旧进程及第二实例；拒绝符号/硬链接和未经导入的旧 JSON。PostgreSQL 用事务内 schema 锁协调初始化，用 principal 行锁保证跨连接池的注册和会话数量限制。初始 Attached Runner ID 沿用机器 ID，绑定修订为 1。
+- `pkg/storage.Config` 只选择支持的后端与连接配置。PostgreSQL 的 `BeforeConnect` 对每条新物理连接取得独立配置副本，可通过私有 SDK 更新鉴权；连接仍须属于同一数据库命名空间。采用固定版本的 [modernc SQLite](https://pkg.go.dev/modernc.org/sqlite) 与 [pgx stdlib](https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib)，SQL 驱动未进入协议核心。
+- 本机独立 PostgreSQL 17 实例使用真实 SCRAM 密码认证。共同契约已验证跨对象失败回滚、并发单次消费、跨池会话上限、重启恢复和撤销；另外验证并发 schema 初始化、实际密码轮换及池恢复。提交丢失测试在真实 SQLite 提交之后注入回执错误，确认只提交一次并保留已落库状态。
+- 验证：启用该独立 PostgreSQL 的全量 `make test`、SQL `make test-race` 和 `make check-go` 通过；新增存储包以 `CGO_ENABLED=0` 交叉编译通过 Linux amd64/arm64、macOS amd64，本机 macOS arm64 完成运行测试。交叉编译不代替目标平台运行验收。
+
+本检查点尚未切换官方运行时：现有 Web 仍临时使用旧存储。下一功能点完成 JSON 导入、宿主/CLI 接入新后端、默认 SQLite 与运行时 JSON 移除，再验收完整 SQL 工作台链路。

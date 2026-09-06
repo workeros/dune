@@ -17,6 +17,7 @@ Dune 用 Go 提供 Agent 执行、PTY/ACP、文件、Git 和端口能力，包�
 | CLI / SDK / API | `cmd/dune/`、`pkg/sdk/`（默认拨号）、`pkg/client/`（协议）、`pkg/api/types.go` |
 | 隧道、鉴权、协议 | `pkg/gateway/`、`pkg/transport/`、`internal/gateway/`（启动装配）、`internal/wire/`、`proto/dune/dtp/v1/message.proto` |
 | 产品身份与访问 | `internal/identity/`、`internal/authorization/`、`pkg/access/` |
+| SQL 元数据与连接配置 | `internal/metadata/`、`pkg/storage/` |
 | 执行、PTY、ACP、进程生命周期 | `pkg/fabricd/`、`internal/daemon/`（启动装配）、`internal/process/`、`internal/tmux/`、`internal/service/`、`internal/supervisor/` |
 | Web 功能与宿主装配 | `pkg/host/`、`internal/webapp/`、`web/src/`、[Web 方案](docs/personal-web-plan.md) |
 | UI 样式和交互 | [DESIGN.md](DESIGN.md)、`web/src/components/`、`web/src/styles.css` |
