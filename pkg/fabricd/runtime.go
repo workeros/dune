@@ -278,7 +278,7 @@ func environment(extra map[string]string) []string {
 	}
 	return out
 }
-func (d *Engine) start(s *wire.Stream, m *pb.Message) {
+func (d *Engine) start(s *executionStream, m *pb.Message) {
 	select {
 	case d.starts <- struct{}{}:
 
@@ -425,7 +425,7 @@ func (d *Engine) start(s *wire.Stream, m *pb.Message) {
 	}
 	d.interact(s, r, sub)
 }
-func (d *Engine) attach(s *wire.Stream, m *pb.Message) {
+func (d *Engine) attach(s *executionStream, m *pb.Message) {
 	r, e := d.lookup(m)
 	if e != nil {
 		s.Fail("STALE_RUNTIME", e)
@@ -458,7 +458,7 @@ func (d *Engine) attach(s *wire.Stream, m *pb.Message) {
 	}
 	d.interact(s, r, sub)
 }
-func (d *Engine) interact(s *wire.Stream, r *runtime, sub *subscription) {
+func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 	if r.tmux != nil {
 		d.interactTmux(s, r, sub)
 		return

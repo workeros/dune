@@ -38,6 +38,8 @@ make test TEST_PKGS=./tests \
 
 PTY 重连/服务重启选 `TestTmuxSurvivesFabricdAndGateway`；原生画面、历史和环境隔离选 `./internal/tmux`。先看测试内容是否匹配待验证的行为；不以测试名代替覆盖分析。
 
+`pkg/fabricd/TestReplacementConnectionRejectsOldStreamInput` 建立两条实际反向协议连接，验证新 generation 生效后，旧 PTY、原始 ACP 和端口输入在执行端被拒绝，Runtime 保留且新连接可执行。`TestCancelledConnectionRejectsBufferedMessage` 单独覆盖取消后仍在 Yamux 缓冲中的消息。它们验证当前连接关联，不证明目录 epoch、输入租约或三节点集群已完成。
+
 在 Make 变量中使用正则结尾 `$` 时写成 `$$`，避免被 Make 当作变量展开；直接运行 `go test` 时不需要这一层转义。确认选中的测试实际执行，`[no tests to run]` 不算行为验证通过。
 
 `tests/` 即使按 `-run` 过滤也会执行 TestMain 的 race 构建；包内 Go 测试的 race 检查仍需 `test-race`。需要明确排除已继承的外部测试开关时：

@@ -12,6 +12,8 @@ Gateway HTTP 服务使用 fasthttp，WebSocket 升级使用 fasthttp/websocket�
 
 第一条 stream 必须在 5s 内发送 hello（版本、角色、target）。fabricd 额外提交随机 incarnation、递增 connection generation 和能力清单；SDK 收到当前 daemon 的绑定。之后每条业务 stream 的首消息是 request，含 request_id、operation、target、incarnation、connection_generation；Runtime 操作还需 runtime_id、runtime_incarnation 和 runtime_generation。Gateway 和 daemon 均校验绑定。连接重新建立需新的 SDK Client；旧 stream 不恢复。
 
+fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。该检查尚不包含企业集群方案中的目录 epoch 和有界输入租约。
+
 业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 
 Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`，daemon 调用 TCP CloseWrite，两方向都完成后返回 result。Yamux Close 用于取消/结束 stream。其他业务的 EOF 若未见 result/exit，SDK 返回 STREAM_INTERRUPTED；已提交 unary 调用丢失结果时为 RESULT_UNKNOWN，不自动重试。断开已受理的 Exec/Git 不回滚，也不保证立即取消；其超时仍有效。交互订阅断开不会停止 Agent。
@@ -36,9 +38,9 @@ ACP stdout 逐行验证 JSON-RPC 2.0 对象、字符串/数字 ID、request/noti
 
 | 资源 | 限制 |
 | --- | --- |
-| Gateway 会话（含待握手） | 16 |
+| Gateway 会话（含待握手） | 256 |
 | 每会话待请求/活跃业务 stream | 64；首条请求超时 5s |
-| Gateway 全局活跃转发 | 128 |
+| Gateway 全局活跃转发 | 512 |
 | daemon 活跃处理器 | 每条有效 tunnel 64 |
 | Yamux 单流接收窗口 | 256KiB |
 | protobuf 单消息 | 1MiB |

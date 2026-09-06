@@ -76,7 +76,7 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 			go func() {
 				defer d.active.Done()
 				defer func() { <-sem }()
-				d.handle(wire.Wrap(raw), target, gen)
+				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen}, target, gen)
 			}()
 		default:
 			raw.Close()

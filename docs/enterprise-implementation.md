@@ -218,3 +218,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - SQLite 与真实 PostgreSQL 验证并发请求去重、单次领取、跨池/重开接管、租约到期不释放业务互斥、等待连接时的维护、旧绑定及修订拒绝、暂停写入、字段界限、修订溢出和事务失败回滚。SQL 转库及 PostgreSQL 17 原生备份恢复包含实际 unknown 操作和原租约，意图/领取/完成的回执丢失均可按原 ID 核对。
 - 这是内部协调组件；新 Runner 创建与权限复核、销毁访问限制、阶段结果与资源引用仍须由后续生命周期专用事务一起提交。尚无公共 Operation API、提供方动作键、恢复 worker 或真实 Managed 调用，不将该组件视为 S2 闭环或 S3 执行路由完成。
 - 验证：启用 PostgreSQL 17 的 metadata 全包回归、操作/回执丢失/转库/原生恢复定向 race、host/Web/migrate 回归、前缀工作台及跨宿主真实 PTY 定向回归、`make build` 和 `make check-go` 通过。最后拆分业务互斥与完成状态后重验了相关 SQL/race；本次未运行不相关的完整 Agent 任务或宣称真实提供方已验收。
+
+## S3：集群连接归属（实施中）
+
+### 已完成：执行端逐消息校验原连接
+
+- 修复 fabricd 原先只在首请求检查 connection generation 的缺口。所有业务处理器使用同一个连接关联读取入口，在 protobuf 解码后检查反向连接 context、引擎状态和原 generation，随后才允许首请求或后续 PTY、原始 ACP、端口消息进入操作处理。后续消息仍隐式属于原 stream，不新增用户或产品身份字段，也不修改线协议。
+- 第二条真实反向连接推进同一引擎的 generation，保持旧 Gateway 及其流存活的回归中，旧终端未创建测试文件，原始 ACP 输入拒绝，端口字节未到目标；现有 PTY/ACP Runtime 保持运行，新连接执行并返回 `CURRENT_CONNECTION_OK`。另一回归先将输入写入 Yamux 缓冲，再取消连接 context，确认消息不被交给处理器。
+- 此处拒绝的是失效连接上的新消息准入，不回滚已受理操作。目录 epoch、恢复代次、接收方有界输入租约、owner 发布与 peer 转发尚未实现，不将 connection generation 等同于集群 epoch。下一步仍须实现这些约束并在三节点、进程暂停、缓冲输入和分区下验证。
+- 验证：全量本地 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、fabricd/access/gateway/wire 竞态回归、`make build check-go` 通过。新增回归使用两个真实协议 Gateway、PTY、原始 ACP 和 TCP 连接；本次未启用 PostgreSQL、真实 Agent 或远端验收。

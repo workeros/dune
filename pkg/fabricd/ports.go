@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func (d *Engine) port(s *wire.Stream, m *pb.Message) {
+func (d *Engine) port(s *executionStream, m *pb.Message) {
 	var a api.Port
 	if wire.Decode(m, &a) != nil || a.Port < 1 || a.Port > 65535 {
 		s.Fail("INVALID_ARGUMENT", fmt.Errorf("port must be 1..65535"))

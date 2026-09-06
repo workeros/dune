@@ -44,7 +44,7 @@ func (d *Engine) watchTmux() {
 		}
 	}
 }
-func (d *Engine) interactTmux(s *wire.Stream, r *runtime, sub *subscription) {
+func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription) {
 	defer func() { r.mu.Lock(); delete(r.subs, sub); r.mu.Unlock() }()
 	view, err := r.tmux.Attach(!sub.owner)
 	if err != nil {

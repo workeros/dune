@@ -81,7 +81,7 @@ func (d *Engine) Close() {
 		}
 	})
 }
-func (d *Engine) handle(s *wire.Stream, target string, gen uint64) {
+func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 	defer s.Close()
 	_ = s.SetReadDeadline(time.Now().Add(5 * time.Second))
 	m, e := s.Recv()
