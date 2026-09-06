@@ -1,0 +1,14 @@
+version: 1
+kind: agent
+working_directory: /tmp/dune-demo
+env:
+  TERM: xterm-256color
+setup:
+  steps:
+    - name: prepare
+      run: printf 'prepared\n' > ready.txt
+      shell: /bin/sh
+      timeout_seconds: 5
+adapter: pty
+start:
+  argv: [/bin/sh]

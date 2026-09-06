@@ -1,0 +1,11 @@
+{
+  "version": "3.7c",
+  "source": "https://github.com/tmux/tmux-builds/releases/tag/v3.7c",
+  "archives": {
+    "linux-amd64": ["linux-x86_64", "cc56bd1cc873eb6089c615f0496b072385bda8a6d944069f38564a5d49c128aa"],
+    "linux-arm64": ["linux-arm64", "29dcb978da2a4b0cf6790f9e004865dac239a3ba03bbf776dddacce23d03831b"],
+    "darwin-amd64": ["macos-x86_64", "1c21f9ade964e4a539be05ffe3a4e95854ab76a0a9c4c05d0ffbe7fc6c4d783f"],
+    "darwin-arm64": ["macos-arm64", "0a763dd0380aa980d239509654da1bc7455843706a3c050f6709c8cd2e13d12d"]
+  },
+  "licenses_sha256": "094905d3ba42397c65fecd817dc29736dd14bd35e75600441403a365125f47d1"
+}

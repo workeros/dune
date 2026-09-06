@@ -1,0 +1,7 @@
+version: 1
+kind: agent
+working_directory: /tmp/dune-demo
+adapter: acp
+start:
+  # Build with: go build -o /tmp/dune-mock-acp ./samples/mock-acp
+  argv: [/tmp/dune-mock-acp]

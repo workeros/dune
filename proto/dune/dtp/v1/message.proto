@@ -1,0 +1,25 @@
+syntax = "proto3";
+package dune.dtp.v1;
+option go_package = "github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1";
+
+// Message is one application message, preceded by a 4-byte big-endian size.
+// This MVP wire format is dune-mvp/1, not the historical DTP/1 Frame.
+// kind: hello, welcome, request, accepted, result, error, data, input,
+// written, resize, signal, eof, exit, stderr. payload is UTF-8 JSON with
+// operation-specific schemas defined by pkg/api; data is uninterpreted bytes.
+// Stream IDs and transport acknowledgements belong exclusively to Yamux.
+message Message {
+  string kind = 1;
+  string request_id = 2;
+  string operation = 3;
+  string target = 4;
+  string incarnation = 5;
+  uint64 connection_generation = 6;
+  string runtime_id = 7;
+  uint64 runtime_generation = 8;
+  bytes payload = 9;
+  bytes data = 10;
+  string code = 11;
+  string detail = 12;
+  string runtime_incarnation = 13;
+}

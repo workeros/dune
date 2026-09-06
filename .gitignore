@@ -1,0 +1,9 @@
+.tools/
+bin/
+*.test
+__pycache__/
+*.pyc
+
+.local/
+web/node_modules/
+web/dist/

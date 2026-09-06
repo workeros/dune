@@ -1,0 +1,5 @@
+version: v2
+plugins:
+  - local: .tools/protoc-gen-go
+    out: .
+    opt: module=github.com/aiomni/dune
