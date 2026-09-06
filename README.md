@@ -144,7 +144,7 @@ session_lifetime: 8h
 
 配置后页面只显示企业登录，本地密码登录和注册均关闭。会话期限默认 8 小时，可设为 1 分钟至 24 小时；不会保存上游 access/refresh token。Dune 按 issuer 和 subject 识别用户，邮箱只作展示，不自动合并同邮箱账号。退出撤销 Dune 会话，不注销身份源会话。上游停用尚无自动同步，已有 Dune 会话以配置期限为界，宿主也可主动停用用户。身份源切换和旧数据升级见[迁移说明](docs/metadata-migration.md)。
 
-Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。身份提供方不决定 Runner 访问权限，企业操作级授权仍在实施中。
+Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。迁移已有账号时，可信管理员可按[身份关联流程](docs/metadata-migration.md#schema-4显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限，企业操作级授权仍在实施中。
 
 也可在已安装 Dune 的机器手动绑定：
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
+	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/jackc/pgx/v5"
 	"modernc.org/sqlite"
@@ -159,5 +160,24 @@ func TestCommitAcknowledgementLossIsNotReplayed(t *testing.T) {
 	}
 	if got, err := s.ReadSession(ctx, "session-hash", time.Now().Unix()); err != nil || got.ID != a.ID {
 		t.Fatal("commit was incomplete", err)
+	}
+	request := public.LinkRequest{RequestID: wire.ID(), Actor: "admin:test", PrincipalID: a.ID, Namespace: "issuer", Subject: "subject", Reason: "verified migration"}
+	if _, err := interrupted.LinkIdentity(ctx, request); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 2 {
+		t.Fatal("link commit loss was hidden or replayed", err)
+	}
+	if record, err := s.IdentityLink(ctx, request.RequestID); err != nil || record.LinkRequest != request {
+		t.Fatal("cannot reconcile committed link", err)
+	}
+	if _, err := s.ReadSession(ctx, "session-hash", time.Now().Unix()); !errors.Is(err, identity.ErrUnauthorized) {
+		t.Fatal("committed link did not revoke original session", err)
+	}
+	if err := s.CreateSession(ctx, a.ID, "fresh-session", time.Now().Add(time.Hour).Unix(), 32); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LinkIdentity(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReadSession(ctx, "fresh-session", time.Now().Unix()); err != nil {
+		t.Fatal("reconciled retry revoked new session", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 var transferTables = []struct{ name, columns string }{
 	{"dune_principals", "id,email,enabled,auth_version"},
 	{"dune_external_identities", "namespace,subject,principal_id"},
+	{"dune_identity_links", "request_id,actor,principal_id,namespace,subject,reason,created_at"},
 	{"dune_local_accounts", "principal_id,email,salt,password_hash"},
 	{"dune_sessions", "hash,principal_id,expires_at,auth_version,identity_namespace"},
 	{"dune_login_transactions", "state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at"},

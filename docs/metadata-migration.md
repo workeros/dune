@@ -79,7 +79,7 @@ pg_restore --dbname=service=dune_restore --single-transaction --exit-on-error \
 
 `dune_backup` 和 `dune_restore` 分别指向源库和新恢复库；恢复账号须具有建表权限，目标服务账号的权限由部署方配置。核对 schema 版本、各表数据、原登录与机器身份，再切换应用。恢复不会延长已过期会话或凭据，也不能恢复备份之后的新增记录。保留原库直到验收完成，禁止用恢复备份的方式隐式丢弃已开放的新写入。
 
-当前已验证 schema 3 的 JSON 导入、SQLite 转 PostgreSQL、SQLite 复制恢复及 PostgreSQL 17 的原生备份恢复。后续 schema/版本升级必须补充对应验证，不能据此承诺任意版本可混用或回退。
+当前已验证 schema 4 的 JSON 导入、SQLite 转 PostgreSQL、SQLite 复制恢复及 PostgreSQL 17 的原生备份恢复。后续 schema/版本升级必须补充对应验证，不能据此承诺任意版本可混用或回退。
 
 ## 从 schema 1 升级到 2
 
@@ -95,4 +95,25 @@ schema 3 增加外部身份关联、一次性登录事务和会话身份源。sc
 
 启用 OIDC 后，仅接受该 issuer 签发身份对应的 Dune 会话；原本地会话不能用于企业模式，不同 issuer 的会话也不能混用。切回本地模式后，未撤销且未过期的本地会话仍可能有效；配置切换不等同于永久撤销全部旧会话。需要永久撤销时通过可信宿主管理入口停用对应用户。
 
-首次企业登录按 issuer + subject 新建独立用户，不根据邮箱接管本地账号、机器或 Runner。迁移既有本地归属需要后续明确授权的身份关联流程；当前不要通过改邮箱或直接改 SQL 绕过此边界。Dune 用户停用会同时阻止企业新登录并撤销已有会话；上游停用自动同步尚未实现，不能将回调成功或短期会话视为持续上游授权证明。
+首次企业登录按 issuer + subject 新建独立用户，不根据邮箱接管本地账号、机器或 Runner。迁移既有本地归属使用下述明确授权的身份关联流程，不通过改邮箱或直接改 SQL 绕过此边界。Dune 用户停用会同时阻止企业新登录并撤销已有会话；上游停用自动同步尚未实现，不能将回调成功或短期会话视为持续上游授权证明。
+
+## schema 4：显式关联既有账号
+
+schema 4 增加成功关联决定的持久记录，随同一事务后端保存和备份。升级仍须停站、备份并停止所有旧版本实例；默认登录、机器与 Runner 身份不因升级改变。
+
+可信宿主管理员先认证实际操作者、授权这次迁移，核验既有 Dune principal 与稳定外部身份的归属，再调用 `App.LinkIdentity`。应在用户首次企业登录前完成；已归属另一 principal 的外部身份会冲突，当前不提供账号合并或身份转移。`Actor` 必须来自管理员认证结果，不能直接信任普通用户传入的值。`Reason` 保存非敏感核验依据或审批单引用，禁止放入密码、令牌或工作内容。
+
+```go
+// verifiedPrincipalID、verifiedIssuer 和 verifiedSubject 来自宿主核验流程。
+decision := identity.LinkRequest{
+    RequestID: approval.RequestID, Actor: administrator.ID,
+    PrincipalID: verifiedPrincipalID,
+    Namespace: verifiedIssuer, Subject: verifiedSubject,
+    Reason: approval.Reference,
+}
+record, err := app.LinkIdentity(ctx, decision)
+```
+
+成功时身份关联、审计记录、用户授权版本递增、已有会话及待消费 enrollment 撤销一起提交。新登录获得原 principal ID，保留原机器、Runner、运行中的 Runtime 和历史；已有用户连接按撤销机制关闭。身份源和本地密码凭据本身不被删除，站点允许的登录方式仍由配置决定。
+
+请求 ID 与所有决定字段相同的重试返回原记录，不再次撤销会话；复用请求 ID 修改决定或把外部身份关联给另一个用户均失败。提交回执丢失时，先调用 `App.IdentityLink(ctx, decision.RequestID)` 核对持久记录与完整决定；查不到或查询失败不能据此宣称先前未提交，不自动换请求 ID 重试。查询同样由宿主授权。此表只记录成功关联决定，失败的身份核验、拒绝和其他管理员活动由宿主审计，不声称覆盖所有审计事件。

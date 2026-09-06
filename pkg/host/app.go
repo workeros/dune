@@ -216,17 +216,54 @@ func (a *App) Done() <-chan struct{} { return a.done }
 // while preserving machines and their running work. Re-enabling requires a new
 // login. Close cancels and waits for this operation as for accepted HTTP work.
 func (a *App) SetPrincipalEnabled(ctx context.Context, principalID string, enabled bool) error {
+	ctx, finish, err := a.adminContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return a.store.SetPrincipalEnabled(ctx, principalID, enabled)
+}
+
+// LinkIdentity associates a verified external identity with an existing enabled
+// principal. The caller must authenticate and authorize the administrator and
+// verify both identities as documented by identity.LinkRequest. It is not a user
+// HTTP endpoint. Success revokes existing sessions and pending enrollment grants,
+// preserves machine/Runner ownership, and atomically records the decision.
+// An identical RequestID and payload returns the original result without another
+// revocation. After an uncertain commit, inspect IdentityLink before proceeding.
+func (a *App) LinkIdentity(ctx context.Context, request externalidentity.LinkRequest) (externalidentity.LinkRecord, error) {
+	ctx, finish, err := a.adminContext(ctx)
+	if err != nil {
+		return externalidentity.LinkRecord{}, err
+	}
+	defer finish()
+	return a.store.LinkIdentity(ctx, request)
+}
+
+// IdentityLink reads one committed administrator decision by its request ID.
+// The host must authorize access to this identity and audit information.
+func (a *App) IdentityLink(ctx context.Context, requestID string) (externalidentity.LinkRecord, error) {
+	ctx, finish, err := a.adminContext(ctx)
+	if err != nil {
+		return externalidentity.LinkRecord{}, err
+	}
+	defer finish()
+	return a.store.IdentityLink(ctx, requestID)
+}
+
+func (a *App) adminContext(ctx context.Context) (context.Context, func(), error) {
 	a.mu.Lock()
 	if a.closed || a.ctx.Err() != nil {
 		a.mu.Unlock()
-		return fmt.Errorf("Dune is closed")
+		return nil, nil, fmt.Errorf("Dune is closed")
 	}
 	a.active.Add(1)
 	a.mu.Unlock()
-	defer a.active.Done()
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	stop := context.AfterFunc(a.ctx, cancel)
-	defer stop()
-	return a.store.SetPrincipalEnabled(ctx, principalID, enabled)
+	return ctx, func() {
+		stop()
+		cancel()
+		a.active.Done()
+	}, nil
 }

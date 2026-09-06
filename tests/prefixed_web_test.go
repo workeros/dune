@@ -22,6 +22,7 @@ import (
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/fasthttp/websocket"
 )
@@ -217,6 +218,23 @@ func testPrefixedWorkbench(t *testing.T, override, external bool, database *stor
 		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
 			t.Fatal("principal suspension changed the running PTY")
+		}
+		connection.Close()
+		connection = connect()
+		readPrefixedTerminalMarker(t, connection)
+		_, err := app.LinkIdentity(ctx, identity.LinkRequest{RequestID: "terminal-link", Actor: "admin:regression", PrincipalID: user.ID, Namespace: "https://identity.example.test", Subject: "terminal-owner", Reason: "verified regression account ownership"})
+		must(t, err)
+		awaitRevocation()
+		response, err := browser.Get(site + "api/me")
+		must(t, err)
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatal("pre-link session survived")
+		}
+		do("POST", "api/auth/login", map[string]string{"email": "prefix@example.test", "password": "prefix-test-password"}, nil)
+		do("POST", "api/machines/"+machineConfig.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
+		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
+			t.Fatal("identity link changed the running PTY")
 		}
 		connection.Close()
 		connection = connect()

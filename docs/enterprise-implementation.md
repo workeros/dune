@@ -114,4 +114,12 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 官方 `web --identity-config` 从私有文件构造同一适配器。企业模式关闭本地密码入口并拒绝本地/其他身份源 Cookie；工作台显示有限的企业登录按钮。Dune Cookie 为 HttpOnly、SameSite Strict 和部署路径，跨站回调 proof 为 SameSite Lax 和回调路径，HTTPS 下均为 Secure。退出仅撤销 Dune 会话；上游令牌不持久化。
 - SQLite 验证关闭并重开应用后完成待处理回调；真实 PostgreSQL 验证独立连接池之间单次消费和并发身份注册。实际 Dex 2.45.1 浏览器演练将 start 固定交给宿主 A、callback 固定交给独立宿主 B，在 `/tools/dune/` 完成认证和回调；停用后旧 Cookie 返回 401，Dex 再次认证也无法越过 Dune 停用，重新启用后必须新登录。另通过正式 CLI、SQLite、私有配置在 `/enterprise/` 完成登录和退出。
 - 验证：真实 PostgreSQL 17 和原生备份工具启用的全量 `make test`、metadata/Web/host/identity/migrate race、`make check-go`、`make web-check web-build` 通过。签名协议测试覆盖拒绝非法 token、轮换密钥和模糊交换不重放；转库清单与备份恢复覆盖 schema 3 新字段。Dex 是本机独立真实身份服务，此证据不代表某个企业 IdP 的部署已验收，也不代表跨节点执行路由已经实现。
-- 上游停用尚无自动通知/轮询同步，默认八小时 Dune 会话（可设一分钟至二十四小时）提供到期边界；可信宿主可更早调用用户停用入口。明确审计的身份关联、人类 CLI 登录、跨实例访问凭据、完整操作级 AccessChecker、Runner/绑定公开边界仍待实现，S1 尚未整体完成。
+- 上游停用尚无自动通知/轮询同步，默认八小时 Dune 会话（可设一分钟至二十四小时）提供到期边界；可信宿主可更早调用用户停用入口。明确审计的身份关联见下节；人类 CLI 登录、跨实例访问凭据、完整操作级 AccessChecker、Runner/绑定公开边界仍待实现，S1 尚未整体完成。
+
+### 已完成：显式身份关联与持久决定记录
+
+- 可信宿主 `App.LinkIdentity` 接收明确管理员、请求 ID、既有 principal、稳定 namespace/subject 和核验依据。宿主负责认证管理员、授权并核验两个身份，不提供普通用户可直接调用的管理 HTTP 入口。已有其他归属拒绝关联，不合并账号或按邮箱认领；已有正确归属可提交新的明确决定。
+- schema 4 将关联和成功决定记录、授权版本递增、会话/enrollment 撤销原子提交，审计写入失败时整体回滚。相同请求及字段只执行一次，冲突请求不改变数据；`App.IdentityLink` 支持提交回执丢失后的核对。该记录只覆盖成功关联，宿主另行审计拒绝和授权过程。
+- 首次外部登录与管理员关联使用同一身份锁，SQLite/PostgreSQL 并发回归验证不会串入其他账号，关闭重开后决定保留。SQL 转库字段清单覆盖审计记录，备份恢复包含相同数据。公开宿主回归从本地注册、显式关联、关闭重开到外部浏览器回调，确认稳定 principal ID、Cookie 撤销和新会话重试不受影响。
+- 真实 SQLite/PostgreSQL 工作台 PTY 回归中，关联撤销空闲用户连接，重新登录可读取原 Runtime ID、incarnation/generation 和终端历史，现有 fabricd 和机器配置保持有效。这是可信测试身份适配器与真实执行进程的组合验证，不声称新增了某企业 IdP 的部署验收。
+- 验证：启用真实 PostgreSQL 17 和备份工具的全量 `make test`、metadata/host race 和 `make check-go`；身份关联及其持久化/撤销/并发/回执丢失回归通过。迁移步骤与审计边界见[元数据迁移](metadata-migration.md#schema-4显式关联既有账号)。下一检查点继续人类 CLI 登录和访问授权，S1 未整体完成。

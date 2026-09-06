@@ -2,9 +2,7 @@ package metadata
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"errors"
 	"time"
 
@@ -50,13 +48,8 @@ func (s *Store) ConsumeLogin(ctx context.Context, stateHash, browserHash, namesp
 func (s *Store) ExternalLogin(ctx context.Context, namespace string, subject public.Subject, newID, hash string, expires int64, limit int) (identity.User, error) {
 	var user identity.User
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		if s.postgres {
-			// Serialize creation of the unique external identity before its row
-			// exists. Hash collisions only serialize unrelated identities.
-			key := sha256.Sum256([]byte("dune-identity\x00" + namespace + "\x00" + subject.ID))
-			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(binary.BigEndian.Uint64(key[:8]))); err != nil {
-				return err
-			}
+		if err := s.lockExternalIdentity(ctx, tx, namespace, subject.ID); err != nil {
+			return err
 		}
 		err := tx.QueryRowContext(ctx, `SELECT principal_id FROM dune_external_identities WHERE namespace=$1 AND subject=$2`, namespace, subject.ID).Scan(&user.ID)
 		if errors.Is(err, sql.ErrNoRows) {

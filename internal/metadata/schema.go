@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -34,6 +34,11 @@ var schema3 = []string{
 	`CREATE INDEX dune_external_principal ON dune_external_identities(principal_id)`,
 	`CREATE TABLE dune_login_transactions (state_hash TEXT PRIMARY KEY, browser_hash TEXT NOT NULL, namespace TEXT NOT NULL, redirect_url TEXT NOT NULL, nonce TEXT NOT NULL, verifier TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_login_expires ON dune_login_transactions(expires_at)`,
+}
+
+var schema4 = []string{
+	`CREATE TABLE dune_identity_links (request_id TEXT PRIMARY KEY, actor TEXT NOT NULL, principal_id TEXT NOT NULL REFERENCES dune_principals(id), namespace TEXT NOT NULL, subject TEXT NOT NULL, reason TEXT NOT NULL, created_at BIGINT NOT NULL)`,
+	`CREATE INDEX dune_identity_links_principal ON dune_identity_links(principal_id,created_at)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -85,6 +90,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=3 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 3
+		}
+		if version == 3 {
+			for _, statement := range schema4 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=4 WHERE id=1`); err != nil {
 				return err
 			}
 		}

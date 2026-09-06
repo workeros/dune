@@ -110,6 +110,9 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if _, err := source.db.Exec(`INSERT INTO dune_identity_links(request_id,actor,principal_id,namespace,subject,reason,created_at) SELECT 'review-request','admin:review',id,'issuer','z-subject','verified migration approval',123456 FROM dune_principals`); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := source.db.Exec(`INSERT INTO dune_login_transactions(state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at) VALUES('state','proof','issuer','https://dune.test/callback','nonce','verifier',9999999999)`); err != nil {
 				t.Fatal(err)
 			}
