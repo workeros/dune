@@ -133,6 +133,9 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if _, err := source.db.Exec(`INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,outcome,worker,execution_revision,lease_until) SELECT 'original-operation','original-request',$1,owner_id,'issuer','z-subject',id,fabric_id,binding_revision,'renew',123456,'unknown',$2,7,9999999999999 FROM dune_runners`, strings.Repeat("a", 64), strings.Repeat("b", 32)); err != nil {
+				t.Fatal(err)
+			}
 			before := snapshotRecords(t, source)
 			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "target")}
 			if backend == "postgres" {

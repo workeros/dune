@@ -107,3 +107,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 `TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份；`TestSchemaSevenRequiresKnownLoginSubject` 检查旧企业会话及安装材料撤销、本地访问和机器身份保留、迁移失败回滚。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
 
 `make test TEST_PKGS=./internal/lifecycle` 验证个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实及配置边界。当前只有纯策略计算，没有提供方调用或持久调度；这些测试不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
+
+生命周期 SQL 协调使用 `make test-race TEST_PKGS=./internal/metadata TEST_FLAGS='-run Operation -count=1 -timeout=180s'`，启用上述 PostgreSQL 配置后验证跨连接池领取、重开恢复、业务互斥、数据库租约到期、暂停后的条件写入、旧 worker 拒绝和等待连接时的维护串行化。`TestCommitAcknowledgementLossIsNotReplayed` 另覆盖意图、领取及完成的回执丢失；转库和原生备份测试保存实际 unknown 操作行。协调夹具使用已有 Runner 元数据，没有模拟或调用 Managed 提供方，不能用这些结果替代外部副作用与完整阶段恢复验收。

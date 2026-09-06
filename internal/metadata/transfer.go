@@ -20,6 +20,7 @@ var transferTables = []struct{ name, columns string }{
 	{"dune_login_transactions", "state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at"},
 	{"dune_enrollments", "hash,principal_id,name,expires_at,identity_namespace,identity_subject"},
 	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
+	{"dune_operations", operationColumns},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
 	{"dune_access_tickets", "hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id,identity_subject"},
 }

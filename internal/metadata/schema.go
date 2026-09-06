@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -75,6 +75,11 @@ var schema8 = []string{
 	`ALTER TABLE dune_enrollments ADD COLUMN identity_subject TEXT NOT NULL DEFAULT ''`,
 	`DELETE FROM dune_sessions WHERE identity_namespace<>''`,
 	`DELETE FROM dune_enrollments`,
+}
+
+var schema9 = []string{
+	`CREATE TABLE dune_operations (id TEXT PRIMARY KEY,request_key TEXT NOT NULL,request_digest TEXT NOT NULL,principal_id TEXT NOT NULL REFERENCES dune_principals(id),identity_namespace TEXT NOT NULL,identity_subject TEXT NOT NULL,runner_id TEXT NOT NULL REFERENCES dune_runners(id),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),action TEXT NOT NULL CHECK(action IN ('create','renew','destroy')),created_at BIGINT NOT NULL,finished BOOLEAN NOT NULL DEFAULT FALSE,outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','unknown','timed_out','succeeded','failed')),worker TEXT NOT NULL DEFAULT '',execution_revision BIGINT NOT NULL DEFAULT 0 CHECK(execution_revision>=0),lease_until BIGINT NOT NULL DEFAULT 0,exclusive BOOLEAN NOT NULL DEFAULT TRUE,UNIQUE(principal_id,request_key),CHECK(finished=FALSE OR exclusive=FALSE),CHECK((finished=FALSE AND outcome IN ('','unknown','timed_out')) OR (finished=TRUE AND outcome IN ('succeeded','failed'))))`,
+	`CREATE UNIQUE INDEX dune_operations_active_runner ON dune_operations(runner_id) WHERE exclusive=TRUE`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -181,6 +186,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=8 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 8
+		}
+		if version == 8 {
+			for _, statement := range schema9 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=9 WHERE id=1`); err != nil {
 				return err
 			}
 		}

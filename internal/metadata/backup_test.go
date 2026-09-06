@@ -13,6 +13,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
 	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/jackc/pgx/v5"
@@ -98,6 +99,17 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	operationIntent := lifecycle.Intent{ID: wire.ID(), RequestKey: wire.ID(), Digest: strings.Repeat("a", 64), PrincipalID: externalUser.ID, Namespace: externalUser.Namespace, Subject: externalUser.Subject, RunnerID: externalMachine.RunnerID, FabricID: "attached", BindingRevision: 1, Action: "renew"}
+	if _, err := s.BeginOperation(ctx, operationIntent); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := s.ClaimOperation(ctx, operationIntent.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordOperationUncertainty(ctx, claim, "unknown"); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -149,6 +161,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, snapshotRecords(t, s)) {
 		t.Fatal("restored metadata differs from backup")
+	}
+	if op, err := s.Operation(ctx, operationIntent.ID); err != nil || op.Intent != operationIntent || op.Revision != claim.Revision || op.Outcome != "unknown" || op.Finished || !op.Until.Equal(claim.Until) {
+		t.Fatal("restored operation lost ownership or uncertainty", err)
 	}
 	if position, err := s.ReadCursor(ctx, user.ID, "", "runner.list", cursor); err != nil || position != machine.RunnerID {
 		t.Fatal("restored cursor invalid", err)
