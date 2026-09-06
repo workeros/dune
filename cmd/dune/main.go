@@ -113,11 +113,12 @@ func run() error {
 		binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 		publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
 		gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + tunnel")
+		disableRegistration := flags.Bool("disable-registration", false, "disable local sign-up; existing accounts can still log in")
 		webListen := flags.String("web-listen", "", "optional extra loopback HTTP listener for local validation")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return webapp.Run(ctx, c, webapp.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, WebListen: *webListen, Binaries: *binaries})
+		return webapp.Run(ctx, c, webapp.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, WebListen: *webListen, Binaries: *binaries, DisableRegistration: *disableRegistration})
 
 	}
 	tc, e := c.TLS()

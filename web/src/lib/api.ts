@@ -18,6 +18,7 @@ export function call<T>(machine: string, operation: string, payload: unknown = {
 }
 export const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 export type User = { id: string; email: string };
+export type StartupInfo = { login_methods: { kind: string; url: string }[]; local_registration: boolean; attached: boolean; managed: boolean; public_url: string; gateway_url: string };
 export type Machine = { id: string; name: string; os: string; arch: string; online: boolean };
 export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; title?: string; working_directory?: string };
 export type AgentConfig = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; adapter: "pty" | "acp"; history_lines?: number };

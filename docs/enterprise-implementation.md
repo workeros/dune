@@ -45,4 +45,10 @@
 - 回归覆盖根路径与前缀下的资源、Cookie、安装地址和覆盖隔离；`TestPrefixedWorkbenchEnrollmentAndTerminal` 经过真实注册、CLI 绑定、fabricd 反向连接、Web API、终端 WS 和退出撤销，分别验证默认入口及另一个监听地址/路径的机器入口。创建后的输入订阅释放是异步的，测试与浏览器一样仅在明确 INPUT_OWNED 时重连既有会话，不重放创建或输入。
 - 验证入口：全量本地 Go 回归、Web/接入/地址模块 race、vet、`make web-check web-build`，以及实际浏览器交互。构建仍报告现有主 bundle 体积提示。
 
-S0b 剩余：可复用身份与 Web/API 模块、公开宿主组装、有限启动能力配置及独立宿主工作台验证。登录回调的前缀行为随 S1 身份实现再验收。
+### 已完成：有限启动信息与注册入口
+
+- 匿名 `GET api/bootstrap` 只返回已装配登录方式及公开入口、本地注册开关、Attached/Managed 和公开地址，禁止缓存。当前本地密码与 Attached 可用，Managed 为 false；不提供能将未实现提供方标成可用的配置。
+- 工作台先读取启动信息再显示入口，失败提供明确错误和重试。`--disable-registration` 同时关闭页面注册入口与服务端注册操作，保留已有账号登录。
+- 验证：Web 后端回归覆盖公开字段白名单、可信地址、关闭注册不创建账号、已有账号登录；`make check-go`、`make web-check web-build` 通过。在独立 Chrome 会话中通过真实登录、退出及前缀页面验证，并注入一次 bootstrap 网络失败，确认错误页重试后恢复登录表单。构建仍报告现有 bundle 体积提示。
+
+S0b 剩余：可复用身份与 Web/API 模块、公开宿主组装及独立宿主工作台验证。登录回调的前缀行为随 S1 身份实现再验收。

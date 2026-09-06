@@ -122,6 +122,8 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 
 机器使用独立入口时显式传入 `--gateway-url wss://machines.example.com/private/connect`，并将该入口代理到 Web 服务的 `/tools/dune/tunnel`。此覆盖只改变安装绑定返回的机器地址，不改变浏览器或内部工作台连接的路径。原有 `--url` 与机器配置中 `gateway` 不同的部署（例如额外 loopback 浏览器入口），升级时也应显式填写 `--gateway-url`。省略 `--url` 时仍从原配置的 `gateway` 派生浏览器地址。
 
+工作台从部署目录下的 `api/bootstrap` 读取登录方式、注册状态、Attached/Managed 能力和公开地址。当前装配本地账号与 Attached，Managed 尚不可用。添加 `--disable-registration` 可关闭本地注册，已有账号仍可登录；服务端同步拒绝注册请求。启动信息读取失败时页面提示重试，不假定所有功能可用。
+
 也可在已安装 Dune 的机器手动绑定：
 
 ```sh

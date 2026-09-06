@@ -38,6 +38,8 @@ type Options struct {
 	Assets     string
 	PublicURL  string
 	GatewayURL string
+	// DisableRegistration closes local sign-up while preserving existing accounts.
+	DisableRegistration bool
 	// Optional extra loopback-only HTTP listener for local browser validation
 	// while remote machines connect through the primary verified TLS endpoint.
 	WebListen string
@@ -80,6 +82,7 @@ func NewServer(parent context.Context, c config.Config, options Options, store *
 		return grant.Bind()
 	}))
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
+	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/me", s.me)
@@ -254,8 +257,14 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.options.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: 7 * 24 * 3600})
 	writeJSON(w, http.StatusOK, user)
 }
-func (s *Server) register(w http.ResponseWriter, r *http.Request) { s.auth(w, r, true) }
-func (s *Server) login(w http.ResponseWriter, r *http.Request)    { s.auth(w, r, false) }
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if s.options.DisableRegistration {
+		writeError(w, http.StatusForbidden, "REGISTRATION_DISABLED", "此站点未开放本地注册，请使用已有账号登录。")
+		return
+	}
+	s.auth(w, r, true)
+}
+func (s *Server) login(w http.ResponseWriter, r *http.Request) { s.auth(w, r, false) }
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if user, _, ok := s.user(w, r); ok {
 		writeJSON(w, 200, user)
