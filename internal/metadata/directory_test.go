@@ -205,7 +205,7 @@ func TestDirectoryBackendAndSchemaUpgrade(t *testing.T) {
 			}
 			claim := directoryClaim(t, s, wire.ID())
 			if err := s.transaction(ctx, func(tx *sql.Tx) error {
-				for _, query := range []string{`DROP TABLE dune_routes`, `DROP TABLE dune_cluster`, `UPDATE dune_schema SET version=9`, `CREATE TABLE dune_routes (collision TEXT)`} {
+				for _, query := range []string{`DROP TABLE dune_peer_access`, `DROP TABLE dune_routes`, `DROP TABLE dune_cluster`, `UPDATE dune_schema SET version=9`, `CREATE TABLE dune_routes (collision TEXT)`} {
 					if _, err := tx.Exec(query); err != nil {
 						return err
 					}

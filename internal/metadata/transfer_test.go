@@ -136,6 +136,11 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			if _, err := source.db.Exec(`INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,outcome,worker,execution_revision,lease_until) SELECT 'original-operation','original-request',$1,owner_id,'issuer','z-subject',id,fabric_id,binding_revision,'renew',123456,'unknown',$2,7,9999999999999 FROM dune_runners`, strings.Repeat("a", 64), strings.Repeat("b", 32)); err != nil {
 				t.Fatal(err)
 			}
+			// Preserve even expired capabilities verbatim during offline transfer;
+			// their session/boot/request validation still applies after restoration.
+			if _, err := source.db.Exec(`INSERT INTO dune_peer_access(hash,session_hash,machine_id,source_boot_id,owner_boot_id,identity_namespace,request_digest,expires_at,context) SELECT 'peer-hash',a.session_hash,a.machine_id,'source-boot','owner-boot',a.identity_namespace,'request-digest',0,'expired-test-context' FROM dune_access_tickets a LIMIT 1`); err != nil {
+				t.Fatal(err)
+			}
 			before := snapshotRecords(t, source)
 			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "target")}
 			if backend == "postgres" {

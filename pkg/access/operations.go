@@ -18,9 +18,9 @@ func oneOf(value string, values ...string) bool {
 	return false
 }
 
-// describe recognizes the actual execution vocabulary, not a configurable IAM
+// Describe recognizes the actual execution vocabulary, not a configurable IAM
 // action catalog. Decode semantics match fabricd, including JSON field aliases.
-func describe(scope Scope, m *pb.Message) (Request, error) {
+func Describe(scope Scope, m *pb.Message) (Request, error) {
 	r := Request{Scope: scope, RequestID: m.RequestId, Operation: m.Operation, Runtime: RuntimeIdentity{ID: m.RuntimeId, Incarnation: m.RuntimeIncarnation, Generation: m.RuntimeGeneration}}
 	if m.Kind != "request" || m.Target != scope.Binding.MachineID || r.RequestID == "" || len(r.RequestID) > 128 {
 		return r, ErrDenied

@@ -86,6 +86,9 @@ type Stream struct {
 	accessContext []byte
 }
 
+// Context ends with this stream, including local handling and route closure.
+func (s *Stream) Context() context.Context { return s.ctx }
+
 func (s *Stream) Send(m *pb.Message) error {
 	if err := s.ctx.Err(); err != nil {
 		return err

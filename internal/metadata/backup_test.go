@@ -124,6 +124,10 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err := directory.Publish(ctx, owner.Route); err != nil {
 		t.Fatal(err)
 	}
+	peer := peerRecord(t, s)
+	if err := s.CreatePeerAccess(ctx, tokenHash(wire.ID()), peer, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

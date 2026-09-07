@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -20,6 +21,11 @@ const ticketPrefix = "dune_access_"
 type ConnectionAccess struct {
 	SessionHash, PrincipalID, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
 	BindingRevision, AuthVersion, ExpiresAt                                           int64
+}
+
+func (r ConnectionAccess) Scope() access.Scope {
+	return access.Scope{PrincipalID: r.PrincipalID, Namespace: r.Namespace, Subject: r.Subject, OwnerID: r.OwnerID,
+		Binding: runner.Binding{RunnerID: r.RunnerID, FabricID: r.FabricID, MachineID: r.Target, Revision: r.BindingRevision}}
 }
 
 type Repository interface {
@@ -36,6 +42,8 @@ type Repository interface {
 	ConsumeAccess(context.Context, string, string, int64) (ConnectionAccess, error)
 	CheckAccess(context.Context, ConnectionAccess, int64) (bool, error)
 	DeleteAccess(context.Context, string) error
+	CreatePeerAccess(context.Context, string, PeerAccess, time.Duration) error
+	ConsumePeerAccess(context.Context, string, PeerReference) (PeerAccess, error)
 }
 
 func credentialHash(value string) string {

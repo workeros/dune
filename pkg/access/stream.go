@@ -31,7 +31,7 @@ func newLease(d Decision) *lease {
 }
 
 func (c *connection) openChecked(ctx context.Context, m *pb.Message, flow *gateway.Stream) (gateway.StreamHandler, error) {
-	r, err := describe(c.grant.Policy.Scope, m)
+	r, err := Describe(c.grant.Policy.Scope, m)
 	if err != nil {
 		return nil, err
 	}
@@ -39,10 +39,30 @@ func (c *connection) openChecked(ctx context.Context, m *pb.Message, flow *gatew
 	if err != nil {
 		return nil, err
 	}
-	if err = flow.Forward(); err != nil {
+	if route, remote := flow.PeerRoute(); remote {
+		if c.grant.Policy.Delegate == nil {
+			return nil, ErrDenied
+		}
+		bounded, cancel := context.WithDeadline(ctx, d.ValidUntil)
+		var value []byte
+		value, err = c.grant.Policy.Delegate(bounded, route, m, r, d)
+		if err == nil {
+			err = bounded.Err()
+		}
+		cancel()
+		if err == nil {
+			err = flow.ForwardPeer(value)
+		}
+	} else {
+		err = flow.Forward()
+	}
+	if err != nil || !time.Now().Before(d.ValidUntil) {
+		if err == nil {
+			err = ErrDenied
+		}
 		return nil, err
 	}
-	life, cancel := context.WithCancel(c.ctx)
+	life, cancel := context.WithCancel(flow.Context())
 	s := &checkedStream{grant: c.grant, base: r, flow: flow, ctx: life, cancel: cancel, leases: map[Request]*lease{r: newLease(d)}, changed: make(chan struct{}, 1)}
 	go s.watch()
 	return s, nil

@@ -29,6 +29,7 @@ type Service struct {
 	ctx       context.Context
 	sessions  Sessions
 	bindings  Repository
+	bootID    string
 }
 
 func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Service {
@@ -142,11 +143,15 @@ func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.Conne
 		if record.ExpiresAt <= time.Now().Unix() {
 			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
-		fixed := access.Scope{PrincipalID: record.PrincipalID, Namespace: record.Namespace, Subject: record.Subject, OwnerID: record.OwnerID, Binding: runner.Binding{RunnerID: record.RunnerID, FabricID: record.FabricID, MachineID: record.Target, Revision: record.BindingRevision}}
+		fixed := record.Scope()
 		if _, err := access.Evaluate(ctx, l.checker, access.Request{Scope: fixed, RequestID: wire.ID(), Operation: "runner.connect", Suboperation: "attached"}); err != nil {
 			return gateway.BindingContext{}, nil, err
 		}
-		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Valid: l.validAccess(record), Policy: &access.Policy{Scope: fixed, Checker: l.checker}}).Bind()
+		policy := &access.Policy{Scope: fixed, Checker: l.checker}
+		if l.bootID != "" {
+			policy.Delegate = l.delegate(record)
+		}
+		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Valid: l.validAccess(record), Policy: policy}).Bind()
 	}
 	target, err := l.bindings.MachineCredential(ctx, token)
 	if err != nil {

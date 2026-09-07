@@ -247,7 +247,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"agent.config", api.AgentConfigRequest{Action: "save", Config: &api.AgentConfig{ID: "config", Command: "secret"}}, "save", ""},
 	}
 	for _, tc := range cases {
-		r, err := describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
+		r, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
 		if err != nil || r.Suboperation != tc.sub || r.Mode != tc.mode {
 			t.Fatal("operation not mapped", tc.op, err)
 		}
@@ -257,7 +257,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ op, body string }{{"new.operation", "{}"}, {"files", `{"action":"new"}`}, {"git", `{"action":"stash","mode":"unknown"}`}, {"upload", `{"action":"begin"}`}, {"acp.action", `{"action":"arbitrary-rpc"}`}} {
-		if _, err := describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: []byte(tc.body)}); !errors.Is(err, ErrDenied) {
+		if _, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: []byte(tc.body)}); !errors.Is(err, ErrDenied) {
 			t.Fatal("unknown operation accepted", tc, err)
 		}
 	}
@@ -268,7 +268,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"upload", api.Upload{Action: "commit", ID: "handle", Path: "/forged/allowed/path"}},
 		{"acp.action", map[string]string{"action": "prompt", "cwd": "/forged/allowed/path"}},
 	} {
-		r, err := describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
+		r, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
 		if err != nil || r.Resource.Path != "" || r.Resource.Directory != "" {
 			t.Fatal("ignored client fields impersonated effective resource attributes", tc.op, err)
 		}

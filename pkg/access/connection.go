@@ -48,33 +48,60 @@ func (g Grant) Bind() (gateway.BindingContext, gateway.ConnectionHandler, error)
 
 type connection struct {
 	grant Grant
-	ctx   context.Context
 }
 
 func (c *connection) Connected(ctx context.Context, conn *gateway.Connection) error {
-	c.ctx = ctx
 	if err := c.grant.check(); err != nil {
 		return err
 	}
 	if c.grant.Valid != nil {
-		go func() {
-			ticker := time.NewTicker(time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if err := c.grant.check(); err != nil {
-						conn.Cancel(err)
-						return
-					}
-				}
-			}
-		}()
+		go c.grant.watch(ctx, conn.Cancel)
 	}
 	return nil
 }
+
+func (g Grant) watch(ctx context.Context, cancel func(error)) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := g.check(); err != nil {
+				cancel(err)
+				return
+			}
+		}
+	}
+}
+
+// Open authenticates one peer-delivered user stream using a grant reconstructed
+// by the application. It requires a real user policy and ongoing validity check;
+// it does not let a peer connection's identity become a standalone user grant.
+func (g Grant) Open(ctx context.Context, request *pb.Message, stream *gateway.Stream) (gateway.StreamHandler, error) {
+	if g.Role != gateway.RoleSDK || g.Policy == nil || g.Valid == nil {
+		return nil, ErrDenied
+	}
+	_, handler, err := g.Bind()
+	if err != nil {
+		return nil, err
+	}
+	checked, err := handler.Open(ctx, request, stream)
+	if err != nil {
+		return nil, err
+	}
+	life, cancel := context.WithCancel(stream.Context())
+	go g.watch(life, stream.Cancel)
+	return &scopedStream{StreamHandler: checked, cancel: cancel}, nil
+}
+
+type scopedStream struct {
+	gateway.StreamHandler
+	cancel context.CancelFunc
+}
+
+func (s *scopedStream) Closed(err error) { s.cancel(); s.StreamHandler.Closed(err) }
 
 func (c *connection) Open(ctx context.Context, request *pb.Message, stream *gateway.Stream) (gateway.StreamHandler, error) {
 	if err := ctx.Err(); err != nil {

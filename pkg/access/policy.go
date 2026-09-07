@@ -9,7 +9,9 @@ import (
 	"unicode"
 
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/runner"
+	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
 const CheckTimeout = time.Second
@@ -85,6 +87,10 @@ type Checker interface {
 type Policy struct {
 	Scope   Scope
 	Checker Checker
+	// Delegate is invoked only after allowing the exact request on a remote
+	// route. It creates an independently verifiable, request-specific context.
+	// It must respect cancellation and must not retain or mutate the message.
+	Delegate func(context.Context, gateway.Route, *pb.Message, Request, Decision) ([]byte, error)
 }
 
 // Owner implements the default personal policy with the same decision contract.

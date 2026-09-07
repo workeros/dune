@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
@@ -20,7 +21,6 @@ import (
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/storage"
-	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -59,7 +59,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	user, _, err := identity.NewLocal(first, true).Register(ctx, "owner@routing.test", "routing-test-password")
+	user, cookie, err := identity.NewLocal(first, true).Register(ctx, "owner@routing.test", "routing-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,20 +95,40 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	competitor := newEngine(ctx)
 	var wg sync.WaitGroup
 	var peerDials atomic.Int32
+	ownerChecker := &peerOwnerChecker{}
+	auth1, err := authorization.New(ctx, identity.NewLocal(first, true), first, ownerChecker).WithPeers(g1.BootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth2, err := authorization.New(ctx, identity.NewLocal(second, true), second, ownerChecker).WithPeers(g2.BootID())
+	if err != nil {
+		t.Fatal(err)
+	}
 	entry, err := gateway.NewWithPeers(d2, "https://entry.test/peer", recovery, func(_ context.Context, source string, destination gateway.Route) (net.Conn, error) {
 		peerDials.Add(1)
 		owner := g1
+		authorizer := auth1
 		if destination.OwnerBootID == g2.BootID() {
 			owner = g2
+			authorizer = auth2
 		} else if destination.OwnerBootID != g1.BootID() {
 			return nil, gateway.ErrRouteStale
 		}
+		binding, handler, err := authorizer.Peer(source, machine.ID)
+		if err != nil {
+			return nil, err
+		}
 		left, right := net.Pipe()
 		wg.Go(func() {
-			_ = owner.ServeConn(ctx, left, gateway.BindingContext{Target: machine.ID, Role: gateway.RolePeer, PeerBootID: source}, protocolPeerHandler{})
+			_ = owner.ServeConn(ctx, left, binding, handler)
 		})
 		return right, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryRepository := &peerEntryRepository{Repository: second}
+	entryAuth, err := authorization.NewLocal(ctx, identity.NewLocal(second, true), entryRepository).WithPeers(entry.BootID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +171,15 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 			t.Fatal(err)
 		}
 		if g == entry {
-			handler = protocolPeerHandler{}
+			grant, err := entryAuth.Client(ctx, cookie, machine.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer grant.Close()
+			binding, handler, err = entryAuth.Authorize(grant.Token())
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		wg.Go(func() { _ = g.ServeConn(ctx, left, binding, handler) })
 		c, err := client.Connect(ctx, right, machine.ID)
@@ -164,6 +192,11 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	originalDone := connectFabric(g1, engine)
 	waitOnline(g1)
 	original := connectClient(entry)
+	ownerChecker.denied.Store(true)
+	if _, err := original.List(ctx); err == nil {
+		t.Fatal("entry allow bypassed owner policy")
+	}
+	ownerChecker.denied.Store(false)
 	if original.Binding.RouteEpoch != 1 || original.Binding.RouteRecovery != recovery {
 		t.Fatal("SDK did not receive fixed ownership", original.Binding)
 	}
@@ -274,6 +307,30 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 			break
 		}
 	}
+	// Logout on the other pool must close an idle peer user stream.
+	// Deliberately hold the entry's validity answer stale to prove the owner's
+	// independent watchdog, rather than relying on the entry to close the path.
+	entryRepository.stale.Store(true)
+	if err := identity.NewLocal(first, true).Logout(ctx, cookie); err != nil {
+		t.Fatal(err)
+	}
+	idleDone := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := reattached.Recv(); err != nil {
+				idleDone <- err
+				return
+			}
+		}
+	}()
+	select {
+	case <-idleDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("revoked peer user kept idle terminal access")
+	}
+	if _, err := current.List(ctx); err == nil {
+		t.Fatal("revoked peer user opened another request")
+	}
 	// Restore fencing must reach a running owner via its next directory renewal.
 	if _, err := second.RotateConnectionRecovery(ctx, recovery); err != nil {
 		t.Fatal(err)
@@ -290,19 +347,23 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	}
 }
 
-// Trusted protocol fixture only: this tests actual SQL routing and PTY behavior,
-// not enterprise user authentication or a production peer transport.
-type protocolPeerHandler struct{}
+type peerOwnerChecker struct{ denied atomic.Bool }
 
-func (protocolPeerHandler) Connected(context.Context, *gateway.Connection) error { return nil }
-func (h protocolPeerHandler) Open(_ context.Context, m *pb.Message, s *gateway.Stream) (gateway.StreamHandler, error) {
-	if _, remote := s.PeerRoute(); remote {
-		return h, s.ForwardPeer([]byte("protocol-fixture"))
+func (c *peerOwnerChecker) Check(ctx context.Context, r access.Request) (access.Decision, error) {
+	if c.denied.Load() {
+		return access.Decision{Allowed: false, Reason: "OWNER_TEST_DENY", ID: wire.ID()}, nil
 	}
-	if string(m.AccessContext) != "protocol-fixture" {
-		return nil, errors.New("missing test peer context")
-	}
-	return h, s.Forward()
+	return (access.Owner{}).Check(ctx, r)
 }
-func (protocolPeerHandler) Message(context.Context, gateway.Direction, *pb.Message) error { return nil }
-func (protocolPeerHandler) Closed(error)                                                  {}
+
+type peerEntryRepository struct {
+	authorization.Repository
+	stale atomic.Bool
+}
+
+func (r *peerEntryRepository) CheckAccess(ctx context.Context, c authorization.ConnectionAccess, now int64) (bool, error) {
+	if r.stale.Load() {
+		return true, nil
+	}
+	return r.Repository.CheckAccess(ctx, c, now)
+}

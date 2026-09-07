@@ -262,3 +262,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 协议回归覆盖入口和目标分别拒绝、错误身份/归属、禁止第三跳、固定快照、上下文界限、迟于握手的本地归属变化和断线不重拨。真实 PostgreSQL 回归使用三个协议 Gateway、两个 SQL 池和真实 fabricd/tmux：客户端固定入口，经 owner A 续租超过首个期限；fabricd 顺序连接 owner B 后，旧 peer 失效，显式新连接取得新 epoch 并恢复原 PTY 输出，随后恢复代次变更使旧访问关闭。
 - 验证：完整本地 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过（跨进程包 174.854 秒）；gateway/fabricd/access/wire/tunnel race、最终 Gateway 全包 race、启用 PostgreSQL 17 的归属/peer/PTY 定向 race（23.71 秒）、`make proto`、`make build check` 与差异检查通过。专用 PostgreSQL 已停止并清理，未调用真实 Agent 或远端资源。
 - 此处的真实协议测试使用可信 peer 身份和用户上下文夹具。生产 peer 认证、用户上下文签发验证与跨实例撤销、默认 host/CLI 集群配置、配置指纹、排空及三节点故障矩阵仍待接入；普通 HTTP tunnel 保持拒绝 peer。S3 及完整 S1/S2 集群闭环继续实施，不能将此组件表述为已经交付生产 HA。
+
+### 已完成组件：逐请求 peer 用户上下文与目标独立撤销
+
+- 默认授权服务可按 Gateway 启动身份装配 peer 用户访问。入口复核原会话及操作权限后，在同一 Dune SQL 后端签发一次性随机能力；传输中只携带随机值，数据库保存其哈希、原会话/subject/授权版本、双方启动身份、Runner/Fabric/绑定修订、有界操作属性和入口决定 ID。完整请求摘要绑定业务字节、请求 ID、Runtime 与执行身份、恢复代次和 epoch，不存储业务正文、原始 bearer 或上游令牌。
+- schema 11 保存最多三十秒、每会话最多六十四个待消费项，期限使用数据库时间并扣除签发等待。签发复核当前会话与绑定，先锁定会话、Runner 和机器再清理/插入，遵守退出和机器撤销的外键锁顺序。消费原子匹配身份源、双方启动身份、目标与请求摘要；错配不消耗其他请求的能力，提交回执丢失不给予执行权也不自动重试。迁移失败回滚，原登录与环境不变，转库及备份覆盖新增记录。
+- 目标侧单次消费后，重新从实际请求生成操作描述并执行自己的 AccessChecker；入口决定不能替代目标决定。每个流重建原用户授权范围，持续检查本次会话、CLI 父会话、授权版本和产品绑定，独立撤销检查关闭空闲流；原授权期限、只读、Runtime 及后续输入检查继续生效。能力到期只限制新的首请求，已建立流不借此延长用户会话。
+- SQLite 重开与 PostgreSQL 跨池验证并发单次消费、请求/源/目标/身份源错配、subject/owner/绑定/授权版本拒绝、到期与容量、退出级联删除、回执丢失和 schema 10 升级失败回滚。真实 PostgreSQL 与三个协议 Gateway 的 PTY 回归已使用正式用户签发/消费路径：入口允许不能覆盖目标拒绝；测试故意保留入口的旧有效性回答后，从另一 SQL 池退出，目标仍独立关闭空闲终端。原 owner 迁移与 PTY 保留回归继续通过。
+- 验证：启用 PostgreSQL 17 与备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过，跨进程包 220.265 秒；metadata/access/authorization race、PostgreSQL 用户 peer/PTY race、schema/凭据/转库/原生备份定向 race、构建与静态检查通过。最终外键锁顺序修改后复验相关 PostgreSQL/SQLite race 与静态检查。未调用真实 Agent、私有权限 SDK 或远端部署。
+- 用户访问上下文采用现有 SQL 一次性能力模式，没有新增一套签名密钥；它仍要求独立的 peer 传输认证与保密。当前测试中的传输身份由可信 `net.Pipe` 夹具提供，生产 peer 接入、host/CLI 集群配置、配置一致性、排空和故障矩阵继续推进，默认 HTTP tunnel 尚未开放 peer。
