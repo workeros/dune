@@ -40,6 +40,8 @@ type Options struct {
 	// DialGateway establishes the authenticated byte connection; the server
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
+	// Online optionally reads shared directory facts for already authorized IDs.
+	Online func(context.Context, []string) (map[string]bool, error)
 }
 
 type authRate struct {
@@ -62,9 +64,9 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, options Options, store *metadata.Store, local identity.Service, authorizer *authorization.Service) (*Server, error) {
-	if options.DialGateway == nil || local == nil || authorizer == nil {
-		return nil, fmt.Errorf("Gateway dialer, identity and access modules required")
+func NewServer(parent context.Context, options Options, store *metadata.Store, local identity.Service, authorizer *authorization.Service, core *gateway.Gateway) (*Server, error) {
+	if options.DialGateway == nil || local == nil || authorizer == nil || core == nil {
+		return nil, fmt.Errorf("Gateway, dialer, identity and access modules required")
 	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
 	if err != nil {
@@ -73,7 +75,7 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{urls: addresses, store: store, identity: local, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
-	s.gateway = gateway.New()
+	s.gateway = core
 	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, authorizer.Authorize))
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
@@ -312,6 +314,11 @@ func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
 		writeMetadataError(w, err)
 		return
 	}
+	online, err := s.online(r.Context(), page.Items)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
 	type machineView struct {
 		Machine
 		Online bool `json:"online"`
@@ -322,7 +329,7 @@ func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
 	}{Items: []machineView{}, NextCursor: page.NextCursor}
 	for _, resource := range page.Items {
 		b := resource.Runner.Binding
-		out.Items = append(out.Items, machineView{Machine: Machine{ID: b.MachineID, RunnerID: resource.Runner.ID, Name: resource.Runner.Name, OS: resource.OS, Arch: resource.Arch, CreatedAt: resource.Runner.CreatedAt}, Online: s.gateway.Online(b.MachineID)})
+		out.Items = append(out.Items, machineView{Machine: Machine{ID: b.MachineID, RunnerID: resource.Runner.ID, Name: resource.Runner.Name, OS: resource.OS, Arch: resource.Arch, CreatedAt: resource.Runner.CreatedAt}, Online: online[b.MachineID]})
 	}
 	writeJSON(w, 200, out)
 }

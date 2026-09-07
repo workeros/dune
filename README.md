@@ -88,6 +88,8 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 `pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)。
 
+Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；CLI 集群配置、配置一致性和排空仍在实施。
+
 宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
 
 可信宿主可调用 `App.SetPrincipalEnabled(ctx, principalID, false)` 停用 Dune 用户；宿主负责校验管理员权限。停用在同一事务中撤销该用户的全部会话与待消费安装命令，已有用户连接会关闭，机器身份和远端任务保留。传入 `true` 重新启用后必须重新登录，旧 Cookie 不会恢复。此接口没有对应的匿名或普通用户 HTTP 管理入口，也不等同于上游企业身份源的停用同步。

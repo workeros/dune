@@ -123,9 +123,14 @@ func (s *Server) cliMachines(w http.ResponseWriter, r *http.Request) {
 		writeMetadataError(w, err)
 		return
 	}
+	online, err := s.online(r.Context(), page.Items)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
 	out := login.MachinePage{Items: []login.Machine{}, NextCursor: page.NextCursor}
 	for _, resource := range page.Items {
-		out.Items = append(out.Items, login.Machine{ID: resource.Runner.Binding.MachineID, Name: resource.Runner.Name, Online: s.gateway.Online(resource.Runner.Binding.MachineID)})
+		out.Items = append(out.Items, login.Machine{ID: resource.Runner.Binding.MachineID, Name: resource.Runner.Name, Online: online[resource.Runner.Binding.MachineID]})
 	}
 	writeJSON(w, 200, out)
 }

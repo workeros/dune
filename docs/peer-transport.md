@@ -1,6 +1,6 @@
 # Peer 传输接入
 
-`pkg/transport/peer` 提供目录模式 Gateway 的双向 TLS 1.3 / WebSocket 接入，继续使用已有 Yamux 和长度前缀 protobuf。当前接口供 Go 应用装配；官方 host/CLI 的集群配置和监听入口尚待接入，不把此模块等同于已部署的 HA 服务。
+`pkg/transport/peer` 提供目录模式 Gateway 的双向 TLS 1.3 / WebSocket 接入，继续使用已有 Yamux 和长度前缀 protobuf。`host.Options.Cluster` 已提供同一 PostgreSQL 后端的宿主装配和独立 peer 监听入口；官方 CLI 配置、配置一致性准入、readiness/排空和多进程故障验收仍在实施，不把当前接口等同于已部署的 HA 服务。
 
 ## 身份与边界
 
@@ -10,7 +10,17 @@ CA 认证的是可信集群成员。成员在受 TLS 保护的请求中声明入
 
 peer 必须使用独立监听入口。模块要求实际 TLS 连接，忽略 `X-Forwarded-Proto`、客户端证书转发头等代理声明；允许四层 TLS 透传，不能在普通七层代理解密后以明文转发到 peer Handler。`ServerTLSConfig()` 要求客户端证书，只适用于 peer 监听器，不用于公开浏览器监听器。Handler 还独立按原集群 CA 验证客户端链，应用改变监听器的信任集合不会扩大 Handler 的授权范围。
 
-## Go 应用装配
+## 工作台宿主
+
+通过 `host.Options.Database` 选择 PostgreSQL，设置 `Cluster: &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{Address: address, Certificate: certificate, Roots: roots}}`。`host.Open` 从同一存储池创建目录、用户授权和 peer 上下文；每次启动获得新的 Gateway boot 身份。恢复代次是所有副本共同配置的 32 位小写十六进制值，已有值不在启动时替换，离线恢复使用[代次工具](metadata-migration.md)。证书、私钥和 CA 的读取由宿主管理。
+
+公开 HTTP 服务仍调用 `App.Serve` 或挂载 `App`；另创建普通 TCP listener，交给 `App.ServePeer(listener)`，由 App 加上自己的双向 TLS 策略并接管监听器。完整广告地址必须直接到达该实例的这个端口，peer 不挂载到公开 HTTP 路由。父 context 取消或 `App.Close` 一起关闭这些监听器、升级连接和用户请求；监听器启动失败应由宿主取消整个应用。关闭后仍保留远端 tmux。
+
+机器可以连到不同于用户入口的副本，工作台和人类 CLI 请求按原目录 owner 转发一次。工作台的机器列表、Runner 列表/详情及 CLI 机器列表仅针对用户已获准查看的绑定批量读取在线事实，一页最多一百个 ID、查询最多一秒；未确认、过期和旧恢复代次路由不作为在线连接，存储故障返回服务错误。在线是展示信息，执行仍独立校验固定绑定和归属。
+
+SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能缺少 Cluster 配置启动单机宿主。这个启动检查**尚未构成持续的配置一致性租约**，也不能阻止并发启动的混合模式；当前切换必须先停止整个部署，并确保所有副本的身份、授权和公开入口配置一致。跨副本配置指纹、运行期准入及 readiness/排空将在后续功能点完成。
+
+## 底层 Go 应用装配
 
 应用负责从私有配置读取证书和 CA，构造 `peer.Config{Address, Certificate, Roots}` 后调用 `peer.New`。私钥不进入 SQL、日志、启动信息或浏览器配置；模块复制证书字节和信任集合，应用不得修改正在使用的私钥。
 
@@ -27,3 +37,5 @@ peer 必须使用独立监听入口。模块要求实际 TLS 连接，忽略 `X-
 定向检查为 `go test -race ./pkg/transport/peer -count=1 -timeout=60s`，覆盖真实 TLS 握手、独立 Handler 信任检查、错误 CA/主机/启动身份、角色边界、明文及转发头、重复头、重定向、回调取消、证书到期和跨 CA 轮换。测试使用内存中的临时 CA，不写入生产信任。
 
 启用专用 PostgreSQL 后，`go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s` 使用三个独立 peer HTTPS 监听器、正式用户上下文和真实 tmux，验证目录定向连接、原 owner 更换后的显式重接、独立授权拒绝、空闲撤销和恢复代次隔离。SDK/反向连接仍是本地协议夹具，不将此测试称为完整 host/CLI 部署或三个独立进程的故障矩阵。
+
+`go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s` 使用两个正式 `host.App` 和独立 mTLS peer 监听器，机器由真实 fabricd 进程连接 B，工作台与人类 CLI 固定进入 A。覆盖共享在线事实、Runner 快照、真实 PTY、企业共享访问/拒绝及空闲撤销。它仍是同机双宿主测试，不证明三进程网络分区、配置漂移、真实企业权限 SDK 或 Linux 集群部署。

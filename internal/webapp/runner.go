@@ -18,10 +18,10 @@ type runnerView struct {
 	Arch   string `json:"arch,omitempty"`
 }
 
-func (s *Server) runnerView(resource authorization.Resource) runnerView {
+func runnerResponse(resource authorization.Resource, online map[string]bool) runnerView {
 	view := runnerView{Runner: resource.Runner, OS: resource.OS, Arch: resource.Arch}
 	if b := resource.Runner.Binding; b != nil {
-		view.Online = s.gateway.Online(b.MachineID)
+		view.Online = online[b.MachineID]
 	}
 	return view
 }
@@ -40,12 +40,17 @@ func (s *Server) runners(w http.ResponseWriter, r *http.Request) {
 		writeMetadataError(w, err)
 		return
 	}
+	online, err := s.online(r.Context(), page.Items)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
 	out := struct {
 		Items      []runnerView `json:"items"`
 		NextCursor string       `json:"next_cursor,omitempty"`
 	}{Items: []runnerView{}, NextCursor: page.NextCursor}
 	for _, resource := range page.Items {
-		out.Items = append(out.Items, s.runnerView(resource))
+		out.Items = append(out.Items, runnerResponse(resource, online))
 	}
 	writeJSON(w, 200, out)
 }
@@ -59,7 +64,12 @@ func (s *Server) runner(w http.ResponseWriter, r *http.Request) {
 		writeMetadataError(w, err)
 		return
 	}
-	writeJSON(w, 200, s.runnerView(resource))
+	online, err := s.online(r.Context(), []authorization.Resource{resource})
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	writeJSON(w, 200, runnerResponse(resource, online))
 }
 
 // Binding selectors are not credentials or authoritative scope. They prevent a

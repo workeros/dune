@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/storage"
 )
 
@@ -172,7 +173,7 @@ func noGateway(context.Context, string) (net.Conn, error) {
 }
 
 func newTestServer(ctx context.Context, options Options, store *metadata.Store, local *identity.Local) (*Server, error) {
-	return NewServer(ctx, options, store, local, authorization.NewLocal(ctx, local, store))
+	return NewServer(ctx, options, store, local, authorization.NewLocal(ctx, local, store), gateway.New())
 }
 
 func OpenStore(dir string) (*metadata.Store, error) {

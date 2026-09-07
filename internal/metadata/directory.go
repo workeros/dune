@@ -291,3 +291,50 @@ func (s *Store) ConnectionRecovery(ctx context.Context) (string, error) {
 	}
 	return generation, err
 }
+
+// OnlineConnections reads display-only facts for an already authorized page.
+// It never supplies execution authority or discovers additional machine IDs.
+func (s *Store) OnlineConnections(ctx context.Context, recovery string, machines []string) (map[string]bool, error) {
+	if !s.postgres || !validBootID(recovery) || len(machines) > 100 {
+		return nil, ErrInvalidArgument
+	}
+	for _, id := range machines {
+		if id == "" || len(id) > 128 {
+			return nil, ErrInvalidArgument
+		}
+	}
+	online := make(map[string]bool, len(machines))
+	if len(machines) == 0 {
+		return online, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT c.recovery_generation,r.machine_id
+		FROM dune_cluster c LEFT JOIN dune_routes r ON r.recovery_generation=c.recovery_generation
+		AND r.published=TRUE AND r.expires_at>floor(extract(epoch FROM clock_timestamp())*1000)::bigint
+		AND r.machine_id=ANY($1) WHERE c.id=1`, machines)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var generation string
+		var machine sql.NullString
+		if err := rows.Scan(&generation, &machine); err != nil {
+			return nil, err
+		}
+		if generation != recovery {
+			return nil, gateway.ErrRouteStale
+		}
+		found = true
+		if machine.Valid {
+			online[machine.String] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, gateway.ErrRouteStale
+	}
+	return online, nil
+}

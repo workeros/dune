@@ -21,6 +21,7 @@ import (
 	"github.com/aiomni/dune/pkg/deployment"
 	externalidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
+	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/aiomni/dune/pkg/transport/ws"
 )
 
@@ -32,6 +33,9 @@ type Options struct {
 	// Database selects a SQL backend instead of the default SQLite DataDir.
 	// It cannot be combined with DataDir. The application owns the connection pool.
 	Database *storage.Config
+	// Cluster enables shared connection ownership and authenticated peer routing.
+	// All metadata, authorization and directory records use Database's PostgreSQL.
+	Cluster *ClusterOptions
 	// Assets and Binaries contain the built workbench and installation archives.
 	Assets, Binaries string
 	// PublicURL is the browser HTTP(S) deployment directory. GatewayURL optionally
@@ -59,17 +63,19 @@ type Options struct {
 // HTTP middleware must preserve Hijacker and ResponseController support (directly
 // or through Unwrap) for upgrades and cancellation of blocked request I/O.
 type App struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	web     *webapp.Server
-	store   *metadata.Store
-	mu      sync.Mutex
-	closed  bool
-	servers map[*http.Server]struct{}
-	active  sync.WaitGroup
-	once    sync.Once
-	done    chan struct{}
-	err     error
+	ctx         context.Context
+	cancel      context.CancelFunc
+	web         *webapp.Server
+	store       *metadata.Store
+	peer        *peer.Transport
+	peerHandler http.Handler
+	mu          sync.Mutex
+	closed      bool
+	servers     map[*http.Server]struct{}
+	active      sync.WaitGroup
+	once        sync.Once
+	done        chan struct{}
+	err         error
 }
 
 // Open assembles an application without opening a listener. Cancelling parent
@@ -96,18 +102,34 @@ func Open(parent context.Context, options Options) (*App, error) {
 		}
 		database = *options.Database
 	}
+	transport, err := clusterTransport(database, options.Cluster)
+	if err != nil {
+		return nil, err
+	}
 	store, err := metadata.Open(parent, database)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
+	core, err := openGateway(ctx, store, database, options.Cluster, transport)
+	if err != nil {
+		cancel()
+		store.Close()
+		return nil, err
+	}
+	assembled := false
+	defer func() {
+		if !assembled {
+			cancel()
+			core.Close()
+			store.Close()
+		}
+	}()
 	local := identity.NewLocal(store, !options.DisableRegistration && options.Identity == nil)
 	var external *identity.External
 	if options.Identity != nil {
 		external, err = identity.NewExternal(store, *options.Identity)
 		if err != nil {
-			cancel()
-			store.Close()
 			return nil, err
 		}
 	}
@@ -116,23 +138,43 @@ func Open(parent context.Context, options Options) (*App, error) {
 		service = external
 	}
 	authorizer := authorization.New(ctx, service, store, options.AccessChecker)
+	var online func(context.Context, []string) (map[string]bool, error)
+	var peerHandler http.Handler
+	if transport != nil {
+		recovery := options.Cluster.RecoveryGeneration
+		online = func(ctx context.Context, ids []string) (map[string]bool, error) {
+			return store.OnlineConnections(ctx, recovery, ids)
+		}
+		authorizer, err = authorizer.WithPeers(core.BootID())
+		if err != nil {
+			return nil, err
+		}
+		peerHandler, err = transport.Handler(ctx, core, peerAuthorization(authorizer))
+		if err != nil {
+			return nil, err
+		}
+	}
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		Assets: options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway: dial,
 		External:    external,
-	}, store, service, authorizer)
+		Online:      online,
+	}, store, service, authorizer, core)
 	if err != nil {
-		cancel()
-		store.Close()
 		return nil, err
 	}
-	app := &App{ctx: ctx, cancel: cancel, web: web, store: store, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	assembled = true
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.serveHTTP(a.web, w, r)
+}
+
+func (a *App) serveHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	if a.closed || a.ctx.Err() != nil {
 		a.mu.Unlock()
@@ -160,14 +202,18 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	defer cancel()
-	a.web.ServeHTTP(w, r.WithContext(ctx))
+	handler.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // Serve takes ownership of listener, including on failure. Multiple listeners
 // may be served concurrently. Close stops all of them; Serve then returns
 // http.ErrServerClosed. TLS listeners should be configured by the caller.
 func (a *App) Serve(listener net.Listener) error {
-	srv := &http.Server{Handler: a, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+	return a.serve(listener, a)
+}
+
+func (a *App) serve(listener net.Listener, handler http.Handler) error {
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	a.mu.Lock()
 	if a.closed || a.ctx.Err() != nil {
 		a.mu.Unlock()

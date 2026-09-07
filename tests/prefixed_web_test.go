@@ -22,14 +22,17 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/config"
+	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
+	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/aiomni/dune/pkg/transport/ws"
 	"github.com/fasthttp/websocket"
 )
@@ -43,7 +46,7 @@ func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 
 type workbenchCase struct {
 	override, external, separateGateway bool
-	humanCLI                            bool
+	humanCLI, cluster                   bool
 	enterprise, runnerEntry             bool
 	database                            *storage.Config
 }
@@ -79,22 +82,67 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	if mode.database != nil {
 		options.DataDir, options.Database = "", mode.database
 	}
-	if mode.separateGateway {
+	var ownerGateway string
+	var peerListener net.Listener
+	var newCluster func() (*host.ClusterOptions, net.Listener)
+	if mode.cluster {
+		ca, recovery := testcert.New(t), wire.ID()
+		newCluster = func() (*host.ClusterOptions, net.Listener) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			must(t, err)
+			t.Cleanup(func() { listener.Close() })
+			return &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{
+				Address:     "https://" + listener.Addr().String() + "/private/peer",
+				Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots(),
+			}}, listener
+		}
+		options.Cluster, peerListener = newCluster()
+	}
+	servePeer := func(application *host.App, listener net.Listener) {
+		done := make(chan error, 1)
+		go func() { done <- application.ServePeer(listener) }()
+		t.Cleanup(func() {
+			application.Close()
+			select {
+			case err := <-done:
+				if err != http.ErrServerClosed {
+					t.Errorf("peer listener: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Error("peer listener remained open")
+			}
+		})
+	}
+	if mode.separateGateway || mode.cluster {
 		if mode.database == nil {
 			t.Fatal("separate gateway requires PostgreSQL")
 		}
 		remote := httptest.NewUnstartedServer(nil)
 		remoteSite := "http://" + remote.Listener.Addr().String() + "/tools/dune/"
 		onlineSite = remoteSite
-		remoteApp, err := host.Open(ctx, host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker})
+		remoteOptions := host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker}
+		var remotePeer net.Listener
+		if mode.cluster {
+			remoteOptions.Cluster, remotePeer = newCluster()
+		}
+		remoteApp, err := host.Open(ctx, remoteOptions)
 		must(t, err)
 		defer remoteApp.Close()
+		if mode.cluster {
+			servePeer(remoteApp, remotePeer)
+		}
 		remote.Config.Handler = remoteApp
 		remote.Start()
 		defer remote.Close()
-		options.GatewayURL = "ws" + strings.TrimPrefix(remoteSite, "http") + "tunnel"
-		options.DialGateway = func(ctx context.Context, token string) (net.Conn, error) {
-			return ws.Dial(ctx, options.GatewayURL, token, &tls.Config{MinVersion: tls.VersionTLS12})
+		ownerGateway = "ws" + strings.TrimPrefix(remoteSite, "http") + "tunnel"
+		if mode.cluster {
+			// Keep all user entry points on A. Only fabricd connects to owner B.
+			onlineSite = site
+		} else {
+			options.GatewayURL = ownerGateway
+			options.DialGateway = func(ctx context.Context, token string) (net.Conn, error) {
+				return ws.Dial(ctx, options.GatewayURL, token, &tls.Config{MinVersion: tls.VersionTLS12})
+			}
 		}
 	}
 	if mode.override {
@@ -121,6 +169,9 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		app, err = host.Open(ctx, options)
 		must(t, err)
 		defer app.Close()
+		if mode.cluster {
+			servePeer(app, peerListener)
+		}
 		server.Config.Handler = app
 		server.Start()
 		defer server.Close()
@@ -168,6 +219,11 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	if machineConfig.Gateway != expectedGateway {
 		t.Fatalf("machine address = %s", machineConfig.Gateway)
 	}
+	if mode.cluster {
+		machineConfig.Gateway = ownerGateway
+		machinePath = filepath.Join(dir, "machine", "owner.yaml")
+		must(t, config.Create(machinePath, machineConfig))
+	}
 	log, err := os.Create(filepath.Join(dir, "fabricd.log"))
 	must(t, err)
 	defer log.Close()
@@ -190,8 +246,8 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 				Online bool
 			}
 		}
-		// The directory is still local at S1. In the separate-Gateway case,
-		// wait for fabricd on its actual owner; execution below goes through A.
+		// Standalone split-host tests observe the actual owner. Cluster tests
+		// read shared online facts from A and execute through A's peer route.
 		response, err := browser.Get(onlineSite + "api/machines")
 		must(t, err)
 		if response.StatusCode != 200 {

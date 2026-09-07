@@ -6,9 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/storage"
+	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/jackc/pgx/v5"
+	"net/http/httptest"
 )
 
 func TestPostgresWorkbenchEnrollmentAndTerminal(t *testing.T) {
@@ -49,4 +54,45 @@ func postgresWorkbenchConfig(t *testing.T) storage.Config {
 		return nil
 	}}}
 	return database
+}
+
+func TestPostgresClusterWorkbench(t *testing.T) {
+	database := postgresWorkbenchConfig(t)
+	testPrefixedWorkbench(t, workbenchCase{database: &database, cluster: true, runnerEntry: true, humanCLI: true, enterprise: true})
+}
+
+func TestPostgresHostClusterConfiguration(t *testing.T) {
+	database := postgresWorkbenchConfig(t)
+	ctx := context.Background()
+	store, err := metadata.Open(ctx, database)
+	must(t, err)
+	defer store.Close()
+	recovery := wire.ID()
+	_, err = store.ConnectionDirectory(ctx, recovery)
+	must(t, err)
+	ca := testcert.New(t)
+	cluster := &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{Address: "https://127.0.0.1:9443/private/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}}
+	options := host.Options{PublicURL: "http://example.test/", Database: &database}
+	for _, selected := range []*host.ClusterOptions{nil, {RecoveryGeneration: wire.ID(), Peer: cluster.Peer}} {
+		options.Cluster = selected
+		app, err := host.Open(ctx, options)
+		if err == nil {
+			app.Close()
+			t.Fatal("cluster database admitted missing or stale configuration")
+		}
+	}
+	actual, err := store.ConnectionRecovery(ctx)
+	must(t, err)
+	if actual != recovery {
+		t.Fatal("startup changed recovery generation")
+	}
+	options.Cluster = cluster
+	app, err := host.Open(ctx, options)
+	must(t, err)
+	defer app.Close()
+	response := httptest.NewRecorder()
+	app.ServeHTTP(response, httptest.NewRequest("GET", "http://example.test/private/peer", nil))
+	if response.Code != 404 {
+		t.Fatal("public listener exposed peer", response.Code)
+	}
 }

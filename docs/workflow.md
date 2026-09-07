@@ -125,3 +125,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 `pkg/fabricd/TestPostgresOwnedReverseConnections` 将两个独立 SQL 池与两个真实协议 Gateway、fabricd 引擎相连，检查 live owner 竞争拒绝、确认后发布、持续数据库续约、原请求 epoch、owner 释放后接管、旧清理拒绝和原 PTY 重新输入；测试中主动旋转恢复代次作为故障注入，验证已有旧连接关闭，不代表生产恢复可以跳过停站。`pkg/gateway/TestOwnership*` 和 `TestOwnedHandshakeRequiresEpochConfirmation` 检查迟到目录响应、保守本地期限、过期不复活及错误确认不发布；`TestInputGrantCannotCrossOwnershipTerm` 单独验证有效输入 grant 不能跨归属。此范围不涵盖 HTTP peer、负载均衡或三节点网络分区。
 
 `pkg/gateway/TestOwnerExpiryClosesLocallyHandledStream` 检查没有 fabric relay 的本地处理流也随执行归属关闭；当前 route 的检查同时位于新请求及后续输入进入应用处理器之前，不能仅依赖关闭计时器及时获得调度。
+
+宿主集群装配使用 `go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s`，启用专用 PostgreSQL。两个正式 `host.App` 的 peer 经各自独立 mTLS 监听器连接，真实 fabricd 进程固定在 B，Web 与人类 CLI 固定在 A，验证远端在线事实、Runner/Runtime、PTY 和授权撤销。`internal/metadata/TestPostgresOnlineConnections` 检查未发布/过期/旧代次与有界 ID 查询，`pkg/host` 检查非法配置和监听器所有权。此范围不替代多进程集群故障、配置一致性租约或 Linux 部署验收。

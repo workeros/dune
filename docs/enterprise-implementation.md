@@ -280,3 +280,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 真实 HTTPS 测试覆盖未知 CA、错误主机、独立 Handler 信任、伪造 TLS 转发头、重复身份、原 owner、取消、证书到期和新旧 CA 交叠/移除。PostgreSQL / PTY 回归已经把 peer `net.Pipe` 替换为三个独立双向 TLS / WebSocket 监听器，继续验证正式用户上下文、跨 owner 显式重接、原终端保留、目标独立拒绝和空闲撤销；测试 CA 只存在于内存，不修改生产信任。
 - 验证：最终固定源码启用 PostgreSQL 17 与备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过，跨进程包 219.527 秒；真实 PostgreSQL / HTTPS peer / PTY 定向 race、最终 peer/Gateway race、`make build check` 与差异检查通过。首次全量期间补充广告地址校验造成了新 peer 源码与已编译 Gateway 的快照不一致；该次结束后冻结源码重跑全量，最终通过，没有用定向结果替代失败的全量检查。
 - 本检查点交付独立传输组件，尚未增加官方 host/CLI 集群配置、配置指纹、readiness/排空或三节点进程故障矩阵；测试中的 SDK 和反向连接仍使用本地协议夹具，也没有执行真实 Agent 或 Linux 多节点部署。完整 S3 及 S1/S2 集群闭环继续推进。
+
+### 已完成功能：工作台宿主装配共享目录与 peer
+
+- `host.Options.Cluster` 将 PostgreSQL 目录、同一次启动的 Gateway、用户访问上下文和 mTLS 传输装配在一起；Web 模块接收宿主创建的 Gateway。目录与身份、会话、授权、Runner 记录始终使用所选的同一数据库池，默认 SQLite/单机行为保留。非法后端、恢复代次与证书配置在打开存储前拒绝，已有集群目录不能由缺失或错误代次配置的宿主启动。
+- `App.ServePeer` 接管独立普通 TCP listener 并使用内部 mTLS 配置，不在公开 HTTP 路由暴露 peer。它复用 App 的请求计数、关闭准入、取消与监听器所有权规则，父 context 或 Close 一并释放连接和存储。跨实例用户请求走原 owner 的一次 peer 连接，不改变 Runner/Runtime 选择或重放行为。
+- 工作台机器、Runner 列表/详情及 CLI 机器列表在授权后批量读取共享在线事实，一页最多一百个已准入 ID、数据库查询最多一秒。未确认和过期路由不展示为在线，恢复代次不符或数据库故障返回服务错误；查询不枚举其他机器，也不授予执行权。
+- 新宿主回归使用两个正式 `host.App`、独立 mTLS peer 端口和真实 fabricd 进程。机器固定连接 B，Web 与人类 CLI 都固定进入 A，验证远端在线、固定 Runner/Runtime、真实 PTY、企业共享权限与拒绝、策略/用户撤销和 peer listener 释放。存储回归另覆盖发布前后、过期、旧恢复代次及查询 ID 界限；宿主配置回归覆盖 SQLite、非法参数、已初始化数据库及公开路径隔离。
+- 这是 Go 宿主的实际接入功能；官方 CLI 集群配置、持续配置一致性租约、readiness/排空及三进程故障矩阵仍待实现。现有启动检查不能阻止并发混合模式，部署模式切换须先停站；文档明确要求实例配置一致，没有把这项要求描述为已实现的运行期隔离。此次没有运行真实 Agent、私有权限 SDK 或 Linux 集群部署。
+- 验证：启用 PostgreSQL 17 和备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过，跨进程包 281.872 秒；PostgreSQL 宿主集群/在线事实定向 race、host/Web 全包 race、`make build check-go` 及差异检查通过。先前试编译发现测试误用不存在的配置保存函数，已改为正式 `config.Create` 写入独立测试配置；此后冻结源码，定向和全量均通过。
