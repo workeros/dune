@@ -24,7 +24,13 @@ fabricd 在 hello 中提交随机 `input_lease_id`，Gateway 的 welcome 提供�
 
 SDK 的首请求固定恢复代次与 epoch，Gateway 不随目录变化转投另一个 owner；后续消息由原 route 标记同一归属，fabricd 即使收到有效输入 grant，也拒绝另一恢复代次或 epoch 的消息。明确发现归属不匹配时返回 `ROUTE_STALE`；可能已经提交的调用仍遵守结果未知、不自动重放的规则。较早的 v2 实现缺少归属确认字段，不能接入目录模式；原单机模式的两个字段为空/零，继续使用原输入租约。
 
-此构造器目前协调本实例接收的反向连接；官方工作台/CLI 集群装配、peer 入口和跨实例 SDK 转发尚未完成，不能把目录实现单独接入后当作完整 HA 服务。协议核心不导入 SQL 或产品身份，第二层仍负责提供同一元数据后端的目录及可信连接上下文。
+`gateway.NewWithPeers(directory, instanceAddress, recoveryGeneration, dialPeer)` 在目录归属上增加单跳 SDK 路由。入口先使用本地有效连接；否则只查询一次目录并向原 owner 定向拨号。目录未发布、过期、恢复代次不同或指向自身但没有本地连接均拒绝；拨号及握手最多五秒，并扣除目录查询耗时。每条 SDK 连接固定一条 peer 连接，不共享用户连接、不在故障后重新解析 owner 或重放请求。
+
+peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证与保密性的 `net.Conn`，在受控入口把验证过的入口启动身份设为 `BindingContext.PeerBootID`；普通 SDK、机器及共享凭据不能进入该角色。hello 的 `peer_source` / `peer_owner` 与可信入口身份、本实例启动身份一致，目标实例还验证原执行绑定、恢复代次及 epoch。peer 只能访问该实例当前持有的本地反向连接，缺失或过期返回 `ROUTE_STALE`，绝不再拨号第三个实例。原 owner 关闭时一并关闭空闲 peer 与 SDK 连接。
+
+应用访问处理器从 `Stream.PeerRoute()` 取得固定 owner 的副本，在批准操作并构造该请求的访问上下文后调用 `ForwardPeer(context)`。普通 `Forward()` 对远端路由拒绝。`access_context` 仅允许出现在 peer stream 的首请求，必须为 1–16384 字节；SDK 伪造、后续消息替换及缺失上下文在准入前拒绝。目标实例的处理器必须独立验证用户、原请求和当前授权；core 不解析用户与 Runner，peer 身份本身不构成用户授权。上下文只到 owner，后者转发给 fabricd 前移除该字段，并设置自己的有界输入 grant。
+
+目前交付的是协议核心的单跳路径与受控回调契约，默认 HTTP tunnel 仍拒绝 peer 角色，官方工作台/CLI 未启用集群。生产 peer 认证、可验证的用户访问上下文及撤销、宿主配置与三节点故障验收须继续接入；不能把可信测试处理器或目录构造器单独部署后当作完整 HA 服务。协议核心不导入 SQL 或产品身份，第二层仍负责提供同一元数据后端的目录及可信连接上下文。
 
 `dune-mvp/2` 与旧版本不混用：Gateway、fabricd、CLI 和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 

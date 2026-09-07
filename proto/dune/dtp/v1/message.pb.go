@@ -50,6 +50,9 @@ type Message struct {
 	// Ownership identity for directory-backed routes; both absent in local mode.
 	RouteRecovery string `protobuf:"bytes,16,opt,name=route_recovery,json=routeRecovery,proto3" json:"route_recovery,omitempty"`
 	RouteEpoch    uint64 `protobuf:"varint,17,opt,name=route_epoch,json=routeEpoch,proto3" json:"route_epoch,omitempty"`
+	// Opaque application authorization, mandatory only on a peer's first request.
+	// Never accepted from SDK clients or delivered to fabricd.
+	AccessContext []byte `protobuf:"bytes,18,opt,name=access_context,json=accessContext,proto3" json:"access_context,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -203,11 +206,18 @@ func (x *Message) GetRouteEpoch() uint64 {
 	return 0
 }
 
+func (x *Message) GetAccessContext() []byte {
+	if x != nil {
+		return x.AccessContext
+	}
+	return nil
+}
+
 var File_dune_dtp_v1_message_proto protoreflect.FileDescriptor
 
 const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\n" +
-	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xb6\x04\n" +
+	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xdd\x04\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +
@@ -229,7 +239,8 @@ const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\x0einput_lease_ms\x18\x0f \x01(\rR\finputLeaseMs\x12%\n" +
 	"\x0eroute_recovery\x18\x10 \x01(\tR\rrouteRecovery\x12\x1f\n" +
 	"\vroute_epoch\x18\x11 \x01(\x04R\n" +
-	"routeEpochB0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
+	"routeEpoch\x12%\n" +
+	"\x0eaccess_context\x18\x12 \x01(\fR\raccessContextB0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
 
 var (
 	file_dune_dtp_v1_message_proto_rawDescOnce sync.Once

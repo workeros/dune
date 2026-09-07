@@ -30,4 +30,7 @@ message Message {
   // Ownership identity for directory-backed routes; both absent in local mode.
   string route_recovery = 16;
   uint64 route_epoch = 17;
+  // Opaque application authorization, mandatory only on a peer's first request.
+  // Never accepted from SDK clients or delivered to fabricd.
+  bytes access_context = 18;
 }

@@ -13,6 +13,9 @@ const Version = "dune-mvp/2"
 type Hello struct {
 	Version string `json:"version"`
 	Role    string `json:"role"`
+	// Peer identities name Gateway boots, not users or machine credentials.
+	PeerSource string `json:"peer_source,omitempty"`
+	PeerOwner  string `json:"peer_owner,omitempty"`
 }
 type Binding struct {
 	Version       string         `json:"version"`

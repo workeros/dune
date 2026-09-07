@@ -34,11 +34,15 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 		c.Fail("ROUTE_STALE", fmt.Errorf("request belongs to another ownership term"))
 		return
 	}
+	if (binding.Role == RolePeer && (len(m.AccessContext) == 0 || len(m.AccessContext) > MaxAccessContext)) || (binding.Role != RolePeer && len(m.AccessContext) != 0) {
+		c.Fail("ACCESS_DENIED", fmt.Errorf("invalid peer access context"))
+		return
+	}
 	if failure := g.routeError(binding.Target, r); failure != nil {
 		c.Fail(failure.Code, failure)
 		return
 	}
-	flow := &Stream{ctx: ctx, cancel: cancel, client: c}
+	flow := &Stream{ctx: ctx, cancel: cancel, client: c, peer: r.peer}
 	var policy StreamHandler
 	err = flow.hook(func(ctx context.Context) error {
 		var e error
@@ -66,6 +70,11 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 			var message *pb.Message
 			message, err = c.Recv()
 			if err != nil {
+				return
+			}
+			if len(message.AccessContext) != 0 {
+				err = fmt.Errorf("access context is only valid on the first peer request")
+				c.Fail("ACCESS_DENIED", err)
 				return
 			}
 			if failure := g.routeError(binding.Target, r); failure != nil {
@@ -99,6 +108,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	defer d.Close()
 	stopFabric := context.AfterFunc(ctx, func() { d.Close() })
 	defer stopFabric()
+	m.AccessContext = flow.accessContext
 	if err = r.send(d, m); err != nil {
 		c.Fail("RESULT_UNKNOWN", err)
 		return
@@ -107,6 +117,9 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	relay := func(dst, src *wire.Stream, direction Direction) {
 		for {
 			message, e := src.Recv()
+			if e == nil && len(message.AccessContext) != 0 {
+				e = fmt.Errorf("access context is only valid on the first peer request")
+			}
 			if e == nil && direction == ToFabric {
 				if failure := g.routeError(binding.Target, r); failure != nil {
 					e = failure

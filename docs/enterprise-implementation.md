@@ -253,3 +253,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 真实 PostgreSQL 与两个协议 Gateway 的回归中，竞争引擎无法打断有效 owner；超过首个十五秒后原连接仍正常执行。释放后原引擎连接另一个 Gateway，epoch 和连接 generation 分别前进，旧 owner 清理被拒绝，原 PTY 重接输出 `OWNER_TRANSFER_OK`。测试旋转代次后，运行中的旧连接在下一次目录复核关闭；时间边界与错误 epoch 确认另有定向回归。
 - 当前新增的是协议核心的目录装配。官方 host/CLI 集群配置、peer 用户访问上下文、跨实例转发、排空及三节点故障验收仍未交付；不将这次真实 SQL/协议集成等同于完整 S3 或 S1/S2 集群闭环。
 - 验证：启用 PostgreSQL 17 和备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、相关 gateway/fabricd/access/wire race、`make proto` 与 `make build check` 通过。最后补齐本地处理流的生命周期后，重新执行完整跨进程测试和受影响包 race，均通过。测试在专用 SQL schema 和本地真实 PTY 上进行，未修改既有部署或启用真实 Agent 账号。
+
+### 已完成组件：协议 peer 单跳转发
+
+- `gateway.NewWithPeers` 在原目录与输入租约上增加固定 owner 拨号。SDK 连接只解析并建立一次 peer，后续请求使用原绑定；失效、网络中断及结果未知均不重新选路或重放。拨号由应用提供已认证、保密的 `net.Conn`，核心继续不依赖 HTTP、SQL 或产品用户。
+- 独立 `peer` 角色核对可信入口启动身份、目标启动身份、原执行绑定、恢复代次及 epoch。共享、SDK 和机器角色不能充当 peer；目标实例只允许访问自己当前持有的本地连接，缺失时返回 `ROUTE_STALE`，不转发第三跳。原 owner 关闭会终止空闲 peer 和上游 SDK 连接。
+- 远端流要求访问模块显式调用 `ForwardPeer`，普通转发不隐式授予权限。每个首请求携带最多 16 KiB 的应用上下文，目标实例的处理器仍独立验证；SDK 注入、上下文缺失、越界和后续替换在准入前拒绝。快照及上下文缓冲复制，应用不能更改核心原路由；上下文在 owner 截止，由 owner 为 fabricd 设置自己的执行输入 grant。
+- 协议回归覆盖入口和目标分别拒绝、错误身份/归属、禁止第三跳、固定快照、上下文界限、迟于握手的本地归属变化和断线不重拨。真实 PostgreSQL 回归使用三个协议 Gateway、两个 SQL 池和真实 fabricd/tmux：客户端固定入口，经 owner A 续租超过首个期限；fabricd 顺序连接 owner B 后，旧 peer 失效，显式新连接取得新 epoch 并恢复原 PTY 输出，随后恢复代次变更使旧访问关闭。
+- 验证：完整本地 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过（跨进程包 174.854 秒）；gateway/fabricd/access/wire/tunnel race、最终 Gateway 全包 race、启用 PostgreSQL 17 的归属/peer/PTY 定向 race（23.71 秒）、`make proto`、`make build check` 与差异检查通过。专用 PostgreSQL 已停止并清理，未调用真实 Agent 或远端资源。
+- 此处的真实协议测试使用可信 peer 身份和用户上下文夹具。生产 peer 认证、用户上下文签发验证与跨实例撤销、默认 host/CLI 集群配置、配置指纹、排空及三节点故障矩阵仍待接入；普通 HTTP tunnel 保持拒绝 peer。S3 及完整 S1/S2 集群闭环继续实施，不能将此组件表述为已经交付生产 HA。

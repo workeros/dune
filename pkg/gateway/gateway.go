@@ -20,11 +20,13 @@ type route struct {
 	b     api.Binding
 	input *wire.InputWindow
 	owner *ownership
+	peer  *Route
 }
 
 type Gateway struct {
 	directory                      Directory
 	ownerAddress, recovery, bootID string
+	dialPeer                       PeerDialer
 	mu                             sync.Mutex
 	closed                         bool
 	routes                         map[string]*route
@@ -45,6 +47,12 @@ func (g *Gateway) Online(target string) bool {
 }
 
 func (g *Gateway) routeError(target string, expected *route) *api.Error {
+	if expected.peer != nil {
+		if expected.ctx.Err() == nil && !expected.s.IsClosed() {
+			return nil
+		}
+		return &api.Error{Code: "ROUTE_STALE", Detail: "peer connection closed"}
+	}
 	g.mu.Lock()
 	current := g.routes[target]
 	g.mu.Unlock()
@@ -92,7 +100,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 		return fmt.Errorf("nil connection")
 	}
 	defer conn.Close()
-	if handler == nil || binding.Target == "" || (binding.Role != RoleSDK && binding.Role != RoleDaemon && binding.Role != RoleEither) {
+	if handler == nil || !binding.valid() || (binding.Role == RolePeer && g.directory == nil) {
 		return fmt.Errorf("binding and connection handler required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -149,8 +157,18 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 		return nil
 	}
 	var h api.Hello
-	if wire.Decode(m, &h) != nil || m.Kind != "hello" || h.Version != api.Version || m.Target != binding.Target || (binding.Role != RoleEither && h.Role != binding.Role) {
+	if wire.Decode(m, &h) != nil || m.Kind != "hello" || h.Version != api.Version || m.Target != binding.Target || (binding.Role != RoleEither && h.Role != binding.Role) || len(m.AccessContext) != 0 {
 		st.Fail("HANDSHAKE", fmt.Errorf("invalid version or target"))
+		return nil
+	}
+	// A shared standalone credential never admits the peer role.
+	if h.Role == RolePeer {
+		if binding.Role != RolePeer || h.PeerSource != binding.PeerBootID || h.PeerOwner != g.bootID || h.PeerSource == g.bootID {
+			st.Fail("HANDSHAKE", fmt.Errorf("invalid authenticated peer identity"))
+			return nil
+		}
+	} else if h.PeerSource != "" || h.PeerOwner != "" {
+		st.Fail("HANDSHAKE", fmt.Errorf("peer identity on non-peer connection"))
 		return nil
 	}
 	timer.Stop()
@@ -158,7 +176,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	if h.Role == "daemon" {
 		return g.serveDaemon(ctx, s, st, m, binding.Target)
 	}
-	if h.Role != "sdk" {
+	if h.Role != RoleSDK && h.Role != RolePeer {
 		st.Fail("HANDSHAKE", fmt.Errorf("invalid role"))
 		return nil
 	}
@@ -166,9 +184,28 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	r := g.routes[binding.Target]
 	g.mu.Unlock()
 	if r == nil || r.s.IsClosed() || !r.inputAlive() {
-		st.Fail("OFFLINE", fmt.Errorf("fabricd offline"))
+		if h.Role == RolePeer {
+			st.Fail("ROUTE_STALE", ErrRouteStale)
+			return nil
+		}
+		if g.dialPeer == nil {
+			st.Fail("OFFLINE", fmt.Errorf("fabricd offline"))
+			return nil
+		}
+		r, e = g.connectPeer(ctx, binding.Target)
+		if e != nil {
+			st.Fail("ROUTE_STALE", e)
+			return nil
+		}
+		defer r.s.Close()
+	}
+	if h.Role == RolePeer && (r.owner == nil || m.Incarnation != r.b.Incarnation || m.ConnectionGeneration != r.b.Generation || m.RouteRecovery != r.b.RouteRecovery || m.RouteEpoch != r.b.RouteEpoch) {
+		st.Fail("ROUTE_STALE", ErrRouteStale)
 		return nil
 	}
+	// The fixed owner closing also closes idle peer connections, not just streams.
+	stopRoute := context.AfterFunc(r.ctx, func() { s.Close() })
+	defer stopRoute()
 	if st.Send(&pb.Message{Kind: "welcome", Payload: api.Payload(r.b)}) != nil {
 		return nil
 	}

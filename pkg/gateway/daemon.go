@@ -13,11 +13,21 @@ import (
 )
 
 func (r *route) inputAlive() bool {
+	if r.peer != nil {
+		return r.ctx.Err() == nil && !r.s.IsClosed()
+	}
 	id, _ := r.input.Current()
 	return id != "" && (r.owner == nil || r.owner.remaining() > 0)
 }
 
 func (r *route) send(stream *wire.Stream, message *pb.Message) error {
+	if r.peer != nil {
+		// Only the receiving owner can issue the execution input grant.
+		message.InputLeaseId, message.InputLeaseMs = "", 0
+		return stream.Send(message)
+	}
+	// User authorization context ends at the owning Gateway.
+	message.AccessContext = nil
 	id, _ := r.input.Current()
 	if r.owner != nil && r.owner.remaining() <= 0 {
 		return &api.Error{Code: "ROUTE_STALE", Detail: "connection ownership expired"}

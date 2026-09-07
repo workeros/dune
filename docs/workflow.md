@@ -66,6 +66,8 @@ go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeou
 
 `TestDurableAccessCredentials` 检查短期凭据的 SQLite 重开、PostgreSQL 跨池单次消费、期限、会话/身份源隔离及固定绑定。`TestPostgresAccessIssuerAndGateway` 用两个独立宿主和真实 fabricd/PTY，验证 A 签发后由 B 消费，并从 A 撤销 B 的空闲用户访问；它显式选择目标 Gateway，不证明 S3 的目录或自动跨节点转发。
 
+协议 peer 回归使用 `go test -race ./pkg/gateway -run Peer -count=1 -timeout=60s`，覆盖双端请求授权、独立角色和启动身份、错误归属、禁止第三跳、上下文界限及断线不重拨。启用专用 PostgreSQL 后运行 `go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s`：三个独立协议 Gateway 经实际 Yamux 连接，客户端固定入口，fabricd 在两个 owner 间顺序迁移；验证目录续租、竞争拒绝、旧 peer 失效、显式重接后真实 PTY 保留及恢复代次隔离。该测试的 peer 身份和用户上下文由可信夹具提供，不证明生产认证、HTTP 集群装配或三节点进程/网络故障矩阵。
+
 外部身份回归运行 `go test ./pkg/identity/... ./internal/metadata ./tests -run 'OIDC|ExternalIdentity|ExternalBrowserLogin' -count=1 -timeout=180s`，PostgreSQL 子测试沿用上述配置。签名协议测试使用本地 TLS issuer 和轮换密钥；宿主测试使用可信测试适配器，验证 SQLite 重开、PostgreSQL 跨实例回调及 Cookie 绑定。这些测试不替代真实身份源验收。
 
 真实浏览器验收可使用独立 [Dex 2.45.1](https://github.com/dexidp/dex/releases/tag/v2.45.1) 和专用账号，按 [Dex 配置](https://dexidp.io/docs/configuration/) 注册精确 Dune 回调地址，将 client secret 保存在 0600 配置文件中。先验证官方 `web --identity-config` 的登录、退出和部署前缀，再用两个共享 PostgreSQL 的独立 `host.App` 分别接收 start/callback，确认跨实例完成；停用 Dune 用户后验证已有 Cookie 和再次上游登录均被拒绝，启用后仅新登录成功。使用 loopback HTTP 的演练不代表 HTTPS 代理、真实企业 IdP 或 S3 执行路由验收；完成后停止专用身份服务、工作台并清理测试 schema。

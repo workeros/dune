@@ -13,6 +13,7 @@ import (
 const (
 	RoleSDK    = "sdk"
 	RoleDaemon = "daemon"
+	RolePeer   = "peer"
 	// RoleEither is an explicit opt-in for a standalone shared credential.
 	// Hosted machine credentials must use RoleDaemon.
 	RoleEither     = "either"
@@ -21,7 +22,26 @@ const (
 
 // BindingContext contains protocol constraints confirmed by the caller. It
 // deliberately carries no user, session, Runner, or provider identity.
-type BindingContext struct{ Target, Role string }
+type BindingContext struct {
+	Target, Role string
+	// PeerBootID is the entry Gateway identity verified by the peer transport.
+	// It is required exclusively for RolePeer; peer identity grants no user access.
+	PeerBootID string
+}
+
+func (b BindingContext) valid() bool {
+	if b.Target == "" {
+		return false
+	}
+	switch b.Role {
+	case RoleSDK, RoleDaemon, RoleEither:
+		return b.PeerBootID == ""
+	case RolePeer:
+		return wire.ValidID(b.PeerBootID)
+	default:
+		return false
+	}
+}
 
 // ConnectionHandler is supplied for every authenticated connection. Open is
 // called only after protocol validation and may run concurrently across streams.
@@ -56,12 +76,14 @@ func (c *Connection) Cancel(err error) { c.cancel(err) }
 // Send is serialized and has a bounded write deadline. Cancel is idempotent and
 // unblocks pending reads/writes. Operations after cancellation fail.
 type Stream struct {
-	ctx     context.Context
-	cancel  context.CancelCauseFunc
-	client  *wire.Stream
-	mu      sync.Mutex
-	forward bool
-	opened  bool
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	client        *wire.Stream
+	mu            sync.Mutex
+	forward       bool
+	opened        bool
+	peer          *Route
+	accessContext []byte
 }
 
 func (s *Stream) Send(m *pb.Message) error {
@@ -83,6 +105,35 @@ func (s *Stream) Forward() error {
 	if s.opened {
 		return fmt.Errorf("forwarding must be chosen during Open")
 	}
+	if s.peer != nil {
+		return fmt.Errorf("remote forwarding requires an application access context")
+	}
+	s.forward = true
+	return nil
+}
+
+// PeerRoute returns the fixed remote owner selected for this connection. Local
+// and inbound peer streams return false: an inbound peer can never relay again.
+func (s *Stream) PeerRoute() (Route, bool) {
+	if s.peer == nil {
+		return Route{}, false
+	}
+	return cloneRoute(*s.peer), true
+}
+
+// ForwardPeer is chosen by the application after authorizing the request and
+// constructing a bounded, independently verifiable context for this exact peer
+// route and request. Core does not parse it. Generic Forward fails on this path.
+func (s *Stream) ForwardPeer(accessContext []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if s.opened || s.peer == nil || len(accessContext) == 0 || len(accessContext) > MaxAccessContext {
+		return fmt.Errorf("remote route and bounded access context required during Open")
+	}
+	s.accessContext = append([]byte(nil), accessContext...)
 	s.forward = true
 	return nil
 }

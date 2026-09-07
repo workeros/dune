@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/storage"
+	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -92,8 +94,27 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	}
 	competitor := newEngine(ctx)
 	var wg sync.WaitGroup
+	var peerDials atomic.Int32
+	entry, err := gateway.NewWithPeers(d2, "https://entry.test/peer", recovery, func(_ context.Context, source string, destination gateway.Route) (net.Conn, error) {
+		peerDials.Add(1)
+		owner := g1
+		if destination.OwnerBootID == g2.BootID() {
+			owner = g2
+		} else if destination.OwnerBootID != g1.BootID() {
+			return nil, gateway.ErrRouteStale
+		}
+		left, right := net.Pipe()
+		wg.Go(func() {
+			_ = owner.ServeConn(ctx, left, gateway.BindingContext{Target: machine.ID, Role: gateway.RolePeer, PeerBootID: source}, protocolPeerHandler{})
+		})
+		return right, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		cancel()
+		entry.Close()
 		g1.Close()
 		g2.Close()
 		wg.Wait()
@@ -129,6 +150,9 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if g == entry {
+			handler = protocolPeerHandler{}
+		}
 		wg.Go(func() { _ = g.ServeConn(ctx, left, binding, handler) })
 		c, err := client.Connect(ctx, right, machine.ID)
 		if err != nil {
@@ -139,7 +163,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	}
 	originalDone := connectFabric(g1, engine)
 	waitOnline(g1)
-	original := connectClient(g1)
+	original := connectClient(entry)
 	if original.Binding.RouteEpoch != 1 || original.Binding.RouteRecovery != recovery {
 		t.Fatal("SDK did not receive fixed ownership", original.Binding)
 	}
@@ -208,7 +232,13 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	}
 	connectFabric(g2, engine)
 	waitOnline(g2)
-	current := connectClient(g2)
+	if _, err := original.List(ctx); err == nil {
+		t.Fatal("old peer connection followed the new owner")
+	}
+	current := connectClient(entry)
+	if peerDials.Load() != 2 {
+		t.Fatal("peer route was retried instead of explicitly reconnected", peerDials.Load())
+	}
 	if current.Binding.RouteEpoch != 2 || current.Binding.RouteRecovery != recovery || current.Binding.Incarnation != snapshot.Incarnation || current.Binding.Generation <= snapshot.Generation {
 		t.Fatal("reconnection did not advance ownership independently", current.Binding)
 	}
@@ -259,3 +289,20 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		t.Fatal("old recovery still executes")
 	}
 }
+
+// Trusted protocol fixture only: this tests actual SQL routing and PTY behavior,
+// not enterprise user authentication or a production peer transport.
+type protocolPeerHandler struct{}
+
+func (protocolPeerHandler) Connected(context.Context, *gateway.Connection) error { return nil }
+func (h protocolPeerHandler) Open(_ context.Context, m *pb.Message, s *gateway.Stream) (gateway.StreamHandler, error) {
+	if _, remote := s.PeerRoute(); remote {
+		return h, s.ForwardPeer([]byte("protocol-fixture"))
+	}
+	if string(m.AccessContext) != "protocol-fixture" {
+		return nil, errors.New("missing test peer context")
+	}
+	return h, s.Forward()
+}
+func (protocolPeerHandler) Message(context.Context, gateway.Direction, *pb.Message) error { return nil }
+func (protocolPeerHandler) Closed(error)                                                  {}
