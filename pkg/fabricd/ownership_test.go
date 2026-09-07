@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,12 +16,14 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/storage"
+	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -80,11 +83,25 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g1, err := gateway.NewWithDirectory(d1, "https://owner-a.test/peer", recovery)
+	ca := testcert.New(t)
+	newPeer := func() (*httptest.Server, *peer.Transport) {
+		t.Helper()
+		server := httptest.NewUnstartedServer(nil)
+		t.Cleanup(server.Close)
+		transport, err := peer.New(peer.Config{Address: "https://" + server.Listener.Addr().String() + "/private/dune/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return server, transport
+	}
+	server1, peer1 := newPeer()
+	server2, peer2 := newPeer()
+	entryServer, entryPeer := newPeer()
+	g1, err := gateway.NewWithDirectory(d1, peer1.Address(), recovery)
 	if err != nil {
 		t.Fatal(err)
 	}
-	g2, err := gateway.NewWithDirectory(d2, "https://owner-b.test/peer", recovery)
+	g2, err := gateway.NewWithDirectory(d2, peer2.Address(), recovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,25 +121,9 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, err := gateway.NewWithPeers(d2, "https://entry.test/peer", recovery, func(_ context.Context, source string, destination gateway.Route) (net.Conn, error) {
+	entry, err := gateway.NewWithPeers(d2, entryPeer.Address(), recovery, func(dialCtx context.Context, source string, destination gateway.Route) (net.Conn, error) {
 		peerDials.Add(1)
-		owner := g1
-		authorizer := auth1
-		if destination.OwnerBootID == g2.BootID() {
-			owner = g2
-			authorizer = auth2
-		} else if destination.OwnerBootID != g1.BootID() {
-			return nil, gateway.ErrRouteStale
-		}
-		binding, handler, err := authorizer.Peer(source, machine.ID)
-		if err != nil {
-			return nil, err
-		}
-		left, right := net.Pipe()
-		wg.Go(func() {
-			_ = owner.ServeConn(ctx, left, binding, handler)
-		})
-		return right, nil
+		return entryPeer.Dial(dialCtx, source, destination)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -132,11 +133,35 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, instance := range []struct {
+		server    *httptest.Server
+		transport *peer.Transport
+		core      *gateway.Gateway
+		auth      *authorization.Service
+	}{
+		{server1, peer1, g1, auth1}, {server2, peer2, g2, auth2}, {entryServer, entryPeer, entry, entryAuth},
+	} {
+		handler, err := instance.transport.Handler(ctx, instance.core, func(admission context.Context, source, target string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+			if err := admission.Err(); err != nil {
+				return gateway.BindingContext{}, nil, err
+			}
+			return instance.auth.Peer(source, target)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		instance.server.Config.Handler = handler
+		instance.server.TLS = instance.transport.ServerTLSConfig()
+		instance.server.StartTLS()
+	}
 	defer func() {
 		cancel()
 		entry.Close()
 		g1.Close()
 		g2.Close()
+		server1.Close()
+		server2.Close()
+		entryServer.Close()
 		wg.Wait()
 		engine.Close()
 		competitor.Close()

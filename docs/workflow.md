@@ -68,7 +68,9 @@ go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeou
 
 协议 peer 回归使用 `go test -race ./pkg/gateway -run Peer -count=1 -timeout=60s`，覆盖双端请求授权、独立角色和启动身份、错误归属、禁止第三跳、上下文界限及断线不重拨。用户上下文另跑 `go test -race ./internal/metadata ./internal/authorization -run Peer -count=1 -timeout=90s`，验证 SQLite 重开、PostgreSQL 跨池单次消费、身份/请求/绑定隔离、有界期限与容量、提交回执丢失和迁移回滚。PostgreSQL 子测试仍需专用配置，不把跳过计作通过。
 
-启用专用 PostgreSQL 后运行 `go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s`：三个独立协议 Gateway 经实际 Yamux 连接，客户端固定入口，fabricd 在两个 owner 间顺序迁移；验证目录续租、竞争拒绝、旧 peer 失效、显式重接后真实 PTY 保留及恢复代次隔离。用户上下文使用正式 SQL 签发与消费路径，验证入口允许不能覆盖目标拒绝；故意让入口的有效性回答保持过期状态后，另一 SQL 池退出用户，目标的独立检查仍关闭空闲终端。peer 传输身份仍由可信 `net.Pipe` 夹具提供，不证明生产传输认证、HTTP 集群装配或三节点进程/网络故障矩阵。
+启用专用 PostgreSQL 后运行 `go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s`：三个独立协议 Gateway 使用各自的 peer HTTPS 监听器，经双向 TLS、WebSocket 和 Yamux 连接；客户端固定入口，fabricd 在两个 owner 间顺序迁移。验证目录续租、竞争拒绝、旧 peer 失效、显式重接后真实 PTY 保留及恢复代次隔离。用户上下文使用正式 SQL 签发与消费路径，验证入口允许不能覆盖目标拒绝；故意让入口的有效性回答保持过期状态后，另一 SQL 池退出用户，目标的独立检查仍关闭空闲终端。测试 CA 在内存中临时生成；SDK 与反向连接仍是本地协议夹具，不证明完整 host/CLI 部署或三节点进程/网络故障矩阵。
+
+peer 传输本身运行 `go test -race ./pkg/transport/peer -count=1 -timeout=60s`，覆盖错误 CA/主机、独立 Handler 信任检查、明文与转发头、重复身份头、原 owner 协商、证书到期、取消、代理/重定向拒绝及真实 HTTPS CA 轮换。接入配置和独立监听器的职责见 [peer 传输接入](peer-transport.md)。
 
 外部身份回归运行 `go test ./pkg/identity/... ./internal/metadata ./tests -run 'OIDC|ExternalIdentity|ExternalBrowserLogin' -count=1 -timeout=180s`，PostgreSQL 子测试沿用上述配置。签名协议测试使用本地 TLS issuer 和轮换密钥；宿主测试使用可信测试适配器，验证 SQLite 重开、PostgreSQL 跨实例回调及 Cookie 绑定。这些测试不替代真实身份源验收。
 

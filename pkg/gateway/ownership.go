@@ -32,6 +32,9 @@ func NewWithDirectory(directory Directory, address, recovery string) (*Gateway, 
 	return g, nil
 }
 
+// OwnerAddress is the immutable directory advertisement, empty in local mode.
+func (g *Gateway) OwnerAddress() string { return g.ownerAddress }
+
 type ownership struct {
 	directory Directory
 	route     Route

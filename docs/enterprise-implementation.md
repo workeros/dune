@@ -271,3 +271,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - SQLite 重开与 PostgreSQL 跨池验证并发单次消费、请求/源/目标/身份源错配、subject/owner/绑定/授权版本拒绝、到期与容量、退出级联删除、回执丢失和 schema 10 升级失败回滚。真实 PostgreSQL 与三个协议 Gateway 的 PTY 回归已使用正式用户签发/消费路径：入口允许不能覆盖目标拒绝；测试故意保留入口的旧有效性回答后，从另一 SQL 池退出，目标仍独立关闭空闲终端。原 owner 迁移与 PTY 保留回归继续通过。
 - 验证：启用 PostgreSQL 17 与备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过，跨进程包 220.265 秒；metadata/access/authorization race、PostgreSQL 用户 peer/PTY race、schema/凭据/转库/原生备份定向 race、构建与静态检查通过。最终外键锁顺序修改后复验相关 PostgreSQL/SQLite race 与静态检查。未调用真实 Agent、私有权限 SDK 或远端部署。
 - 用户访问上下文采用现有 SQL 一次性能力模式，没有新增一套签名密钥；它仍要求独立的 peer 传输认证与保密。当前测试中的传输身份由可信 `net.Pipe` 夹具提供，生产 peer 接入、host/CLI 集群配置、配置一致性、排空和故障矩阵继续推进，默认 HTTP tunnel 尚未开放 peer。
+
+### 已完成组件：peer 双向 TLS / WebSocket 传输
+
+- `pkg/transport/peer` 使用标准 TLS 1.3 与独立集群 CA 验证成员身份，复用原 WebSocket、Yamux 和 protobuf。每实例的叶证书须匹配本机广告地址，同时支持 serverAuth/clientAuth；启动验证链、期限、用途和私钥匹配，复制证书与信任集合。核心只新增只读广告地址查询，仍不解析 TLS、HTTP、账户或 SQL。
+- 独立 Handler 要求实际 TLS 客户端证书，并按自己的原 CA 集合复核；不接受转发头代替 TLS、用户/机器 bearer、Cookie 或 Origin。HTTP 协商严格核对版本、完整路径、Host、唯一身份头与本实例 boot；回调只能返回匹配的 peer 绑定。受认证成员声明入口启动身份，目标 core 再验证 peer hello 和原归属，用户仍通过上一检查点的独立 SQL 上下文授权。
+- 拨号只访问原 owner 的 HTTPS 地址，不使用环境代理、跟随重定向或重放。错误主机/端口、通配地址、路径歧义和目录广告与 Handler 地址不一致在配置或准入时拒绝。证书到期关闭空闲连接；应用负责独立 TLS 监听器和生命周期，普通 tunnel 不开放 peer。接口与协调 CA 轮换见 [peer 传输接入](peer-transport.md)。
+- 真实 HTTPS 测试覆盖未知 CA、错误主机、独立 Handler 信任、伪造 TLS 转发头、重复身份、原 owner、取消、证书到期和新旧 CA 交叠/移除。PostgreSQL / PTY 回归已经把 peer `net.Pipe` 替换为三个独立双向 TLS / WebSocket 监听器，继续验证正式用户上下文、跨 owner 显式重接、原终端保留、目标独立拒绝和空闲撤销；测试 CA 只存在于内存，不修改生产信任。
+- 验证：最终固定源码启用 PostgreSQL 17 与备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过，跨进程包 219.527 秒；真实 PostgreSQL / HTTPS peer / PTY 定向 race、最终 peer/Gateway race、`make build check` 与差异检查通过。首次全量期间补充广告地址校验造成了新 peer 源码与已编译 Gateway 的快照不一致；该次结束后冻结源码重跑全量，最终通过，没有用定向结果替代失败的全量检查。
+- 本检查点交付独立传输组件，尚未增加官方 host/CLI 集群配置、配置指纹、readiness/排空或三节点进程故障矩阵；测试中的 SDK 和反向连接仍使用本地协议夹具，也没有执行真实 Agent 或 Linux 多节点部署。完整 S3 及 S1/S2 集群闭环继续推进。
