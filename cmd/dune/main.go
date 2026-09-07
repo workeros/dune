@@ -78,7 +78,7 @@ func run() error {
 		return fmt.Errorf("--target and --runner cannot be combined")
 	}
 	if len(args) > 0 && (args[0] == "help" || args[0] == "version") {
-		fmt.Println("Dune\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune metadata cluster-recovery --database-config FILE [--rotate-from GENERATION]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines|runners [--limit 1..100] [--cursor CURSOR]\n  dune --login FILE --runner RUNNER_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login, --runner and --target must precede the subcommand; --login and --config are mutually exclusive.")
+		fmt.Println("Dune\n  dune init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune [gateway|fabricd]\n  dune web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE] [--cluster-config FILE]\n  dune metadata import-json|copy-sqlite --source DIR [--data DIR | --database-config FILE]\n  dune metadata cluster-recovery --database-config FILE [--rotate-from GENERATION]\n  dune login --site URL [--file FILE] [--no-browser] [--certificate FILE]\n  dune logout [--file FILE]\n  dune --login FILE machines|runners [--limit 1..100] [--cursor CURSOR]\n  dune --login FILE --runner RUNNER_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune --login FILE --target MACHINE_ID exec [--cwd DIR] -- COMMAND ARG...\n  dune capabilities\n  dune profile start PROFILE.yaml [--detach]\n  dune runtime list|get|attach|stop ID\n  dune exec [--cwd DIR] -- COMMAND ARG...\n  dune files|upload|git REQUEST.json (or - for stdin)\n  dune upload-file LOCAL REMOTE\n  dune ports forward LOCAL_PORT REMOTE_PORT\nGlobal --config, --login, --runner and --target must precede the subcommand; --login and --config are mutually exclusive.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "init" {
@@ -152,6 +152,7 @@ func run() error {
 		flags := flag.NewFlagSet("web", flag.ContinueOnError)
 		data := flags.String("data", ".local/web-accounts", "private SQLite metadata directory")
 		databaseFile := flags.String("database-config", "", "private SQL configuration; replaces the default SQLite data directory")
+		clusterFile := flags.String("cluster-config", "", "private PostgreSQL cluster and mutual TLS peer configuration")
 		identityFile := flags.String("identity-config", "", "private OIDC configuration; replaces local password login")
 		assets := flags.String("assets", "web/dist", "built React assets directory")
 		binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
@@ -186,7 +187,19 @@ func run() error {
 			}
 			options.DataDir, options.Database = "", &database
 		}
-		return runWeb(ctx, c, options, *webListen)
+		var peerListen string
+		if *clusterFile != "" {
+			if options.Database == nil || options.Database.Postgres == nil {
+				return fmt.Errorf("--cluster-config requires a PostgreSQL --database-config")
+			}
+			cluster, err := config.Cluster(*clusterFile)
+			if err != nil {
+				return err
+			}
+			options.Cluster = &host.ClusterOptions{RecoveryGeneration: cluster.RecoveryGeneration, Peer: cluster.Peer}
+			peerListen = cluster.Listen
+		}
+		return runWeb(ctx, c, options, *webListen, peerListen)
 
 	}
 	var client *sdk.Client

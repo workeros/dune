@@ -289,3 +289,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 新宿主回归使用两个正式 `host.App`、独立 mTLS peer 端口和真实 fabricd 进程。机器固定连接 B，Web 与人类 CLI 都固定进入 A，验证远端在线、固定 Runner/Runtime、真实 PTY、企业共享权限与拒绝、策略/用户撤销和 peer listener 释放。存储回归另覆盖发布前后、过期、旧恢复代次及查询 ID 界限；宿主配置回归覆盖 SQLite、非法参数、已初始化数据库及公开路径隔离。
 - 这是 Go 宿主的实际接入功能；官方 CLI 集群配置、持续配置一致性租约、readiness/排空及三进程故障矩阵仍待实现。现有启动检查不能阻止并发混合模式，部署模式切换须先停站；文档明确要求实例配置一致，没有把这项要求描述为已实现的运行期隔离。此次没有运行真实 Agent、私有权限 SDK 或 Linux 集群部署。
 - 验证：启用 PostgreSQL 17 和备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'` 通过，跨进程包 281.872 秒；PostgreSQL 宿主集群/在线事实定向 race、host/Web 全包 race、`make build check-go` 及差异检查通过。先前试编译发现测试误用不存在的配置保存函数，已改为正式 `config.Create` 写入独立测试配置；此后冻结源码，定向和全量均通过。
+
+### 已完成功能：官方 CLI 集群配置与三进程正常链路
+
+- `dune web --cluster-config FILE` 读取私有集群配置，必须同时选择 PostgreSQL；复用上一检查点的 `host.Options.Cluster` 和 `App.ServePeer`，没有另写一套目录或授权链路。配置指定共同恢复代次及每实例 peer 的监听、直接地址、证书、密钥和 CA 文件，相对路径按配置文件目录解析。
+- 配置与私钥限制为当前用户私有文件；所有 PEM 限普通文件及 64 KiB，不跟随符号链接，不阻塞读取 FIFO。沿用传输模块的证书双用途、主机匹配、CA 和期限检查，错误信息不包含 PEM 正文或配置秘密。公开 HTTP 与 peer 监听器分离，所有端口绑定完成后才开始服务；peer 端口占用使启动失败并释放已经取得的公开端口。
+- 新回归启动三个独立官方服务进程及真实 fabricd，使用共享 PostgreSQL、各自 peer 证书与监听器。A 签发安装材料、B 消费并持有机器连接，A 和 C 分别通过 Web、人类 CLI 和 Runner SDK 访问 B；另一入口退出父会话后检查既有用户访问失效。测试证书只写入专用临时目录，使用默认 owner 策略，不代表企业权限 SDK 或真实 Agent 验收。
+- 这一步证明正式配置与三进程正常运行链路，尚未覆盖三节点网络分区、配置漂移、时钟扰动、readiness/排空或 Linux 部署。下一步继续完成持续配置一致性准入及故障范围，不把正常运行测试视为完整 S3 交付。
+- 验证：启用 PostgreSQL 17 的 `go test -race ./internal/config ./tests -run 'Cluster|PeerPEM|PrefixedWorkbench|HumanCLILoginAndExecution' -count=1 -timeout=240s` 通过，跨进程包 121.696 秒；配置全包 race、`make build check-go` 和差异检查通过。新增测试首次遗漏浏览器 Origin 头，被已有 CSRF 校验拒绝；补齐测试头后通过，最终端口冲突与单机拒绝回归也已通过。本次沿用上一功能点刚完成的全量证据，新增 CLI 改动执行其直接影响的配置和进程回归，没有宣称重跑了不相关的全量 Agent 测试。

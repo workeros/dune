@@ -14,7 +14,10 @@ import (
 	"github.com/aiomni/dune/pkg/transport/ws"
 )
 
-func runWeb(ctx context.Context, c config.Config, options host.Options, webListen string) error {
+func runWeb(ctx context.Context, c config.Config, options host.Options, webListen, peerListen string) error {
+	if (options.Cluster == nil) != (peerListen == "") {
+		return fmt.Errorf("cluster options and peer listener must be supplied together")
+	}
 	if err := c.ValidateServer(); err != nil {
 		return err
 	}
@@ -90,7 +93,18 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 		defer ln.Close()
 		listeners = append(listeners, ln)
 	}
-	errors := make(chan error, len(listeners))
+	var peerListener net.Listener
+	if peerListen != "" {
+		peerListener, err = net.Listen("tcp", peerListen)
+		if err != nil {
+			return err
+		}
+		defer peerListener.Close()
+	}
+	errors := make(chan error, len(listeners)+1)
+	if peerListener != nil {
+		go func() { errors <- app.ServePeer(peerListener) }()
+	}
 	for _, ln := range listeners {
 		go func() { errors <- app.Serve(ln) }()
 	}
