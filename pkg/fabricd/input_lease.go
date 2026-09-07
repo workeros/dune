@@ -6,17 +6,21 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
-func confirmInputLease(input *wire.InputWindow, control *wire.Stream, grant *pb.Message) error {
+func confirmInputLease(input *wire.InputWindow, control *wire.Stream, grant *pb.Message, binding api.Binding) error {
+	if grant.RouteRecovery != binding.RouteRecovery || grant.RouteEpoch != binding.RouteEpoch {
+		return fmt.Errorf("input grant changed ownership identity")
+	}
 	if err := input.Confirm(grant.InputLeaseId, time.Duration(grant.InputLeaseMs)*time.Millisecond); err != nil {
 		return err
 	}
-	return control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: grant.InputLeaseId})
+	return control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: grant.InputLeaseId, RouteRecovery: binding.RouteRecovery, RouteEpoch: binding.RouteEpoch})
 }
 
-func renewInputLease(ctx context.Context, input *wire.InputWindow, control *wire.Stream) error {
+func renewInputLease(ctx context.Context, input *wire.InputWindow, control *wire.Stream, binding api.Binding) error {
 	for {
 		timer := time.NewTimer(wire.InputLeaseInterval)
 		select {
@@ -31,7 +35,7 @@ func renewInputLease(ctx context.Context, input *wire.InputWindow, control *wire
 		}
 		_, remaining := input.Current()
 		_ = control.SetReadDeadline(time.Now().Add(remaining))
-		if err := control.Send(&pb.Message{Kind: "lease_request", InputLeaseId: id}); err != nil {
+		if err := control.Send(&pb.Message{Kind: "lease_request", InputLeaseId: id, RouteRecovery: binding.RouteRecovery, RouteEpoch: binding.RouteEpoch}); err != nil {
 			return err
 		}
 		grant, err := control.Recv()
@@ -41,7 +45,7 @@ func renewInputLease(ctx context.Context, input *wire.InputWindow, control *wire
 		if grant.Kind != "lease_grant" {
 			return fmt.Errorf("input lease grant required")
 		}
-		if err := confirmInputLease(input, control, grant); err != nil {
+		if err := confirmInputLease(input, control, grant, binding); err != nil {
 			return err
 		}
 	}

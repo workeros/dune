@@ -46,7 +46,10 @@ type Message struct {
 	// Mandatory on Gateway-to-fabricd business messages and lease control frames.
 	InputLeaseId string `protobuf:"bytes,14,opt,name=input_lease_id,json=inputLeaseId,proto3" json:"input_lease_id,omitempty"`
 	// Relative grant duration on welcome/lease_grant only, bounded by the protocol.
-	InputLeaseMs  uint32 `protobuf:"varint,15,opt,name=input_lease_ms,json=inputLeaseMs,proto3" json:"input_lease_ms,omitempty"`
+	InputLeaseMs uint32 `protobuf:"varint,15,opt,name=input_lease_ms,json=inputLeaseMs,proto3" json:"input_lease_ms,omitempty"`
+	// Ownership identity for directory-backed routes; both absent in local mode.
+	RouteRecovery string `protobuf:"bytes,16,opt,name=route_recovery,json=routeRecovery,proto3" json:"route_recovery,omitempty"`
+	RouteEpoch    uint64 `protobuf:"varint,17,opt,name=route_epoch,json=routeEpoch,proto3" json:"route_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -186,11 +189,25 @@ func (x *Message) GetInputLeaseMs() uint32 {
 	return 0
 }
 
+func (x *Message) GetRouteRecovery() string {
+	if x != nil {
+		return x.RouteRecovery
+	}
+	return ""
+}
+
+func (x *Message) GetRouteEpoch() uint64 {
+	if x != nil {
+		return x.RouteEpoch
+	}
+	return 0
+}
+
 var File_dune_dtp_v1_message_proto protoreflect.FileDescriptor
 
 const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\n" +
-	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xee\x03\n" +
+	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xb6\x04\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +
@@ -209,7 +226,10 @@ const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\x06detail\x18\f \x01(\tR\x06detail\x12/\n" +
 	"\x13runtime_incarnation\x18\r \x01(\tR\x12runtimeIncarnation\x12$\n" +
 	"\x0einput_lease_id\x18\x0e \x01(\tR\finputLeaseId\x12$\n" +
-	"\x0einput_lease_ms\x18\x0f \x01(\rR\finputLeaseMsB0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
+	"\x0einput_lease_ms\x18\x0f \x01(\rR\finputLeaseMs\x12%\n" +
+	"\x0eroute_recovery\x18\x10 \x01(\tR\rrouteRecovery\x12\x1f\n" +
+	"\vroute_epoch\x18\x11 \x01(\x04R\n" +
+	"routeEpochB0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
 
 var (
 	file_dune_dtp_v1_message_proto_rawDescOnce sync.Once

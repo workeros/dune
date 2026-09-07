@@ -16,6 +16,8 @@ var (
 
 // RouteClaim contains the immutable connection and owner identity proposed for
 // one ownership term. OwnerAddress names an instance, not a load balancer.
+// Binding contains daemon identity and capabilities; its route fields stay zero
+// until core has acquired and confirmed a term.
 type RouteClaim struct {
 	Target, OwnerBootID, OwnerAddress, RecoveryGeneration string
 	Binding                                               api.Binding
@@ -42,6 +44,7 @@ type RouteLease struct {
 // Directory provides atomic ownership operations; core does not know SQL,
 // accounts or Runner identities. Implementations must honor context, preserve
 // epochs on release and reject an expired Renew or stale recovery generation.
+// Renew never shortens the existing term: prior input grants rely on that bound.
 // Errors with an unknown commit outcome must never trigger a blind retry.
 // Acquire reserves an unpublished term. Publish follows fabricd confirmation.
 // Resolve also returns expired/unpublished records so Acquire can compare their

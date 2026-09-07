@@ -15,12 +15,14 @@ type Hello struct {
 	Role    string `json:"role"`
 }
 type Binding struct {
-	Version      string         `json:"version"`
-	Target       string         `json:"target"`
-	Incarnation  string         `json:"incarnation"`
-	Generation   uint64         `json:"generation"`
-	Capabilities []string       `json:"capabilities"`
-	Limits       map[string]int `json:"limits"`
+	Version       string         `json:"version"`
+	Target        string         `json:"target"`
+	Incarnation   string         `json:"incarnation"`
+	Generation    uint64         `json:"generation"`
+	RouteRecovery string         `json:"route_recovery,omitempty"`
+	RouteEpoch    uint64         `json:"route_epoch,omitempty"`
+	Capabilities  []string       `json:"capabilities"`
+	Limits        map[string]int `json:"limits"`
 }
 type Command struct {
 	Name           string   `json:"name,omitempty" yaml:"name,omitempty"`

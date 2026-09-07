@@ -15,18 +15,22 @@ import (
 )
 
 type route struct {
+	ctx   context.Context
 	s     *yamux.Session
 	b     api.Binding
 	input *wire.InputWindow
+	owner *ownership
 }
 
 type Gateway struct {
-	mu       sync.Mutex
-	closed   bool
-	routes   map[string]*route
-	sessions map[*yamux.Session]BindingContext
-	slots    chan struct{}
-	streams  chan struct{}
+	directory                      Directory
+	ownerAddress, recovery, bootID string
+	mu                             sync.Mutex
+	closed                         bool
+	routes                         map[string]*route
+	sessions                       map[*yamux.Session]BindingContext
+	slots                          chan struct{}
+	streams                        chan struct{}
 }
 
 func New() *Gateway {
@@ -38,6 +42,20 @@ func (g *Gateway) Online(target string) bool {
 	defer g.mu.Unlock()
 	r := g.routes[target]
 	return r != nil && !r.s.IsClosed() && r.inputAlive()
+}
+
+func (g *Gateway) routeError(target string, expected *route) *api.Error {
+	g.mu.Lock()
+	current := g.routes[target]
+	g.mu.Unlock()
+	if current == expected && !expected.s.IsClosed() && expected.inputAlive() {
+		return nil
+	}
+	code := "STALE_BINDING"
+	if expected.owner != nil {
+		code = "ROUTE_STALE"
+	}
+	return &api.Error{Code: code, Detail: "reconnect SDK for current binding"}
 }
 
 func (g *Gateway) Disconnect(target string) {

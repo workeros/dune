@@ -18,6 +18,8 @@ type executionStream struct {
 	engine     *Engine
 	generation uint64
 	input      *wire.InputWindow
+	recovery   string
+	epoch      uint64
 }
 
 func (s *executionStream) Recv() (*pb.Message, error) {
@@ -30,6 +32,11 @@ func (s *executionStream) Recv() (*pb.Message, error) {
 	s.engine.mu.Unlock()
 	if s.ctx.Err() != nil || s.engine.ctx.Err() != nil || current != s.generation || s.input == nil || !s.input.Valid(m.InputLeaseId) {
 		err := &api.Error{Code: "STALE_BINDING", Detail: "execution connection or input lease is no longer current"}
+		s.Fail(err.Code, err)
+		return nil, err
+	}
+	if m.RouteRecovery != s.recovery || m.RouteEpoch != s.epoch {
+		err := &api.Error{Code: "ROUTE_STALE", Detail: "message belongs to another ownership term"}
 		s.Fail(err.Code, err)
 		return nil, err
 	}

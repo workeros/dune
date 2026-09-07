@@ -2,7 +2,6 @@ package wire
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -34,8 +33,7 @@ func (w *InputWindow) Begin(id string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	now := w.now()
-	decoded, err := hex.DecodeString(id)
-	if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != id || w.pending != "" {
+	if !ValidID(id) || w.pending != "" {
 		return fmt.Errorf("invalid input lease challenge")
 	}
 	if w.current != "" && (!now.Before(w.grants[w.current]) || now.Sub(w.issued) < InputLeaseInterval) {

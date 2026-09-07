@@ -12,11 +12,19 @@ Gateway HTTP 服务使用 fasthttp，WebSocket 升级使用 fasthttp/websocket�
 
 第一条 stream 必须在 5s 内发送 hello（版本、角色、target）。fabricd 额外提交随机 incarnation、递增 connection generation 和能力清单；SDK 收到当前 daemon 的绑定。之后每条业务 stream 的首消息是 request，含 request_id、operation、target、incarnation、connection_generation；Runtime 操作还需 runtime_id、runtime_incarnation 和 runtime_generation。Gateway 和 daemon 均校验绑定。连接重新建立需新的 SDK Client；旧 stream 不恢复。
 
-fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录 epoch 与集群恢复代次尚未实现。
+fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录模式还会校验消息所属的恢复代次和 epoch。
 
 fabricd 在 hello 中提交随机 `input_lease_id`，Gateway 的 welcome 提供同一标识及最多 15000ms 的相对期限。fabricd 从自己发出 challenge 前的本地单调时间计时，确认仍有效后回复 `lease_ready`；Gateway 收到确认才发布路由。未确认或确认失败的新连接不会替换原路由。此处的租约只限制当前反向连接，不赋予集群机器归属。
 
 控制流每五秒发起新的 `lease_request → lease_grant → lease_ready`，同一时刻只允许一个待确认 challenge。双端检查原有效期，迟到确认不能复活已经过期的连接。Gateway 转发每条业务消息时覆盖 `input_lease_id`，fabricd 解码后按该标识的原期限检查，续租不改变旧消息的期限。保留尚未过期的少量原 grant 供在途消息使用，避免每次续租打断合法传输；没有无限历史。空闲连接也在期限结束时关闭，消息检查不依赖关闭计时器是否及时得到调度。传输状态不参与业务请求去重。
+
+协议宿主通过 `gateway.NewWithDirectory(directory, instanceAddress, recoveryGeneration)` 显式选择目录模式。Gateway 为每次实例启动生成新的 ownerBootID；完成 hello 校验后查询原 epoch 并条件领取十五秒归属，有效 owner 不被抢占。目录调用逐次限时一秒，响应的剩余期限从调用开始的本地单调时间计算，迟到响应和数据库墙钟值不能延长本地准入。fabricd 在 welcome/lease_ready 中确认 `route_recovery` 与 `route_epoch` 后才发布目录和本地路由。
+
+目录模式的五秒控制续租先刷新原 owner，输入 grant 至多延伸到 owner 的保守期限。原期限已过时不调用续约，等待期间过期或结果未知也不会恢复执行权限。独立期限检查覆盖空闲连接、SDK 新 stream 与每条转发消息；由 Gateway 本地处理的流也绑定原执行连接，并在交给处理器前检查当前归属；结束连接先关闭隧道，再按原 owner/epoch 条件释放目录，清理失败不重试。既有外部操作及 Runtime 的生命周期不因目录释放而改变。
+
+SDK 的首请求固定恢复代次与 epoch，Gateway 不随目录变化转投另一个 owner；后续消息由原 route 标记同一归属，fabricd 即使收到有效输入 grant，也拒绝另一恢复代次或 epoch 的消息。明确发现归属不匹配时返回 `ROUTE_STALE`；可能已经提交的调用仍遵守结果未知、不自动重放的规则。较早的 v2 实现缺少归属确认字段，不能接入目录模式；原单机模式的两个字段为空/零，继续使用原输入租约。
+
+此构造器目前协调本实例接收的反向连接；官方工作台/CLI 集群装配、peer 入口和跨实例 SDK 转发尚未完成，不能把目录实现单独接入后当作完整 HA 服务。协议核心不导入 SQL 或产品身份，第二层仍负责提供同一元数据后端的目录及可信连接上下文。
 
 `dune-mvp/2` 与旧版本不混用：Gateway、fabricd、CLI 和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 

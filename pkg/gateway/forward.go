@@ -13,6 +13,10 @@ import (
 func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, binding BindingContext, handler ConnectionHandler) {
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(context.Canceled)
+	// Locally handled streams also belong to the selected reverse connection.
+	// Link their lifetime before invoking application hooks, even without relay.
+	stopRoute := context.AfterFunc(r.ctx, func() { cancel(fmt.Errorf("execution route closed")) })
+	defer stopRoute()
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
@@ -24,6 +28,14 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	}
 	if m.Kind != "request" || m.RequestId == "" || m.Target != r.b.Target || m.Incarnation != r.b.Incarnation || m.ConnectionGeneration != r.b.Generation {
 		c.Fail("STALE_BINDING", fmt.Errorf("invalid target or binding"))
+		return
+	}
+	if m.RouteRecovery != r.b.RouteRecovery || m.RouteEpoch != r.b.RouteEpoch {
+		c.Fail("ROUTE_STALE", fmt.Errorf("request belongs to another ownership term"))
+		return
+	}
+	if failure := g.routeError(binding.Target, r); failure != nil {
+		c.Fail(failure.Code, failure)
 		return
 	}
 	flow := &Stream{ctx: ctx, cancel: cancel, client: c}
@@ -56,6 +68,11 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 			if err != nil {
 				return
 			}
+			if failure := g.routeError(binding.Target, r); failure != nil {
+				err = failure
+				c.Fail(failure.Code, failure)
+				return
+			}
 			err = flow.hook(func(ctx context.Context) error { return policy.Message(ctx, ToFabric, message) })
 			if err != nil {
 				c.Fail("ACCESS_DENIED", err)
@@ -65,12 +82,9 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	}
 	// The access check may have taken time. Revalidate the fixed route before
 	// opening the fabric stream; never transfer a request to a new binding.
-	g.mu.Lock()
-	current := g.routes[binding.Target]
-	g.mu.Unlock()
-	if current != r || !r.inputAlive() {
-		err = fmt.Errorf("reconnect SDK for current binding")
-		c.Fail("STALE_BINDING", err)
+	if failure := g.routeError(binding.Target, r); failure != nil {
+		err = failure
+		c.Fail(failure.Code, failure)
 		return
 	}
 	if err = ctx.Err(); err != nil {
@@ -93,6 +107,11 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	relay := func(dst, src *wire.Stream, direction Direction) {
 		for {
 			message, e := src.Recv()
+			if e == nil && direction == ToFabric {
+				if failure := g.routeError(binding.Target, r); failure != nil {
+					e = failure
+				}
+			}
 			if e == nil {
 				e = flow.hook(func(ctx context.Context) error { return policy.Message(ctx, direction, message) })
 			}

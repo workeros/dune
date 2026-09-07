@@ -304,3 +304,57 @@ func TestReverseConnectionRenewsInputLease(t *testing.T) {
 		t.Fatal("lease renewal replaced execution identity")
 	}
 }
+
+func TestInputGrantCannotCrossOwnershipTerm(t *testing.T) {
+	for _, wrongRecovery := range []bool{false, true} {
+		t.Run(map[bool]string{false: "epoch", true: "recovery"}[wrongRecovery], func(t *testing.T) {
+			engine := newEngine(context.Background())
+			defer engine.Close()
+			left, right := net.Pipe()
+			sender, err := yamux.Client(left, wire.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sender.Close()
+			receiver, err := yamux.Server(right, wire.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer receiver.Close()
+			raw, err := sender.OpenStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent := wire.Wrap(raw)
+			inbound, err := receiver.AcceptStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := wire.NewInputWindow()
+			id, recovery := wire.ID(), wire.ID()
+			if err := input.Begin(id); err != nil {
+				t.Fatal(err)
+			}
+			if err := input.Confirm(id, wire.InputLeaseDuration); err != nil {
+				t.Fatal(err)
+			}
+			stream := &executionStream{Stream: wire.Wrap(inbound), ctx: context.Background(), engine: engine, input: input, recovery: recovery, epoch: 4}
+			message := &pb.Message{Kind: "input", InputLeaseId: id, RouteRecovery: recovery, RouteEpoch: 3, Data: []byte("must not cross term")}
+			if wrongRecovery {
+				message.RouteEpoch = 4
+				message.RouteRecovery = wire.ID()
+			}
+			if err := sent.Send(message); err != nil {
+				t.Fatal(err)
+			}
+			if accepted, err := stream.Recv(); accepted != nil || err == nil {
+				t.Fatal("valid grant admitted wrong ownership term", accepted, err)
+			}
+			_ = sent.SetReadDeadline(time.Now().Add(time.Second))
+			failure, err := sent.Recv()
+			if err != nil || failure.Code != "ROUTE_STALE" {
+				t.Fatal("missing route stale response", failure, err)
+			}
+		})
+	}
+}

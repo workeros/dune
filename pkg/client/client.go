@@ -109,7 +109,7 @@ func (c *Client) open(ctx context.Context, op, id string, payload any, r *api.Ru
 	}
 	st := &Stream{s: wire.Wrap(raw)}
 	st.cancel = context.AfterFunc(ctx, func() { st.s.Close() })
-	m := &pb.Message{Kind: "request", RequestId: id, Operation: op, Target: c.Binding.Target, Incarnation: c.Binding.Incarnation, ConnectionGeneration: c.Binding.Generation, Payload: api.Payload(payload)}
+	m := &pb.Message{Kind: "request", RequestId: id, Operation: op, Target: c.Binding.Target, Incarnation: c.Binding.Incarnation, ConnectionGeneration: c.Binding.Generation, RouteRecovery: c.Binding.RouteRecovery, RouteEpoch: c.Binding.RouteEpoch, Payload: api.Payload(payload)}
 	if r != nil {
 		m.RuntimeId = r.ID
 		m.RuntimeGeneration = r.Generation

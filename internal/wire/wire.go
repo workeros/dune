@@ -30,6 +30,11 @@ func ID() string {
 	}
 	return hex.EncodeToString(b[:])
 }
+func ValidID(id string) bool {
+	decoded, err := hex.DecodeString(id)
+	return err == nil && len(decoded) == 16 && hex.EncodeToString(decoded) == id
+}
+
 func Config() *yamux.Config {
 	c := yamux.DefaultConfig()
 	c.AcceptBacklog = MaxStreams

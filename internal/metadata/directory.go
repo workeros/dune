@@ -96,7 +96,7 @@ func validRoute(route gateway.RouteClaim, recovery string) bool {
 		return false
 	}
 	binding := route.Binding
-	if binding.Target != route.Target || binding.Version == "" || len(binding.Version) > 64 || strings.ContainsFunc(binding.Version, unicode.IsControl) || binding.Incarnation == "" || len(binding.Incarnation) > 128 || strings.ContainsFunc(binding.Incarnation, unicode.IsControl) || binding.Generation == 0 || len(binding.Capabilities) > 128 || len(binding.Limits) > 32 {
+	if binding.RouteEpoch != 0 || binding.RouteRecovery != "" || binding.Target != route.Target || binding.Version == "" || len(binding.Version) > 64 || strings.ContainsFunc(binding.Version, unicode.IsControl) || binding.Incarnation == "" || len(binding.Incarnation) > 128 || strings.ContainsFunc(binding.Incarnation, unicode.IsControl) || binding.Generation == 0 || len(binding.Capabilities) > 128 || len(binding.Limits) > 32 {
 		return false
 	}
 	for _, capability := range binding.Capabilities {
@@ -249,7 +249,7 @@ func (d *connectionDirectory) mutate(ctx context.Context, route gateway.Route, a
 		case "publish":
 			set, live = "published=TRUE", " AND expires_at>"+clock
 		case "renew":
-			set, live = fmt.Sprintf("expires_at=%s+%d", clock, connectionLeaseDuration.Milliseconds()), " AND expires_at>"+clock
+			set, live = fmt.Sprintf("expires_at=GREATEST(expires_at,%s+%d)", clock, connectionLeaseDuration.Milliseconds()), " AND expires_at>"+clock
 		}
 		query := `UPDATE dune_routes SET ` + set + ` WHERE machine_id=$1 AND recovery_generation=$2 AND epoch=$3 AND owner_boot_id=$4 AND owner_address=$5 AND binding=$6` + live + ` RETURNING ` + routeColumns
 		updated, err := scanRoute(tx.QueryRowContext(ctx, query, route.Target, d.recovery, route.Epoch, route.OwnerBootID, route.OwnerAddress, routeBinding(route.RouteClaim)))

@@ -244,3 +244,12 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 真实 PostgreSQL 跨池回归覆盖并发唯一 owner、两阶段发布、完整绑定、释放后的 epoch、旧进程迟到清理与续约、代次恢复及溢出；锁等待跨越期限不能复活租约。提交回执丢失覆盖 Acquire/Publish/Renew/Release/恢复旋转，均只提交一次并可独立读取核对；原生备份包含实际归属，恢复后旋转隔离历史路由。正式 CLI 验证读取、旋转及旧条件重试拒绝。
 - 此检查点尚未把目录装配到 Gateway/host：下一步须在握手时领取 owner，确认 epoch 后发布，将现有输入期限限制在 owner 期限内，并补齐 peer、恢复身份接入与三节点验证。目录接口或 SQL 测试本身不证明集群执行已经交付。
 - 验证：启用 PostgreSQL 17 的 metadata 全包及 migrate/host/Web 回归、目录/恢复/转库/原生备份定向 race、正式恢复 CLI 与 PostgreSQL 工作台及跨宿主 PTY 回归、`make build check-go` 通过。最后的现有 schema 只读打开与类型拆分已复验；未执行完整真实 Agent 任务、三节点故障注入或对现有部署进行恢复操作。
+
+### 已完成：Gateway 归属领取、epoch 确认与输入期限衔接
+
+- 协议 Gateway 新增显式目录构造器，每实例使用新启动身份和定向地址；校验 hello 后按目录 epoch 领取归属，有效 owner 不能抢占。fabricd 确认恢复代次、epoch 及原输入 challenge 后，Gateway 才发布路由。协议层不增加 SQL、用户或 Runner 依赖。
+- 目录调用限时一秒，owner 的本地有效期从调用起点扣除已耗时间；每次五秒控制更新先刷新原归属，再把输入 grant 限制在 owner 的保守期限内。暂停后的迟到响应、过期或结果未知不复活本地权限。空闲连接、新 stream 和转发均受期限约束，本地处理流同样绑定原连接，并在处理新消息前复核归属；结束时先关隧道再按原归属清理；不盲目重试目录变更。
+- v2 协议新增可选的 `route_recovery` / `route_epoch`，目录模式要求完整确认与消息关联。SDK 固定首请求归属，Gateway 后续转发覆盖客户端提供的归属字段，fabricd 对有效输入 grant 也执行原归属校验。单机模式仍为空/零；旧 v2 端不能静默降级接入目录模式。SQL 续约保留原有的更晚期限，已有 grant 的承诺不会因一次更新缩短。
+- 真实 PostgreSQL 与两个协议 Gateway 的回归中，竞争引擎无法打断有效 owner；超过首个十五秒后原连接仍正常执行。释放后原引擎连接另一个 Gateway，epoch 和连接 generation 分别前进，旧 owner 清理被拒绝，原 PTY 重接输出 `OWNER_TRANSFER_OK`。测试旋转代次后，运行中的旧连接在下一次目录复核关闭；时间边界与错误 epoch 确认另有定向回归。
+- 当前新增的是协议核心的目录装配。官方 host/CLI 集群配置、peer 用户访问上下文、跨实例转发、排空及三节点故障验收仍未交付；不将这次真实 SQL/协议集成等同于完整 S3 或 S1/S2 集群闭环。
+- 验证：启用 PostgreSQL 17 和备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、相关 gateway/fabricd/access/wire race、`make proto` 与 `make build check` 通过。最后补齐本地处理流的生命周期后，重新执行完整跨进程测试和受影响包 race，均通过。测试在专用 SQL schema 和本地真实 PTY 上进行，未修改既有部署或启用真实 Agent 账号。

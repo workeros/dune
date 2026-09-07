@@ -116,6 +116,16 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 	if _, err := b.Renew(ctx, owned.Route); err != nil {
 		t.Fatal(err)
 	}
+	// A retained future expiry (for example after a backward DB clock step)
+	// remains guaranteed to prior input grants. Renewal must not shorten it.
+	var retained int64
+	if err := first.db.QueryRow(`UPDATE dune_routes SET expires_at=`+first.databaseClock()+`+30000 WHERE machine_id=$1 RETURNING expires_at`, claim.Target).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := b.Renew(ctx, owned.Route)
+	if err != nil || kept.ExpiresAt.UnixMilli() < retained || kept.ValidFor > connectionLeaseDuration {
+		t.Fatal("renewal shortened prior grant or enlarged local duration", kept, err)
+	}
 	if err := a.Release(ctx, owned.Route); err != nil {
 		t.Fatal(err)
 	}

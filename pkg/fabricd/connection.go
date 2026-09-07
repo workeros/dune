@@ -59,12 +59,16 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	if err != nil {
 		return err
 	}
-	if err := confirmInputLease(input, ctrl, welcome); err != nil {
+	var accepted api.Binding
+	if err := wire.Decode(welcome, &accepted); err != nil || accepted.Target != target || accepted.Incarnation != d.inc || accepted.Generation != gen || accepted.Version != api.Version || ((accepted.RouteEpoch == 0) != (accepted.RouteRecovery == "")) || (accepted.RouteEpoch != 0 && !wire.ValidID(accepted.RouteRecovery)) {
+		return fmt.Errorf("invalid accepted execution binding")
+	}
+	if err := confirmInputLease(input, ctrl, welcome, accepted); err != nil {
 		return err
 	}
 	go input.Watch(ctx, func() { sess.Close() })
 	log.Printf("fabricd connected incarnation=%s generation=%d", d.inc, gen)
-	go func() { _ = renewInputLease(ctx, input, ctrl); sess.Close() }()
+	go func() { _ = renewInputLease(ctx, input, ctrl, accepted); sess.Close() }()
 	sem := make(chan struct{}, wire.MaxStreams)
 	for {
 		raw, err := sess.AcceptStream()
@@ -85,7 +89,7 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 			go func() {
 				defer d.active.Done()
 				defer func() { <-sem }()
-				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen, input: input}, target, gen)
+				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen, input: input, recovery: accepted.RouteRecovery, epoch: accepted.RouteEpoch}, target, gen)
 			}()
 		default:
 			raw.Close()
