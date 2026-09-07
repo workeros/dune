@@ -263,7 +263,7 @@ func TestSchemaSevenRequiresKnownLoginSubject(t *testing.T) {
 			// Remove only v8 columns to recreate old data with no per-login subject.
 			err = s.transaction(ctx, func(tx *sql.Tx) error {
 				for _, statement := range []string{
-					`DROP TABLE dune_peer_access`, `DROP TABLE dune_routes`,
+					`DROP TABLE dune_instances`, `DROP TABLE dune_peer_access`, `DROP TABLE dune_routes`,
 					`DROP TABLE dune_cluster`,
 					`DROP TABLE dune_operations`,
 					`ALTER TABLE dune_enrollments DROP COLUMN identity_subject`,

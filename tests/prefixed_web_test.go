@@ -64,6 +64,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	var sharedPrincipal atomic.Value
 	var policyRevoked, sharedExecution atomic.Bool
 	if mode.enterprise {
+		options.ConfigurationVersion = "enterprise-test-v1"
 		options.AccessChecker = enterpriseCheck(func(ctx context.Context, r access.Request) (access.Decision, error) {
 			shared, _ := sharedPrincipal.Load().(string)
 			allowed := r.PrincipalID == r.OwnerID || (shared != "" && r.PrincipalID == shared)
@@ -120,7 +121,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		remote := httptest.NewUnstartedServer(nil)
 		remoteSite := "http://" + remote.Listener.Addr().String() + "/tools/dune/"
 		onlineSite = remoteSite
-		remoteOptions := host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker}
+		remoteOptions := host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker, ConfigurationVersion: options.ConfigurationVersion}
 		var remotePeer net.Listener
 		if mode.cluster {
 			remoteOptions.Cluster, remotePeer = newCluster()

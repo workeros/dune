@@ -19,6 +19,7 @@ import (
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/deployment"
+	"github.com/aiomni/dune/pkg/gateway"
 	externalidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
@@ -48,6 +49,10 @@ type Options struct {
 	// AccessChecker selects enterprise policy instead of the default owner check.
 	// It must honor cancellation and must not retain credentials or work content.
 	AccessChecker access.Checker
+	// ConfigurationVersion identifies nonsecret custom identity/policy behavior.
+	// Required for PostgreSQL with custom modules; replicas must use the same
+	// value and change it whenever incompatible module settings change.
+	ConfigurationVersion string
 	// DialGateway optionally connects the workbench to this application's tunnel
 	// using the supplied short-lived credential. The returned connection belongs
 	// to Dune. It must honor context cancellation and must not replay requests.
@@ -69,6 +74,7 @@ type App struct {
 	store       *metadata.Store
 	peer        *peer.Transport
 	peerHandler http.Handler
+	admission   *gateway.AdmissionLease
 	mu          sync.Mutex
 	closed      bool
 	servers     map[*http.Server]struct{}
@@ -111,17 +117,17 @@ func Open(parent context.Context, options Options) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	core, err := openGateway(ctx, store, database, options.Cluster, transport)
-	if err != nil {
-		cancel()
-		store.Close()
-		return nil, err
-	}
+	var core *gateway.Gateway
+	var admission *gateway.AdmissionLease
+	var instance metadata.InstanceConfig
 	assembled := false
 	defer func() {
 		if !assembled {
 			cancel()
-			core.Close()
+			admission.Close()
+			if core != nil {
+				core.Close()
+			}
 			store.Close()
 		}
 	}()
@@ -137,6 +143,16 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if external != nil {
 		service = external
 	}
+	if database.Postgres != nil {
+		admission, instance, err = registerInstance(ctx, store, options, addresses, service)
+		if err != nil {
+			return nil, err
+		}
+	}
+	core, err = openGateway(ctx, store, database, options.Cluster, transport)
+	if err != nil {
+		return nil, err
+	}
 	authorizer := authorization.New(ctx, service, store, options.AccessChecker)
 	var online func(context.Context, []string) (map[string]bool, error)
 	var peerHandler http.Handler
@@ -149,7 +165,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 		if err != nil {
 			return nil, err
 		}
-		peerHandler, err = transport.Handler(ctx, core, peerAuthorization(authorizer))
+		peerHandler, err = transport.Handler(ctx, core, peerAuthorization(authorizer, admission))
 		if err != nil {
 			return nil, err
 		}
@@ -160,12 +176,17 @@ func Open(parent context.Context, options Options) (*App, error) {
 		DialGateway: dial,
 		External:    external,
 		Online:      online,
+		Admission:   admission,
 	}, store, service, authorizer, core)
 	if err != nil {
 		return nil, err
 	}
-	app := &App{ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
+	if admission != nil {
+		app.active.Add(1)
+		go app.renewAdmission(instance)
+	}
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil
 }
@@ -176,7 +197,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) serveHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
-	if a.closed || a.ctx.Err() != nil {
+	if a.closed || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
 		a.mu.Unlock()
 		http.Error(w, "Dune is closed", http.StatusServiceUnavailable)
 		return
@@ -215,7 +236,7 @@ func (a *App) Serve(listener net.Listener) error {
 func (a *App) serve(listener net.Listener, handler http.Handler) error {
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	a.mu.Lock()
-	if a.closed || a.ctx.Err() != nil {
+	if a.closed || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
 		a.mu.Unlock()
 		listener.Close()
 		return http.ErrServerClosed
@@ -246,6 +267,7 @@ func (a *App) Close() error {
 		}
 		a.mu.Unlock()
 		a.cancel()
+		a.admission.Close()
 		a.web.Close()
 		for _, srv := range servers {
 			srv.Close()
@@ -303,7 +325,7 @@ func (a *App) IdentityLink(ctx context.Context, requestID string) (externalident
 
 func (a *App) adminContext(ctx context.Context) (context.Context, func(), error) {
 	a.mu.Lock()
-	if a.closed || a.ctx.Err() != nil {
+	if a.closed || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
 		a.mu.Unlock()
 		return nil, nil, fmt.Errorf("Dune is closed")
 	}

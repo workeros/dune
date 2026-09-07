@@ -41,7 +41,8 @@ type Options struct {
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
 	// Online optionally reads shared directory facts for already authorized IDs.
-	Online func(context.Context, []string) (map[string]bool, error)
+	Online    func(context.Context, []string) (map[string]bool, error)
+	Admission *gateway.AdmissionLease
 }
 
 type authRate struct {
@@ -76,7 +77,11 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{urls: addresses, store: store, identity: local, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = core
-	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, authorizer.Authorize))
+	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+		binding, handler, err := authorizer.Authorize(credential)
+		binding.Admission = options.Admission
+		return binding, handler, err
+	}))
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)

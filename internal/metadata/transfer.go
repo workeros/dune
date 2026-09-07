@@ -23,6 +23,7 @@ var transferTables = []struct{ name, columns string }{
 	{"dune_operations", operationColumns},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
 	{"dune_cluster", "id,recovery_generation"},
+	{"dune_instances", instanceColumns},
 	{"dune_routes", routeColumns},
 	{"dune_access_tickets", "hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id,identity_subject"},
 	{"dune_peer_access", "hash,session_hash,machine_id,source_boot_id,owner_boot_id,identity_namespace,request_digest,expires_at,context"},

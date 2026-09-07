@@ -152,6 +152,7 @@ func run() error {
 		flags := flag.NewFlagSet("web", flag.ContinueOnError)
 		data := flags.String("data", ".local/web-accounts", "private SQLite metadata directory")
 		databaseFile := flags.String("database-config", "", "private SQL configuration; replaces the default SQLite data directory")
+		configurationVersion := flags.String("configuration-version", "", "shared nonsecret version of custom identity and policy settings")
 		clusterFile := flags.String("cluster-config", "", "private PostgreSQL cluster and mutual TLS peer configuration")
 		identityFile := flags.String("identity-config", "", "private OIDC configuration; replaces local password login")
 		assets := flags.String("assets", "web/dist", "built React assets directory")
@@ -163,7 +164,7 @@ func run() error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		options := host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
+		options := host.Options{ConfigurationVersion: *configurationVersion, DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
 		if *identityFile != "" {
 			identity, err := config.Identity(ctx, *identityFile)
 			if err != nil {

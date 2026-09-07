@@ -13,6 +13,9 @@ import (
 )
 
 func (r *route) inputAlive() bool {
+	if r.admission.Remaining() <= 0 {
+		return false
+	}
 	if r.peer != nil {
 		return r.ctx.Err() == nil && !r.s.IsClosed()
 	}
@@ -21,6 +24,9 @@ func (r *route) inputAlive() bool {
 }
 
 func (r *route) send(stream *wire.Stream, message *pb.Message) error {
+	if r.admission.Remaining() <= 0 {
+		return fmt.Errorf("application admission expired")
+	}
 	if r.peer != nil {
 		// Only the receiving owner can issue the execution input grant.
 		message.InputLeaseId, message.InputLeaseMs = "", 0
@@ -42,7 +48,8 @@ func (r *route) send(stream *wire.Stream, message *pb.Message) error {
 	return stream.Send(message)
 }
 
-func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, control *wire.Stream, hello *pb.Message, target string) error {
+func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, control *wire.Stream, hello *pb.Message, admission BindingContext) error {
+	target := admission.Target
 	if hello.Incarnation == "" || hello.ConnectionGeneration == 0 {
 		control.Fail("HANDSHAKE", fmt.Errorf("missing incarnation/generation"))
 		return nil
@@ -55,7 +62,7 @@ func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, contr
 	binding.Target, binding.Incarnation = target, hello.Incarnation
 	binding.Generation, binding.Version = hello.ConnectionGeneration, api.Version
 	binding.RouteRecovery, binding.RouteEpoch = "", 0
-	r := &route{ctx: ctx, s: session, b: binding, input: wire.NewInputWindow()}
+	r := &route{ctx: ctx, s: session, b: binding, input: wire.NewInputWindow(), admission: admission.Admission}
 	if !wire.ValidID(hello.InputLeaseId) {
 		control.Fail("HANDSHAKE", fmt.Errorf("input lease challenge required"))
 		return nil
@@ -148,6 +155,10 @@ func (r *route) grant(ctx context.Context, control *wire.Stream, id, kind string
 		if duration <= 0 {
 			return ErrRouteStale
 		}
+	}
+	duration = min(duration, r.admission.Remaining()).Truncate(time.Millisecond)
+	if duration <= 0 {
+		return fmt.Errorf("application admission expired")
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	if _, remaining := r.input.Current(); remaining > 0 && remaining < 5*time.Second {

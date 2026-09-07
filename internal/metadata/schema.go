@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 11
+const schemaVersion = 12
 
 // Version 1 is retained verbatim for coordinated upgrades and upgrade tests.
 var schema = []string{
@@ -90,6 +90,10 @@ var schema10 = []string{
 var schema11 = []string{
 	`CREATE TABLE dune_peer_access (hash TEXT PRIMARY KEY,session_hash TEXT NOT NULL REFERENCES dune_sessions(hash) ON DELETE CASCADE,machine_id TEXT NOT NULL REFERENCES dune_machines(id) ON DELETE CASCADE,source_boot_id TEXT NOT NULL,owner_boot_id TEXT NOT NULL,identity_namespace TEXT NOT NULL,request_digest TEXT NOT NULL,expires_at BIGINT NOT NULL,context TEXT NOT NULL)`,
 	`CREATE INDEX dune_peer_access_session ON dune_peer_access(session_hash)`,
+}
+
+var schema12 = []string{
+	`CREATE TABLE dune_instances (boot_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,recovery_generation TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -229,6 +233,17 @@ func (s *Store) migrate(ctx context.Context) error {
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=11 WHERE id=1`); err != nil {
+				return err
+			}
+			version = 11
+		}
+		if version == 11 {
+			for _, statement := range schema12 {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_schema SET version=12 WHERE id=1`); err != nil {
 				return err
 			}
 		}

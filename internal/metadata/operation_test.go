@@ -298,7 +298,7 @@ func TestOperationSchemaUpgrade(t *testing.T) {
 			defer func() { s.Close() }()
 			intent := operationFixture(t, s)
 			if err := s.transaction(ctx, func(tx *sql.Tx) error {
-				for _, table := range []string{"dune_peer_access", "dune_routes", "dune_cluster"} {
+				for _, table := range []string{"dune_instances", "dune_peer_access", "dune_routes", "dune_cluster"} {
 					if _, err := tx.Exec("DROP TABLE " + table); err != nil {
 						return err
 					}

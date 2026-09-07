@@ -43,7 +43,7 @@ func TestExternalBrowserLoginCallbacks(t *testing.T) {
 			const site = "https://dune.example.test/tools/dune/"
 			const callback = site + "api/auth/external/callback"
 			providerA, providerB := &browserIdentityFixture{}, &browserIdentityFixture{}
-			options := host.Options{PublicURL: site, DataDir: filepath.Join(t.TempDir(), "metadata"), Identity: &identity.Options{Provider: providerA}, AccessChecker: providerA}
+			options := host.Options{PublicURL: site, ConfigurationVersion: "browser-identity-test-v1", DataDir: filepath.Join(t.TempDir(), "metadata"), Identity: &identity.Options{Provider: providerA}, AccessChecker: providerA}
 			if backend == "postgres-two-apps" {
 				database := postgresWorkbenchConfig(t)
 				options.DataDir = ""

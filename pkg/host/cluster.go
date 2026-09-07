@@ -55,12 +55,14 @@ func openGateway(ctx context.Context, store *metadata.Store, database storage.Co
 	return gateway.NewWithPeers(directory, transport.Address(), options.RecoveryGeneration, transport.Dial)
 }
 
-func peerAuthorization(service *authorization.Service) peer.Authorize {
+func peerAuthorization(service *authorization.Service, admission *gateway.AdmissionLease) peer.Authorize {
 	return func(ctx context.Context, source, target string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		if err := ctx.Err(); err != nil {
 			return gateway.BindingContext{}, nil, err
 		}
-		return service.Peer(source, target)
+		binding, handler, err := service.Peer(source, target)
+		binding.Admission = admission
+		return binding, handler, err
 	}
 }
 

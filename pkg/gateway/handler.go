@@ -27,10 +27,12 @@ type BindingContext struct {
 	// PeerBootID is the entry Gateway identity verified by the peer transport.
 	// It is required exclusively for RolePeer; peer identity grants no user access.
 	PeerBootID string
+	// Admission optionally bounds this connection by a shared application lease.
+	Admission *AdmissionLease
 }
 
 func (b BindingContext) valid() bool {
-	if b.Target == "" {
+	if b.Target == "" || b.Admission.Remaining() <= 0 {
 		return false
 	}
 	switch b.Role {
@@ -77,6 +79,7 @@ func (c *Connection) Cancel(err error) { c.cancel(err) }
 // unblocks pending reads/writes. Operations after cancellation fail.
 type Stream struct {
 	ctx           context.Context
+	admission     *AdmissionLease
 	cancel        context.CancelCauseFunc
 	client        *wire.Stream
 	mu            sync.Mutex
@@ -90,6 +93,9 @@ type Stream struct {
 func (s *Stream) Context() context.Context { return s.ctx }
 
 func (s *Stream) Send(m *pb.Message) error {
+	if s.admission.Remaining() <= 0 {
+		return fmt.Errorf("application admission expired")
+	}
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
@@ -152,11 +158,17 @@ func (s *Stream) finishOpen() bool {
 // Host callbacks are trusted Go code and must return when ctx is cancelled;
 // their capacity remains reserved until they return.
 func (s *Stream) hook(fn func(context.Context) error) error {
+	if s.admission.Remaining() <= 0 {
+		return fmt.Errorf("application admission expired")
+	}
 	ctx, cancel := context.WithTimeout(s.ctx, HandlerTimeout)
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { s.Cancel(context.Cause(ctx)) })
 	defer stop()
 	err := fn(ctx)
+	if s.admission.Remaining() <= 0 {
+		return fmt.Errorf("application admission expired")
+	}
 	if ctx.Err() != nil {
 		return context.Cause(ctx)
 	}

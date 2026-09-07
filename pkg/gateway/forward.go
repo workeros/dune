@@ -42,7 +42,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 		c.Fail(failure.Code, failure)
 		return
 	}
-	flow := &Stream{ctx: ctx, cancel: cancel, client: c, peer: r.peer}
+	flow := &Stream{ctx: ctx, cancel: cancel, client: c, peer: r.peer, admission: binding.Admission}
 	var policy StreamHandler
 	err = flow.hook(func(ctx context.Context) error {
 		var e error

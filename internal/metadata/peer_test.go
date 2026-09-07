@@ -208,7 +208,7 @@ func TestPeerAccessSchemaUpgrade(t *testing.T) {
 			}
 			defer s.Close()
 			r := peerRecord(t, s)
-			for _, statement := range []string{`DROP TABLE dune_peer_access`, `UPDATE dune_schema SET version=10`, `CREATE INDEX dune_peer_access_session ON dune_sessions(hash)`} {
+			for _, statement := range []string{`DROP TABLE dune_instances`, `DROP TABLE dune_peer_access`, `UPDATE dune_schema SET version=10`, `CREATE INDEX dune_peer_access_session ON dune_sessions(hash)`} {
 				if _, err := s.db.Exec(statement); err != nil {
 					t.Fatal(err)
 				}

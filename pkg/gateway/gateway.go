@@ -15,12 +15,13 @@ import (
 )
 
 type route struct {
-	ctx   context.Context
-	s     *yamux.Session
-	b     api.Binding
-	input *wire.InputWindow
-	owner *ownership
-	peer  *Route
+	ctx       context.Context
+	s         *yamux.Session
+	b         api.Binding
+	input     *wire.InputWindow
+	admission *AdmissionLease
+	owner     *ownership
+	peer      *Route
 }
 
 type Gateway struct {
@@ -134,6 +135,8 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 		case <-s.CloseChan():
 			cancel(context.Canceled)
 		case <-ctx.Done():
+		case <-binding.Admission.Done():
+			cancel(fmt.Errorf("application admission expired"))
 		}
 	}()
 	hookTimer := time.AfterFunc(HandlerTimeout, func() { cancel(context.DeadlineExceeded) })
@@ -174,7 +177,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	timer.Stop()
 	defer st.Close()
 	if h.Role == "daemon" {
-		return g.serveDaemon(ctx, s, st, m, binding.Target)
+		return g.serveDaemon(ctx, s, st, m, binding)
 	}
 	if h.Role != RoleSDK && h.Role != RolePeer {
 		st.Fail("HANDSHAKE", fmt.Errorf("invalid role"))
@@ -197,6 +200,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 			st.Fail("ROUTE_STALE", e)
 			return nil
 		}
+		r.admission = binding.Admission
 		defer r.s.Close()
 	}
 	if h.Role == RolePeer && (r.owner == nil || m.Incarnation != r.b.Incarnation || m.ConnectionGeneration != r.b.Generation || m.RouteRecovery != r.b.RouteRecovery || m.RouteEpoch != r.b.RouteEpoch) {
