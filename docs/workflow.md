@@ -131,3 +131,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 官方集群 CLI 使用 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s`。它启动三个正式服务进程及独立 fabricd，经私有配置加载测试证书，在共享 PostgreSQL 上验证跨进程安装、在线发现、Web/人类 CLI 定向执行和退出撤销。此正常运行检查不替代三节点故障矩阵；配置读取的私有权限、相对路径和证书错误另由 `internal/config/TestPrivateClusterConfiguration` 覆盖。
 
 配置准入使用 `go test -race ./pkg/gateway ./internal/metadata ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`，启用专用 PostgreSQL。覆盖并发不兼容配置、跨池续约、锁等待、未知提交、升级与原生恢复；宿主回归观察实际续约、Close 后保留原期限及到期后变更。`TestPostgresAdmissionSurvivesProcessPause` 暂停正式 CLI 宿主超过十五秒，确认恢复后旧进程退出、旧终端输入未执行、替换配置后原 PTY 可继续使用。它证明同机 PostgreSQL 准入与进程暂停边界，不证明数据库时钟跳变、三节点分区或 Linux 部署。
+
+就绪与排空运行 `go test -race ./pkg/gateway ./pkg/host ./pkg/transport/peer ./internal/webapp -count=1 -timeout=90s`，覆盖入口/owner 排空期间原流双向收发、新流拒绝、清理回调等待，HTTP 完整响应/部分请求超时、挂载与自有监听器、并发 Close/Shutdown 及前缀探针。`go test -race ./tests -run TestWebCLIShutdownPreservesPTY -count=1 -timeout=90s` 启动正式 SQLite CLI 和真实 fabricd/PTY，验证 SIGTERM、限时退出、旧连接新请求拒绝、原终端重接与空闲隧道不延迟退出。该测试没有执行 Agent，也不替代 PostgreSQL 三节点分区或 Managed worker 排空验收。

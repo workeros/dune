@@ -117,6 +117,10 @@ func New(config Config) (*Transport, error) {
 // Address is the complete, directly reachable advertised endpoint.
 func (t *Transport) Address() string { return t.address.String() }
 
+// Ready reports whether this transport's own verified certificate chain is
+// still within its validity period. It does not probe remote peers or listeners.
+func (t *Transport) Ready() bool { return time.Now().Before(t.expires) }
+
 // ServerTLSConfig is for a dedicated peer listener owned by the application.
 // Public browser listeners must not require peer client certificates. The HTTP
 // handler also verifies certificates independently, so forwarded TLS headers or

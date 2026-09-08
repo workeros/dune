@@ -68,20 +68,25 @@ type Options struct {
 // HTTP middleware must preserve Hijacker and ResponseController support (directly
 // or through Unwrap) for upgrades and cancellation of blocked request I/O.
 type App struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	web         *webapp.Server
-	store       *metadata.Store
-	peer        *peer.Transport
-	peerHandler http.Handler
-	admission   *gateway.AdmissionLease
-	mu          sync.Mutex
-	closed      bool
-	servers     map[*http.Server]struct{}
-	active      sync.WaitGroup
-	once        sync.Once
-	done        chan struct{}
-	err         error
+	ctx          context.Context
+	cancel       context.CancelFunc
+	web          *webapp.Server
+	core         *gateway.Gateway
+	publicPath   string
+	store        *metadata.Store
+	peer         *peer.Transport
+	peerHandler  http.Handler
+	admission    *gateway.AdmissionLease
+	mu           sync.Mutex
+	closed       bool
+	draining     bool
+	requests     int
+	requestsDone chan struct{}
+	servers      map[*http.Server]struct{}
+	active       sync.WaitGroup
+	once         sync.Once
+	done         chan struct{}
+	err          error
 }
 
 // Open assembles an application without opening a listener. Cancelling parent
@@ -181,7 +186,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
 	if admission != nil {
 		app.active.Add(1)
@@ -192,19 +197,30 @@ func Open(parent context.Context, options Options) (*App, error) {
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.serveHTTP(a.web, w, r)
+	if a.health(w, r) {
+		return
+	}
+	a.serveHTTP(a.web, w, r, r.URL.Path == a.publicPath+"tunnel")
 }
 
-func (a *App) serveHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request) {
+func (a *App) serveHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request, connection bool) {
 	a.mu.Lock()
-	if a.closed || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
+	if a.closed || a.draining || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
 		a.mu.Unlock()
 		http.Error(w, "Dune is closed", http.StatusServiceUnavailable)
 		return
 	}
 	a.active.Add(1)
+	if !connection {
+		a.requests++
+	}
 	a.mu.Unlock()
-	defer a.active.Done()
+	defer func() {
+		if !connection {
+			a.finishRequest()
+		}
+		a.active.Done()
+	}()
 	ctx, cancel := context.WithCancel(r.Context())
 	interrupted := make(chan struct{})
 	stop := context.AfterFunc(a.ctx, func() {
@@ -236,7 +252,7 @@ func (a *App) Serve(listener net.Listener) error {
 func (a *App) serve(listener net.Listener, handler http.Handler) error {
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	a.mu.Lock()
-	if a.closed || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
+	if a.closed || a.draining || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
 		a.mu.Unlock()
 		listener.Close()
 		return http.ErrServerClosed
@@ -244,11 +260,18 @@ func (a *App) serve(listener net.Listener, handler http.Handler) error {
 	a.servers[srv] = struct{}{}
 	a.mu.Unlock()
 	defer func() {
-		srv.Close()
 		listener.Close()
 		a.mu.Lock()
-		delete(a.servers, srv)
+		draining := a.draining
+		if !draining {
+			delete(a.servers, srv)
+		}
 		a.mu.Unlock()
+		// Shutdown closes listeners before flushing accepted responses. Keep
+		// the server owned until Close, and do not interrupt that flush.
+		if !draining {
+			srv.Close()
+		}
 	}()
 	return srv.Serve(listener)
 }
@@ -273,6 +296,7 @@ func (a *App) Close() error {
 			srv.Close()
 		}
 		a.active.Wait()
+		<-a.core.Drain()
 		a.err = a.store.Close()
 		close(a.done)
 	})
@@ -325,17 +349,19 @@ func (a *App) IdentityLink(ctx context.Context, requestID string) (externalident
 
 func (a *App) adminContext(ctx context.Context) (context.Context, func(), error) {
 	a.mu.Lock()
-	if a.closed || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
+	if a.closed || a.draining || a.ctx.Err() != nil || a.admission.Remaining() <= 0 {
 		a.mu.Unlock()
 		return nil, nil, fmt.Errorf("Dune is closed")
 	}
 	a.active.Add(1)
+	a.requests++
 	a.mu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(a.ctx, cancel)
 	return ctx, func() {
 		stop()
 		cancel()
+		a.finishRequest()
 		a.active.Done()
 	}, nil
 }

@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -160,6 +161,7 @@ func run() error {
 		publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
 		gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + tunnel")
 		disableRegistration := flags.Bool("disable-registration", false, "disable local sign-up; existing accounts can still log in")
+		drainTimeout := flags.Duration("drain-timeout", 5*time.Second, "maximum graceful shutdown wait; zero closes immediately")
 		webListen := flags.String("web-listen", "", "optional extra loopback HTTP listener for local validation")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
@@ -200,7 +202,7 @@ func run() error {
 			options.Cluster = &host.ClusterOptions{RecoveryGeneration: cluster.RecoveryGeneration, Peer: cluster.Peer}
 			peerListen = cluster.Listen
 		}
-		return runWeb(ctx, c, options, *webListen, peerListen)
+		return runWeb(ctx, c, options, *webListen, peerListen, *drainTimeout)
 
 	}
 	var client *sdk.Client

@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/pkg/deployment"
@@ -14,7 +16,13 @@ import (
 	"github.com/aiomni/dune/pkg/transport/ws"
 )
 
-func runWeb(ctx context.Context, c config.Config, options host.Options, webListen, peerListen string) error {
+func runWeb(ctx context.Context, c config.Config, options host.Options, webListen, peerListen string, drainTimeout time.Duration) error {
+	if drainTimeout < 0 {
+		return fmt.Errorf("drain timeout cannot be negative")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if (options.Cluster == nil) != (peerListen == "") {
 		return fmt.Errorf("cluster options and peer listener must be supplied together")
 	}
@@ -63,7 +71,13 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 	options.DialGateway = func(ctx context.Context, token string) (net.Conn, error) {
 		return ws.Dial(ctx, local.String(), token, tc)
 	}
-	app, err := host.Open(ctx, options)
+	// Signals start a bounded drain; the host's own admission failures still
+	// cancel it immediately. Release this detached lifetime on every exit.
+	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancel()
+	stopStartup := context.AfterFunc(ctx, cancel)
+	defer stopStartup()
+	app, err := host.Open(lifetime, options)
 	if err != nil {
 		return err
 	}
@@ -101,20 +115,30 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 		}
 		defer peerListener.Close()
 	}
-	errors := make(chan error, len(listeners)+1)
+	// Preserve prompt signal cancellation while opening SQL and listeners.
+	// After startup, signals initiate Shutdown instead of cancelling work.
+	if !stopStartup() || ctx.Err() != nil {
+		return nil
+	}
+	serveErrors := make(chan error, len(listeners)+1)
 	if peerListener != nil {
-		go func() { errors <- app.ServePeer(peerListener) }()
+		go func() { serveErrors <- app.ServePeer(peerListener) }()
 	}
 	for _, ln := range listeners {
-		go func() { errors <- app.Serve(ln) }()
+		go func() { serveErrors <- app.Serve(ln) }()
 	}
 	fmt.Printf("Dune Web: %s\n", addresses.PublicURL)
 	select {
 	case <-ctx.Done():
-	case err = <-errors:
+		bounded, stop := context.WithTimeout(context.Background(), drainTimeout)
+		defer stop()
+		err = app.Shutdown(bounded)
+		// A signal plus the configured drain budget is a normal process exit.
+		if errors.Is(err, context.DeadlineExceeded) {
+			return app.Close()
+		}
+		return err
+	case err = <-serveErrors:
+		return err
 	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	return err
 }

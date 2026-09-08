@@ -76,7 +76,7 @@ func (a *App) ServePeer(listener net.Listener) error {
 		return fmt.Errorf("peer listener requires Cluster options")
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.serveHTTP(a.peerHandler, w, r)
+		a.serveHTTP(a.peerHandler, w, r, true)
 	})
 	return a.serve(tls.NewListener(listener, a.peer.ServerTLSConfig()), handler)
 }

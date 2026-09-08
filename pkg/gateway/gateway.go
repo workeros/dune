@@ -29,7 +29,8 @@ type Gateway struct {
 	ownerAddress, recovery, bootID string
 	dialPeer                       PeerDialer
 	mu                             sync.Mutex
-	closed                         bool
+	closed, draining               bool
+	drained                        chan struct{}
 	routes                         map[string]*route
 	sessions                       map[*yamux.Session]BindingContext
 	slots                          chan struct{}
@@ -37,7 +38,7 @@ type Gateway struct {
 }
 
 func New() *Gateway {
-	return &Gateway{routes: map[string]*route{}, sessions: map[*yamux.Session]BindingContext{}, slots: make(chan struct{}, 256), streams: make(chan struct{}, 512)}
+	return &Gateway{routes: map[string]*route{}, sessions: map[*yamux.Session]BindingContext{}, slots: make(chan struct{}, 256), streams: make(chan struct{}, 512), drained: make(chan struct{})}
 }
 
 func (g *Gateway) Online(target string) bool {
@@ -84,6 +85,7 @@ func (g *Gateway) Disconnect(target string) {
 func (g *Gateway) Close() {
 	g.mu.Lock()
 	g.closed = true
+	g.beginDrainLocked()
 	var closeSessions []*yamux.Session
 	for sess := range g.sessions {
 		closeSessions = append(closeSessions, sess)
@@ -123,9 +125,9 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	}
 	defer s.Close()
 	g.mu.Lock()
-	if g.closed {
+	if g.closed || g.draining {
 		g.mu.Unlock()
-		return fmt.Errorf("gateway closed")
+		return fmt.Errorf("gateway is not accepting connections")
 	}
 	g.sessions[s] = binding
 	g.mu.Unlock()
@@ -226,13 +228,14 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 			raw.Close()
 			continue
 		}
-		select {
-		case g.streams <- struct{}{}:
-		default:
+		if !g.acquireStream() {
 			<-sem
 			raw.Close()
 			continue
 		}
-		go func() { defer func() { <-sem; <-g.streams }(); g.forward(ctx, wire.Wrap(raw), r, binding, handler) }()
+		go func() {
+			defer func() { <-sem; g.releaseStream() }()
+			g.forward(ctx, wire.Wrap(raw), r, binding, handler)
+		}()
 	}
 }
