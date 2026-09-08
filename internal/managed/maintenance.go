@@ -23,6 +23,32 @@ type MaintenanceExecutor struct {
 	policy        renewal.Policy
 	policyVersion string
 	policyTimeout time.Duration
+	observe       func(RenewalDecisionObservation)
+}
+
+// RenewalDecisionObservation contains the exact policy result accepted by the
+// metadata transaction. It excludes provider responses, template parameters,
+// credentials and identity subject.
+type RenewalDecisionObservation struct {
+	ObservedAt    time.Time
+	NextCheckAt   time.Time
+	RenewUntil    time.Time
+	PrincipalID   string
+	Namespace     string
+	RunnerID      string
+	FabricID      string
+	ResourceRef   string
+	PolicyVersion string
+	Reason        string
+	Outcome       string
+}
+
+func notifyRenewalDecision(observer func(RenewalDecisionObservation), observation RenewalDecisionObservation) {
+	if observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observer(observation)
 }
 
 func NewMaintenanceExecutor(store *metadata.Store, providers map[string]fabric.InspectProvider, policy renewal.Policy, policyVersion string, policyTimeout time.Duration) (*MaintenanceExecutor, error) {
@@ -85,11 +111,27 @@ func (e *MaintenanceExecutor) Execute(ctx context.Context, providerCtx context.C
 	policyCtx, cancel := context.WithTimeout(ctx, e.policyTimeout)
 	decision, policyErr := e.policy.Decide(policyCtx, input)
 	cancel()
+	outcome := "stopped"
 	if policyErr != nil {
 		decision = renewal.Decision{Reason: "POLICY_ERROR", RecheckAt: input.Now.Add(renewalPolicyFailureRecheck)}
+		outcome = "policy_error"
 	} else if renewal.ValidateDecision(input, decision) != nil {
 		decision = renewal.Decision{Reason: "POLICY_INVALID", RecheckAt: input.Now.Add(renewalPolicyFailureRecheck)}
+		outcome = "policy_invalid"
+	} else if decision.Renew {
+		outcome = "renew"
+	} else if !decision.RecheckAt.IsZero() {
+		outcome = "recheck"
 	}
-	_, err = e.store.RecordManagedRenewalDecision(ctx, claimed, e.policyVersion, input, result, decision)
-	return err
+	saved, err := e.store.RecordManagedRenewalDecision(ctx, claimed, e.policyVersion, input, result, decision)
+	if err != nil {
+		return err
+	}
+	notifyRenewalDecision(e.observe, RenewalDecisionObservation{
+		ObservedAt: saved.ObservedAt, NextCheckAt: saved.NextCheckAt, RenewUntil: saved.RenewUntil,
+		PrincipalID: input.PrincipalID, Namespace: input.Namespace,
+		RunnerID: saved.RunnerID, FabricID: saved.FabricID, ResourceRef: saved.ResourceRef,
+		PolicyVersion: saved.PolicyVersion, Reason: saved.Reason, Outcome: outcome,
+	})
+	return nil
 }

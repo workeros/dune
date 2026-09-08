@@ -9,16 +9,17 @@ import (
 )
 
 const (
-	AccessCheck          = "access.check"
-	GatewayBackpressure  = "gateway.backpressure"
-	GatewayConnection    = "gateway.connection"
-	GatewayPeerDial      = "gateway.peer_dial"
-	GatewayRoute         = "gateway.route"
-	GatewayRouteRenewal  = "gateway.route_renewal"
-	GatewayStream        = "gateway.stream"
-	HostAdmissionRenewal = "host.admission_renewal"
-	ManagedProviderCall  = "managed.provider_call"
-	Dropped              = "observe.dropped"
+	AccessCheck            = "access.check"
+	GatewayBackpressure    = "gateway.backpressure"
+	GatewayConnection      = "gateway.connection"
+	GatewayPeerDial        = "gateway.peer_dial"
+	GatewayRoute           = "gateway.route"
+	GatewayRouteRenewal    = "gateway.route_renewal"
+	GatewayStream          = "gateway.stream"
+	HostAdmissionRenewal   = "host.admission_renewal"
+	ManagedProviderCall    = "managed.provider_call"
+	ManagedRenewalDecision = "managed.renewal_decision"
+	Dropped                = "observe.dropped"
 )
 
 // Event contains only bounded operational facts and controlled identifiers.
@@ -32,15 +33,17 @@ type Event struct {
 	Outcome        string    `json:"outcome,omitempty"`
 	DurationMicros int64     `json:"duration_micros,omitempty"`
 
-	PrincipalID   string `json:"principal_id,omitempty"`
-	Namespace     string `json:"namespace,omitempty"`
-	RunnerID      string `json:"runner_id,omitempty"`
-	MachineID     string `json:"machine_id,omitempty"`
-	Target        string `json:"target,omitempty"`
-	Operation     string `json:"operation,omitempty"`
-	Suboperation  string `json:"suboperation,omitempty"`
-	RequestID     string `json:"request_id,omitempty"`
-	DecisionID    string `json:"decision_id,omitempty"`
+	PrincipalID  string `json:"principal_id,omitempty"`
+	Namespace    string `json:"namespace,omitempty"`
+	RunnerID     string `json:"runner_id,omitempty"`
+	MachineID    string `json:"machine_id,omitempty"`
+	Target       string `json:"target,omitempty"`
+	Operation    string `json:"operation,omitempty"`
+	Suboperation string `json:"suboperation,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	DecisionID   string `json:"decision_id,omitempty"`
+	// Reason is used only for a validated, non-sensitive policy reason code.
+	Reason        string `json:"reason,omitempty"`
 	OperationID   string `json:"operation_id,omitempty"`
 	ActionID      string `json:"action_id,omitempty"`
 	FabricID      string `json:"fabric_id,omitempty"`

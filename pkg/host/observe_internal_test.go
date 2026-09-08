@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	managedmodule "github.com/aiomni/dune/internal/managed"
 	"github.com/aiomni/dune/pkg/observe"
 )
 
@@ -37,5 +38,24 @@ func TestObservationDispatcherIsBounded(t *testing.T) {
 	recorder.close()
 	if time.Since(started) > time.Second {
 		t.Fatal("observer cancellation did not bound close")
+	}
+}
+
+func TestManagedRenewalDecisionObservationIsBounded(t *testing.T) {
+	events := make(chan observe.Event, 1)
+	recorder := newObservationRecorder(observe.SinkFunc(func(_ context.Context, event observe.Event) { events <- event }))
+	defer recorder.close()
+	observeManagedRenewalDecision(recorder)(managedmodule.RenewalDecisionObservation{
+		ObservedAt: time.Unix(123, 0).UTC(), NextCheckAt: time.Unix(153, 0).UTC(),
+		PrincipalID: "principal", Namespace: "https://identity.example.test", RunnerID: "runner", FabricID: "fabric", ResourceRef: "resource",
+		PolicyVersion: "enterprise-v2", Reason: "POLICY_ERROR", Outcome: "policy_error",
+	})
+	select {
+	case event := <-events:
+		if event.Name != observe.ManagedRenewalDecision || event.Outcome != "policy_error" || event.Time.Unix() != 123 || event.PrincipalID != "principal" || event.Namespace != "https://identity.example.test" || event.RunnerID != "runner" || event.FabricID != "fabric" || event.ResourceRef != "resource" || event.Operation != "renewal" || event.Suboperation != "policy" || event.PolicyVersion != "enterprise-v2" || event.Reason != "POLICY_ERROR" {
+			t.Fatal("unexpected renewal decision event", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("renewal decision event was not delivered")
 	}
 }

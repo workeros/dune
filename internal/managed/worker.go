@@ -27,6 +27,9 @@ type WorkerConfig struct {
 	// RenewalPolicyVersion changes whenever policy meaning or configuration
 	// changes, so stopped schedules are reconsidered without rewriting history.
 	RenewalPolicyVersion string
+	// ObserveRenewalDecision receives only decisions accepted by the metadata
+	// transaction. It must return promptly; callback panics are isolated.
+	ObserveRenewalDecision func(RenewalDecisionObservation)
 	// HistoryRetention bounds the recovery and idempotency window for terminal
 	// lifecycle records. Cleanup uses the shared database clock.
 	HistoryRetention time.Duration
@@ -122,6 +125,7 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 		if err != nil {
 			return nil, err
 		}
+		maintenance.observe = config.ObserveRenewalDecision
 		for id := range maintenance.providers {
 			inspectConfigured[id] = struct{}{}
 		}

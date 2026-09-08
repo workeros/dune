@@ -88,6 +88,8 @@ func TestMaintenanceExecutorPersistsBoundProviderFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(providers, "sandbox")
+	observations := make(chan RenewalDecisionObservation, 1)
+	executor.observe = func(observation RenewalDecisionObservation) { observations <- observation }
 	claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, claimed.RunnerID, "personal-v1", wire.ID(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +110,42 @@ func TestMaintenanceExecutorPersistsBoundProviderFacts(t *testing.T) {
 	resource, err := fixture.store.ManagedResource(fixture.ctx, claimed.RunnerID)
 	if err != nil || !resource.ExpiresAt.Equal(expires) {
 		t.Fatal("confirmed provider expiry was not persisted", resource, err)
+	}
+	select {
+	case observation := <-observations:
+		if observation.PrincipalID != claimed.PrincipalID || observation.Namespace != claimed.Namespace || observation.RunnerID != claimed.RunnerID || observation.FabricID != claimed.FabricID || observation.ResourceRef != "bootstrap-resource" || observation.PolicyVersion != "personal-v1" || observation.Reason != "RENEW" || observation.Outcome != "renew" || observation.ObservedAt.IsZero() || observation.RenewUntil.IsZero() || !observation.NextCheckAt.IsZero() {
+			t.Fatal("observer did not receive the accepted bounded decision", observation)
+		}
+	default:
+		t.Fatal("accepted renewal decision was not observed")
+	}
+}
+
+func TestMaintenanceExecutorDoesNotObserveRejectedDecision(t *testing.T) {
+	fixture := newServiceFixture(t)
+	claimed := readyResourceForInspection(t, fixture)
+	provider := &inspectProvider{result: fabric.Inspection{Status: fabric.InspectionConfirmed, ResourceRef: "bootstrap-resource", ExpiresAt: time.Now().Add(time.Hour)}}
+	observed := false
+	policy := renewal.PolicyFunc(func(context.Context, renewal.Input) (renewal.Decision, error) {
+		if err := fixture.store.SetPrincipalEnabled(fixture.ctx, claimed.PrincipalID, false); err != nil {
+			return renewal.Decision{}, err
+		}
+		return renewal.Decision{Reason: "DISABLED"}, nil
+	})
+	executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, policy, "enterprise-v9", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor.observe = func(RenewalDecisionObservation) { observed = true }
+	claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, claimed.RunnerID, "enterprise-v9", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(fixture.ctx, fixture.ctx, claim); !errors.Is(err, lifecycle.ErrLeaseLost) {
+		t.Fatal("decision based on stale account state was accepted", err)
+	}
+	if observed {
+		t.Fatal("rejected renewal decision was observed as committed")
 	}
 }
 
@@ -258,6 +296,8 @@ func TestMaintenanceExecutorPersistsPolicyFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			observations := make(chan RenewalDecisionObservation, 1)
+			executor.observe = func(observation RenewalDecisionObservation) { observations <- observation }
 			claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, claimed.RunnerID, "enterprise-v8", wire.ID(), time.Minute)
 			if err != nil {
 				t.Fatal(err)
@@ -271,6 +311,14 @@ func TestMaintenanceExecutorPersistsPolicyFailures(t *testing.T) {
 			}
 			if delta := schedule.NextCheckAt.Sub(schedule.ObservedAt); delta <= 0 || delta > renewalPolicyFailureRecheck {
 				t.Fatal("policy failure did not get a bounded retry", delta)
+			}
+			observation := <-observations
+			expectedOutcome := "policy_error"
+			if test.reason == "POLICY_INVALID" {
+				expectedOutcome = "policy_invalid"
+			}
+			if observation.Reason != test.reason || observation.Outcome != expectedOutcome || observation.PolicyVersion != "enterprise-v8" {
+				t.Fatal("policy failure observation was not normalized", observation)
 			}
 		})
 	}
@@ -341,6 +389,8 @@ func TestWorkerPersistsInspectionTimeoutAndLeavesUnsupportedFabric(t *testing.T)
 	timedOut := &inspectProvider{called: make(chan struct{}), release: make(chan struct{})}
 	config := inspectionWorkerConfig()
 	config.CallTimeout = 40 * time.Millisecond
+	observations := make(chan RenewalDecisionObservation, 1)
+	config.ObserveRenewalDecision = func(observation RenewalDecisionObservation) { observations <- observation }
 	worker, err := NewWorker(fixture.store, ProviderSet{Inspect: map[string]fabric.InspectProvider{"sandbox": timedOut}}, config)
 	if err != nil {
 		t.Fatal(err)
@@ -351,6 +401,14 @@ func TestWorkerPersistsInspectionTimeoutAndLeavesUnsupportedFabric(t *testing.T)
 	schedule, err := fixture.store.ManagedRenewalSchedule(fixture.ctx, ready.RunnerID)
 	if err != nil || schedule.Facts != lifecycle.InspectionTimedOut || schedule.Reason != "FACTS_UNKNOWN" {
 		t.Fatal("inspection timeout was not persisted", schedule, err)
+	}
+	select {
+	case observation := <-observations:
+		if observation.RunnerID != ready.RunnerID || observation.PolicyVersion != "personal-v1" || observation.Reason != "FACTS_UNKNOWN" || observation.Outcome != "recheck" || observation.NextCheckAt.IsZero() || !observation.RenewUntil.IsZero() {
+			t.Fatal("worker did not forward the accepted renewal decision", observation)
+		}
+	default:
+		t.Fatal("worker did not observe the accepted renewal decision")
 	}
 
 	second := newServiceFixture(t)

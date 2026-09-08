@@ -16,6 +16,7 @@
 | `gateway.stream` | `completed`、`rejected`、`interrupted`、`result_unknown`；`route` 区分 `local` 与 `peer` |
 | `gateway.backpressure` | `session_limit`、`connection_stream_limit`、`gateway_stream_limit`；记录固定容量拒绝 |
 | `managed.provider_call` | Availability 的 `read`，Create/Bootstrap/Renew/Destroy 的 `dispatch` 或 `reconcile`、Inspect 的 `read`、候选核验的 `verify`；Availability 结果为 `available`、`unavailable`，其余结果为 provider 返回的 `succeeded`、`failed`、`unknown`、`confirmed`，错误或无效值统一归一化 |
+| `managed.renewal_decision` | `renew`、`recheck`、`stopped`、`policy_error`、`policy_invalid`；只在巡检事实与策略决定被元数据事务共同接受后发出 |
 | `host.admission_renewal` | `failed` 或 `expired`；PostgreSQL 配置准入续租失败后、宿主取消前发出，`suboperation` 区分 `store`、`deadline`、`local_lease` |
 | `observe.dropped` | `dropped`；`count` 是最近一批未投递事件数 |
 
@@ -23,7 +24,7 @@
 
 `managed.provider_call` 在适配器返回后、Dune 校验全部结果字段及提交 SQL 之前发出。它的 outcome 表示原始 provider 枚举或调用错误的保守归一化，不代表动作已经持久提交；例如 provider 报告 `succeeded` 后仍可能因字段契约或执行租约失效而被拒绝。普通错误统一为 `unknown`，deadline 为 `timed_out`，未知枚举为 `invalid`。Availability 的有效公开结果归一为 `available` 或 `unavailable`，不会记录具体固定原因或 SDK 错误。确认后的权威状态仍以 Managed Operation、action 和 resource 记录为准。
 
-RenewalPolicy 的权威结果保存在资源维护计划中，并通过已授权的 Operation/Runner 状态返回策略版本、固定原因、观测时间、下次检查和冻结续期目标。策略错误正文不进入状态或事件；错误与非法决定分别归一为 `POLICY_ERROR`、`POLICY_INVALID` 并等待重新巡检。自定义原因属于公开状态字段，策略实现必须只返回稳定、非敏感的短代码。
+RenewalPolicy 的权威结果保存在资源维护计划中，并通过已授权的 Operation/Runner 状态返回策略版本、固定原因、观测时间、下次检查和冻结续期目标。`managed.renewal_decision` 使用数据库观测时间，携带原创建 principal/namespace、Runner/Fabric、已持久资源引用、策略版本和经过公共验证器约束的原因码；`operation=renewal`、`suboperation=policy` 表示后台维护来源。若账号、绑定、资源或领取修订在策略运行时变化，事务拒绝旧决定且不发出成功事件。策略错误正文不进入状态或事件；错误与非法决定分别归一为 `POLICY_ERROR`、`POLICY_INVALID` 并等待重新巡检。自定义原因属于公开状态字段，策略实现必须只返回稳定、非敏感的短代码。
 
 租约故障事件只在业务 context 仍有效时发送，正常 `Shutdown`、`Close` 或父 context 取消不会制造失败。owner 事件包含 target、原 owner boot、incarnation、generation 和 epoch；实例准入事件只包含本次 boot ID 和固定失败阶段。两者都不附带 SQL/目录错误正文、数据库地址或配置指纹。事件是失败前的尽力投递，不能阻止既定的保守关闭。
 

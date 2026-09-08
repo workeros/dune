@@ -216,3 +216,23 @@ func observeManagedProviders(availability map[string]fabric.AvailabilityProvider
 	}
 	return observedAvailability, result
 }
+
+func observeManagedRenewalDecision(recorder *observationRecorder) func(managedmodule.RenewalDecisionObservation) {
+	if recorder == nil || recorder.sink == nil {
+		return nil
+	}
+	return func(decision managedmodule.RenewalDecisionObservation) {
+		outcome := decision.Outcome
+		switch outcome {
+		case "renew", "recheck", "stopped", "policy_error", "policy_invalid":
+		default:
+			outcome = "invalid"
+		}
+		recorder.emit(observe.Event{
+			Time: decision.ObservedAt, Name: observe.ManagedRenewalDecision, Outcome: outcome,
+			PrincipalID: decision.PrincipalID, Namespace: decision.Namespace,
+			RunnerID: decision.RunnerID, FabricID: decision.FabricID, ResourceRef: decision.ResourceRef,
+			Operation: "renewal", Suboperation: "policy", PolicyVersion: decision.PolicyVersion, Reason: decision.Reason,
+		})
+	}
+}

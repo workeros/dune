@@ -542,3 +542,8 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 
 - `samples/enterprise` 只依赖公开 Go 包，把应用自有 IdentityProvider、AccessChecker、完整 Managed Provider、RenewalPolicy 和 PostgreSQL `BeforeConnect` 组合到同一个 `host.App`，并把现有工作台挂载到应用自有 HTTP handler。示例保留 Dune App 供调用方执行排空、状态读取和可信管理操作，不接管宿主 listener。
 - 示例要求显式配置版本并关闭本地注册，不提供宽松身份/授权 stub，也不模拟云资源；私有配置与凭据仍保存在调用方适配器中。独立临时 Go module 编译回归保证示例无法借用仓库 `internal` 包。该证据完成公开组合边界，不能替代真实企业 SDK 或 Managed 平台验收。
+
+### 已完成组件：已提交续期策略决定的结构化观测
+
+- 新增 `managed.renewal_decision`，只在巡检事实和 RenewalPolicy 决定通过同一元数据事务复核并提交后发出。事件使用数据库观测时间，记录后台 `renewal/policy` 来源、原创建 principal/namespace、Runner/Fabric、已持久资源引用、策略版本与经公共验证器约束的原因码；不包含 subject、session、模板参数、provider 返回、错误正文或凭据。
+- outcome 固定为 `renew`、`recheck`、`stopped`、`policy_error` 或 `policy_invalid`。策略运行期间账号、绑定、资源或领取修订变化导致的旧决定不发成功事件；回调 panic 被隔离，完整宿主仍通过原有有界异步队列投递。内部回归覆盖已提交字段、worker 转发、策略错误及状态变化拒绝，宿主回归覆盖公开事件映射。
