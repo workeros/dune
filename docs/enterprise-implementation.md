@@ -344,3 +344,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - `internal/managed.Service` 先认证浏览器会话，对可用模板逐项执行 `template.list` 检查；普通拒绝隐藏条目和存在性，检查器故障则整体失败。查看与新建分别执行 `template.get`、`runner.create`，只把已配置的 Fabric/模板标识交给检查器，用户参数和私有配置不会进入权限请求。
 - 创建在两个权限决定的最短有效期内校验完整请求，再调用原 SQL 原子事务；事务继续复核同一浏览器 session、身份 namespace/subject 和幂等摘要。成功只保存未绑定 Runner 与持久创建意图，不调用提供方，也不把数据库提交解释为资源已分配。公开请求类型从内部生命周期包移到 `pkg/fabric`，没有保留开发阶段兼容别名。
 - 验证：`pkg/fabric`、授权、Managed 服务及 metadata 的定向 race 回归通过，覆盖配置不可变、顺序无关指纹、禁用版本、拒绝隐藏、策略故障、双重访问检查、请求拷贝、非法参数不落库及伪造早期认证被事务复核拒绝。后续仍需把目录和服务装配进宿主/Web，组合目录指纹到 PostgreSQL 准入，并实现真实 FabricProvider、worker、Bootstrap、续期和销毁闭环。
+
+### 已完成：Managed 创建动作的适配器执行边界
+
+- `pkg/fabric.CreateProvider` 定义首个窄接口：`Create` 接收已验证的不可变模板快照，以及动作 ID、Operation/Runner/Fabric、请求摘要、原始 worker/执行修订和绑定修订；私有选项与凭据保留在适配器实例。`ReconcileCreate` 只能查询同一原始动作关联，并取得 Dune 已持久确认的可选资源引用，不授予重发变更的权限。接口只覆盖当前已实现的创建阶段，避免在真实适配闭环前臆造 Bootstrap、续期和销毁形状。
+- 内部 Executor 复制 Fabric 到适配器的启动配置，读取原创建快照并复核 claimed Operation，提交动作预约后再次检查数据库执行权。只有首次预约的明确提交调用一次 `Create`；重复进入、unknown、timeout、重启或接管均调用 `Reconcile`，终态直接返回。调用前后的 SQL 条件检查使用数据库时钟；不会把数据库绝对租约与本机时钟比较，worker 须为 SDK 调用提供有界 context。
+- 适配器错误不会被解释为失败或成功：deadline 映射为 timed_out，其他错误映射为 unknown，并忽略同时返回的未确认字段。适配器可以用无错误的 unknown 返回已核验部分引用；succeeded 必须包含资源引用，非法状态、控制字符、无引用有效期或 create 报告资源已删除均作为契约错误拒绝。
+- 验证：Executor race 回归覆盖配置快照、Create 恰好一次调用、稳定动作与执行身份、provider 不能修改持久请求、confirmed resource 原子保存、unknown 后仅 Reconcile、timeout/错误保守记录、终态幂等、缺失适配器不预约和非法事实拒绝。当前适配器仍为测试夹具，不构成真实提供方、持久扫描 worker、Bootstrap、反向 WS、续期或销毁闭环。
