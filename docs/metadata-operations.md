@@ -98,7 +98,7 @@ Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍
 
 资源一经确认便进入独立巡检计划，不等待首次连接。公开 `fabric.InspectProvider` 只能按固定 Runner、Fabric、resource_ref 与 binding revision 读取事实，不携带动作键，也不授予创建、续期或删除权限。适配器错误和 deadline 分别保存为 unknown/timed_out，并丢弃伴随字段；只有无错误、引用一致的 confirmed 结果可以更新到期时间或确认 Gone。确认 Gone 在同一事务关闭访问并删除 Managed enrollment 与机器身份，网络错误或本地到期时间不会触发该变化。
 
-巡检候选、领取和续租都使用数据库时钟。每个资源的策略版本、最后事实、观测时间、下次检查时间与固定 `renew_until` 决定持久化在同一行；多副本通过独立执行修订和短租约竞争，锁内再次核对资源引用、绑定和访问状态。个人策略基于首次资源确认时间和持久 create/Bootstrap 状态计算；首次在线会重新激活因未连接而停止的计划，曾经可用后不会重套首次连接宽限期。
+巡检候选、领取和续租都使用数据库时钟。每个资源的策略版本、最后事实、观测时间、下次检查时间与固定 `renew_until` 决定持久化在同一行；多副本通过独立执行修订和短租约竞争，锁内再次核对资源引用、绑定和访问状态。公开 `pkg/renewal.Policy` 在 SQL 事务外取得数据库时间、原创建 principal/namespace、当前账号 enabled、Runner/Fabric、创建及首次资源确认时间和受控状态；输入不含 identity subject、浏览器 session、模板参数或 provider 凭据。策略回调有独立的 `CallTimeout`，返回后事务重新构造并精确比较同一输入与巡检租约，状态或账号变化会拒绝旧决定及其巡检事实。续期目标必须真正晚于当前已确认期限，且无法绕过 Gone、未确认、过期、Bootstrap 失败、销毁或变更中的状态。策略错误和非法决定分别固定保存 `POLICY_ERROR`、`POLICY_INVALID`，30 秒后重新巡检，不保存错误正文。个人策略基于首次资源确认时间和持久 create/Bootstrap 状态计算；首次在线会重新激活因未连接而停止的计划，曾经可用后不会重套首次连接宽限期。
 
 冻结的 `renew_until` 由独立事务消费成自动 Renew Operation，同时保存原策略版本、绝对目标、稳定请求摘要和 Runner 业务互斥。事务在 principal → Runner 锁顺序下复核策略、观测、资源引用、绑定和数据库时钟；目标已过期会返回巡检，已有创建、续期或销毁操作则保持原计划不变。提交回执未知不返回执行权，恢复扫描只领取已持久化且租约到期的原 Operation。
 
@@ -110,9 +110,9 @@ Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.d
 
 公开 `fabric.DestroyProvider` 把首次删除和只读 `ReconcileDestroy` 分开。只有 Destroy 动作预约明确提交并再次复核执行权后才可首次调用；超时、unknown、重启或租约接管只查询原动作键。适配器错误的伴随字段会丢弃，成功必须给出同一 resource_ref 的明确 Gone 事实，才原子完成动作与 Operation；失败或不确定结果都不会恢复访问。关闭通知由共享 SQL 待办扇出，不依赖仍可解析的 machine route；未确认实例及确认时间随备份保留。实例失联时仍由固定 deadline 进入 timed_out 后继续清理，该状态明确保留关闭确认不足的事实。
 
-`host.Options.Managed` 把不可变模板目录、同一 Fabric 的五种生命周期能力、候选资源核验能力、业务服务和一个持久 worker 装进现有 Host/Web 生命周期。启动先验证目录、提供方集合、公开地址及所有时间界限；失败时不留下 worker 或存储锁。PostgreSQL 准入指纹自动包含公开目录、提供方命名空间和 worker 行为，并要求宿主另给出 `ConfigurationVersion` 表达 Dune 无法读取的私有 SDK 语义。
+`host.Options.Managed` 把不可变模板目录、同一 Fabric 的 Availability 与六种生命周期能力、可选 RenewalPolicy、业务服务和一个持久 worker 装进现有 Host/Web 生命周期。启动先验证目录、提供方集合、公开地址及所有时间界限；失败时不留下 worker 或存储锁。PostgreSQL 准入指纹自动包含公开目录、提供方命名空间、续期策略版本和 worker 行为，并要求宿主另给出 `ConfigurationVersion` 表达 Dune 无法读取的私有 SDK 或策略语义。
 
-浏览器 API 只有配置完整时才注册。模板列表和详情逐项执行访问检查；创建返回 durable acceptance，销毁返回 access-close acceptance。Operation 状态只允许原浏览器主体读取，Runner 状态要求当前 Runner 访问权；响应保留 action、stage、provider outcome、已知 resource_ref/expiry 和销毁关闭事实，不返回 principal、请求键、worker、执行修订或 provider action key。工作台按字符串边界检查模板的 `int64` 并把原十进制词法直接写入 JSON，避免 JavaScript 浮点转换；unknown 明示为只核对原动作，页面关闭不会停止 worker。
+浏览器 API 只有配置完整时才注册。模板列表和详情逐项执行访问检查；创建返回 durable acceptance，销毁返回 access-close acceptance。Operation 状态只允许原浏览器主体读取，Runner 状态要求当前 Runner 访问权；响应保留 action、stage、provider outcome、已知 resource_ref/expiry、最后续期策略版本/原因/时间和销毁关闭事实，不返回 principal、请求键、worker、执行修订或 provider action key。工作台按字符串边界检查模板的 `int64` 并把原十进制词法直接写入 JSON，避免 JavaScript 浮点转换；unknown 明示为只核对原动作，页面关闭不会停止 worker。
 
 人工核对请求执行新的 `runner.resolve/managed` 访问检查，并在事务中复核当前浏览器身份、Runner/Fabric/binding revision、未决 Operation 与原 Provider action。请求保存操作者、理由、候选引用和幂等摘要；同一 action 同时只允许一个未完成核对。`reconcile` 只调用对应动作的 `Reconcile*`；`candidate` 仅用于未决 Create，并调用 `CandidateProvider.VerifyCandidate` 核验候选与原 action 的关联。已知部分资源引用不能被另一个候选覆盖。核验结果仍通过原 action 的资源及阶段事务规则提交，失败或 unknown 不清业务互斥；核对审计随后以条件更新完成，进程若在两次事务间退出，下个 worker 从已完成 action 收敛审计，不再次查询。没有直接编辑绑定、强制成功或重新派发 Create/Bootstrap/Renew/Destroy 的接口。
 

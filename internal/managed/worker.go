@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/fabric"
+	"github.com/aiomni/dune/pkg/renewal"
 )
 
 const managedCreateBatch = 32
@@ -18,11 +19,11 @@ const managedCreateBatch = 32
 const managedHistoryCleanupInterval = time.Hour
 
 type WorkerConfig struct {
-	PollInterval time.Duration
-	LeaseTTL     time.Duration
-	CallTimeout  time.Duration
-	Bootstrap    BootstrapConfig
-	Renewal      lifecycle.RenewalConfig
+	PollInterval  time.Duration
+	LeaseTTL      time.Duration
+	CallTimeout   time.Duration
+	Bootstrap     BootstrapConfig
+	RenewalPolicy renewal.Policy
 	// RenewalPolicyVersion changes whenever policy meaning or configuration
 	// changes, so stopped schedules are reconsidered without rewriting history.
 	RenewalPolicyVersion string
@@ -36,7 +37,8 @@ type WorkerConfig struct {
 }
 
 func DefaultWorkerConfig() WorkerConfig {
-	return WorkerConfig{PollInterval: time.Second, LeaseTTL: 30 * time.Second, CallTimeout: 20 * time.Second, Renewal: lifecycle.DefaultRenewalConfig(), RenewalPolicyVersion: "personal-v1", HistoryRetention: 30 * 24 * time.Hour}
+	config := renewal.DefaultConfig()
+	return WorkerConfig{PollInterval: time.Second, LeaseTTL: 30 * time.Second, CallTimeout: 20 * time.Second, RenewalPolicy: renewal.Personal{Config: config}, RenewalPolicyVersion: "personal-v1", HistoryRetention: 30 * 24 * time.Hour}
 }
 
 func (c WorkerConfig) validate() error {
@@ -88,7 +90,10 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	if len(providers.Renew) > 0 && !validProviderName(config.RenewalPolicyVersion) {
+	if len(providers.Inspect) > 0 && config.RenewalPolicy == nil {
+		return nil, fmt.Errorf("managed inspection worker requires a renewal policy")
+	}
+	if (len(providers.Inspect) > 0 || len(providers.Renew) > 0) && !validProviderName(config.RenewalPolicyVersion) {
 		return nil, fmt.Errorf("managed renewal worker requires a policy version")
 	}
 	create, err := NewExecutor(store, providers.Create)
@@ -113,7 +118,7 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 	var maintenance *MaintenanceExecutor
 	inspectConfigured := make(map[string]struct{}, len(providers.Inspect))
 	if len(providers.Inspect) > 0 {
-		maintenance, err = NewMaintenanceExecutor(store, providers.Inspect, config.Renewal, config.RenewalPolicyVersion)
+		maintenance, err = NewMaintenanceExecutor(store, providers.Inspect, config.RenewalPolicy, config.RenewalPolicyVersion, config.CallTimeout)
 		if err != nil {
 			return nil, err
 		}

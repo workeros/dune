@@ -118,7 +118,7 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 
 `TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
 
-`make test TEST_PKGS=./internal/lifecycle` 验证个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实及配置边界。该包只验证纯策略计算；持久巡检另见下方回归。两者都不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
+`go test ./pkg/renewal ./internal/lifecycle` 验证公开策略契约和个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实、目标必须延长期限及配置边界。该检查只验证纯策略计算；持久巡检另见下方回归。两者都不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
 
 生命周期 SQL 协调使用 `make test-race TEST_PKGS=./internal/metadata TEST_FLAGS='-run Operation -count=1 -timeout=180s'`，启用上述 PostgreSQL 配置后验证跨连接池领取、重开恢复、业务互斥、数据库租约到期、暂停后的条件写入、旧 worker 拒绝和等待连接时的维护串行化。`TestCommitAcknowledgementLossIsNotReplayed` 另覆盖意图、领取及完成的回执丢失；原生备份测试保存实际 unknown 操作行。协调夹具使用已有 Runner 元数据，没有模拟或调用 Managed 提供方，不能用这些结果替代外部副作用与完整阶段恢复验收。
 
@@ -142,7 +142,7 @@ Managed 阶段 worker 使用 `go test -race ./internal/managed ./internal/metada
 
 Managed 首次连接确认使用 `go test -race ./pkg/gateway ./internal/metadata -run 'DaemonOnlineCallback|ManagedCreateFinishes|AttachedMachineOnline' -count=1 -timeout=120s`。Gateway 回归检查回调位于输入确认和集群 Publish 之后、本机路由可见之前，失败或超时不暴露路由，并隔离回调对绑定快照的修改。metadata 在 SQLite/PostgreSQL 检查 Bootstrap 前拒绝、资源和绑定复核、精确集群 route、提交回执丢失及重连幂等；PostgreSQL 子例需要专用测试库。这里确认的是可信 Gateway 观察与持久创建状态的衔接，尚不证明某个真实提供方已成功安装并回连。
 
-Managed 巡检和续期执行使用 `go test -race ./internal/lifecycle ./pkg/fabric ./internal/managed ./internal/metadata -run 'Renewal|Inspection|ConfirmedGone|FirstOnline' -count=1 -timeout=240s`。SQLite/PostgreSQL 元数据回归检查数据库时钟候选、跨池单次领取、租约续约与旧修订拒绝、策略版本重算、unknown 不覆盖旧到期事实、首次在线重新激活、确认 Gone 原子关闭访问、冻结计划单次消费、互斥操作阻塞、过期目标、提交回执丢失及原生备份恢复。worker 回归检查只读巡检、首次 Renew 与 Reconcile 的权限分离、稳定动作身份、确认期限、错误字段丢弃、deadline 独立落库、长调用续租、能力过滤和优先级。适配器仍为可信夹具；这些结果证明 Dune 的调用编排和落库边界，不证明真实提供方已执行续期、具备动作去重或旧执行者 fencing。
+Managed 巡检和续期执行使用 `go test -race ./pkg/renewal ./internal/lifecycle ./pkg/fabric ./internal/managed ./internal/metadata ./internal/webapp -run 'Renewal|Inspection|Policy|ConfirmedGone|FirstOnline|RunnerStatus' -count=1 -timeout=240s`。SQLite/PostgreSQL 元数据回归检查数据库时钟候选、跨池单次领取、租约续约与旧修订拒绝、策略版本重算、unknown 不覆盖旧到期事实、首次在线重新激活、确认 Gone 原子关闭访问、冻结计划单次消费、互斥操作阻塞、过期目标、提交回执丢失及原生备份恢复。自定义策略回归检查有界公开输入、账号状态、SQL 事务外回调、独立 deadline、错误/非法结果固定化、目标安全验证、回调期间状态变化拒绝及状态 API 字段。worker 回归检查只读巡检、首次 Renew 与 Reconcile 的权限分离、稳定动作身份、确认期限、错误字段丢弃、deadline 独立落库、长调用续租、能力过滤和优先级。适配器仍为可信夹具；这些结果证明 Dune 的调用编排和落库边界，不证明真实提供方已执行续期、具备动作去重或旧执行者 fencing。
 
 Managed 销毁接受阶段使用 `go test -race ./internal/authorization ./internal/managed ./internal/metadata -run 'ManagedDestroy|DestroyChecks|DestroyRejects|Discovery' -count=1 -timeout=180s`。SQLite/PostgreSQL 回归覆盖 `runner.destroy/managed` 的固定身份、Fabric 和 binding scope，事务内浏览器复核，并发幂等、冲突生命周期互斥、提交回执丢失、访问/续期/enrollment/机器/票据的原子失效、无机器时直接确认关闭、集群实例关闭待办快照，以及提供方已确认 Gone 时收敛完成。
 

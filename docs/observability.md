@@ -23,6 +23,8 @@
 
 `managed.provider_call` 在适配器返回后、Dune 校验全部结果字段及提交 SQL 之前发出。它的 outcome 表示原始 provider 枚举或调用错误的保守归一化，不代表动作已经持久提交；例如 provider 报告 `succeeded` 后仍可能因字段契约或执行租约失效而被拒绝。普通错误统一为 `unknown`，deadline 为 `timed_out`，未知枚举为 `invalid`。Availability 的有效公开结果归一为 `available` 或 `unavailable`，不会记录具体固定原因或 SDK 错误。确认后的权威状态仍以 Managed Operation、action 和 resource 记录为准。
 
+RenewalPolicy 的权威结果保存在资源维护计划中，并通过已授权的 Operation/Runner 状态返回策略版本、固定原因、观测时间、下次检查和冻结续期目标。策略错误正文不进入状态或事件；错误与非法决定分别归一为 `POLICY_ERROR`、`POLICY_INVALID` 并等待重新巡检。自定义原因属于公开状态字段，策略实现必须只返回稳定、非敏感的短代码。
+
 租约故障事件只在业务 context 仍有效时发送，正常 `Shutdown`、`Close` 或父 context 取消不会制造失败。owner 事件包含 target、原 owner boot、incarnation、generation 和 epoch；实例准入事件只包含本次 boot ID 和固定失败阶段。两者都不附带 SQL/目录错误正文、数据库地址或配置指纹。事件是失败前的尽力投递，不能阻止既定的保守关闭。
 
 `health/ready` 的 Gateway 数量和 `App.Readiness()` 适合读取当前本机快照；结构化事件适合计算连接/流变化、跨实例比例、耗时和容量拒绝。可信运维宿主还可调用 `App.ManagedStatusSnapshot(ctx)`：它用一个数据库时钟快照返回 Managed Runner、已知/可访问资源、unknown/timed-out Operation、当前策略下的续期积压、配置提前量内的到期风险和残留资源数量，不返回具体主体或引用。没有当前维护决定、策略版本变化、检查已到期或已有冻结续期决定都计入 backlog；访问已关闭但未 Gone 的资源，以及没有 machine 且生命周期 unknown/timed-out/failed 的资源计入 residual。调用方须自行鉴权，此方法没有普通用户 HTTP 路由。

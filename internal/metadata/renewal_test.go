@@ -10,6 +10,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/renewal"
 )
 
 func readyManagedResource(t *testing.T, s *Store, user identity.User, sessionHash string) (lifecycle.Creation, Machine) {
@@ -20,6 +21,40 @@ func readyManagedResource(t *testing.T, s *Store, user identity.User, sessionHas
 		t.Fatal(err)
 	}
 	return created, machine
+}
+
+func TestManagedRenewalDecisionRejectsChangedPolicyInput(t *testing.T) {
+	ctx := context.Background()
+	s, _, user, sessionHash := managedFixture(t, "sqlite")
+	created, _ := readyManagedResource(t, s, user, sessionHash)
+	claim, err := s.ClaimManagedInspection(ctx, created.Runner.ID, "enterprise-v1", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+	inspection := lifecycle.ResourceInspection{Status: lifecycle.InspectionConfirmed, ResourceRef: claim.ResourceRef, ExpiresAt: expires}
+	input, err := s.ManagedRenewalPolicyInput(ctx, claim, inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.PrincipalID != user.ID || !input.PrincipalEnabled || input.Namespace != user.Namespace || input.RunnerID != created.Runner.ID || input.FabricID != "sandbox" || input.CreatedAt.IsZero() || !input.State.EverReady {
+		t.Fatal("policy input did not preserve the accepted create identity and lifecycle facts", input)
+	}
+	before, err := s.ManagedResource(ctx, created.Runner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPrincipalEnabled(ctx, user.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	decision := renewal.Decision{Reason: "ENTERPRISE_WAIT", RecheckAt: input.Now.Add(time.Minute)}
+	if _, err := s.RecordManagedRenewalDecision(ctx, claim, "enterprise-v1", input, inspection, decision); !errors.Is(err, lifecycle.ErrLeaseLost) {
+		t.Fatal("a policy decision committed after its authoritative input changed", err)
+	}
+	after, err := s.ManagedResource(ctx, created.Runner.ID)
+	if err != nil || !after.ExpiresAt.Equal(before.ExpiresAt) {
+		t.Fatal("rejected decision persisted stale provider facts", before, after, err)
+	}
 }
 
 func TestManagedInspectionPersistsRenewalDecision(t *testing.T) {

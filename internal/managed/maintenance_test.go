@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/fabric"
+	"github.com/aiomni/dune/pkg/renewal"
 )
 
 type inspectProvider struct {
@@ -46,7 +47,7 @@ func (p *inspectProvider) Inspect(ctx context.Context, call fabric.InspectCall) 
 
 func inspectionWorkerConfig() WorkerConfig {
 	config := testWorkerConfig()
-	config.Renewal = lifecycle.DefaultRenewalConfig()
+	config.RenewalPolicy = renewal.Personal{Config: renewal.DefaultConfig()}
 	config.RenewalPolicyVersion = "personal-v1"
 	return config
 }
@@ -82,7 +83,7 @@ func TestMaintenanceExecutorPersistsBoundProviderFacts(t *testing.T) {
 	expires := time.Now().Add(5 * time.Minute).Truncate(time.Millisecond)
 	provider := &inspectProvider{result: fabric.Inspection{Status: fabric.InspectionConfirmed, ResourceRef: "bootstrap-resource", ExpiresAt: expires}}
 	providers := map[string]fabric.InspectProvider{"sandbox": provider}
-	executor, err := NewMaintenanceExecutor(fixture.store, providers, lifecycle.DefaultRenewalConfig(), "personal-v1")
+	executor, err := NewMaintenanceExecutor(fixture.store, providers, renewal.Personal{Config: renewal.DefaultConfig()}, "personal-v1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestMaintenanceExecutorTreatsProviderErrorsAsUnknown(t *testing.T) {
 				result: fabric.Inspection{Status: fabric.InspectionConfirmed, ResourceRef: "wrong-resource", Gone: true},
 				err:    providerErr,
 			}
-			executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, lifecycle.DefaultRenewalConfig(), "personal-v1")
+			executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, renewal.Personal{Config: renewal.DefaultConfig()}, "personal-v1", time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,18 +154,22 @@ func TestMaintenanceExecutorTreatsProviderErrorsAsUnknown(t *testing.T) {
 func TestMaintenanceExecutorRejectsInvalidConfigurationAndFacts(t *testing.T) {
 	fixture := newServiceFixture(t)
 	claimed := readyResourceForInspection(t, fixture)
-	config := lifecycle.DefaultRenewalConfig()
+	config := renewal.DefaultConfig()
+	policy := renewal.Personal{Config: config}
 	provider := &inspectProvider{result: fabric.Inspection{Status: fabric.InspectionConfirmed, ResourceRef: "bootstrap-resource"}}
-	if _, err := NewMaintenanceExecutor(nil, nil, config, "personal-v1"); err == nil {
+	if _, err := NewMaintenanceExecutor(nil, nil, policy, "personal-v1", time.Second); err == nil {
 		t.Fatal("maintenance executor accepted no shared metadata")
 	}
-	if _, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{" attached": provider}, config, "personal-v1"); err == nil {
+	if _, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{" attached": provider}, policy, "personal-v1", time.Second); err == nil {
 		t.Fatal("maintenance executor accepted an invalid provider namespace")
 	}
-	if _, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, lifecycle.RenewalConfig{}, "personal-v1"); err == nil {
-		t.Fatal("maintenance executor accepted invalid renewal policy")
+	if _, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, nil, "personal-v1", time.Second); err == nil {
+		t.Fatal("maintenance executor accepted no renewal policy")
 	}
-	executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, config, "personal-v1")
+	if _, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, policy, "personal-v1", 0); err == nil {
+		t.Fatal("maintenance executor accepted an unbounded policy call")
+	}
+	executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, policy, "personal-v1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +183,96 @@ func TestMaintenanceExecutorRejectsInvalidConfigurationAndFacts(t *testing.T) {
 	if _, err := fixture.store.ManagedRenewalSchedule(fixture.ctx, claimed.RunnerID); err != nil {
 		t.Fatal("invalid provider facts removed the durable claim", err)
 	}
-	missing, err := NewMaintenanceExecutor(fixture.store, nil, config, "personal-v1")
+	missing, err := NewMaintenanceExecutor(fixture.store, nil, policy, "personal-v1", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := missing.Execute(fixture.ctx, fixture.ctx, claim); !errors.Is(err, ErrProviderUnavailable) {
 		t.Fatal("missing provider was not reported", err)
+	}
+}
+
+func TestMaintenanceExecutorUsesCustomPolicyOutsideTransaction(t *testing.T) {
+	fixture := newServiceFixture(t)
+	claimed := readyResourceForInspection(t, fixture)
+	expires := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+	provider := &inspectProvider{result: fabric.Inspection{Status: fabric.InspectionConfirmed, ResourceRef: "bootstrap-resource", ExpiresAt: expires}}
+	var captured renewal.Input
+	policyHadDeadline := false
+	policy := renewal.PolicyFunc(func(ctx context.Context, input renewal.Input) (renewal.Decision, error) {
+		captured = input
+		_, policyHadDeadline = ctx.Deadline()
+		if _, err := fixture.store.ManagedResource(fixture.ctx, input.RunnerID); err != nil {
+			return renewal.Decision{}, err
+		}
+		return renewal.Decision{Renew: true, Until: input.Now.Add(2 * time.Hour), Reason: "ENTERPRISE_RENEW"}, nil
+	})
+	executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, policy, "enterprise-v7", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, claimed.RunnerID, "enterprise-v7", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(fixture.ctx, fixture.ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if !policyHadDeadline || captured.PrincipalID != claimed.PrincipalID || !captured.PrincipalEnabled || captured.Namespace != claimed.Namespace || captured.RunnerID != claimed.RunnerID || captured.FabricID != claimed.FabricID || captured.CreatedAt.IsZero() || !captured.State.EverReady || !captured.State.FactsConfirmed || !captured.State.ExpiresAt.Equal(expires) {
+		t.Fatal("custom policy did not receive the authoritative bounded input", captured)
+	}
+	schedule, err := fixture.store.ManagedRenewalSchedule(fixture.ctx, claimed.RunnerID)
+	if err != nil || schedule.PolicyVersion != "enterprise-v7" || schedule.Reason != "ENTERPRISE_RENEW" || !schedule.RenewUntil.Equal(captured.Now.Add(2*time.Hour)) || !schedule.NextCheckAt.IsZero() {
+		t.Fatal("custom policy decision was not durably persisted", schedule, err)
+	}
+}
+
+func TestMaintenanceExecutorPersistsPolicyFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  renewal.Policy
+		reason  string
+		timeout time.Duration
+	}{
+		{name: "error", policy: renewal.PolicyFunc(func(context.Context, renewal.Input) (renewal.Decision, error) {
+			return renewal.Decision{}, errors.New("private policy failure")
+		}), reason: "POLICY_ERROR"},
+		{name: "invalid", policy: renewal.PolicyFunc(func(context.Context, renewal.Input) (renewal.Decision, error) {
+			return renewal.Decision{Renew: true, Reason: "unsafe"}, nil
+		}), reason: "POLICY_INVALID"},
+		{name: "deadline", policy: renewal.PolicyFunc(func(ctx context.Context, _ renewal.Input) (renewal.Decision, error) {
+			<-ctx.Done()
+			return renewal.Decision{}, ctx.Err()
+		}), reason: "POLICY_ERROR", timeout: 30 * time.Millisecond},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newServiceFixture(t)
+			claimed := readyResourceForInspection(t, fixture)
+			provider := &inspectProvider{result: fabric.Inspection{Status: fabric.InspectionConfirmed, ResourceRef: "bootstrap-resource", ExpiresAt: time.Now().Add(time.Hour)}}
+			policyTimeout := test.timeout
+			if policyTimeout == 0 {
+				policyTimeout = time.Second
+			}
+			executor, err := NewMaintenanceExecutor(fixture.store, map[string]fabric.InspectProvider{"sandbox": provider}, test.policy, "enterprise-v8", policyTimeout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, claimed.RunnerID, "enterprise-v8", wire.ID(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := executor.Execute(fixture.ctx, fixture.ctx, claim); err != nil {
+				t.Fatal("policy failure escaped the durable scheduler", err)
+			}
+			schedule, err := fixture.store.ManagedRenewalSchedule(fixture.ctx, claimed.RunnerID)
+			if err != nil || schedule.Reason != test.reason || schedule.NextCheckAt.IsZero() || !schedule.RenewUntil.IsZero() {
+				t.Fatal("policy failure was not durably normalized", schedule, err)
+			}
+			if delta := schedule.NextCheckAt.Sub(schedule.ObservedAt); delta <= 0 || delta > renewalPolicyFailureRecheck {
+				t.Fatal("policy failure did not get a bounded retry", delta)
+			}
+		})
 	}
 }
 

@@ -475,3 +475,25 @@ func TestStatusShowsDurableStageWithoutProviderActionKeys(t *testing.T) {
 		t.Fatal("authorized collaborator could not read the Runner lifecycle", sharedStatus, err)
 	}
 }
+
+func TestRunnerStatusIncludesRenewalDecision(t *testing.T) {
+	fixture := newServiceFixture(t)
+	service := newService(t, fixture, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return allowDecision(), nil
+	}), nil)
+	created := readyResourceForInspection(t, fixture)
+	claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, created.RunnerID, "personal-v1", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := fixture.store.RecordManagedInspection(fixture.ctx, claim, "personal-v1", lifecycle.DefaultRenewalConfig(), lifecycle.ResourceInspection{
+		Status: lifecycle.InspectionConfirmed, ResourceRef: claim.ResourceRef, ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.RunnerStatus(fixture.ctx, fixture.cookie, created.RunnerID)
+	if err != nil || status.RenewalPolicyVersion != schedule.PolicyVersion || status.RenewalReason != schedule.Reason || !status.RenewalObservedAt.Equal(schedule.ObservedAt) || !status.RenewalNextCheckAt.Equal(schedule.NextCheckAt) || !status.RenewalUntil.Equal(schedule.RenewUntil) {
+		t.Fatal("Runner status omitted its durable renewal decision", status, schedule, err)
+	}
+}

@@ -8,10 +8,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/aiomni/dune/internal/lifecycle"
 	managedmodule "github.com/aiomni/dune/internal/managed"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/fabric"
+	"github.com/aiomni/dune/pkg/renewal"
 )
 
 // ManagedProviders contains the capabilities required for each configured
@@ -60,6 +60,10 @@ type ManagedOptions struct {
 	Templates []fabric.Template
 	Providers ManagedProviders
 	Worker    ManagedWorkerOptions
+	// RenewalPolicy replaces the personal timing policy. Nil selects the policy
+	// built from Worker renewal settings. Its declared version must change when
+	// custom behavior or private configuration changes across a cluster.
+	RenewalPolicy renewal.Policy
 }
 
 type managedAssembly struct {
@@ -67,6 +71,7 @@ type managedAssembly struct {
 	availability        map[string]fabric.AvailabilityProvider
 	providers           managedmodule.ProviderSet
 	worker              managedmodule.WorkerConfig
+	renewBefore         time.Duration
 	destroyCloseTimeout time.Duration
 	fingerprint         string
 }
@@ -135,9 +140,16 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 		}
 	}
 	workerOptions := options.Worker
-	renewal := lifecycle.RenewalConfig{
+	renewalConfig := renewal.Config{
 		Enabled: workerOptions.RenewalEnabled, ExtendBy: workerOptions.ExtendBy,
 		RenewBefore: workerOptions.RenewBefore, FirstConnectionGrace: workerOptions.FirstConnectionGrace,
+	}
+	if err := renewalConfig.Validate(); err != nil {
+		return nil, err
+	}
+	policy := options.RenewalPolicy
+	if policy == nil {
+		policy = renewal.Personal{Config: renewalConfig}
 	}
 	if workerOptions.DestroyAccessCloseTimeout < 0 || workerOptions.DestroyAccessCloseTimeout > 10*time.Minute || workerOptions.EnrollmentLifetime < time.Second || workerOptions.EnrollmentLifetime > 10*time.Minute ||
 		workerOptions.HistoryRetention < 24*time.Hour || workerOptions.HistoryRetention > 366*24*time.Hour {
@@ -145,8 +157,8 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 	}
 	worker := managedmodule.WorkerConfig{
 		PollInterval: workerOptions.PollInterval, LeaseTTL: workerOptions.LeaseTTL, CallTimeout: workerOptions.CallTimeout,
-		Bootstrap: managedmodule.BootstrapConfig{PublicURL: urls.PublicURL, GatewayURL: urls.GatewayURL, Version: workerOptions.BootstrapVersion, EnrollmentLifetime: workerOptions.EnrollmentLifetime},
-		Renewal:   renewal, RenewalPolicyVersion: workerOptions.RenewalPolicyVersion,
+		Bootstrap:     managedmodule.BootstrapConfig{PublicURL: urls.PublicURL, GatewayURL: urls.GatewayURL, Version: workerOptions.BootstrapVersion, EnrollmentLifetime: workerOptions.EnrollmentLifetime},
+		RenewalPolicy: policy, RenewalPolicyVersion: workerOptions.RenewalPolicyVersion,
 		HistoryRetention: workerOptions.HistoryRetention,
 	}
 	// NewWorker performs the final provider-name and duration validation after
@@ -157,14 +169,14 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 		PollInterval, LeaseTTL, CallTimeout             time.Duration
 		EnrollmentLifetime, DestroyCloseTimeout         time.Duration
 		HistoryRetention                                time.Duration
-		Renewal                                         lifecycle.RenewalConfig
+		Renewal                                         renewal.Config
 	}{
 		Catalog: catalog.Fingerprint(), Providers: keys, BootstrapVersion: workerOptions.BootstrapVersion,
 		RenewalPolicyVersion: workerOptions.RenewalPolicyVersion, PollInterval: workerOptions.PollInterval,
 		LeaseTTL: workerOptions.LeaseTTL, CallTimeout: workerOptions.CallTimeout,
 		EnrollmentLifetime: workerOptions.EnrollmentLifetime, DestroyCloseTimeout: workerOptions.DestroyAccessCloseTimeout,
 		HistoryRetention: workerOptions.HistoryRetention,
-		Renewal:          renewal,
+		Renewal:          renewalConfig,
 	}
 	encoded, err := json.Marshal(description)
 	if err != nil {
@@ -178,7 +190,7 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 			Create: options.Providers.Create, Bootstrap: options.Providers.Bootstrap,
 			Inspect: options.Providers.Inspect, Renew: options.Providers.Renew, Destroy: options.Providers.Destroy, Candidate: options.Providers.Candidate,
 		},
-		worker: worker, destroyCloseTimeout: workerOptions.DestroyAccessCloseTimeout,
+		worker: worker, renewBefore: workerOptions.RenewBefore, destroyCloseTimeout: workerOptions.DestroyAccessCloseTimeout,
 		fingerprint: hex.EncodeToString(sum[:]),
 	}, nil
 }

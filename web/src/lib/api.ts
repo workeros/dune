@@ -40,7 +40,8 @@ export type ManagedTemplate = { fabric_id: string; id: string; version: string; 
 export type ManagedOperation = {
   id: string; runner_id: string; fabric_id: string; binding_revision: number; action: "create" | "renew" | "destroy";
   created_at: string; finished: boolean; outcome?: string; stage?: string; provider_outcome?: string; resource_ref?: string;
-  expires_at?: string; access_closed: boolean; access_close_outcome?: string; access_close_deadline?: string;
+  expires_at?: string; renewal_policy_version?: string; renewal_reason?: string; renewal_observed_at?: string; renewal_next_check_at?: string; renewal_until?: string;
+  access_closed: boolean; access_close_outcome?: string; access_close_deadline?: string;
 };
 export type ManagedCreation = { runner: Runner; operation: ManagedOperation };
 export type ManagedReview = {

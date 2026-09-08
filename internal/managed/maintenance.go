@@ -5,23 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/fabric"
+	"github.com/aiomni/dune/pkg/renewal"
 )
+
+const renewalPolicyFailureRecheck = 30 * time.Second
 
 type MaintenanceExecutor struct {
 	store         *metadata.Store
 	providers     map[string]fabric.InspectProvider
-	config        lifecycle.RenewalConfig
+	policy        renewal.Policy
 	policyVersion string
+	policyTimeout time.Duration
 }
 
-func NewMaintenanceExecutor(store *metadata.Store, providers map[string]fabric.InspectProvider, config lifecycle.RenewalConfig, policyVersion string) (*MaintenanceExecutor, error) {
-	if store == nil || config.Validate() != nil || !validProviderName(policyVersion) {
+func NewMaintenanceExecutor(store *metadata.Store, providers map[string]fabric.InspectProvider, policy renewal.Policy, policyVersion string, policyTimeout time.Duration) (*MaintenanceExecutor, error) {
+	if store == nil || policy == nil || !validProviderName(policyVersion) || policyTimeout <= 0 || policyTimeout > 10*time.Minute {
 		return nil, fmt.Errorf("invalid managed renewal configuration")
 	}
 	copy := make(map[string]fabric.InspectProvider, len(providers))
@@ -31,7 +36,7 @@ func NewMaintenanceExecutor(store *metadata.Store, providers map[string]fabric.I
 		}
 		copy[id] = provider
 	}
-	return &MaintenanceExecutor{store: store, providers: copy, config: config, policyVersion: policyVersion}, nil
+	return &MaintenanceExecutor{store: store, providers: copy, policy: policy, policyVersion: policyVersion, policyTimeout: policyTimeout}, nil
 }
 
 func validProviderName(value string) bool {
@@ -59,8 +64,8 @@ func inspectionResult(providerCtx context.Context, inspection fabric.Inspection,
 	return lifecycle.ResourceInspection{Status: lifecycle.InspectionConfirmed, ResourceRef: inspection.ResourceRef, ExpiresAt: inspection.ExpiresAt, Gone: inspection.Gone}, nil
 }
 
-// Execute inspects one claimed resource outside the SQL transaction, then
-// atomically saves the trusted facts and resulting personal renewal decision.
+// Execute inspects one claimed resource and evaluates its policy outside SQL
+// transactions, then atomically rechecks the snapshot and saves the result.
 func (e *MaintenanceExecutor) Execute(ctx context.Context, providerCtx context.Context, claimed lifecycle.RenewalSchedule) error {
 	provider, ok := e.providers[claimed.FabricID]
 	if !ok {
@@ -73,6 +78,18 @@ func (e *MaintenanceExecutor) Execute(ctx context.Context, providerCtx context.C
 	if resultErr != nil {
 		return resultErr
 	}
-	_, err = e.store.RecordManagedInspection(ctx, claimed, e.policyVersion, e.config, result)
+	input, err := e.store.ManagedRenewalPolicyInput(ctx, claimed, result)
+	if err != nil {
+		return err
+	}
+	policyCtx, cancel := context.WithTimeout(ctx, e.policyTimeout)
+	decision, policyErr := e.policy.Decide(policyCtx, input)
+	cancel()
+	if policyErr != nil {
+		decision = renewal.Decision{Reason: "POLICY_ERROR", RecheckAt: input.Now.Add(renewalPolicyFailureRecheck)}
+	} else if renewal.ValidateDecision(input, decision) != nil {
+		decision = renewal.Decision{Reason: "POLICY_INVALID", RecheckAt: input.Now.Add(renewalPolicyFailureRecheck)}
+	}
+	_, err = e.store.RecordManagedRenewalDecision(ctx, claimed, e.policyVersion, input, result, decision)
 	return err
 }

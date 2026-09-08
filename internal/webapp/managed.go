@@ -10,21 +10,26 @@ import (
 )
 
 type operationView struct {
-	ID                  string     `json:"id"`
-	RunnerID            string     `json:"runner_id"`
-	FabricID            string     `json:"fabric_id"`
-	BindingRevision     int64      `json:"binding_revision"`
-	Action              string     `json:"action"`
-	CreatedAt           time.Time  `json:"created_at"`
-	Finished            bool       `json:"finished"`
-	Outcome             string     `json:"outcome,omitempty"`
-	Stage               string     `json:"stage,omitempty"`
-	ProviderOutcome     string     `json:"provider_outcome,omitempty"`
-	ResourceRef         string     `json:"resource_ref,omitempty"`
-	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
-	AccessClosed        bool       `json:"access_closed"`
-	AccessCloseOutcome  string     `json:"access_close_outcome,omitempty"`
-	AccessCloseDeadline *time.Time `json:"access_close_deadline,omitempty"`
+	ID                   string     `json:"id"`
+	RunnerID             string     `json:"runner_id"`
+	FabricID             string     `json:"fabric_id"`
+	BindingRevision      int64      `json:"binding_revision"`
+	Action               string     `json:"action"`
+	CreatedAt            time.Time  `json:"created_at"`
+	Finished             bool       `json:"finished"`
+	Outcome              string     `json:"outcome,omitempty"`
+	Stage                string     `json:"stage,omitempty"`
+	ProviderOutcome      string     `json:"provider_outcome,omitempty"`
+	ResourceRef          string     `json:"resource_ref,omitempty"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+	RenewalPolicyVersion string     `json:"renewal_policy_version,omitempty"`
+	RenewalReason        string     `json:"renewal_reason,omitempty"`
+	RenewalObservedAt    *time.Time `json:"renewal_observed_at,omitempty"`
+	RenewalNextCheckAt   *time.Time `json:"renewal_next_check_at,omitempty"`
+	RenewalUntil         *time.Time `json:"renewal_until,omitempty"`
+	AccessClosed         bool       `json:"access_closed"`
+	AccessCloseOutcome   string     `json:"access_close_outcome,omitempty"`
+	AccessCloseDeadline  *time.Time `json:"access_close_deadline,omitempty"`
 }
 
 type reviewView struct {
@@ -55,6 +60,19 @@ func statusResponse(status lifecycle.ManagedStatus) operationView {
 	if !status.ExpiresAt.IsZero() {
 		expires := status.ExpiresAt
 		view.ExpiresAt = &expires
+	}
+	view.RenewalPolicyVersion, view.RenewalReason = status.RenewalPolicyVersion, status.RenewalReason
+	if !status.RenewalObservedAt.IsZero() {
+		observed := status.RenewalObservedAt
+		view.RenewalObservedAt = &observed
+	}
+	if !status.RenewalNextCheckAt.IsZero() {
+		next := status.RenewalNextCheckAt
+		view.RenewalNextCheckAt = &next
+	}
+	if !status.RenewalUntil.IsZero() {
+		until := status.RenewalUntil
+		view.RenewalUntil = &until
 	}
 	view.AccessCloseOutcome = status.AccessCloseOutcome
 	if !status.AccessCloseDeadline.IsZero() {

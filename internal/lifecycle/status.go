@@ -9,6 +9,11 @@ type ManagedStatus struct {
 	Operation
 	Stage, ProviderOutcome, ResourceRef string
 	ExpiresAt                           time.Time
+	RenewalPolicyVersion                string
+	RenewalReason                       string
+	RenewalObservedAt                   time.Time
+	RenewalNextCheckAt                  time.Time
+	RenewalUntil                        time.Time
 	AccessClosed                        bool
 	AccessCloseOutcome                  string
 	AccessCloseDeadline                 time.Time

@@ -284,6 +284,12 @@ func (s *Service) operationStatus(ctx context.Context, operation lifecycle.Opera
 	} else if !errors.Is(err, metadata.ErrNotFound) {
 		return lifecycle.ManagedStatus{}, err
 	}
+	if schedule, err := s.store.ManagedRenewalSchedule(ctx, operation.RunnerID); err == nil {
+		status.RenewalPolicyVersion, status.RenewalReason = schedule.PolicyVersion, schedule.Reason
+		status.RenewalObservedAt, status.RenewalNextCheckAt, status.RenewalUntil = schedule.ObservedAt, schedule.NextCheckAt, schedule.RenewUntil
+	} else if !errors.Is(err, metadata.ErrNotFound) {
+		return lifecycle.ManagedStatus{}, err
+	}
 	switch operation.Action {
 	case "create":
 		status.Stage = "queued"

@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/lifecycle"
+	"github.com/aiomni/dune/pkg/renewal"
 )
 
 const maintenanceColumns = "runner_id,fabric_id,resource_ref,binding_revision,policy_version,reason,facts,observed_at,next_check_at,renew_until,worker,execution_revision,lease_until"
@@ -205,100 +205,166 @@ func (s *Store) RenewManagedInspectionLease(ctx context.Context, expected lifecy
 	return renewed, nil
 }
 
-// RecordManagedInspection saves one trusted fact read and the pure policy
-// decision in one transaction. A confirmed missing resource closes Managed
-// access immediately; unknown reads retain the last confirmed resource facts.
-func (s *Store) RecordManagedInspection(ctx context.Context, expected lifecycle.RenewalSchedule, policyVersion string, config lifecycle.RenewalConfig, inspection lifecycle.ResourceInspection) (lifecycle.RenewalSchedule, error) {
-	if !validPolicyVersion(policyVersion) || !validInspection(inspection) {
-		return lifecycle.RenewalSchedule{}, ErrInvalidArgument
+func (s *Store) managedRenewalPolicyInputTx(ctx context.Context, tx *sql.Tx, expected lifecycle.RenewalSchedule, inspection lifecycle.ResourceInspection, evaluatedAt time.Time) (renewal.Input, int64, error) {
+	if !validInspection(inspection) {
+		return renewal.Input{}, 0, ErrInvalidArgument
 	}
-	var saved lifecycle.RenewalSchedule
-	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		fabricID, bindingRevision, err := s.lockOperationRunner(ctx, tx, expected.RunnerID)
-		if err != nil {
-			return err
-		}
-		current, err := s.renewalScheduleTx(ctx, tx, expected.RunnerID)
-		if err != nil {
-			return err
-		}
-		now, err := s.databaseNow(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if fabricID != expected.FabricID || bindingRevision != expected.BindingRevision || !ownsRenewalSchedule(current, expected, now) {
-			return lifecycle.ErrLeaseLost
-		}
-		resource, err := scanManagedResource(tx.QueryRowContext(ctx, "SELECT "+resourceColumns+" FROM dune_managed_resources WHERE runner_id=$1", expected.RunnerID))
-		if err != nil {
-			return err
-		}
-		if resource.FabricID != expected.FabricID || resource.Ref != expected.ResourceRef || resource.Gone || resource.AccessClosed {
-			return lifecycle.ErrIntentConflict
-		}
-		if inspection.Status == lifecycle.InspectionConfirmed {
-			if inspection.ResourceRef != resource.Ref {
-				return lifecycle.ErrIntentConflict
-			}
-			if inspection.Gone {
-				if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET gone=TRUE,access_closed=TRUE WHERE runner_id=$1 AND gone=FALSE`, resource.RunnerID); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM dune_managed_enrollments WHERE runner_id=$1`, resource.RunnerID); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM dune_machines WHERE runner_id=$1`, resource.RunnerID); err != nil {
-					return err
-				}
-				resource.Gone, resource.AccessClosed = true, true
-			} else {
-				if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=$2 WHERE runner_id=$1 AND gone=FALSE AND access_closed=FALSE`, resource.RunnerID, inspection.ExpiresAt.UnixMilli()); err != nil {
-					return err
-				}
-				resource.ExpiresAt = optionalTime(inspection.ExpiresAt.UnixMilli())
-			}
-		}
-
-		var createFinished bool
-		var createOutcome string
-		if err := tx.QueryRowContext(ctx, `SELECT finished,outcome FROM dune_operations WHERE runner_id=$1 AND action='create'`, resource.RunnerID).Scan(&createFinished, &createOutcome); err != nil {
-			return err
-		}
-		var bootstrapOutcome string
-		err = tx.QueryRowContext(ctx, `SELECT outcome FROM dune_provider_actions WHERE operation_id=(SELECT operation_id FROM dune_managed_creations WHERE runner_id=$1) AND kind='bootstrap'`, resource.RunnerID).Scan(&bootstrapOutcome)
+	// Account state is policy input, so hold the principal through the final
+	// conditional write. The principal-before-Runner order matches mutations.
+	var owner string
+	if err := tx.QueryRowContext(ctx, `SELECT owner_id FROM dune_runners WHERE id=$1`, expected.RunnerID).Scan(&owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			bootstrapOutcome = ""
-		} else if err != nil {
-			return err
+			return renewal.Input{}, 0, ErrNotFound
 		}
-		var destroying, mutationPending bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dune_operations WHERE runner_id=$1 AND action='destroy'),EXISTS(SELECT 1 FROM dune_operations WHERE runner_id=$1 AND exclusive=TRUE) OR EXISTS(SELECT 1 FROM dune_provider_actions a JOIN dune_operations o ON o.id=a.operation_id WHERE o.runner_id=$1 AND a.completed_at=0)`, resource.RunnerID).Scan(&destroying, &mutationPending); err != nil {
-			return err
+		return renewal.Input{}, 0, err
+	}
+	principalQuery := `SELECT enabled FROM dune_principals WHERE id=$1`
+	if s.postgres {
+		principalQuery += ` FOR UPDATE`
+	}
+	var principalEnabled bool
+	if err := tx.QueryRowContext(ctx, principalQuery, owner).Scan(&principalEnabled); err != nil {
+		return renewal.Input{}, 0, err
+	}
+	fabricID, bindingRevision, err := s.lockOperationRunner(ctx, tx, expected.RunnerID)
+	if err != nil {
+		return renewal.Input{}, 0, err
+	}
+	current, err := s.renewalScheduleTx(ctx, tx, expected.RunnerID)
+	if err != nil {
+		return renewal.Input{}, 0, err
+	}
+	now, err := s.databaseNow(ctx, tx)
+	if err != nil {
+		return renewal.Input{}, 0, err
+	}
+	if fabricID != expected.FabricID || bindingRevision != expected.BindingRevision || !ownsRenewalSchedule(current, expected, now) {
+		return renewal.Input{}, 0, lifecycle.ErrLeaseLost
+	}
+	resource, err := scanManagedResource(tx.QueryRowContext(ctx, "SELECT "+resourceColumns+" FROM dune_managed_resources WHERE runner_id=$1", expected.RunnerID))
+	if err != nil {
+		return renewal.Input{}, 0, err
+	}
+	if resource.FabricID != expected.FabricID || resource.Ref != expected.ResourceRef || resource.Gone || resource.AccessClosed {
+		return renewal.Input{}, 0, lifecycle.ErrIntentConflict
+	}
+	if inspection.Status == lifecycle.InspectionConfirmed {
+		if inspection.ResourceRef != resource.Ref {
+			return renewal.Input{}, 0, lifecycle.ErrIntentConflict
 		}
-		state := lifecycle.RenewalState{
+		if inspection.Gone {
+			resource.Gone, resource.AccessClosed = true, true
+		} else {
+			resource.ExpiresAt = inspection.ExpiresAt
+		}
+	}
+
+	var principalID, namespace, createOutcome string
+	var created int64
+	var createFinished bool
+	if err := tx.QueryRowContext(ctx, `SELECT principal_id,identity_namespace,created_at,finished,outcome FROM dune_operations WHERE runner_id=$1 AND action='create'`, resource.RunnerID).Scan(&principalID, &namespace, &created, &createFinished, &createOutcome); err != nil {
+		return renewal.Input{}, 0, err
+	}
+	if principalID != owner {
+		return renewal.Input{}, 0, ErrConflict
+	}
+	var bootstrapOutcome string
+	err = tx.QueryRowContext(ctx, `SELECT action.outcome FROM dune_operations operation JOIN dune_provider_actions action ON action.operation_id=operation.id WHERE operation.runner_id=$1 AND operation.action='create' AND action.kind='bootstrap'`, resource.RunnerID).Scan(&bootstrapOutcome)
+	if errors.Is(err, sql.ErrNoRows) {
+		bootstrapOutcome = ""
+	} else if err != nil {
+		return renewal.Input{}, 0, err
+	}
+	var destroying, mutationPending bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dune_operations WHERE runner_id=$1 AND action='destroy'),
+		EXISTS(SELECT 1 FROM dune_operations WHERE runner_id=$1 AND exclusive=TRUE) OR
+		EXISTS(SELECT 1 FROM dune_operations operation JOIN dune_provider_actions action ON action.operation_id=operation.id WHERE operation.runner_id=$1 AND action.completed_at=0)`, resource.RunnerID).Scan(&destroying, &mutationPending); err != nil {
+		return renewal.Input{}, 0, err
+	}
+	if evaluatedAt.IsZero() {
+		evaluatedAt = time.UnixMilli(now).UTC()
+	}
+	input := renewal.Input{
+		Now: evaluatedAt, PrincipalID: principalID, PrincipalEnabled: principalEnabled, Namespace: namespace,
+		RunnerID: resource.RunnerID, FabricID: resource.FabricID, CreatedAt: optionalTime(created),
+		State: renewal.State{
 			Managed: true, ResourceRef: resource.Ref, ResourceConfirmedAt: resource.ConfirmedAt,
 			EverReady: createFinished && createOutcome == "succeeded", BootstrapFailed: bootstrapOutcome == "failed",
 			Destroying: destroying, MutationPending: mutationPending,
 			FactsConfirmed: inspection.Status == lifecycle.InspectionConfirmed, ResourceGone: resource.Gone, ExpiresAt: resource.ExpiresAt,
-		}
-		decision, err := lifecycle.DecideRenewal(time.UnixMilli(now).UTC(), config, state)
-		if err != nil {
-			return fmt.Errorf("invalid renewal policy: %w", err)
-		}
-		next, renew := optionalMillis(decision.RecheckAt), optionalMillis(decision.Until)
-		result, err := tx.ExecContext(ctx, `UPDATE dune_managed_maintenance SET policy_version=$2,reason=$3,facts=$4,observed_at=$5,next_check_at=$6,renew_until=$7,worker='',lease_until=0 WHERE runner_id=$1 AND worker=$8 AND execution_revision=$9 AND lease_until>`+s.databaseClock(), expected.RunnerID, policyVersion, decision.Reason, inspection.Status, now, next, renew, expected.Worker, expected.Revision)
+		},
+	}
+	return input, now, nil
+}
+
+// ManagedRenewalPolicyInput returns an authoritative database-clock snapshot
+// after validating the current inspection claim. It performs no writes, so a
+// caller-owned policy can run outside the SQL transaction.
+func (s *Store) ManagedRenewalPolicyInput(ctx context.Context, expected lifecycle.RenewalSchedule, inspection lifecycle.ResourceInspection) (renewal.Input, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return renewal.Input{}, conflict(err)
+	}
+	defer tx.Rollback()
+	input, _, err := s.managedRenewalPolicyInputTx(ctx, tx, expected, inspection, time.Time{})
+	if err != nil {
+		return renewal.Input{}, conflict(err)
+	}
+	return input, nil
+}
+
+// RecordManagedRenewalDecision atomically saves provider facts and a policy
+// decision after rechecking the exact input snapshot and inspection lease.
+// Confirmed deletion closes access; unknown reads retain confirmed expiry.
+func (s *Store) RecordManagedRenewalDecision(ctx context.Context, expected lifecycle.RenewalSchedule, policyVersion string, input renewal.Input, inspection lifecycle.ResourceInspection, decision renewal.Decision) (lifecycle.RenewalSchedule, error) {
+	if !validPolicyVersion(policyVersion) || !validInspection(inspection) || renewal.ValidateDecision(input, decision) != nil {
+		return lifecycle.RenewalSchedule{}, ErrInvalidArgument
+	}
+	var saved lifecycle.RenewalSchedule
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		currentInput, now, err := s.managedRenewalPolicyInputTx(ctx, tx, expected, inspection, input.Now)
 		if err != nil {
 			return err
 		}
-		n, err := result.RowsAffected()
+		if currentInput != input {
+			return lifecycle.ErrLeaseLost
+		}
+		if inspection.Status == lifecycle.InspectionConfirmed {
+			if inspection.Gone {
+				if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET gone=TRUE,access_closed=TRUE WHERE runner_id=$1 AND gone=FALSE`, input.RunnerID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM dune_managed_enrollments WHERE runner_id=$1`, input.RunnerID); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM dune_machines WHERE runner_id=$1`, input.RunnerID); err != nil {
+					return err
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=$2 WHERE runner_id=$1 AND gone=FALSE AND access_closed=FALSE`, input.RunnerID, inspection.ExpiresAt.UnixMilli()); err != nil {
+					return err
+				}
+			}
+		}
+
+		current, err := s.renewalScheduleTx(ctx, tx, expected.RunnerID)
 		if err != nil {
 			return err
 		}
-		if n != 1 {
+		next, renewUntil := optionalMillis(decision.RecheckAt), optionalMillis(decision.Until)
+		result, err := tx.ExecContext(ctx, `UPDATE dune_managed_maintenance SET policy_version=$2,reason=$3,facts=$4,observed_at=$5,next_check_at=$6,renew_until=$7,worker='',lease_until=0 WHERE runner_id=$1 AND worker=$8 AND execution_revision=$9 AND lease_until>`+s.databaseClock(), input.RunnerID, policyVersion, decision.Reason, inspection.Status, now, next, renewUntil, expected.Worker, expected.Revision)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
 			return lifecycle.ErrLeaseLost
 		}
 		current.PolicyVersion, current.Reason, current.Facts = policyVersion, decision.Reason, inspection.Status
-		current.ObservedAt, current.NextCheckAt, current.RenewUntil = time.UnixMilli(now).UTC(), optionalTime(next), optionalTime(renew)
+		current.ObservedAt, current.NextCheckAt, current.RenewUntil = time.UnixMilli(now).UTC(), optionalTime(next), optionalTime(renewUntil)
 		current.Worker, current.Until = "", time.Time{}
 		saved = current
 		return nil
@@ -307,6 +373,20 @@ func (s *Store) RecordManagedInspection(ctx context.Context, expected lifecycle.
 		return lifecycle.RenewalSchedule{}, err
 	}
 	return saved, nil
+}
+
+// RecordManagedInspection applies Dune's default pure policy. Production
+// workers use the same prepare/commit path for default and custom policies.
+func (s *Store) RecordManagedInspection(ctx context.Context, expected lifecycle.RenewalSchedule, policyVersion string, config lifecycle.RenewalConfig, inspection lifecycle.ResourceInspection) (lifecycle.RenewalSchedule, error) {
+	input, err := s.ManagedRenewalPolicyInput(ctx, expected, inspection)
+	if err != nil {
+		return lifecycle.RenewalSchedule{}, err
+	}
+	decision, err := renewal.Decide(input.Now, config, input.State)
+	if err != nil {
+		return lifecycle.RenewalSchedule{}, err
+	}
+	return s.RecordManagedRenewalDecision(ctx, expected, policyVersion, input, inspection, decision)
 }
 
 // ManagedRenewalSchedule is a trusted recovery/status read.

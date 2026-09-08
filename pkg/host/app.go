@@ -239,7 +239,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	var managedStatus *managedStatusConfig
 	if managedConfig != nil {
-		managedStatus = &managedStatusConfig{policyVersion: managedConfig.worker.RenewalPolicyVersion, expiryRiskWindow: managedConfig.worker.Renewal.RenewBefore}
+		managedStatus = &managedStatusConfig{policyVersion: managedConfig.worker.RenewalPolicyVersion, expiryRiskWindow: managedConfig.renewBefore}
 	}
 	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), managedDrain: make(chan struct{}), managedDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, observer: observer, managedStatus: managedStatus, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true

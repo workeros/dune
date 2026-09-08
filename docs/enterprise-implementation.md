@@ -530,3 +530,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 每个配置的 Fabric 新增独立只读 Availability 能力。模板发现先完成逐模板访问检查，再对同一 Fabric 至多调用一次且最多等待一秒；无权或静态禁用的模板不会触发状态读取。授权用户仍能看到暂不可创建的模板，公开原因只允许 `maintenance`、`capacity`、`configuration`、`unreachable` 和 `unknown`，SDK 错误及私有返回字段不进入响应。
 - 创建在保存 Runner、Operation 或请求幂等记录前重新读取 Availability。不可用时返回固定 503，Provider 不会收到 Create；状态恢复后同一宿主立即接受新请求，无需重启或改变配置指纹。该门控只控制新资源，worker 对既有资源的巡检、续期、核对、销毁和失败恢复不依赖 Availability。
 - 工作台优先选择当前可用模板，在选项中显示固定原因，并对不可用选择禁用参数与提交。结构化观测增加 `availability/read` 调用耗时和归一化结果，仅携带 Fabric。服务和宿主回归覆盖按 Fabric 去重、授权顺序、错误归一化、不落库、动态恢复、API 状态、配置完整性与事件字段；Go race、Web 类型与生产构建作为提交验证。这里的 Provider 是可信动态夹具，不能替代真实平台容量、权限或故障响应验收。
+
+### 已完成组件：可注入的 Managed 续期策略
+
+- 新增公开 `pkg/renewal`，定义策略输入、决定、函数适配器和个人默认实现。企业宿主可在 `ManagedOptions.RenewalPolicy` 注入策略；nil 沿用 worker 时间配置，语义或私有配置变化由调用方更新 `RenewalPolicyVersion`，使共享计划重新计算并参与集群准入。
+- 每次巡检先从数据库时钟和原 Create 范围构造输入，只暴露 principal、namespace、账号 enabled、Runner/Fabric、创建/首次确认时间与受控生命周期事实。策略在 SQL 事务外用独立有界 context 执行；提交事务重新构造并精确比较输入、资源绑定和领取修订，期间账号或生命周期变化会拒绝旧决定及巡检事实。
+- 公共验证器要求续期目标晚于已确认期限，并禁止对未确认、已过期、Gone、Bootstrap 失败、销毁或变更中的资源发起续期。策略错误和非法结果分别保存 `POLICY_ERROR`、`POLICY_INVALID`，不保存错误正文，30 秒后重新巡检。已授权状态 API 返回最后策略版本、原因、观测/复查时间和冻结目标，工作台显示原因与计划时间。
+- 回归覆盖默认行为、公开决定边界、自定义目标、SQL 事务外读取、deadline、错误归一化和回调期间账号变化栅栏。它验证 Dune 的策略替换与持久提交边界；真实企业规则、目录读取和某个平台 Renew 仍须随目标适配器完成验收。
