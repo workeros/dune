@@ -103,3 +103,7 @@ Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍
 冻结的 `renew_until` 由独立事务消费成自动 Renew Operation，同时保存原策略版本、绝对目标、稳定请求摘要和 Runner 业务互斥。事务在 principal → Runner 锁顺序下复核策略、观测、资源引用、绑定和数据库时钟；目标已过期会返回巡检，已有创建、续期或销毁操作则保持原计划不变。提交回执未知不返回执行权，恢复扫描只领取已持久化且租约到期的原 Operation。
 
 公开 `fabric.RenewProvider` 将首次 `Renew` 与只读 `ReconcileRenew` 分开。只有动作预约明确提交并再次复核执行权后才允许首次调用；动作携带原 issuer、execution revision、resource_ref 和冻结绝对目标。超时、unknown、进程重启和租约接管均只核对原动作，错误返回的伴随字段会丢弃。成功必须确认同一资源的到期时间不早于目标，才原子更新资源、完成 Operation 并立即安排下一次巡检；明确失败同样结束本次 Operation 并回到巡检。资源在派发前已经过期或访问关闭时，Operation 直接失败且不生成 Provider 动作。SQL 租约不能隔离外部迟到调用，适配器仍须按动作 ID 去重，并在可用时使用原 issuer/revision 做提供方侧 fencing。
+
+Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.destroy/managed` 访问检查。接受事务重新检查同一登录主体，固定 Fabric、resource_ref、binding revision 和访问关闭期限；随后一次性保存 Destroy Operation、暂停续期、把资源标为禁止访问，并删除 Managed enrollment、机器身份及级联的连接票据和 route。Runner、资源引用和操作记录继续保留用于清理与核对。并发重试返回原记录，提交回执未知不返回成功；机器删除后按原请求键重试时仍能恢复原 machine ID 和截止时间。已有冲突变更时不关闭访问，也不抢占 Runner 业务互斥。
+
+访问关闭与提供方删除是不同事实。有机器绑定的销毁先记录 `waiting` 和数据库时钟生成的固定 deadline；没有绑定可立即记为 `confirmed`。现有连接通过机器身份和票据失效机制退出，但这一检查点尚未把所有节点的流关闭确认写回，也未在 deadline 后发出 Destroy Provider 动作。提供方已经确认 Gone 的资源可直接把清理 Operation 收敛为 succeeded；其他已接受销毁在后续 worker 完成前仍保留 access_closed 和资源引用。

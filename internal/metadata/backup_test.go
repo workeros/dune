@@ -215,6 +215,47 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil || !consumed || renewalOperation.ID == "" || renewalOperation.RunnerID != renewedManaged.Runner.ID {
 		t.Fatal("backup renewal operation setup", renewalOperation, consumed, err)
 	}
+	destroyManaged, err := s.CreateManaged(ctx, externalUser, tokenHash(externalCookie), wire.ID(), managedSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyClaim, err := s.ClaimOperation(ctx, destroyManaged.Operation.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyCreate, dispatch, err := s.BeginProviderAction(ctx, destroyClaim, lifecycle.ActionRequest{Kind: "create", Digest: destroyClaim.Digest})
+	if err != nil || !dispatch {
+		t.Fatal("backup destroy create setup", dispatch, err)
+	}
+	if err := s.RecordProviderAction(ctx, destroyClaim, destroyCreate.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "restore-destroy-resource", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.YieldOperationLease(ctx, destroyClaim); err != nil {
+		t.Fatal(err)
+	}
+	destroyClaim, err = s.ClaimOperation(ctx, destroyManaged.Operation.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyBootstrap, dispatch, err := s.BeginManagedBootstrap(ctx, destroyClaim, tokenHash("restore destroy bootstrap inputs"), 10*time.Minute)
+	if err != nil || !dispatch {
+		t.Fatal("backup destroy Bootstrap setup", dispatch, err)
+	}
+	if err := s.RecordProviderAction(ctx, destroyClaim, destroyBootstrap.Action.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: destroyBootstrap.Action.ResourceRef}); err != nil {
+		t.Fatal(err)
+	}
+	destroySelection, err := s.RunnerResource(ctx, destroyManaged.Runner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyResource, err := s.ManagedResource(ctx, destroyManaged.Runner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedDestroy, err := s.CreateManagedDestroy(ctx, externalUser, tokenHash(externalCookie), wire.ID(), destroySelection, destroyResource, time.Minute)
+	if err != nil || savedDestroy.ID == "" || savedDestroy.ResourceRef != destroyResource.Ref || savedDestroy.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
+		t.Fatal("backup destroy operation setup", savedDestroy, err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

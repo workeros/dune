@@ -113,3 +113,28 @@ func (s *Service) Create(ctx context.Context, cookie, requestKey string, request
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
 	return s.store.CreateManaged(ctx, user, hash, requestKey, frozen)
 }
+
+// Destroy authenticates the current browser actor and checks the current
+// Managed Runner before atomically closing its access and accepting cleanup.
+// A successful result does not mean the provider resource has been deleted.
+func (s *Service) Destroy(ctx context.Context, cookie, requestKey, runnerID string, closeTimeout time.Duration) (lifecycle.ManagedDestruction, error) {
+	user, err := s.sessions.Authenticate(ctx, cookie)
+	if err != nil {
+		return lifecycle.ManagedDestruction{}, err
+	}
+	selected, decision, err := s.access.Resource(ctx, user, runnerID, false, "runner.destroy")
+	if err != nil {
+		return lifecycle.ManagedDestruction{}, err
+	}
+	if selected.Runner.Kind != "managed" {
+		return lifecycle.ManagedDestruction{}, authorization.ErrNotFound
+	}
+	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
+	defer cancel()
+	resource, err := s.store.ManagedResource(ctx, runnerID)
+	if err != nil {
+		return lifecycle.ManagedDestruction{}, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
+	return s.store.CreateManagedDestroy(ctx, user, hash, requestKey, selected, resource, closeTimeout)
+}

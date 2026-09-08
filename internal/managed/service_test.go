@@ -12,6 +12,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
@@ -265,5 +266,70 @@ func TestNewRequiresCompleteManagedAssembly(t *testing.T) {
 				t.Fatal("incomplete assembly accepted")
 			}
 		})
+	}
+}
+
+func TestDestroyChecksManagedRunnerAndClosesAccess(t *testing.T) {
+	fixture := newServiceFixture(t)
+	created := readyResourceForInspection(t, fixture)
+	var mu sync.Mutex
+	var requests []access.Request
+	service := newService(t, fixture, checkFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
+		return allowDecision(), nil
+	}), nil)
+	destroyed, err := service.Destroy(fixture.ctx, fixture.cookie, "destroy-1", created.RunnerID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destroyed.Action != "destroy" || destroyed.RunnerID != created.RunnerID || !destroyed.Exclusive || destroyed.AccessCloseOutcome != lifecycle.AccessCloseWaiting {
+		t.Fatal("destroy service did not return durable acceptance", destroyed)
+	}
+	mu.Lock()
+	got := append([]access.Request(nil), requests...)
+	mu.Unlock()
+	if len(got) != 1 || got[0].Operation != "runner.destroy" || got[0].Suboperation != "managed" || got[0].PrincipalID != fixture.user.ID || got[0].OwnerID != fixture.user.ID || got[0].Binding.RunnerID != created.RunnerID || got[0].Binding.FabricID != "sandbox" || got[0].Binding.Revision != 1 || got[0].Binding.MachineID == "" {
+		t.Fatal("destroy access decision lost its fixed Managed scope", got)
+	}
+	if resource, err := fixture.store.RunnerResource(fixture.ctx, created.RunnerID); err != nil || resource.Runner.Binding != nil {
+		t.Fatal("destroy did not revoke the current machine", resource, err)
+	}
+}
+
+func TestDestroyRejectsDeniedStaleAndAttachedRequests(t *testing.T) {
+	fixture := newServiceFixture(t)
+	created := readyResourceForInspection(t, fixture)
+	denied := newService(t, fixture, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return denyDecision(), nil
+	}), nil)
+	if _, err := denied.Destroy(fixture.ctx, fixture.cookie, "denied-destroy", created.RunnerID, time.Minute); !errors.Is(err, authorization.ErrNotFound) {
+		t.Fatal("denied destroy disclosed or changed the Runner", err)
+	}
+	if _, err := fixture.store.ManagedDestroy(fixture.ctx, fixture.user.ID, "denied-destroy"); !errors.Is(err, metadata.ErrNotFound) {
+		t.Fatal("denied destroy left durable state", err)
+	}
+
+	stale := newService(t, fixture, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return allowDecision(), nil
+	}), fixedSessions{user: fixture.user})
+	if _, err := stale.Destroy(fixture.ctx, "missing-browser-session", "stale-destroy", created.RunnerID, time.Minute); !errors.Is(err, identity.ErrUnauthorized) {
+		t.Fatal("destroy transaction trusted stale authentication", err)
+	}
+	if _, err := stale.Destroy(fixture.ctx, "missing-browser-session", "bad-timeout", created.RunnerID, -time.Second); !errors.Is(err, metadata.ErrInvalidArgument) {
+		t.Fatal("destroy accepted a negative close timeout", err)
+	}
+
+	token, _, err := fixture.store.IssueEnrollment(fixture.ctx, fixture.user.ID, "attached destroy target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, _, err := fixture.store.Enroll(fixture.ctx, token, "linux", "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stale.Destroy(fixture.ctx, "missing-browser-session", "attached-destroy", attached.RunnerID, time.Minute); !errors.Is(err, authorization.ErrNotFound) {
+		t.Fatal("Managed destroy accepted an Attached Runner", err)
 	}
 }

@@ -15,6 +15,11 @@ import (
 type Resource struct {
 	Runner            runner.Runner
 	OwnerID, OS, Arch string
+	// FabricID and BindingRevision remain authoritative when a Managed Runner
+	// has no machine. They let lifecycle access checks retain its fixed scope
+	// without pretending that an executable Binding exists.
+	FabricID        string
+	BindingRevision int64
 }
 type Page struct {
 	Items      []Resource
@@ -26,7 +31,7 @@ func scope(user identity.User, resource Resource) access.Scope {
 	if resource.Runner.Binding != nil {
 		out.Binding = *resource.Runner.Binding
 	} else {
-		out.Binding.RunnerID = resource.Runner.ID
+		out.Binding.RunnerID, out.Binding.FabricID, out.Binding.Revision = resource.Runner.ID, resource.FabricID, resource.BindingRevision
 	}
 	return out
 }

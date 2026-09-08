@@ -27,6 +27,7 @@ func scanResource(row interface{ Scan(...any) error }) (authorization.Resource, 
 		binding.RunnerID, binding.MachineID = resource.Runner.ID, machine.String
 		resource.Runner.Binding = &binding
 	}
+	resource.FabricID, resource.BindingRevision = binding.FabricID, binding.Revision
 	resource.OS, resource.Arch = osName.String, arch.String
 	return resource, nil
 }
