@@ -33,12 +33,18 @@ type Gateway struct {
 	drained                        chan struct{}
 	routes                         map[string]*route
 	sessions                       map[*yamux.Session]BindingContext
+	blocked                        map[string]chan struct{}
+	targetStreams                  map[string]int
 	slots                          chan struct{}
 	streams                        chan struct{}
 }
 
 func New() *Gateway {
-	return &Gateway{routes: map[string]*route{}, sessions: map[*yamux.Session]BindingContext{}, slots: make(chan struct{}, 256), streams: make(chan struct{}, 512), drained: make(chan struct{})}
+	return &Gateway{
+		routes: map[string]*route{}, sessions: map[*yamux.Session]BindingContext{},
+		blocked: map[string]chan struct{}{}, targetStreams: map[string]int{},
+		slots: make(chan struct{}, 256), streams: make(chan struct{}, 512), drained: make(chan struct{}),
+	}
 }
 
 func (g *Gateway) Online(target string) bool {
@@ -68,18 +74,49 @@ func (g *Gateway) routeError(target string, expected *route) *api.Error {
 	return &api.Error{Code: code, Detail: "reconnect SDK for current binding"}
 }
 
-func (g *Gateway) Disconnect(target string) {
+// Disconnect irreversibly rejects new connections and streams for target in
+// this Gateway incarnation, closes every existing target session, and returns a
+// channel that closes after their accepted streams and callbacks have exited.
+// Repeated calls return the same completion channel.
+func (g *Gateway) Disconnect(target string) <-chan struct{} {
 	g.mu.Lock()
+	done, exists := g.blocked[target]
+	if !exists {
+		done = make(chan struct{})
+		g.blocked[target] = done
+	}
 	var closeSessions []*yamux.Session
 	for sess, binding := range g.sessions {
 		if binding.Target == target {
 			closeSessions = append(closeSessions, sess)
 		}
 	}
+	if !exists {
+		g.finishDisconnectLocked(target)
+	}
 	g.mu.Unlock()
 	for _, sess := range closeSessions {
 		sess.Close()
 	}
+	return done
+}
+
+func (g *Gateway) finishDisconnectLocked(target string) {
+	done, blocked := g.blocked[target]
+	if !blocked || g.targetStreams[target] != 0 {
+		return
+	}
+	select {
+	case <-done:
+		return
+	default:
+	}
+	for _, binding := range g.sessions {
+		if binding.Target == target {
+			return
+		}
+	}
+	close(done)
 }
 
 func (g *Gateway) Close() {
@@ -125,13 +162,19 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	}
 	defer s.Close()
 	g.mu.Lock()
-	if g.closed || g.draining {
+	_, targetBlocked := g.blocked[binding.Target]
+	if g.closed || g.draining || targetBlocked {
 		g.mu.Unlock()
 		return fmt.Errorf("gateway is not accepting connections")
 	}
 	g.sessions[s] = binding
 	g.mu.Unlock()
-	defer func() { g.mu.Lock(); delete(g.sessions, s); g.mu.Unlock() }()
+	defer func() {
+		g.mu.Lock()
+		delete(g.sessions, s)
+		g.finishDisconnectLocked(binding.Target)
+		g.mu.Unlock()
+	}()
 	go func() {
 		select {
 		case <-s.CloseChan():
@@ -228,13 +271,13 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 			raw.Close()
 			continue
 		}
-		if !g.acquireStream() {
+		if !g.acquireStream(binding.Target) {
 			<-sem
 			raw.Close()
 			continue
 		}
 		go func() {
-			defer func() { <-sem; g.releaseStream() }()
+			defer func() { <-sem; g.releaseStream(binding.Target) }()
 			g.forward(ctx, wire.Wrap(raw), r, binding, handler)
 		}()
 	}

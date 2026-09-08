@@ -252,6 +252,16 @@ func TestWorkerLeavesUnsupportedFabricUnclaimed(t *testing.T) {
 	if _, err := NewWorker(fixture.store, ProviderSet{}, WorkerConfig{}); err == nil {
 		t.Fatal("invalid worker bounds were accepted")
 	}
+	config := testWorkerConfig()
+	config.InstanceID = wire.ID()
+	if _, err := NewWorker(fixture.store, ProviderSet{}, config); err == nil {
+		t.Fatal("instance without a Gateway closer was accepted")
+	}
+	config.InstanceID = ""
+	config.CloseTarget = func(string) <-chan struct{} { return make(chan struct{}) }
+	if _, err := NewWorker(fixture.store, ProviderSet{}, config); err == nil {
+		t.Fatal("Gateway closer without an instance was accepted")
+	}
 	if _, err := NewWorker(fixture.store, ProviderSet{Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": &bootstrapProvider{}}}, testWorkerConfig()); err == nil {
 		t.Fatal("Bootstrap provider without a frozen target was accepted")
 	}

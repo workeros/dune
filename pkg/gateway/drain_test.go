@@ -67,6 +67,60 @@ func TestDrainWaitsForApplicationCleanup(t *testing.T) {
 	}
 }
 
+func TestDisconnectWaitsForTargetCleanupAndRejectsReentry(t *testing.T) {
+	h := &drainCleanupHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	var once sync.Once
+	release := func() { once.Do(func() { close(h.release) }) }
+	defer release()
+	f := newPeerFixture(t, h)
+	client, err := f.client(t, delegateHandler())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := f.request(t, client, nil)
+	raw, err := f.daemon.AcceptStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := wire.Wrap(raw)
+	defer remote.Close()
+	remote.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := remote.Recv(); err != nil {
+		t.Fatal(err)
+	}
+
+	done := f.owner.Disconnect(f.binding.Target)
+	if repeated := f.owner.Disconnect(f.binding.Target); repeated != done {
+		t.Fatal("repeated disconnect changed its completion boundary")
+	}
+	select {
+	case <-h.entered:
+	case <-f.ctx.Done():
+		t.Fatal("target cleanup callback was not invoked")
+	}
+	select {
+	case <-done:
+		t.Fatal("disconnect confirmed before callback returned")
+	default:
+	}
+	release()
+	select {
+	case <-done:
+	case <-f.ctx.Done():
+		t.Fatal("target remained active after its cleanup completed")
+	}
+	if !f.owner.Status().Accepting {
+		t.Fatal("target disconnect drained unrelated Gateway work")
+	}
+
+	left, right := net.Pipe()
+	defer left.Close()
+	if err := f.owner.ServeConn(f.ctx, right, BindingContext{Target: f.binding.Target, Role: RoleSDK}, ownedHandler{}); err == nil {
+		t.Fatal("disconnected target accepted a new connection")
+	}
+	request.Close()
+}
+
 func TestDrainPreservesAcceptedPeerWork(t *testing.T) {
 	for _, side := range []string{"entry", "owner"} {
 		t.Run(side, func(t *testing.T) {

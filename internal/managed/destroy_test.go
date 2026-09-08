@@ -53,7 +53,7 @@ func claimedDestroy(t *testing.T, fixture serviceFixture, ttl time.Duration) lif
 	if err != nil {
 		t.Fatal(err)
 	}
-	destroyed, err := fixture.store.CreateManagedDestroy(fixture.ctx, fixture.user, credentialDigest(fixture.cookie), wire.ID(), selected, resource, 0)
+	destroyed, err := fixture.store.CreateManagedDestroy(fixture.ctx, fixture.user, credentialDigest(fixture.cookie), wire.ID(), selected, resource, wire.ID(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestWorkerAdvancesDestroyBeforeMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.store.CreateManagedDestroy(fixture.ctx, fixture.user, credentialDigest(fixture.cookie), wire.ID(), selected, resource, 0); err != nil {
+	if _, err := fixture.store.CreateManagedDestroy(fixture.ctx, fixture.user, credentialDigest(fixture.cookie), wire.ID(), selected, resource, wire.ID(), 0); err != nil {
 		t.Fatal(err)
 	}
 	provider := &destroyProvider{destroyResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: resource.Ref, Gone: true}}
@@ -219,5 +219,59 @@ func TestWorkerAdvancesDestroyBeforeMaintenance(t *testing.T) {
 	current, err := fixture.store.ManagedResource(fixture.ctx, created.RunnerID)
 	if err != nil || !current.Gone {
 		t.Fatal("worker did not persist provider deletion", current, err)
+	}
+}
+
+func TestWorkerConfirmsGatewayClosureBeforeDestroy(t *testing.T) {
+	fixture := newServiceFixture(t)
+	created := readyResourceForInspection(t, fixture)
+	selected, err := fixture.store.RunnerResource(fixture.ctx, created.RunnerID)
+	if err != nil || selected.Runner.Binding == nil {
+		t.Fatal("managed machine binding setup", selected, err)
+	}
+	resource, err := fixture.store.ManagedResource(fixture.ctx, created.RunnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceID := wire.ID()
+	destroyed, err := fixture.store.CreateManagedDestroy(fixture.ctx, fixture.user, credentialDigest(fixture.cookie), wire.ID(), selected, resource, instanceID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	closeCalls := 0
+	provider := &destroyProvider{destroyResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: resource.Ref, Gone: true}}
+	config := testWorkerConfig()
+	config.InstanceID = instanceID
+	config.CloseTarget = func(target string) <-chan struct{} {
+		closeCalls++
+		if target != destroyed.MachineID {
+			t.Fatalf("worker closed %q instead of %q", target, destroyed.MachineID)
+		}
+		return closed
+	}
+	worker, err := NewWorker(fixture.store, ProviderSet{Destroy: map[string]fabric.DestroyProvider{"sandbox": provider}}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || worked || closeCalls != 1 {
+		t.Fatal("unfinished Gateway closure advanced deletion", worked, closeCalls, err)
+	}
+	close(closed)
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || !worked {
+		t.Fatal("completed Gateway closure was not confirmed", worked, err)
+	}
+	if len(provider.destroyCalls) != 0 {
+		t.Fatal("closure confirmation also dispatched provider deletion")
+	}
+	current, err := fixture.store.ManagedDestroyOperation(fixture.ctx, destroyed.ID)
+	if err != nil || current.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
+		t.Fatal("worker did not persist closure confirmation", current, err)
+	}
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || !worked {
+		t.Fatal("confirmed closure did not enable provider deletion", worked, err)
+	}
+	if len(provider.destroyCalls) != 1 {
+		t.Fatal("provider deletion count", len(provider.destroyCalls))
 	}
 }

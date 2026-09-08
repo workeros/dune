@@ -18,3 +18,11 @@ type ManagedDestruction struct {
 	AccessClosedAt, CloseDeadline time.Time
 	AccessCloseOutcome            string
 }
+
+// AccessClosure is one durable request for an application incarnation to close
+// every connection and accepted stream belonging to the old machine binding.
+type AccessClosure struct {
+	OperationID, InstanceID, MachineID string
+	BindingRevision                    int64
+	AcknowledgedAt                     time.Time
+}

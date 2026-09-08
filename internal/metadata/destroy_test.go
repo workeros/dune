@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -68,7 +69,7 @@ func TestManagedDestroyAcceptanceClosesAccessAtomically(t *testing.T) {
 					if i%2 == 1 {
 						store = other
 					}
-					result, err := store.CreateManagedDestroy(ctx, user, sessionHash, requestKey, selected, resource, time.Minute)
+					result, err := store.CreateManagedDestroy(ctx, user, sessionHash, requestKey, selected, resource, wire.ID(), time.Minute)
 					if err != nil {
 						t.Error(err)
 						return
@@ -124,14 +125,14 @@ func TestManagedDestroyAcceptanceClosesAccessAtomically(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay, err := other.CreateManagedDestroy(ctx, user, sessionHash, requestKey, refreshed, currentResource, time.Minute)
+			replay, err := other.CreateManagedDestroy(ctx, user, sessionHash, requestKey, refreshed, currentResource, wire.ID(), time.Minute)
 			if err != nil || !reflect.DeepEqual(replay, destroyed) {
 				t.Fatal("post-commit retry did not recover the destroy", replay, err)
 			}
-			if _, err := s.CreateManagedDestroy(ctx, user, sessionHash, requestKey, refreshed, currentResource, 2*time.Minute); !errors.Is(err, lifecycle.ErrIntentConflict) {
+			if _, err := s.CreateManagedDestroy(ctx, user, sessionHash, requestKey, refreshed, currentResource, wire.ID(), 2*time.Minute); !errors.Is(err, lifecycle.ErrIntentConflict) {
 				t.Fatal("same request key changed the close deadline", err)
 			}
-			if _, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), refreshed, currentResource, time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
+			if _, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), refreshed, currentResource, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("a second destroy bypassed the Runner mutex", err)
 			}
 		})
@@ -146,7 +147,7 @@ func TestManagedDestroyCommitLossIsRecoveredWithoutReopeningAccess(t *testing.T)
 			selected, resource, _ := destroyFixture(t, s, user, sessionHash)
 			interrupted, commits := lostCommitStore(t, config)
 			requestKey := wire.ID()
-			result, err := interrupted.CreateManagedDestroy(ctx, user, sessionHash, requestKey, selected, resource, time.Minute)
+			result, err := interrupted.CreateManagedDestroy(ctx, user, sessionHash, requestKey, selected, resource, wire.ID(), time.Minute)
 			if !errors.Is(err, ErrCommitUnknown) || result.ID != "" || commits.Load() != 1 {
 				t.Fatal("uncertain destroy returned acceptance", result, commits.Load(), err)
 			}
@@ -162,7 +163,7 @@ func TestManagedDestroyCommitLossIsRecoveredWithoutReopeningAccess(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay, err := s.CreateManagedDestroy(ctx, user, sessionHash, requestKey, refreshed, current, time.Minute)
+			replay, err := s.CreateManagedDestroy(ctx, user, sessionHash, requestKey, refreshed, current, wire.ID(), time.Minute)
 			if err != nil || !reflect.DeepEqual(replay, recovered) {
 				t.Fatal("uncertain destroy was not reconciled", replay, recovered, err)
 			}
@@ -191,7 +192,7 @@ func TestManagedDestroyWithoutMachineNeedsNoAccessWait(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, time.Minute)
+			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, wire.ID(), time.Minute)
 			if err != nil || destroyed.AccessCloseOutcome != lifecycle.AccessCloseConfirmed || destroyed.MachineID != "" || destroyed.Finished || !destroyed.Exclusive {
 				t.Fatal("unbound resource waited for nonexistent access", destroyed, err)
 			}
@@ -217,7 +218,7 @@ func TestManagedDestroyDoesNotBypassPendingRenewal(t *testing.T) {
 			if err != nil || !consumed || renewal.ID == "" {
 				t.Fatal("renewal setup", renewal, consumed, err)
 			}
-			if destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, time.Minute); !errors.Is(err, lifecycle.ErrBusy) || destroyed.ID != "" {
+			if destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) || destroyed.ID != "" {
 				t.Fatal("destroy bypassed an unresolved renewal", destroyed, err)
 			}
 			current, err := s.ManagedResource(ctx, selected.Runner.ID)
@@ -251,7 +252,7 @@ func TestManagedDestroyOfConfirmedGoneResourceIsAlreadyComplete(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, time.Minute)
+			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, wire.ID(), time.Minute)
 			if err != nil || !destroyed.Finished || destroyed.Outcome != "succeeded" || destroyed.Exclusive || destroyed.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
 				t.Fatal("confirmed deletion did not converge cleanup", destroyed, err)
 			}
@@ -265,7 +266,19 @@ func TestManagedDestroyRecoveryWaitsForAccessClosure(t *testing.T) {
 			ctx := context.Background()
 			s, _, user, sessionHash := managedFixture(t, backend)
 			selected, resource, _ := destroyFixture(t, s, user, sessionHash)
-			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, time.Minute)
+			instanceID := wire.ID()
+			otherInstance := ""
+			if backend == "postgres" {
+				fingerprint := strings.Repeat("a", 64)
+				if _, err := s.RegisterInstance(ctx, InstanceConfig{BootID: instanceID, Fingerprint: fingerprint}); err != nil {
+					t.Fatal(err)
+				}
+				otherInstance = wire.ID()
+				if _, err := s.RegisterInstance(ctx, InstanceConfig{BootID: otherInstance, Fingerprint: fingerprint}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, instanceID, time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -275,14 +288,33 @@ func TestManagedDestroyRecoveryWaitsForAccessClosure(t *testing.T) {
 			if _, err := s.ClaimRecoverableManagedDestroy(ctx, destroyed.ID, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("claim bypassed access closure wait", err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, "wrong-machine"); !errors.Is(err, lifecycle.ErrBusy) {
+			closures, err := s.PendingManagedAccessClosures(ctx, instanceID, 32)
+			if err != nil || len(closures) != 1 || closures[0].OperationID != destroyed.ID || closures[0].MachineID != destroyed.MachineID || closures[0].BindingRevision != destroyed.BindingRevision {
+				t.Fatal("exact closure request was not persisted", closures, err)
+			}
+			wrong := closures[0]
+			wrong.MachineID = wire.ID()
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, wrong); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("wrong machine confirmed closure", err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, destroyed.MachineID); err != nil {
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, closures[0]); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, destroyed.MachineID); err != nil {
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, closures[0]); err != nil {
 				t.Fatal("closure confirmation was not idempotent", err)
+			}
+			if otherInstance != "" {
+				current, err := s.ManagedDestroyOperation(ctx, destroyed.ID)
+				if err != nil || current.AccessCloseOutcome != lifecycle.AccessCloseWaiting {
+					t.Fatal("one instance acknowledged closure for the cluster", current, err)
+				}
+				remaining, err := s.PendingManagedAccessClosures(ctx, otherInstance, 32)
+				if err != nil || len(remaining) != 1 || remaining[0].OperationID != destroyed.ID {
+					t.Fatal("second live instance was not included", remaining, err)
+				}
+				if err := s.ConfirmManagedDestroyAccessClosed(ctx, remaining[0]); err != nil {
+					t.Fatal(err)
+				}
 			}
 			candidates, err := s.RecoverableManagedDestroysFor(ctx, []string{"sandbox"}, 32)
 			if err != nil || len(candidates) != 1 || candidates[0].ID != destroyed.ID {
@@ -313,7 +345,8 @@ func TestManagedDestroyDeadlineRecordsTimeoutBeforeDispatch(t *testing.T) {
 			ctx := context.Background()
 			s, _, user, sessionHash := managedFixture(t, backend)
 			selected, resource, _ := destroyFixture(t, s, user, sessionHash)
-			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, 0)
+			instanceID := wire.ID()
+			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, instanceID, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -329,7 +362,7 @@ func TestManagedDestroyDeadlineRecordsTimeoutBeforeDispatch(t *testing.T) {
 			if err != nil || current.AccessCloseOutcome != lifecycle.AccessCloseTimedOut || !current.CloseDeadline.Equal(current.AccessClosedAt) {
 				t.Fatal("elapsed wait was not recorded as timed out", current, err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, destroyed.MachineID); !errors.Is(err, lifecycle.ErrBusy) {
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, lifecycle.AccessClosure{OperationID: destroyed.ID, InstanceID: instanceID, MachineID: destroyed.MachineID, BindingRevision: destroyed.BindingRevision}); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("late acknowledgement rewrote timeout", err)
 			}
 			if _, dispatch, err := s.BeginProviderAction(ctx, claimed, lifecycle.ActionRequest{Kind: "destroy", Digest: claimed.Digest}); err != nil || !dispatch {

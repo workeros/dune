@@ -99,7 +99,7 @@ func newService(t *testing.T, fixture serviceFixture, checker access.Checker, se
 	if sessions == nil {
 		sessions = fixture.session
 	}
-	service, err := New(fixture.catalog, sessions, authorization.New(fixture.ctx, sessions, fixture.store, checker), fixture.store)
+	service, err := New(fixture.catalog, sessions, authorization.New(fixture.ctx, sessions, fixture.store, checker), fixture.store, wire.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,10 +262,13 @@ func TestNewRequiresCompleteManagedAssembly(t *testing.T) {
 		"store":    {fixture.catalog, fixture.session, checks, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := New(args.catalog, args.sessions, args.checks, args.store); err == nil {
+			if _, err := New(args.catalog, args.sessions, args.checks, args.store, wire.ID()); err == nil {
 				t.Fatal("incomplete assembly accepted")
 			}
 		})
+	}
+	if _, err := New(fixture.catalog, fixture.session, checks, fixture.store, "bad-instance"); err == nil {
+		t.Fatal("invalid application instance accepted")
 	}
 }
 

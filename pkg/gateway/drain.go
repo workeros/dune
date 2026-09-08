@@ -45,24 +45,31 @@ func (g *Gateway) beginDrainLocked() {
 	}
 }
 
-func (g *Gateway) acquireStream() bool {
+func (g *Gateway) acquireStream(target string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closed || g.draining {
+	_, targetBlocked := g.blocked[target]
+	if g.closed || g.draining || targetBlocked {
 		return false
 	}
 	select {
 	case g.streams <- struct{}{}:
+		g.targetStreams[target]++
 		return true
 	default:
 		return false
 	}
 }
 
-func (g *Gateway) releaseStream() {
+func (g *Gateway) releaseStream(target string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	<-g.streams
+	g.targetStreams[target]--
+	if g.targetStreams[target] == 0 {
+		delete(g.targetStreams, target)
+	}
+	g.finishDisconnectLocked(target)
 	if g.draining && len(g.streams) == 0 {
 		close(g.drained)
 	}

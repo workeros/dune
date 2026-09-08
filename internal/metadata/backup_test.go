@@ -253,6 +253,10 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err := s.RecordProviderAction(ctx, destroyClaim, destroyBootstrap.Action.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: destroyBootstrap.Action.ResourceRef}); err != nil {
 		t.Fatal(err)
 	}
+	destroyMachine, _, err := s.Enroll(ctx, destroyBootstrap.Token, "linux", "amd64")
+	if err != nil || destroyMachine.RunnerID != destroyManaged.Runner.ID {
+		t.Fatal("backup destroy machine setup", destroyMachine, err)
+	}
 	destroySelection, err := s.RunnerResource(ctx, destroyManaged.Runner.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -261,9 +265,16 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	savedDestroy, err := s.CreateManagedDestroy(ctx, externalUser, tokenHash(externalCookie), wire.ID(), destroySelection, destroyResource, time.Minute)
-	if err != nil || savedDestroy.ID == "" || savedDestroy.ResourceRef != destroyResource.Ref || savedDestroy.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
+	savedDestroy, err := s.CreateManagedDestroy(ctx, externalUser, tokenHash(externalCookie), wire.ID(), destroySelection, destroyResource, instance.BootID, time.Minute)
+	if err != nil || savedDestroy.ID == "" || savedDestroy.ResourceRef != destroyResource.Ref || savedDestroy.AccessCloseOutcome != lifecycle.AccessCloseWaiting {
 		t.Fatal("backup destroy operation setup", savedDestroy, err)
+	}
+	closures, err := s.PendingManagedAccessClosures(ctx, instance.BootID, 32)
+	if err != nil || len(closures) != 1 || closures[0].MachineID != destroyMachine.ID {
+		t.Fatal("backup destroy closure setup", closures, err)
+	}
+	if err := s.ConfirmManagedDestroyAccessClosed(ctx, closures[0]); err != nil {
+		t.Fatal(err)
 	}
 	destroyExecution, err := s.ClaimRecoverableManagedDestroy(ctx, savedDestroy.ID, wire.ID(), time.Minute)
 	if err != nil {

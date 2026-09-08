@@ -426,3 +426,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - `pkg/fabric.CandidateProvider` 是只读核验能力，成功必须返回与用户候选完全相同且符合原 Create 终态规则的事实。worker 优先领取核对请求，并与原 Operation 在同一数据库事务取得相同 worker 身份下的独立租约；调用期间共同续租。普通核对只调用该 action 类型的 `Reconcile*`，候选核对只调用 `VerifyCandidate`，二者都没有 Create/Bootstrap/Renew/Destroy 的派发入口。
 - 适配器事实继续走原 action 的资源关联与阶段事务，因此候选确认可安全推进 Bootstrap，明确失败可结束阶段，unknown/timed_out 保持业务互斥。核对审计记录随后用租约条件完成；若进程在 action 提交后退出，下个 worker 直接从 action 终态关闭审计，不进行第二次 Provider 查询。Web 响应保留方式、理由、候选、结果与已核验引用，不暴露主体、请求键、action ID、worker 或执行修订；工作台只在不确定状态显示人工核对入口。
 - 定向回归覆盖 SQLite/PostgreSQL 请求与跨池领取、幂等和输入边界、候选冲突、租约续约、终态崩溃间隙、只读调用与原 action 身份、适配器证据不一致、宿主前缀 API 和跨用户隐藏。原生 PostgreSQL 备份夹具保存实际未决核对。最终本地相关包 race 通过（Managed 61.731 秒、metadata 68.269 秒、Web 16.641 秒、Host 11.078 秒）；专用 PostgreSQL 17 定向 race 通过（metadata 11.600 秒、Managed 8.827 秒、Host 4.355 秒），冻结产品源码后的全量回归通过（tests 347.509 秒、metadata 35.268 秒）。当前仍没有真实 Managed 提供方或浏览器自动化；真实平台必须验证关联搜索、历史保留和权限语义后，才能宣称该平台的人工核对闭环。
+
+### 已完成：Managed 跨实例访问关闭确认
+
+- 接受销毁的事务为发起实例及当时所有未过期配置准入实例保存逐实例关闭待办，然后才删除 machine、票据和 route。后启动的实例不能从已关闭访问的 Runner 获得新连接；备份恢复保留待办、确认时间和原 fixed deadline。实例身份来自宿主准入 boot ID，SQLite 独占宿主使用本次 App 的随机身份，不能由另一实例代为确认。
+- `Gateway.Disconnect(target)` 现在建立当前 Gateway 生命周期内不可逆的目标栅栏，拒绝迟到的新连接和已有控制连接上的新流，同时关闭本机 direct machine、SDK 和 peer 会话。它返回稳定的完成通道，只有该目标的会话、已受理流和应用 `Closed` 清理回调都退出后才关闭；全局仍可接收其他目标，不把业务销毁等同于 App 排空。
+- 每个宿主的 Managed worker 优先读取只属于本实例的待办，触发本机 Disconnect，并用原 Operation、instance、machine 与 binding revision 条件确认。只有快照中的全部实例确认后，销毁关闭结果才从 waiting 变为 confirmed 并允许 DestroyProvider；某实例失联、deadline 先到或确认竞态时仍记 timed_out，保留未确认记录并沿用既有有界清理语义。
+- 定向竞态回归覆盖目标清理回调完成边界、重复 Disconnect、关闭后重入拒绝、worker 在本机完成前不派发删除、完成后分步确认再删除，以及 PostgreSQL 两个 live 实例必须分别确认。原生 PostgreSQL dump/restore 保存实际已确认关闭待办。这里验证 Dune 的集群通知与确认，不替代真实提供方销毁、跨主机内核网络或 Linux 部署验收。

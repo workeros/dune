@@ -23,6 +23,10 @@ type WorkerConfig struct {
 	// RenewalPolicyVersion changes whenever policy meaning or configuration
 	// changes, so stopped schedules are reconsidered without rewriting history.
 	RenewalPolicyVersion string
+	// InstanceID and CloseTarget enable durable access-close fanout. They must
+	// be configured together by a host and are unrelated to provider execution.
+	InstanceID  string
+	CloseTarget func(string) <-chan struct{}
 }
 
 func DefaultWorkerConfig() WorkerConfig {
@@ -32,6 +36,9 @@ func DefaultWorkerConfig() WorkerConfig {
 func (c WorkerConfig) validate() error {
 	if c.PollInterval <= 0 || c.PollInterval > time.Minute || c.LeaseTTL < time.Second || c.LeaseTTL > time.Minute || c.CallTimeout <= 0 || c.CallTimeout > 10*time.Minute {
 		return fmt.Errorf("managed worker requires bounded polling, lease and provider call durations")
+	}
+	if (c.InstanceID == "") != (c.CloseTarget == nil) || (c.InstanceID != "" && !wire.ValidID(c.InstanceID)) {
+		return fmt.Errorf("managed worker access closer requires an instance ID and target closer")
 	}
 	return nil
 }
@@ -143,6 +150,25 @@ func configuredFabrics(providers map[string]struct{}) []string {
 // reports whether this worker obtained a claim. Unsupported Fabric namespaces
 // remain untouched so another correctly configured deployment can recover them.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
+	if w.config.CloseTarget != nil {
+		closures, err := w.store.PendingManagedAccessClosures(ctx, w.config.InstanceID, managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, closure := range closures {
+			select {
+			case <-w.config.CloseTarget(closure.MachineID):
+				if err := w.store.ConfirmManagedDestroyAccessClosed(ctx, closure); err != nil {
+					if errors.Is(err, lifecycle.ErrBusy) {
+						continue
+					}
+					return false, err
+				}
+				return true, nil
+			default:
+			}
+		}
+	}
 	if len(w.destroyProviders) > 0 {
 		candidates, err := w.store.RecoverableManagedDestroysFor(ctx, configuredFabrics(w.destroyProviders), managedCreateBatch)
 		if err != nil {

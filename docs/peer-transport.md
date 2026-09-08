@@ -44,6 +44,8 @@ Shutdown 使用调用方的 deadline；没有 deadline 时默认五秒。期限�
 
 协议宿主可独立调用 `Gateway.Drain()`；返回通道在所有已接受业务流及应用清理回调结束后关闭，随后调用 Close 释放空闲连接。core 只管理连接和流，不理解 HTTP、SQL 或业务生命周期。
 
+上层撤销一个机器目标时调用 `Gateway.Disconnect(target)`。该调用在当前 Gateway 生命周期内永久拒绝此目标的新连接和新流，关闭直接 machine、SDK 入口及 peer 会话；返回通道仅在该目标所有已受理流及清理回调退出后关闭。Managed 销毁把当时仍获准运行的应用实例快照成共享 SQL 关闭待办，各实例只用自己的启动身份领取、完成本机 Disconnect 后确认；全部确认才提前结束等待，失联实例仍保留至固定 deadline 并形成 `timed_out`，不会被其他节点代签。
+
 ## 官方 CLI 配置
 
 `dune web --database-config /private/database.yaml --cluster-config /private/cluster.yaml --url https://dune.example.com/dune/` 启用集群装配。继续通过全局 `--config` 指定本机的公开监听地址与 WS(S) 参数；该参数必须放在 `web` 之前。集群配置必须和 PostgreSQL 配置一起使用。

@@ -19,6 +19,7 @@ import (
 	managedmodule "github.com/aiomni/dune/internal/managed"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
@@ -134,6 +135,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	var core *gateway.Gateway
 	var admission *gateway.AdmissionLease
 	var instance metadata.InstanceConfig
+	appInstanceID := wire.ID()
 	assembled := false
 	defer func() {
 		if !assembled {
@@ -166,6 +168,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 		if err != nil {
 			return nil, err
 		}
+		appInstanceID = instance.BootID
 	}
 	core, err = openGateway(ctx, store, database, options.Cluster, transport)
 	if err != nil {
@@ -175,11 +178,13 @@ func Open(parent context.Context, options Options) (*App, error) {
 	var managedService *managedmodule.Service
 	var managedWorker *managedmodule.Worker
 	if managedConfig != nil {
-		managedService, err = managedmodule.New(managedConfig.catalog, service, authorizer, store)
+		managedService, err = managedmodule.New(managedConfig.catalog, service, authorizer, store, appInstanceID)
 		if err != nil {
 			return nil, err
 		}
-		managedWorker, err = managedmodule.NewWorker(store, managedConfig.providers, managedConfig.worker)
+		workerConfig := managedConfig.worker
+		workerConfig.InstanceID, workerConfig.CloseTarget = appInstanceID, core.Disconnect
+		managedWorker, err = managedmodule.NewWorker(store, managedConfig.providers, workerConfig)
 		if err != nil {
 			return nil, err
 		}

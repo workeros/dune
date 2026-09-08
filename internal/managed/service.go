@@ -13,24 +13,26 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/fabric"
 )
 
 type Service struct {
-	catalog  *fabric.Catalog
-	sessions authorization.Sessions
-	access   *authorization.Service
-	store    *metadata.Store
+	catalog    *fabric.Catalog
+	sessions   authorization.Sessions
+	access     *authorization.Service
+	store      *metadata.Store
+	instanceID string
 }
 
 // New uses the host's existing sessions, access service and shared SQL store.
 // It starts no workers and does not make Managed available on a public endpoint.
-func New(catalog *fabric.Catalog, sessions authorization.Sessions, checks *authorization.Service, store *metadata.Store) (*Service, error) {
-	if catalog == nil || sessions == nil || checks == nil || store == nil {
+func New(catalog *fabric.Catalog, sessions authorization.Sessions, checks *authorization.Service, store *metadata.Store, instanceID string) (*Service, error) {
+	if catalog == nil || sessions == nil || checks == nil || store == nil || !wire.ValidID(instanceID) {
 		return nil, fmt.Errorf("managed service requires catalog, sessions, access checks and shared metadata")
 	}
-	return &Service{catalog: catalog, sessions: sessions, access: checks, store: store}, nil
+	return &Service{catalog: catalog, sessions: sessions, access: checks, store: store, instanceID: instanceID}, nil
 }
 
 func (s *Service) Templates(ctx context.Context, cookie string) ([]fabric.Template, error) {
@@ -136,7 +138,7 @@ func (s *Service) Destroy(ctx context.Context, cookie, requestKey, runnerID stri
 		return lifecycle.ManagedDestruction{}, err
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
-	return s.store.CreateManagedDestroy(ctx, user, hash, requestKey, selected, resource, closeTimeout)
+	return s.store.CreateManagedDestroy(ctx, user, hash, requestKey, selected, resource, s.instanceID, closeTimeout)
 }
 
 // Status returns one authorized lifecycle snapshot for the current browser
