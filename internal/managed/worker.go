@@ -42,6 +42,7 @@ type ProviderSet struct {
 	Inspect   map[string]fabric.InspectProvider
 	Renew     map[string]fabric.RenewProvider
 	Destroy   map[string]fabric.DestroyProvider
+	Candidate map[string]fabric.CandidateProvider
 }
 
 // Worker recovers accepted lifecycle stages independently of browser sessions.
@@ -55,6 +56,7 @@ type Worker struct {
 	maintenance        *MaintenanceExecutor
 	renewal            *RenewalExecutor
 	destroyal          *DestroyExecutor
+	review             *ReviewExecutor
 	createProviders    map[string]struct{}
 	bootstrapProviders map[string]struct{}
 	inspectProviders   map[string]struct{}
@@ -117,8 +119,12 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 	for id := range destroyal.providers {
 		destroyConfigured[id] = struct{}{}
 	}
+	review, err := NewReviewExecutor(store, providers)
+	if err != nil {
+		return nil, err
+	}
 	return &Worker{
-		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal, destroyal: destroyal,
+		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal, destroyal: destroyal, review: review,
 		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured, renewProviders: renewConfigured, destroyProviders: destroyConfigured,
 		config: config, instanceID: wire.ID(),
 	}, nil
@@ -132,11 +138,10 @@ func configuredFabrics(providers map[string]struct{}) []string {
 	return ids
 }
 
-// RunOnce claims and advances at most one eligible lifecycle stage. Inspection
-// is checked first so expiry and confirmed deletion facts are not starved by new
-// creates. The bool reports whether this worker obtained a claim. Unsupported
-// Fabric namespaces remain untouched so another correctly configured deployment
-// can recover them.
+// RunOnce claims and advances at most one eligible lifecycle stage. Authorized
+// manual checks and cleanup run before maintenance and new creates. The bool
+// reports whether this worker obtained a claim. Unsupported Fabric namespaces
+// remain untouched so another correctly configured deployment can recover them.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	if len(w.destroyProviders) > 0 {
 		candidates, err := w.store.RecoverableManagedDestroysFor(ctx, configuredFabrics(w.destroyProviders), managedCreateBatch)
@@ -152,6 +157,25 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 				return false, err
 			}
 			return true, w.execute(ctx, claimed, "destroy", w.destroyal.Execute)
+		}
+	}
+	if fabrics := w.review.configuredFabrics(); len(fabrics) > 0 {
+		reviews, err := w.store.RecoverableManagedReviewsFor(ctx, fabrics, managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, candidate := range reviews {
+			review, operation, err := w.store.ClaimManagedReview(ctx, candidate.ID, w.instanceID, w.config.LeaseTTL)
+			if errors.Is(err, lifecycle.ErrBusy) || errors.Is(err, lifecycle.ErrLeaseLost) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			if !review.CompletedAt.IsZero() {
+				return true, nil
+			}
+			return true, w.review.ExecuteWithLease(ctx, review, operation, w.config.LeaseTTL, w.config.CallTimeout)
 		}
 	}
 	if w.maintenance != nil {

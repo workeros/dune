@@ -419,3 +419,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 可复用 Web 增加经过浏览器认证与服务端访问检查的模板列表/详情、创建、销毁、Operation 状态和 Runner 当前生命周期状态。状态由持久 Operation、动作、资源和关闭记录推导，区分 queued、creating、bootstrapping、waiting_connection、renewing、closing_access、destroying 与终态；响应不包含 principal、请求键、worker、执行修订或 provider action key。销毁接受后本机 Gateway 立即断开原 machine，未把断开动作误报为跨节点关闭确认。
 - 工作台只在启动能力明确启用时显示托管入口。动态表单保留模板精确版本，`int64` 以字符串验证边界并直接写入 JSON 数字，避免 JavaScript 精度损失；创建后展示持久阶段，unknown 提示只会核对原动作，Managed 删除走独立销毁流程，Attached 仍走解绑语义。关闭页面不影响后台恢复。
 - 相关 Go 包竞态检查、前端类型检查与生产构建通过；Host 集成夹具验证 worker 领取、前缀 API、跨用户隐藏和响应字段边界。当前没有真实 Managed 提供方、浏览器自动化、跨节点主动关闭确认或人工核对入口；这些限制仍阻止 S2 闭环。
+
+### 已完成：Managed 人工核对与受控继续
+
+- 浏览器可对 unknown/timed_out 的原动作提交持久 `reconcile`，或仅在未决 Create 阶段提交候选 `resource_ref`。服务先执行 `runner.resolve/managed` 当前访问检查；接受事务再次核对浏览器 session、Runner/Fabric/binding revision、Operation 业务互斥和原 action，保存操作者身份、理由、候选、请求摘要与独立核对 ID。同一 action 同时只有一个未完成请求，已知部分引用不能被另一候选替换。
+- `pkg/fabric.CandidateProvider` 是只读核验能力，成功必须返回与用户候选完全相同且符合原 Create 终态规则的事实。worker 优先领取核对请求，并与原 Operation 在同一数据库事务取得相同 worker 身份下的独立租约；调用期间共同续租。普通核对只调用该 action 类型的 `Reconcile*`，候选核对只调用 `VerifyCandidate`，二者都没有 Create/Bootstrap/Renew/Destroy 的派发入口。
+- 适配器事实继续走原 action 的资源关联与阶段事务，因此候选确认可安全推进 Bootstrap，明确失败可结束阶段，unknown/timed_out 保持业务互斥。核对审计记录随后用租约条件完成；若进程在 action 提交后退出，下个 worker 直接从 action 终态关闭审计，不进行第二次 Provider 查询。Web 响应保留方式、理由、候选、结果与已核验引用，不暴露主体、请求键、action ID、worker 或执行修订；工作台只在不确定状态显示人工核对入口。
+- 定向回归覆盖 SQLite/PostgreSQL 请求与跨池领取、幂等和输入边界、候选冲突、租约续约、终态崩溃间隙、只读调用与原 action 身份、适配器证据不一致、宿主前缀 API 和跨用户隐藏。原生 PostgreSQL 备份夹具保存实际未决核对。最终本地相关包 race 通过（Managed 61.731 秒、metadata 68.269 秒、Web 16.641 秒、Host 11.078 秒）；专用 PostgreSQL 17 定向 race 通过（metadata 11.600 秒、Managed 8.827 秒、Host 4.355 秒），冻结产品源码后的全量回归通过（tests 347.509 秒、metadata 35.268 秒）。当前仍没有真实 Managed 提供方或浏览器自动化；真实平台必须验证关联搜索、历史保留和权限语义后，才能宣称该平台的人工核对闭环。

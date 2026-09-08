@@ -59,6 +59,9 @@ func (*completeProvider) Destroy(context.Context, fabric.DestroyCall) (fabric.Ob
 func (*completeProvider) ReconcileDestroy(context.Context, fabric.DestroyReconcileCall) (fabric.Observation, error) {
 	return fabric.Observation{Outcome: fabric.OutcomeUnknown}, nil
 }
+func (*completeProvider) VerifyCandidate(context.Context, fabric.CandidateCall) (fabric.Observation, error) {
+	return fabric.Observation{Outcome: fabric.OutcomeUnknown}, nil
+}
 
 func managedHostOptions(dir string, provider *completeProvider) host.Options {
 	minimum, maximum := int64(1), int64(4)
@@ -71,7 +74,8 @@ func managedHostOptions(dir string, provider *completeProvider) host.Options {
 	providers := host.ManagedProviders{
 		Create: map[string]fabric.CreateProvider{"sandbox": provider}, Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": provider},
 		Inspect: map[string]fabric.InspectProvider{"sandbox": provider}, Renew: map[string]fabric.RenewProvider{"sandbox": provider},
-		Destroy: map[string]fabric.DestroyProvider{"sandbox": provider},
+		Destroy:   map[string]fabric.DestroyProvider{"sandbox": provider},
+		Candidate: map[string]fabric.CandidateProvider{"sandbox": provider},
 	}
 	return host.Options{
 		DataDir: dir, PublicURL: "http://dune.example.test/tools/", Managed: &host.ManagedOptions{
@@ -137,6 +141,24 @@ func TestManagedHostPublishesAPIAndRunsRecoveryWorker(t *testing.T) {
 	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"action":"create"`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"stage":"creating"`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"provider_outcome":"unknown"`)) || bytes.Contains(status.Body.Bytes(), []byte(`request_key`)) || bytes.Contains(status.Body.Bytes(), []byte(`action_key`)) {
 		t.Fatal("operation status was unavailable", status.Code, status.Body.String())
 	}
+	review := managedRequest(t, app, http.MethodPost, "/tools/api/managed/operations/"+created.Operation.ID+"/reviews", `{"request_key":"host-review-1","mode":"reconcile","reason":"operator checked provider activity"}`, cookie)
+	if review.Code != http.StatusAccepted || !bytes.Contains(review.Body.Bytes(), []byte(`"mode":"reconcile"`)) || !bytes.Contains(review.Body.Bytes(), []byte(`"reason":"operator checked provider activity"`)) || bytes.Contains(review.Body.Bytes(), []byte(`principal`)) || bytes.Contains(review.Body.Bytes(), []byte(`action_id`)) || bytes.Contains(review.Body.Bytes(), []byte(`worker`)) {
+		t.Fatal("manual review was not safely accepted", review.Code, review.Body.String())
+	}
+	var acceptedReview struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(review.Body.Bytes(), &acceptedReview); err != nil || acceptedReview.ID == "" {
+		t.Fatal("review response omitted durable identity", acceptedReview, err)
+	}
+	reviewStatus := managedRequest(t, app, http.MethodGet, "/tools/api/managed/reviews/"+acceptedReview.ID, "", cookie)
+	if reviewStatus.Code != http.StatusOK || !bytes.Contains(reviewStatus.Body.Bytes(), []byte(`"operation_id":"`+created.Operation.ID+`"`)) {
+		t.Fatal("review status was unavailable", reviewStatus.Code, reviewStatus.Body.String())
+	}
+	latestReview := managedRequest(t, app, http.MethodGet, "/tools/api/managed/operations/"+created.Operation.ID+"/reviews", "", cookie)
+	if latestReview.Code != http.StatusOK || !bytes.Contains(latestReview.Body.Bytes(), []byte(`"id":"`+acceptedReview.ID+`"`)) {
+		t.Fatal("review was not recoverable after a page refresh", latestReview.Code, latestReview.Body.String())
+	}
 	runnerStatus := managedRequest(t, app, http.MethodGet, "/tools/api/managed/runners/"+created.Operation.RunnerID, "", cookie)
 	if runnerStatus.Code != http.StatusOK || !bytes.Contains(runnerStatus.Body.Bytes(), []byte(`"id":"`+created.Operation.ID+`"`)) || !bytes.Contains(runnerStatus.Body.Bytes(), []byte(`"stage":"creating"`)) {
 		t.Fatal("Runner lifecycle status was unavailable", runnerStatus.Code, runnerStatus.Body.String())
@@ -147,6 +169,12 @@ func TestManagedHostPublishesAPIAndRunsRecoveryWorker(t *testing.T) {
 	}
 	if hidden := managedRequest(t, app, http.MethodGet, "/tools/api/managed/operations/"+created.Operation.ID, "", otherRegistration.Result().Cookies()[0]); hidden.Code != http.StatusNotFound {
 		t.Fatal("operation status disclosed another owner", hidden.Code, hidden.Body.String())
+	}
+	if hidden := managedRequest(t, app, http.MethodGet, "/tools/api/managed/reviews/"+acceptedReview.ID, "", otherRegistration.Result().Cookies()[0]); hidden.Code != http.StatusNotFound {
+		t.Fatal("review status disclosed another actor", hidden.Code, hidden.Body.String())
+	}
+	if hidden := managedRequest(t, app, http.MethodGet, "/tools/api/managed/operations/"+created.Operation.ID+"/reviews", "", otherRegistration.Result().Cookies()[0]); hidden.Code != http.StatusNotFound {
+		t.Fatal("operation review disclosed another actor", hidden.Code, hidden.Body.String())
 	}
 	provider.mu.Lock()
 	calls := append([]fabric.CreateCall(nil), provider.creates...)
@@ -164,6 +192,12 @@ func TestManagedHostRejectsIncompleteConfigurationAndReleasesStore(t *testing.T)
 	if app, err := host.Open(context.Background(), options); err == nil {
 		app.Close()
 		t.Fatal("host accepted a provider without Destroy")
+	}
+	missingReview := managedHostOptions(filepath.Join(t.TempDir(), "metadata-review"), provider)
+	delete(missingReview.Managed.Providers.Candidate, "sandbox")
+	if app, err := host.Open(context.Background(), missingReview); err == nil {
+		app.Close()
+		t.Fatal("host accepted a provider without candidate verification")
 	}
 	valid := managedHostOptions(dir, provider)
 	valid.Managed.Worker.BootstrapVersion = ""

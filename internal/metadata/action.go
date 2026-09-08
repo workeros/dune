@@ -55,6 +55,9 @@ func scanManagedResource(row interface{ Scan(...any) error }) (lifecycle.Resourc
 func (s *Store) ProviderAction(ctx context.Context, operationID, kind string) (lifecycle.ProviderAction, error) {
 	return scanAction(s.db.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM dune_provider_actions WHERE operation_id=$1 AND kind=$2", operationID, kind))
 }
+func (s *Store) ProviderActionByID(ctx context.Context, operationID, actionID string) (lifecycle.ProviderAction, error) {
+	return scanAction(s.db.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM dune_provider_actions WHERE operation_id=$1 AND id=$2", operationID, actionID))
+}
 func (s *Store) ManagedResource(ctx context.Context, runnerID string) (lifecycle.Resource, error) {
 	return scanManagedResource(s.db.QueryRowContext(ctx, "SELECT "+resourceColumns+" FROM dune_managed_resources WHERE runner_id=$1", runnerID))
 }

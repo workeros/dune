@@ -59,6 +59,9 @@ type ManagedService interface {
 	Destroy(context.Context, string, string, string, time.Duration) (lifecycle.ManagedDestruction, error)
 	Status(context.Context, string, string) (lifecycle.ManagedStatus, error)
 	RunnerStatus(context.Context, string, string) (lifecycle.ManagedStatus, error)
+	Review(context.Context, string, string, lifecycle.ReviewRequest) (lifecycle.Review, error)
+	ReviewStatus(context.Context, string, string) (lifecycle.Review, error)
+	OperationReview(context.Context, string, string) (lifecycle.Review, error)
 }
 
 type authRate struct {
@@ -121,6 +124,9 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 		s.mux.HandleFunc("DELETE /api/managed/runners/{runner}", s.destroyManagedRunner)
 		s.mux.HandleFunc("GET /api/managed/runners/{runner}", s.managedRunnerStatus)
 		s.mux.HandleFunc("GET /api/managed/operations/{operation}", s.managedOperation)
+		s.mux.HandleFunc("POST /api/managed/operations/{operation}/reviews", s.createManagedReview)
+		s.mux.HandleFunc("GET /api/managed/operations/{operation}/reviews", s.managedOperationReview)
+		s.mux.HandleFunc("GET /api/managed/reviews/{review}", s.managedReview)
 	}
 	s.mux.HandleFunc("GET /api/cli/runners", s.cliRunners)
 	s.mux.HandleFunc("GET /api/cli/runners/{runner}", s.cliRunner)

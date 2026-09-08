@@ -87,6 +87,7 @@ var snapshotTables = []struct{ name, columns string }{
 	{"dune_managed_renewals", managedRenewalColumns},
 	{"dune_managed_destroys", managedDestroyColumns},
 	{"dune_provider_actions", actionColumns},
+	{"dune_managed_reviews", reviewColumns},
 	{"dune_managed_enrollments", "hash,action_id,operation_id,runner_id,fabric_id,binding_revision,resource_ref,expires_at"},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
 	{"dune_cluster", "id,recovery_generation"},

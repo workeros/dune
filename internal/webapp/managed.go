@@ -27,6 +27,27 @@ type operationView struct {
 	AccessCloseDeadline *time.Time `json:"access_close_deadline,omitempty"`
 }
 
+type reviewView struct {
+	ID                  string     `json:"id"`
+	OperationID         string     `json:"operation_id"`
+	Mode                string     `json:"mode"`
+	Candidate           string     `json:"candidate_resource_ref,omitempty"`
+	Reason              string     `json:"reason"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	Outcome             string     `json:"outcome,omitempty"`
+	VerifiedResourceRef string     `json:"verified_resource_ref,omitempty"`
+}
+
+func reviewResponse(review lifecycle.Review) reviewView {
+	view := reviewView{ID: review.ID, OperationID: review.OperationID, Mode: review.Mode, Candidate: review.Candidate, Reason: review.Reason, CreatedAt: review.CreatedAt, Outcome: review.Outcome, VerifiedResourceRef: review.VerifiedResourceRef}
+	if !review.CompletedAt.IsZero() {
+		completed := review.CompletedAt
+		view.CompletedAt = &completed
+	}
+	return view
+}
+
 func statusResponse(status lifecycle.ManagedStatus) operationView {
 	view := operationResponse(status.Operation)
 	view.Stage, view.ProviderOutcome, view.ResourceRef = status.Stage, status.ProviderOutcome, status.ResourceRef
@@ -151,4 +172,52 @@ func (s *Server) managedRunnerStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, statusResponse(status))
+}
+
+func (s *Server) createManagedReview(w http.ResponseWriter, r *http.Request) {
+	_, cookie, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		RequestKey string `json:"request_key"`
+		Mode       string `json:"mode"`
+		Candidate  string `json:"candidate_resource_ref"`
+		Reason     string `json:"reason"`
+	}
+	if !readJSON(w, r, &request) {
+		return
+	}
+	review, err := s.options.Managed.Review(r.Context(), cookie, request.RequestKey, lifecycle.ReviewRequest{OperationID: r.PathValue("operation"), Mode: request.Mode, Candidate: request.Candidate, Reason: request.Reason})
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, reviewResponse(review))
+}
+
+func (s *Server) managedReview(w http.ResponseWriter, r *http.Request) {
+	_, cookie, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	review, err := s.options.Managed.ReviewStatus(r.Context(), cookie, r.PathValue("review"))
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reviewResponse(review))
+}
+
+func (s *Server) managedOperationReview(w http.ResponseWriter, r *http.Request) {
+	_, cookie, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	review, err := s.options.Managed.OperationReview(r.Context(), cookie, r.PathValue("operation"))
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reviewResponse(review))
 }

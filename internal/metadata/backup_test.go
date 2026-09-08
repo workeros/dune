@@ -155,6 +155,15 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	managedSelection, err := s.RunnerResource(ctx, managedClaim.RunnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateManagedReview(ctx, externalUser, tokenHash(externalCookie), wire.ID(), managedSelection, lifecycle.ReviewRequest{
+		OperationID: managedClaim.ID, Mode: lifecycle.ReviewCandidate, Candidate: savedResource.Ref, Reason: "native restore preserves unresolved provider evidence review",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	maintenanceClaim, err := s.ClaimManagedInspection(ctx, managedClaim.RunnerID, "personal-v1", wire.ID(), time.Minute)
 	if err != nil {
 		t.Fatal(err)

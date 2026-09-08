@@ -181,6 +181,64 @@ func (s *Service) RunnerStatus(ctx context.Context, cookie, runnerID string) (li
 	return s.operationStatus(ctx, operation)
 }
 
+// Review records a current user's request to re-check one unresolved provider
+// action. Provider I/O is performed later by the durable worker. A candidate
+// reference is only a claim for the adapter to verify, never trusted input.
+func (s *Service) Review(ctx context.Context, cookie, requestKey string, request lifecycle.ReviewRequest) (lifecycle.Review, error) {
+	user, err := s.sessions.Authenticate(ctx, cookie)
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	operation, err := s.store.Operation(ctx, request.OperationID)
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	selected, decision, err := s.access.Resource(ctx, user, operation.RunnerID, false, "runner.resolve")
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	if selected.Runner.Kind != "managed" {
+		return lifecycle.Review{}, authorization.ErrNotFound
+	}
+	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
+	defer cancel()
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
+	return s.store.CreateManagedReview(ctx, user, hash, requestKey, selected, request)
+}
+
+// ReviewStatus is actor-scoped because it contains the operator's reason and
+// submitted candidate. Lifecycle status remains separately shareable through
+// RunnerStatus after its normal access check.
+func (s *Service) ReviewStatus(ctx context.Context, cookie, id string) (lifecycle.Review, error) {
+	user, err := s.sessions.Authenticate(ctx, cookie)
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	review, err := s.store.ManagedReview(ctx, user.ID, id)
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	if review.Namespace != user.Namespace || review.Subject != user.Subject {
+		return lifecycle.Review{}, authorization.ErrNotFound
+	}
+	return review, nil
+}
+
+func (s *Service) OperationReview(ctx context.Context, cookie, operationID string) (lifecycle.Review, error) {
+	user, err := s.sessions.Authenticate(ctx, cookie)
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	review, err := s.store.ManagedOperationReview(ctx, user.ID, operationID)
+	if err != nil {
+		return lifecycle.Review{}, err
+	}
+	if review.Namespace != user.Namespace || review.Subject != user.Subject {
+		return lifecycle.Review{}, authorization.ErrNotFound
+	}
+	return review, nil
+}
+
 func (s *Service) operationStatus(ctx context.Context, operation lifecycle.Operation) (lifecycle.ManagedStatus, error) {
 	status := lifecycle.ManagedStatus{Operation: operation}
 	if resource, err := s.store.ManagedResource(ctx, operation.RunnerID); err == nil {

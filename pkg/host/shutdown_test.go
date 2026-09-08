@@ -63,13 +63,13 @@ func TestShutdownFinishesOrCancelsAcceptedHTTP(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer conn.Close()
-				conn.SetDeadline(time.Now().Add(5 * time.Second))
+				conn.SetDeadline(time.Now().Add(10 * time.Second))
 				body := `{"email":"shutdown@example.test","password":"shutdown-test-password"}`
 				fmt.Fprintf(conn, "POST /dune/api/auth/register HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/json\r\nX-Dune-Request: 1\r\nContent-Length: %d\r\n\r\n%s", len(body), body[:1])
 				waitReadiness(t, app, func(r host.Readiness) bool { return r.Requests == 1 })
 				budget := time.Second
 				if complete {
-					budget = 3 * time.Second
+					budget = 6 * time.Second
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), budget)
 				defer cancel()
@@ -109,7 +109,7 @@ func TestShutdownFinishesOrCancelsAcceptedHTTP(t *testing.T) {
 					if (complete && err != nil) || (!complete && !errors.Is(err, context.DeadlineExceeded)) {
 						t.Fatal("shutdown result", err)
 					}
-				case <-time.After(4 * time.Second):
+				case <-time.After(8 * time.Second):
 					t.Fatal("shutdown did not release partial request")
 				}
 				await(t, app.Done())

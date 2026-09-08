@@ -42,5 +42,9 @@ export type ManagedOperation = {
   expires_at?: string; access_closed: boolean; access_close_outcome?: string; access_close_deadline?: string;
 };
 export type ManagedCreation = { runner: Runner; operation: ManagedOperation };
+export type ManagedReview = {
+  id: string; operation_id: string; mode: "reconcile" | "candidate"; candidate_resource_ref?: string; reason: string;
+  created_at: string; completed_at?: string; outcome?: string; verified_resource_ref?: string;
+};
 
 export type Page<T> = { items: T[]; next_cursor?: string };

@@ -92,7 +92,7 @@ Managed Bootstrap 的提供方动作和一次性 enrollment 哈希由一个事�
 
 Bootstrap executor 固定规范化的公开 enrollment 地址、完整 Gateway WS(S) 地址、安装版本和令牌有效期，并用它们生成非敏感动作摘要。首次明确提交同时得到动作和明文 grant 后才调用 `Bootstrap`；此后只用原动作调用 `ReconcileBootstrap`，即使当前启动配置已变化也不改写旧动作。若原 grant 已被 fabricd 消费，已有机器与同一 Runner/Fabric/binding revision 的绑定是本地可信完成证据，可直接结束原 Bootstrap 动作而无需查询提供方。适配器错误只记录 timeout/unknown，不采信伴随错误返回的字段。
 
-Managed worker 在同一持久循环中依次处理到期巡检、已有续期 Operation、冻结续期计划、Bootstrap 与 create，每次只执行一个提供方调用。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
+Managed worker 在同一持久循环中先处理销毁，再处理用户已受理的人工核对，然后依次处理到期巡检、已有续期 Operation、冻结续期计划、Bootstrap 与 create，每次只执行一个提供方调用。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
 
 Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍停留在等待连接。机器凭据的 Gateway 握手先确认 fabricd 输入 grant；集群模式再发布当前 owner 路由，然后通过有界可信回调提交首次在线事实。元数据事务重新锁定 Runner 和原创建 Operation，核对机器绑定、binding revision、Create/Bootstrap 终态、resource_ref、访问门及数据库时钟有效期，才将创建标成 succeeded。PostgreSQL 集群还要求回调携带当前恢复代次和 epoch，并与刚发布、未过期的完整路由绑定相同；SQLite 或没有集群记录的 PostgreSQL 要求路由字段为空。回调完成前本机路由不对业务流可见，失败时握手和已发布 owner 都会撤销。提交回执未知不会在同一握手内重试；已提交的结果由后续重连幂等核对。Attached 机器不进入 Managed 生命周期事务。
 
@@ -110,6 +110,8 @@ Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.d
 
 公开 `fabric.DestroyProvider` 把首次删除和只读 `ReconcileDestroy` 分开。只有 Destroy 动作预约明确提交并再次复核执行权后才可首次调用；超时、unknown、重启或租约接管只查询原动作键。适配器错误的伴随字段会丢弃，成功必须给出同一 resource_ref 的明确 Gone 事实，才原子完成动作与 Operation；失败或不确定结果都不会恢复访问。Dune 当前没有跨节点关闭确认广播，因此绑定过机器的资源通常由固定 deadline 进入 timed_out 后继续清理；该状态明确保留了关闭确认不足的事实。
 
-`host.Options.Managed` 把不可变模板目录、同一 Fabric 的五种完整能力、业务服务和一个持久 worker 装进现有 Host/Web 生命周期。启动先验证目录、提供方集合、公开地址及所有时间界限；失败时不留下 worker 或存储锁。PostgreSQL 准入指纹自动包含公开目录、提供方命名空间和 worker 行为，并要求宿主另给出 `ConfigurationVersion` 表达 Dune 无法读取的私有 SDK 语义。
+`host.Options.Managed` 把不可变模板目录、同一 Fabric 的五种生命周期能力、候选资源核验能力、业务服务和一个持久 worker 装进现有 Host/Web 生命周期。启动先验证目录、提供方集合、公开地址及所有时间界限；失败时不留下 worker 或存储锁。PostgreSQL 准入指纹自动包含公开目录、提供方命名空间和 worker 行为，并要求宿主另给出 `ConfigurationVersion` 表达 Dune 无法读取的私有 SDK 语义。
 
 浏览器 API 只有配置完整时才注册。模板列表和详情逐项执行访问检查；创建返回 durable acceptance，销毁返回 access-close acceptance。Operation 状态只允许原浏览器主体读取，Runner 状态要求当前 Runner 访问权；响应保留 action、stage、provider outcome、已知 resource_ref/expiry 和销毁关闭事实，不返回 principal、请求键、worker、执行修订或 provider action key。工作台按字符串边界检查模板的 `int64` 并把原十进制词法直接写入 JSON，避免 JavaScript 浮点转换；unknown 明示为只核对原动作，页面关闭不会停止 worker。
+
+人工核对请求执行新的 `runner.resolve/managed` 访问检查，并在事务中复核当前浏览器身份、Runner/Fabric/binding revision、未决 Operation 与原 Provider action。请求保存操作者、理由、候选引用和幂等摘要；同一 action 同时只允许一个未完成核对。`reconcile` 只调用对应动作的 `Reconcile*`；`candidate` 仅用于未决 Create，并调用 `CandidateProvider.VerifyCandidate` 核验候选与原 action 的关联。已知部分资源引用不能被另一个候选覆盖。核验结果仍通过原 action 的资源及阶段事务规则提交，失败或 unknown 不清业务互斥；核对审计随后以条件更新完成，进程若在两次事务间退出，下个 worker 从已完成 action 收敛审计，不再次查询。没有直接编辑绑定、强制成功或重新派发 Create/Bootstrap/Renew/Destroy 的接口。

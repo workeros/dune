@@ -81,6 +81,14 @@ type DestroyReconcileCall struct {
 	Action Action
 }
 
+// CandidateCall asks an adapter to verify that an operator-supplied resource
+// reference belongs to the original provider action. It is read-only and does
+// not grant permission to create, bootstrap, renew or destroy anything.
+type CandidateCall struct {
+	Action               Action
+	CandidateResourceRef string
+}
+
 // InspectCall identifies one already associated resource. Inspect is read-only;
 // it carries no action key and grants no permission to create, renew or destroy.
 type InspectCall struct {
@@ -169,4 +177,12 @@ type RenewProvider interface {
 type DestroyProvider interface {
 	Destroy(context.Context, DestroyCall) (Observation, error)
 	ReconcileDestroy(context.Context, DestroyReconcileCall) (Observation, error)
+}
+
+// CandidateProvider verifies a possible resource discovered outside Dune.
+// A successful observation must name the exact candidate and satisfy the
+// original action's normal success rules. Missing or stale evidence is unknown,
+// never permission to repeat the mutation.
+type CandidateProvider interface {
+	VerifyCandidate(context.Context, CandidateCall) (Observation, error)
 }
