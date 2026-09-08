@@ -275,6 +275,9 @@ func (s *Store) FinishOperation(ctx context.Context, expected lifecycle.Operatio
 		if !ownsOperation(current, expected, now) {
 			return lifecycle.ErrLeaseLost
 		}
+		if err := s.requireNoPendingAction(ctx, tx, current.ID); err != nil {
+			return err
+		}
 		return s.updateOperationOutcome(ctx, tx, expected, outcome, true)
 	})
 }
@@ -332,6 +335,11 @@ func (s *Store) operationMutex(ctx context.Context, expected lifecycle.Operation
 		if !exclusive && current.Outcome != "" {
 			return lifecycle.ErrBusy
 		}
+		if !exclusive {
+			if err := s.requireNoPendingAction(ctx, tx, current.ID); err != nil {
+				return err
+			}
+		}
 		if exclusive {
 			var competing string
 			err := tx.QueryRowContext(ctx, `SELECT id FROM dune_operations WHERE runner_id=$1 AND exclusive=TRUE AND id<>$2`, current.RunnerID, current.ID).Scan(&competing)
@@ -342,17 +350,21 @@ func (s *Store) operationMutex(ctx context.Context, expected lifecycle.Operation
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, "UPDATE dune_operations SET exclusive=$2 WHERE id=$1 AND worker=$3 AND execution_revision=$4 AND lease_until>"+s.databaseClock(), current.ID, exclusive, expected.Worker, expected.Revision)
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return lifecycle.ErrLeaseLost
-		}
-		return nil
+		return s.updateOperationMutex(ctx, tx, expected, exclusive)
 	})
+}
+
+func (s *Store) updateOperationMutex(ctx context.Context, tx *sql.Tx, expected lifecycle.Operation, exclusive bool) error {
+	result, err := tx.ExecContext(ctx, "UPDATE dune_operations SET exclusive=$2 WHERE id=$1 AND worker=$3 AND execution_revision=$4 AND lease_until>"+s.databaseClock(), expected.ID, exclusive, expected.Worker, expected.Revision)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return lifecycle.ErrLeaseLost
+	}
+	return nil
 }

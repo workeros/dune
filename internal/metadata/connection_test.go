@@ -19,6 +19,7 @@ import (
 	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"modernc.org/sqlite"
 )
 
@@ -241,4 +242,31 @@ func TestCommitAcknowledgementLossIsNotReplayed(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE parent_hash=$1`, tokenHash(cookie)).Scan(&children); err != nil || children != 1 {
 		t.Fatal("CLI commit did not persist exactly one child", err)
 	}
+}
+
+func lostCommitStore(t *testing.T, config storage.Config) (*Store, *atomic.Int32) {
+	t.Helper()
+	var connector driver.Connector
+	if config.Postgres != nil {
+		parsed, err := pgx.ParseConfig(config.Postgres.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Postgres.BeforeConnect != nil {
+			if err := config.Postgres.BeforeConnect(context.Background(), parsed); err != nil {
+				t.Fatal(err)
+			}
+		}
+		connector = stdlib.GetConnector(*parsed)
+	} else {
+		var err error
+		connector, err = sqlite.NewConnector(filepath.Join(config.SQLiteDir, "metadata.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	commits := new(atomic.Int32)
+	store := &Store{postgres: config.Postgres != nil, db: sql.OpenDB(lostAckConnector{Connector: connector, commits: commits})}
+	t.Cleanup(func() { store.Close() })
+	return store, commits
 }

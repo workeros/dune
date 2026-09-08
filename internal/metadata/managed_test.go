@@ -3,7 +3,6 @@ package metadata
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -18,9 +17,6 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
-	"modernc.org/sqlite"
 )
 
 func managedSpec() lifecycle.CreateSpec {
@@ -302,26 +298,7 @@ func TestManagedCreationLostCommitCanBeReconciled(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			ctx := context.Background()
 			s, config, user, hash := managedFixture(t, backend)
-			var connector driver.Connector
-			var err error
-			if backend == "postgres" {
-				parsed, e := pgx.ParseConfig(config.Postgres.URL)
-				if e != nil {
-					t.Fatal(e)
-				}
-				if err := config.Postgres.BeforeConnect(ctx, parsed); err != nil {
-					t.Fatal(err)
-				}
-				connector = stdlib.GetConnector(*parsed)
-			} else {
-				connector, err = sqlite.NewConnector(filepath.Join(config.SQLiteDir, "metadata.sqlite"))
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			var commits atomic.Int32
-			faulty := &Store{postgres: s.postgres, db: sql.OpenDB(lostAckConnector{Connector: connector, commits: &commits})}
-			defer faulty.Close()
+			faulty, commits := lostCommitStore(t, config)
 			key := wire.ID()
 			if got, err := faulty.CreateManaged(ctx, user, hash, key, managedSpec()); !errors.Is(err, ErrCommitUnknown) || got.Operation.ID != "" || got.Runner.ID != "" || commits.Load() != 1 {
 				t.Fatal("uncertain commit returned success or was replayed", err, commits.Load())

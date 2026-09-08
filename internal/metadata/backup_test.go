@@ -136,6 +136,29 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	managedClaim, err := s.ClaimOperation(ctx, managed.Operation.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, dispatch, err := s.BeginProviderAction(ctx, managedClaim, lifecycle.ActionRequest{Kind: "create", Digest: managedClaim.Digest})
+	if err != nil || !dispatch {
+		t.Fatal("backup action setup", err)
+	}
+	if err := s.RecordProviderAction(ctx, managedClaim, reserved.ID, lifecycle.ActionObservation{Outcome: "unknown", ResourceRef: "restore-managed-resource", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	savedAction, err := s.ProviderAction(ctx, managedClaim.ID, "create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedResource, err := s.ManagedResource(ctx, managedClaim.RunnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err = s.ManagedCreation(ctx, externalUser.ID, managed.Operation.RequestKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -190,6 +213,12 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if got, err := s.ManagedCreation(ctx, externalUser.ID, managed.Operation.RequestKey); err != nil || !reflect.DeepEqual(got, managed) {
 		t.Fatal("restored creation lost immutable intent", err)
+	}
+	if got, err := s.ProviderAction(ctx, managedClaim.ID, "create"); err != nil || got != savedAction {
+		t.Fatal("restored pending provider action changed", err)
+	}
+	if got, err := s.ManagedResource(ctx, managedClaim.RunnerID); err != nil || got != savedResource {
+		t.Fatal("restored resource confirmation changed", err)
 	}
 	// A native restore preserves historical ownership bytes. Rotate recovery
 	// before allowing service startup; old terms cannot become live again.

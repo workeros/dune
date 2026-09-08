@@ -82,6 +82,8 @@ var snapshotTables = []struct{ name, columns string }{
 	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
 	{"dune_operations", operationColumns},
 	{"dune_managed_creations", "runner_id,operation_id,specification"},
+	{"dune_managed_resources", "runner_id,fabric_id,resource_ref,confirmed_at,expires_at,gone,access_closed"},
+	{"dune_provider_actions", actionColumns},
 	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
 	{"dune_cluster", "id,recovery_generation"},
 	{"dune_instances", instanceColumns},

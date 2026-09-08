@@ -300,26 +300,32 @@ func TestOperationWriteRechecksDatabaseLease(t *testing.T) {
 			if _, err := s.BeginOperation(ctx, intent); err != nil {
 				t.Fatal(err)
 			}
-			claimed, err := s.ClaimOperation(ctx, intent.ID, wire.ID(), time.Second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = s.withOperation(ctx, intent.ID, func(tx *sql.Tx, current lifecycle.Operation, now int64) error {
-				if !ownsOperation(current, claimed, now) {
-					t.Fatal("claim expired before pause")
+			var claimed lifecycle.Operation
+			for _, change := range []string{"outcome", "mutex"} {
+				claimed, err = s.ClaimOperation(ctx, intent.ID, wire.ID(), time.Second)
+				if err != nil {
+					t.Fatal(err)
 				}
-				// Pause after reading the valid claim, while retaining the SQL row lock.
-				// The final UPDATE must check database time again, not trust the old read.
-				time.Sleep(1100 * time.Millisecond)
-				return s.updateOperationOutcome(ctx, tx, claimed, "succeeded", true)
-			})
-			if !errors.Is(err, lifecycle.ErrLeaseLost) {
-				t.Fatal("paused worker committed after expiry", err)
+				err = s.withOperation(ctx, intent.ID, func(tx *sql.Tx, current lifecycle.Operation, now int64) error {
+					if !ownsOperation(current, claimed, now) {
+						t.Fatal("claim expired before pause")
+					}
+					// Pause after reading the valid claim, while retaining the SQL row lock.
+					// The final UPDATE must check database time again, not trust the old read.
+					time.Sleep(1100 * time.Millisecond)
+					if change == "mutex" {
+						return s.updateOperationMutex(ctx, tx, claimed, false)
+					}
+					return s.updateOperationOutcome(ctx, tx, claimed, "succeeded", true)
+				})
+				if !errors.Is(err, lifecycle.ErrLeaseLost) {
+					t.Fatal("paused worker committed after expiry", err)
+				}
+				if op, err := s.Operation(ctx, intent.ID); err != nil || op.Finished || !op.Exclusive {
+					t.Fatal("late write changed outcome", err)
+				}
 			}
-			if op, err := s.Operation(ctx, intent.ID); err != nil || op.Finished {
-				t.Fatal("late write changed outcome", err)
-			}
-			if next, err := s.ClaimOperation(ctx, intent.ID, wire.ID(), time.Minute); err != nil || next.Revision != 2 {
+			if next, err := s.ClaimOperation(ctx, intent.ID, wire.ID(), time.Minute); err != nil || next.Revision != 3 {
 				t.Fatal("expired work could not be taken over", err)
 			}
 		})
