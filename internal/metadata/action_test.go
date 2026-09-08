@@ -311,46 +311,6 @@ func TestProviderActionBootstrapRenewAndDestroy(t *testing.T) {
 			if resource, err := s.ManagedResource(ctx, creation.RunnerID); err != nil || !resource.ExpiresAt.Equal(until) {
 				t.Fatal("confirmed renewal missing", err)
 			}
-			destruction := begin("destroy")
-			request := lifecycle.ActionRequest{Kind: "destroy", Digest: tokenHash("fixed destroy arguments")}
-			if _, _, err := s.BeginProviderAction(ctx, destruction, request); !errors.Is(err, lifecycle.ErrBusy) {
-				t.Fatal("destroy began before durable access closure", err)
-			}
-			// The lifecycle-specific destroy admission/stream closure is a separate
-			// feature. This fixture supplies its prerequisite, never a user-facing bypass.
-			if _, err := s.db.Exec(`UPDATE dune_managed_resources SET access_closed=TRUE WHERE runner_id=$1`, creation.RunnerID); err != nil {
-				t.Fatal(err)
-			}
-			destroy, dispatch, err := s.BeginProviderAction(ctx, destruction, request)
-			if err != nil || !dispatch {
-				t.Fatal(err)
-			}
-			if err := s.RecordProviderAction(ctx, destruction, destroy.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "resource"}); !errors.Is(err, ErrInvalidArgument) {
-				t.Fatal("delete acceptance became confirmed deletion", err)
-			}
-			if err := s.RecordProviderAction(ctx, destruction, destroy.ID, lifecycle.ActionObservation{Outcome: "unknown"}); err != nil {
-				t.Fatal(err)
-			}
-			if _, dispatch, err := s.BeginProviderAction(ctx, destruction, request); err != nil || dispatch {
-				t.Fatal("unknown destroy was redispatched", err)
-			}
-			if err := s.RecordProviderAction(ctx, destruction, destroy.ID, lifecycle.ActionObservation{Outcome: "failed", ResourceRef: "resource"}); err != nil {
-				t.Fatal(err)
-			}
-			if resource, err := s.ManagedResource(ctx, creation.RunnerID); err != nil || !resource.AccessClosed || resource.Gone {
-				t.Fatal("failed destroy reopened access or removed reference", err)
-			}
-			cleanup := begin("destroy")
-			last, _, err := s.BeginProviderAction(ctx, cleanup, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := s.RecordProviderAction(ctx, cleanup, last.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "resource", Gone: true}); err != nil {
-				t.Fatal(err)
-			}
-			if resource, err := s.ManagedResource(ctx, creation.RunnerID); err != nil || !resource.Gone || !resource.AccessClosed || resource.Ref != "resource" {
-				t.Fatal("confirmed deletion lost history or access restriction", err)
-			}
 		})
 	}
 }

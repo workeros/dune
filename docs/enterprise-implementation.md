@@ -404,3 +404,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 接受事务按 principal → Runner 顺序重新检查同一登录主体及资源关联，保存独立 Destroy Operation、原 machine ID、数据库时钟下固定的访问关闭起点/deadline 和状态。它同时设置 resource access_closed、暂停续期、撤销 Managed enrollment、删除机器及级联票据/route；Runner 和 resource_ref 保留供清理。等待连接的原 create Operation 被终结为 failed，未决续期等互斥变更则阻止销毁且不改变访问。
 - 同请求键并发及回执丢失通过原记录恢复，机器已被删除后不会因当前绑定为空而改写摘要或截止时间。有绑定记录为 waiting，尚无机器时立即 confirmed；已经由提供方确认 Gone 的资源直接把 Destroy Operation 标成 succeeded。其余 Operation 仍保持业务互斥和访问关闭，不能将接受结果解释为资源已删除。
 - SQLite/PostgreSQL race 回归覆盖并发、重试、互斥、登录复核、权限 scope、旧票据失效、续期暂停、无绑定与 Gone 收敛。此检查点尚未实现跨节点旧流关闭确认、deadline 推进、DestroyProvider 调用/恢复、宿主/Web 状态或真实提供方验收，S2 继续实施。
+
+### 已完成：Managed 销毁等待、提供方动作与恢复
+
+- 销毁 recovery 只扫描 access_closed 且关闭结果为 confirmed，或数据库固定 deadline 已到的原 Operation。领取事务重复核对 Runner、resource_ref、访问门、Gone、业务互斥和 provider 动作；deadline 到期只把 waiting 改为 timed_out，不声称旧连接已确认关闭。可信关闭回写绑定接受时保存的 machine ID，并支持提交回执未知后的幂等重试。
+- `pkg/fabric.DestroyProvider` 分离唯一一次 `Destroy` 与只读 `ReconcileDestroy`。首次动作预约明确提交并再次检查执行租约后才调用删除；unknown、timeout、进程恢复和租约接管保留原 action ID、issuer、execution revision 与 resource_ref，只核对原动作。错误返回的伴随字段不落库，成功必须包含同一资源的明确 Gone 事实。
+- worker 在巡检、续期、Bootstrap 和创建之前恢复可执行销毁。删除成功原子标记资源 Gone、完成 Operation 并释放业务互斥；明确失败或不确定结果不会恢复 access_closed。原生 PostgreSQL 备份夹具保存一个未决 Destroy 动作，确保恢复不会生成新动作键。
+- SQLite/PostgreSQL race 回归覆盖关闭等待、确认和 timeout、过滤与锁内复核、首次调用、接管只核对、deadline/普通错误、非法事实、worker 推进和持久恢复。当前没有跨节点关闭确认广播，绑定过机器的资源通常在固定 deadline 后以 timed_out 事实继续删除；宿主/Web 装配、人工核对和真实提供方验收仍待完成，S2 尚未闭环。

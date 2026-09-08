@@ -69,6 +69,18 @@ type RenewReconcileCall struct {
 	KnownExpiresAt time.Time
 }
 
+// DestroyCall grants deletion of the exact resource named by Action. The
+// provider must treat Action.ID as the stable idempotency key.
+type DestroyCall struct {
+	Action Action
+}
+
+// DestroyReconcileCall only observes the original deletion. It never grants
+// permission to issue another delete request when the action cannot be found.
+type DestroyReconcileCall struct {
+	Action Action
+}
+
 // InspectCall identifies one already associated resource. Inspect is read-only;
 // it carries no action key and grants no permission to create, renew or destroy.
 type InspectCall struct {
@@ -148,4 +160,13 @@ type InspectProvider interface {
 type RenewProvider interface {
 	Renew(context.Context, RenewCall) (Observation, error)
 	ReconcileRenew(context.Context, RenewReconcileCall) (Observation, error)
+}
+
+// DestroyProvider removes one already access-closed resource. Destroy must use
+// Action.ID for provider-side deduplication or fencing. ReconcileDestroy only
+// queries the original action correlation. A successful observation requires
+// affirmative Gone evidence for the exact resource.
+type DestroyProvider interface {
+	Destroy(context.Context, DestroyCall) (Observation, error)
+	ReconcileDestroy(context.Context, DestroyReconcileCall) (Observation, error)
 }

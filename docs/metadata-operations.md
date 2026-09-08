@@ -106,4 +106,6 @@ Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍
 
 Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.destroy/managed` 访问检查。接受事务重新检查同一登录主体，固定 Fabric、resource_ref、binding revision 和访问关闭期限；随后一次性保存 Destroy Operation、暂停续期、把资源标为禁止访问，并删除 Managed enrollment、机器身份及级联的连接票据和 route。Runner、资源引用和操作记录继续保留用于清理与核对。并发重试返回原记录，提交回执未知不返回成功；机器删除后按原请求键重试时仍能恢复原 machine ID 和截止时间。已有冲突变更时不关闭访问，也不抢占 Runner 业务互斥。
 
-访问关闭与提供方删除是不同事实。有机器绑定的销毁先记录 `waiting` 和数据库时钟生成的固定 deadline；没有绑定可立即记为 `confirmed`。现有连接通过机器身份和票据失效机制退出，但这一检查点尚未把所有节点的流关闭确认写回，也未在 deadline 后发出 Destroy Provider 动作。提供方已经确认 Gone 的资源可直接把清理 Operation 收敛为 succeeded；其他已接受销毁在后续 worker 完成前仍保留 access_closed 和资源引用。
+访问关闭与提供方删除是不同事实。有机器绑定的销毁先记录 `waiting` 和数据库时钟生成的固定 deadline；没有绑定可立即记为 `confirmed`。可信的本地关闭观察必须携带接受时保存的 machine ID，重复确认幂等；deadline 先到则只记为 `timed_out`，不能伪装成连接已经确认退出。worker 只领取 confirmed/timed_out 的销毁，并在锁内重复核对 access_closed、resource_ref 和数据库时钟。
+
+公开 `fabric.DestroyProvider` 把首次删除和只读 `ReconcileDestroy` 分开。只有 Destroy 动作预约明确提交并再次复核执行权后才可首次调用；超时、unknown、重启或租约接管只查询原动作键。适配器错误的伴随字段会丢弃，成功必须给出同一 resource_ref 的明确 Gone 事实，才原子完成动作与 Operation；失败或不确定结果都不会恢复访问。Dune 当前没有跨节点关闭确认广播，因此绑定过机器的资源通常由固定 deadline 进入 timed_out 后继续清理；该状态明确保留了关闭确认不足的事实。

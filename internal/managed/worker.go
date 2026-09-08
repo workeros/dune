@@ -41,6 +41,7 @@ type ProviderSet struct {
 	Bootstrap map[string]fabric.BootstrapProvider
 	Inspect   map[string]fabric.InspectProvider
 	Renew     map[string]fabric.RenewProvider
+	Destroy   map[string]fabric.DestroyProvider
 }
 
 // Worker recovers accepted lifecycle stages independently of browser sessions.
@@ -53,10 +54,12 @@ type Worker struct {
 	bootstrap          *BootstrapExecutor
 	maintenance        *MaintenanceExecutor
 	renewal            *RenewalExecutor
+	destroyal          *DestroyExecutor
 	createProviders    map[string]struct{}
 	bootstrapProviders map[string]struct{}
 	inspectProviders   map[string]struct{}
 	renewProviders     map[string]struct{}
+	destroyProviders   map[string]struct{}
 	config             WorkerConfig
 	instanceID         string
 }
@@ -106,9 +109,17 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 	for id := range renewal.providers {
 		renewConfigured[id] = struct{}{}
 	}
+	destroyal, err := NewDestroyExecutor(store, providers.Destroy)
+	if err != nil {
+		return nil, err
+	}
+	destroyConfigured := make(map[string]struct{}, len(destroyal.providers))
+	for id := range destroyal.providers {
+		destroyConfigured[id] = struct{}{}
+	}
 	return &Worker{
-		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal,
-		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured, renewProviders: renewConfigured,
+		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal, destroyal: destroyal,
+		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured, renewProviders: renewConfigured, destroyProviders: destroyConfigured,
 		config: config, instanceID: wire.ID(),
 	}, nil
 }
@@ -127,6 +138,22 @@ func configuredFabrics(providers map[string]struct{}) []string {
 // Fabric namespaces remain untouched so another correctly configured deployment
 // can recover them.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
+	if len(w.destroyProviders) > 0 {
+		candidates, err := w.store.RecoverableManagedDestroysFor(ctx, configuredFabrics(w.destroyProviders), managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, candidate := range candidates {
+			claimed, err := w.store.ClaimRecoverableManagedDestroy(ctx, candidate.ID, w.instanceID, w.config.LeaseTTL)
+			if errors.Is(err, lifecycle.ErrBusy) || errors.Is(err, lifecycle.ErrLeaseLost) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			return true, w.execute(ctx, claimed, "destroy", w.destroyal.Execute)
+		}
+	}
 	if w.maintenance != nil {
 		candidates, err := w.store.RecoverableManagedInspectionsFor(ctx, configuredFabrics(w.inspectProviders), w.config.RenewalPolicyVersion, managedCreateBatch)
 		if err != nil {

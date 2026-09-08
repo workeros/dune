@@ -254,3 +254,83 @@ func TestManagedDestroyOfConfirmedGoneResourceIsAlreadyComplete(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedDestroyRecoveryWaitsForAccessClosure(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			s, _, user, sessionHash := managedFixture(t, backend)
+			selected, resource, _ := destroyFixture(t, s, user, sessionHash)
+			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidates, err := s.RecoverableManagedDestroysFor(ctx, []string{"sandbox"}, 32); err != nil || len(candidates) != 0 {
+				t.Fatal("waiting access closure became provider work", candidates, err)
+			}
+			if _, err := s.ClaimRecoverableManagedDestroy(ctx, destroyed.ID, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
+				t.Fatal("claim bypassed access closure wait", err)
+			}
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, "wrong-machine"); !errors.Is(err, lifecycle.ErrBusy) {
+				t.Fatal("wrong machine confirmed closure", err)
+			}
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, destroyed.MachineID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, destroyed.MachineID); err != nil {
+				t.Fatal("closure confirmation was not idempotent", err)
+			}
+			candidates, err := s.RecoverableManagedDestroysFor(ctx, []string{"sandbox"}, 32)
+			if err != nil || len(candidates) != 1 || candidates[0].ID != destroyed.ID {
+				t.Fatal("confirmed closure was not recoverable", candidates, err)
+			}
+			if candidates, err := s.RecoverableManagedDestroysFor(ctx, []string{"another"}, 32); err != nil || len(candidates) != 0 {
+				t.Fatal("destroy recovery ignored provider filtering", candidates, err)
+			}
+			claimed, err := s.ClaimRecoverableManagedDestroy(ctx, destroyed.ID, wire.ID(), time.Minute)
+			if err != nil || claimed.ID != destroyed.ID {
+				t.Fatal("confirmed destroy was not claimed", claimed, err)
+			}
+			current, err := s.ManagedDestroyOperation(ctx, destroyed.ID)
+			if err != nil || current.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
+				t.Fatal("confirmation was not durable", current, err)
+			}
+			action, dispatch, err := s.BeginProviderAction(ctx, claimed, lifecycle.ActionRequest{Kind: "destroy", Digest: claimed.Digest})
+			if err != nil || !dispatch || action.ResourceRef != resource.Ref {
+				t.Fatal("confirmed closure did not permit exact deletion", action, dispatch, err)
+			}
+		})
+	}
+}
+
+func TestManagedDestroyDeadlineRecordsTimeoutBeforeDispatch(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			s, _, user, sessionHash := managedFixture(t, backend)
+			selected, resource, _ := destroyFixture(t, s, user, sessionHash)
+			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidates, err := s.RecoverableManagedDestroysFor(ctx, []string{"sandbox"}, 32)
+			if err != nil || len(candidates) != 1 || candidates[0].ID != destroyed.ID {
+				t.Fatal("elapsed close deadline was not recoverable", candidates, err)
+			}
+			claimed, err := s.ClaimRecoverableManagedDestroy(ctx, destroyed.ID, wire.ID(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := s.ManagedDestroyOperation(ctx, destroyed.ID)
+			if err != nil || current.AccessCloseOutcome != lifecycle.AccessCloseTimedOut || !current.CloseDeadline.Equal(current.AccessClosedAt) {
+				t.Fatal("elapsed wait was not recorded as timed out", current, err)
+			}
+			if err := s.ConfirmManagedDestroyAccessClosed(ctx, destroyed.ID, destroyed.MachineID); !errors.Is(err, lifecycle.ErrBusy) {
+				t.Fatal("late acknowledgement rewrote timeout", err)
+			}
+			if _, dispatch, err := s.BeginProviderAction(ctx, claimed, lifecycle.ActionRequest{Kind: "destroy", Digest: claimed.Digest}); err != nil || !dispatch {
+				t.Fatal("timed-out access wait did not permit bounded cleanup", dispatch, err)
+			}
+		})
+	}
+}

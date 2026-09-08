@@ -256,6 +256,17 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil || savedDestroy.ID == "" || savedDestroy.ResourceRef != destroyResource.Ref || savedDestroy.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
 		t.Fatal("backup destroy operation setup", savedDestroy, err)
 	}
+	destroyExecution, err := s.ClaimRecoverableManagedDestroy(ctx, savedDestroy.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyAction, dispatch, err := s.BeginProviderAction(ctx, destroyExecution, lifecycle.ActionRequest{Kind: "destroy", Digest: destroyExecution.Digest})
+	if err != nil || !dispatch {
+		t.Fatal("backup destroy action setup", destroyAction, dispatch, err)
+	}
+	if err := s.RecordProviderAction(ctx, destroyExecution, destroyAction.ID, lifecycle.ActionObservation{Outcome: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

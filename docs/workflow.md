@@ -140,6 +140,8 @@ Managed 巡检和续期执行使用 `go test -race ./internal/lifecycle ./pkg/fa
 
 Managed 销毁接受阶段使用 `go test -race ./internal/authorization ./internal/managed ./internal/metadata -run 'ManagedDestroy|DestroyChecks|DestroyRejects|Discovery' -count=1 -timeout=180s`。SQLite/PostgreSQL 回归覆盖 `runner.destroy/managed` 的固定身份、Fabric 和 binding scope，事务内浏览器复核，并发幂等、冲突生命周期互斥、提交回执丢失、访问/续期/enrollment/机器/票据的原子失效、无机器时直接确认关闭，以及提供方已确认 Gone 时收敛完成。测试只证明销毁已被持久接受且旧数据库访问被撤销；有机器时的跨节点流关闭确认、固定 deadline 到期推进和真实 Destroy Provider 调用由后续阶段验证。
 
+Managed 销毁执行使用 `go test -race ./pkg/fabric ./internal/managed ./internal/metadata -run 'ManagedDestroy|DestroyExecutor|WorkerAdvancesDestroy' -count=1 -timeout=180s`。回归检查绑定 machine 的关闭等待、精确且幂等的可信确认、数据库 deadline 到期记录 timed_out、Fabric 过滤和锁内复核，以及首次 Destroy、接管后只 Reconcile、错误字段丢弃、Gone 终态和 worker 优先级。deadline 超时允许资源清理继续，但不等于跨节点连接已确认关闭；适配器仍为可信夹具，真实平台的动作去重、旧执行者 fencing 和 SDK 超时行为仍须真实验收。
+
 连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock` 和 `TestPostgresDirectoryCommitLoss`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查及回执丢失不重放。`TestSQLiteRejectsSharedClusterServices` 检查 SQLite 拒绝集群目录和共享准入；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCLI` 执行正式离线读取/旋转命令。它们仅证明目录事务与恢复工具，不代表 Gateway 已使用目录或三节点转发已经通过。
 
 `pkg/fabricd/TestPostgresOwnedReverseConnections` 将两个独立 SQL 池与两个真实协议 Gateway、fabricd 引擎相连，检查 live owner 竞争拒绝、确认后发布、持续数据库续约、原请求 epoch、owner 释放后接管、旧清理拒绝和原 PTY 重新输入；测试中主动旋转恢复代次作为故障注入，验证已有旧连接关闭，不代表生产恢复可以跳过停站。`pkg/gateway/TestOwnership*` 和 `TestOwnedHandshakeRequiresEpochConfirmation` 检查迟到目录响应、保守本地期限、过期不复活及错误确认不发布；`TestInputGrantCannotCrossOwnershipTerm` 单独验证有效输入 grant 不能跨归属。此范围不涵盖 HTTP peer、负载均衡或三节点网络分区。

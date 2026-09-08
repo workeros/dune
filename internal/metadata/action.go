@@ -170,6 +170,13 @@ func (s *Store) actionTarget(ctx context.Context, tx *sql.Tx, op lifecycle.Opera
 		if op.Action != "destroy" || !resource.AccessClosed {
 			return "", lifecycle.ErrBusy
 		}
+		var ref, accessOutcome string
+		if err := tx.QueryRowContext(ctx, `SELECT resource_ref,access_close_outcome FROM dune_managed_destroys WHERE operation_id=$1 AND runner_id=$2`, op.ID, op.RunnerID).Scan(&ref, &accessOutcome); err != nil {
+			return "", err
+		}
+		if ref != resource.Ref || accessOutcome == lifecycle.AccessCloseWaiting {
+			return "", lifecycle.ErrBusy
+		}
 	} else {
 		if resource.AccessClosed || (!resource.ExpiresAt.IsZero() && resource.ExpiresAt.UnixMilli() <= now) {
 			return "", lifecycle.ErrBusy
