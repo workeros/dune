@@ -19,11 +19,11 @@ import { ACPPane } from "@/components/acp";
 import { TerminalPane } from "@/components/terminal";
 import { Brand } from "@/components/brand";
 import { CLILogin, pendingCLIRequest } from "@/components/cli-login";
-import { APIError, request, post, call, errorText, type Page, type User, runnerPath, bindingKey, runtimeKey, type Binding, type Runner, type BoundRunner, type Runtime, type AgentConfig, type StartupInfo } from "@/lib/api";
+import { APIError, request, post, call, errorText, type Page, type User, runnerPath, bindingKey, runtimeKey, type Binding, type Runner, type BoundRunner, type Runtime, type AgentConfig, type StartupInfo, type ManagedField, type ManagedTemplate, type ManagedOperation, type ManagedCreation } from "@/lib/api";
 
 export function App() {
   const [cliRequest, setCLIRequest] = useState(pendingCLIRequest);
-  const [user, setUser] = useState<User | null>(), [runners, setRunners] = useState<Runner[]>([]), [selected, setSelected] = useState<Runner>(), [adding, setAdding] = useState(false), [error, setError] = useState(new URL(window.location.href).searchParams.get("login_error") === "1" ? "企业登录未完成或已过期，请重新登录。" : "");
+  const [user, setUser] = useState<User | null>(), [runners, setRunners] = useState<Runner[]>([]), [selected, setSelected] = useState<Runner>(), [adding, setAdding] = useState(false), [provisioning, setProvisioning] = useState(false), [error, setError] = useState(new URL(window.location.href).searchParams.get("login_error") === "1" ? "企业登录未完成或已过期，请重新登录。" : "");
   const [pageCursor, setPageCursor] = useState(""), [nextCursor, setNextCursor] = useState(""), [previousCursors, setPreviousCursors] = useState<string[]>([]);
   const discoveryEpoch = useRef(0);
   const [discoveryLoading, setDiscoveryLoading] = useState(true);
@@ -60,15 +60,16 @@ export function App() {
     if (error) return <div className="m-auto p-8"><p className="muted mb-4">暂时无法获取可访问的环境。</p><Button variant="outline" onClick={resetPage}>重新加载列表</Button></div>;
     if (selected && current && !matchingBinding) return <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">环境绑定已变化</h1><p className="muted mb-5 leading-7">原工作区已关闭。确认进入 {current.name} 的当前环境后，才能继续操作。</p><Button onClick={() => setSelected(current)}>进入当前环境</Button></div>;
     if (selected && !current) return <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">该环境暂不可访问</h1><p className="muted leading-7">请刷新列表或选择其他环境。</p></div>;
-    if (selected && current && !current.binding) return <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">{current.name} 尚未绑定开发机</h1><p className="muted leading-7">绑定可用后，再进入环境开始工作。</p></div>;
+    if (selected && current && !current.binding) return current.kind === "managed" ? <ManagedPending runner={current} onRefresh={refresh} /> : <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">{current.name} 尚未绑定开发机</h1><p className="muted leading-7">绑定可用后，再进入环境开始工作。</p></div>;
     if (runners.length > 0) return <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">选择一个开发环境</h1><p className="muted leading-7">从列表选择环境，查看或继续其中的工作。</p></div>;
     if ((pageCursor || nextCursor)) return <div className="m-auto max-w-lg p-8"><h1 className="mb-3 text-xl font-bold">本页暂无可访问的环境</h1><p className="muted leading-7">可以继续翻页，或刷新列表回到第一页。</p></div>;
-    return <div className="m-auto max-w-lg p-8"><div className="mb-6 inline-flex rounded-xl border border-foreground bg-mint p-4"><Icon icon={serverIcon} width={30} /></div><h1 className="mb-3 text-3xl font-bold tracking-tight">把开发机带到浏览器里。</h1><p className="muted mb-7 leading-7">接入你的 Linux 或 macOS 开发机，打开终端或启动 Agent。代码和会话历史留在开发机上。</p>{startup.attached ? <Button onClick={() => setAdding(true)}><Icon icon={addIcon} />接入第一台开发机</Button> : <p className="muted">此站点未开放开发机接入。</p>}</div>;
+    return <div className="m-auto max-w-lg p-8"><div className="mb-6 inline-flex rounded-xl border border-foreground bg-mint p-4"><Icon icon={serverIcon} width={30} /></div><h1 className="mb-3 text-3xl font-bold tracking-tight">准备一个开发环境。</h1><p className="muted mb-7 leading-7">接入已有 Linux 或 macOS 开发机，或按站点模板创建托管环境。代码和会话历史留在开发环境中。</p><div className="flex flex-wrap gap-3">{startup.attached && <Button onClick={() => setAdding(true)}><Icon icon={addIcon} />接入开发机</Button>}{startup.managed && <Button variant="outline" onClick={() => setProvisioning(true)}><Icon icon={addIcon} />创建托管环境</Button>}{!startup.attached && !startup.managed && <p className="muted">此站点未开放环境接入。</p>}</div></div>;
   };
   return <div className="workspace">
-    <aside className="sidebar"><Brand /><div className="machine-section"><div className="mb-3 flex items-center justify-between"><span className="muted font-semibold">开发环境</span><Button variant="ghost" size="icon" aria-label="刷新环境列表" onClick={resetPage}><Icon icon={refreshIcon} /></Button></div><nav className="machine-nav" aria-label="开发环境">{runners.map((m) => <button key={m.id} className={`machine-row ${selected?.id === m.id ? "active" : ""}`} onClick={() => setSelected(m)}><Icon icon={serverIcon} width={21} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{m.name}</span><span className="mt-1 block text-xs text-muted-foreground"><i className={`status-dot ${m.online ? "online" : ""}`} />{!m.binding ? "未绑定" : m.online ? "在线" : "离线"}{m.os && <> · {m.os === "darwin" ? "macOS" : m.os}</>}</span></span></button>)}</nav>{(previousCursors.length > 0 || nextCursor) && <nav className="mt-3 flex flex-wrap gap-2" aria-label="环境分页"><Button variant="outline" size="sm" disabled={!previousCursors.length} onClick={() => { setDiscoveryLoading(true); setRunners([]); setNextCursor(""); setSelected(undefined); setPageCursor(previousCursors.at(-1) ?? ""); setPreviousCursors((items) => items.slice(0, -1)); }}>上一页</Button><Button variant="outline" size="sm" disabled={!nextCursor} onClick={() => { setDiscoveryLoading(true); setRunners([]); setNextCursor(""); setSelected(undefined); setPreviousCursors((items) => [...items, pageCursor]); setPageCursor(nextCursor); }}>下一页</Button></nav>}{startup.attached && <Button className="mt-2 w-full" variant="outline" onClick={() => setAdding(true)}><Icon icon={addIcon} />接入开发机</Button>}</div><div className="sidebar-footer mt-auto border-t border-foreground/20 pt-4"><p className="mb-4 text-xs leading-relaxed text-muted-foreground">任务在你的机器上运行。<br />关闭网页，任务继续。</p><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs" title={user.email}>{user.email || "企业用户"}</span><Button variant="ghost" size="icon" aria-label="退出登录" onClick={() => void post("/api/auth/logout", {}).then(() => setUser(null)).catch((e) => setError(errorText(e)))}><Icon icon={logoutIcon} /></Button></div></div></aside>
+    <aside className="sidebar"><Brand /><div className="machine-section"><div className="mb-3 flex items-center justify-between"><span className="muted font-semibold">开发环境</span><Button variant="ghost" size="icon" aria-label="刷新环境列表" onClick={resetPage}><Icon icon={refreshIcon} /></Button></div><nav className="machine-nav" aria-label="开发环境">{runners.map((m) => <button key={m.id} className={`machine-row ${selected?.id === m.id ? "active" : ""}`} onClick={() => setSelected(m)}><Icon icon={serverIcon} width={21} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{m.name}</span><span className="mt-1 block text-xs text-muted-foreground"><i className={`status-dot ${m.online ? "online" : ""}`} />{!m.binding ? m.kind === "managed" ? "准备中" : "未绑定" : m.online ? "在线" : "离线"}{m.os && <> · {m.os === "darwin" ? "macOS" : m.os}</>}</span></span></button>)}</nav>{(previousCursors.length > 0 || nextCursor) && <nav className="mt-3 flex flex-wrap gap-2" aria-label="环境分页"><Button variant="outline" size="sm" disabled={!previousCursors.length} onClick={() => { setDiscoveryLoading(true); setRunners([]); setNextCursor(""); setSelected(undefined); setPageCursor(previousCursors.at(-1) ?? ""); setPreviousCursors((items) => items.slice(0, -1)); }}>上一页</Button><Button variant="outline" size="sm" disabled={!nextCursor} onClick={() => { setDiscoveryLoading(true); setRunners([]); setNextCursor(""); setSelected(undefined); setPreviousCursors((items) => [...items, pageCursor]); setPageCursor(nextCursor); }}>下一页</Button></nav>}{startup.attached && <Button className="mt-2 w-full" variant="outline" onClick={() => setAdding(true)}><Icon icon={addIcon} />接入开发机</Button>}{startup.managed && <Button className="mt-2 w-full" variant="outline" onClick={() => setProvisioning(true)}><Icon icon={addIcon} />创建托管环境</Button>}</div><div className="sidebar-footer mt-auto border-t border-foreground/20 pt-4"><p className="mb-4 text-xs leading-relaxed text-muted-foreground">任务在开发环境中运行。<br />关闭网页，任务继续。</p><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs" title={user.email}>{user.email || "企业用户"}</span><Button variant="ghost" size="icon" aria-label="退出登录" onClick={() => void post("/api/auth/logout", {}).then(() => setUser(null)).catch((e) => setError(errorText(e)))}><Icon icon={logoutIcon} /></Button></div></div></aside>
     <main className="workbench paper-grid">{error && <div className="error-box m-4" role="alert">{error}</div>}{renderWorkbench()}</main>
     {startup.attached && <AddMachine open={adding} onOpenChange={setAdding} />}
+    {startup.managed && <AddManaged open={provisioning} onOpenChange={setProvisioning} onCreated={async (runner) => { setSelected(runner); resetPage(); }} />}
   </div>;
 }
 
@@ -78,6 +79,91 @@ function Auth({ startup, onLogin, initialError }: { startup: StartupInfo; onLogi
   const [register, setRegister] = useState(false), [email, setEmail] = useState(""), [password, setPassword] = useState(""), [error, setError] = useState(initialError), [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { onLogin(await post<User>(register ? "/api/auth/register" : passwordLogin!.url, { email, password })); } catch (e) { setError(errorText(e)); } finally { setBusy(false); } };
   return <main className="paper-grid flex min-h-screen items-center justify-center p-6"><div className="w-full max-w-md"><div className="mb-8"><Brand /></div><section className="paper-card p-8"><p className="mb-2 text-xs font-semibold uppercase tracking-[.15em] text-muted-foreground">Your machine. Your workspace.</p><h1 className="mb-2 text-2xl font-bold">{register ? "开始使用 Dune" : "回到你的工作台"}</h1><p className="muted mb-7">在浏览器中，继续开发机上的工作。</p>{passwordLogin ? <form onSubmit={submit} className="grid gap-5"><label>邮箱<Input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} /></label><label>密码<Input type="password" autoComplete={register ? "new-password" : "current-password"} minLength={register ? 12 : undefined} maxLength={256} required value={password} onChange={(e) => setPassword(e.target.value)} />{register && <span className="text-xs font-normal text-muted-foreground">至少 12 个字符</span>}</label>{error && <div className="error-box" role="alert">{error}</div>}<Button type="submit" disabled={busy}>{busy ? "请稍候…" : register ? "注册并进入工作台" : "登录"}</Button></form> : externalLogin ? <div className="grid gap-4">{error && <div className="error-box" role="alert">{error}</div>}<Button onClick={() => { window.location.assign(externalLogin.url); }}>使用企业账号登录</Button></div> : <p role="status">此站点暂未提供可用的登录方式。</p>}{passwordLogin && startup.local_registration && <button className="mt-6 text-sm underline decoration-foreground/30 underline-offset-4" onClick={() => { setRegister(!register); setError(""); }}>{register ? "已有账号？登录" : "第一次使用？自由注册"}</button>}{passwordLogin && !startup.local_registration && <p className="muted mt-6 text-sm">此站点未开放本地注册，请使用已有账号登录。</p>}</section><p className="mt-6 text-center text-xs text-muted-foreground">无需预装 Agent，即可接入开发机。</p></div></main>;
+}
+
+function managedRequestBody(template: ManagedTemplate, name: string, values: Record<string, string | boolean>, requestKey: string): string {
+  const parameters = template.fields.flatMap((field) => {
+    const value = values[field.name];
+    if (field.type === "integer") {
+      const raw = typeof value === "string" ? value.trim() : "";
+      if (!raw && !field.required) return [];
+      if (!/^-?(0|[1-9]\d*)$/.test(raw)) throw new Error(`${field.label} 必须是十进制整数。`);
+      const integer = BigInt(raw), minimum = BigInt(field.minimum!), maximum = BigInt(field.maximum!);
+      if (integer < minimum || integer > maximum) throw new Error(`${field.label} 必须在 ${field.minimum} 到 ${field.maximum} 之间。`);
+      return [`${JSON.stringify(field.name)}:${raw}`];
+    }
+    if (field.type === "boolean") return [`${JSON.stringify(field.name)}:${value === true}`];
+    const text = typeof value === "string" ? value : "";
+    if (!text && !field.required) return [];
+    if (!text.trim() && field.required) throw new Error(`请填写${field.label}。`);
+    if (new TextEncoder().encode(text).length > (field.max_length ?? 0)) throw new Error(`${field.label}过长。`);
+    return [`${JSON.stringify(field.name)}:${JSON.stringify(text)}`];
+  });
+  return `{"request_key":${JSON.stringify(requestKey)},"request":{"name":${JSON.stringify(name)},"fabric_id":${JSON.stringify(template.fabric_id)},"template_id":${JSON.stringify(template.id)},"template_version":${JSON.stringify(template.version)},"parameters":{${parameters.join(",")}}}}`;
+}
+
+function managedRequestKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return `web-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function AddManaged({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (runner: Runner) => Promise<void> }) {
+  const [templates, setTemplates] = useState<ManagedTemplate[]>([]), [templateKey, setTemplateKey] = useState(""), [name, setName] = useState(""), [values, setValues] = useState<Record<string, string | boolean>>({}), [error, setError] = useState(""), [busy, setBusy] = useState(false), [loading, setLoading] = useState(false);
+  const requestKey = useRef(managedRequestKey());
+  const selected = templates.find((template) => JSON.stringify([template.fabric_id, template.id, template.version]) === templateKey);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setLoading(true); setError("");
+    request<{ items: ManagedTemplate[] }>("/api/managed/templates").then(({ items }) => {
+      if (!alive) return;
+      setTemplates(items); setTemplateKey(items[0] ? JSON.stringify([items[0].fabric_id, items[0].id, items[0].version]) : "");
+    }).catch((e) => { if (alive) setError(errorText(e)); }).finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [open]);
+  useEffect(() => { setValues({}); }, [templateKey]);
+  const close = (value: boolean) => {
+    onOpenChange(value);
+    if (!value) { setName(""); setValues({}); setError(""); requestKey.current = managedRequestKey(); }
+  };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true); setError("");
+    try {
+      const body = managedRequestBody(selected, name, values, requestKey.current);
+      const created = await request<ManagedCreation>("/api/managed/runners", { method: "POST", body });
+      close(false); await onCreated(created.runner);
+    } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+  };
+  return <Dialog open={open} onOpenChange={close}><DialogContent><DialogTitle className="mb-2 text-xl font-bold">创建托管环境</DialogTitle><DialogDescription className="muted mb-6">选择管理员提供的模板。提交后可以离开页面，创建会在后台继续。</DialogDescription>{loading ? <p role="status">正在读取可用模板…</p> : templates.length ? <form className="grid gap-4" onSubmit={submit}><label>环境名称<Input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} placeholder="例如：项目开发环境" /></label><label>模板<select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>{templates.map((template) => { const key = JSON.stringify([template.fabric_id, template.id, template.version]); return <option key={key} value={key}>{template.name} · {template.version}</option>; })}</select></label>{selected?.fields.map((field) => <ManagedInput key={field.name} field={field} value={values[field.name]} onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))} />)}{error && <div className="error-box" role="alert">{error}</div>}<Button type="submit" disabled={busy}>{busy ? "提交中…" : "创建环境"}</Button></form> : !error && <p className="muted">当前账号没有可用的托管模板。</p>}{error && !templates.length && <div className="error-box" role="alert">{error}</div>}</DialogContent></Dialog>;
+}
+
+function ManagedInput({ field, value, onChange }: { field: ManagedField; value: string | boolean | undefined; onChange: (value: string | boolean) => void }) {
+  if (field.type === "boolean") return <label className="flex items-center gap-3"><input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} /><span>{field.label}{field.required ? " *" : ""}</span></label>;
+  if (field.choices?.length) return <label>{field.label}<select required={field.required} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)}><option value="">请选择</option>{field.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></label>;
+  return <label>{field.label}<Input type="text" inputMode={field.type === "integer" ? "numeric" : "text"} required={field.required} maxLength={field.type === "string" ? field.max_length : undefined} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />{field.type === "integer" && <span className="text-xs font-normal text-muted-foreground">范围：{field.minimum} 至 {field.maximum}</span>}</label>;
+}
+
+const managedStage: Record<string, string> = { queued: "等待后台处理", creating: "正在创建资源", bootstrapping: "正在配置开发环境", waiting_connection: "等待开发机首次连接", renewing: "正在续期", closing_access: "正在关闭访问", destroying: "正在删除资源", succeeded: "操作已完成", failed: "操作失败" };
+
+function ManagedPending({ runner, onRefresh }: { runner: Runner; onRefresh: () => Promise<void> }) {
+  const [status, setStatus] = useState<ManagedOperation>(), [error, setError] = useState(""), [destroying, setDestroying] = useState(false), [confirming, setConfirming] = useState(false);
+  const destroyKey = useRef(managedRequestKey());
+  const load = async () => {
+    try { const next = await request<ManagedOperation>(`/api/managed/runners/${encodeURIComponent(runner.id)}`); setStatus(next); setError(""); if (next.finished && next.outcome === "succeeded") await onRefresh(); }
+    catch (e) { setError(errorText(e)); }
+  };
+  useEffect(() => { let alive = true; const refresh = async () => { if (alive) await load(); }; void refresh(); const timer = setInterval(() => void refresh(), 2500); return () => { alive = false; clearInterval(timer); }; }, [runner.id]);
+  const destroy = async () => {
+    setDestroying(true); setError("");
+    try { await request(`/api/managed/runners/${encodeURIComponent(runner.id)}`, { method: "DELETE", body: JSON.stringify({ request_key: destroyKey.current }) }); setConfirming(false); await onRefresh(); }
+    catch (e) { setError(errorText(e)); } finally { setDestroying(false); }
+  };
+  const detail = status?.provider_outcome === "unknown" ? "外部结果尚未确认，后台只会查询，不会重复提交变更。" : status?.action === "destroy" ? status.finished && status.outcome === "succeeded" ? "供应商资源已确认删除，访问保持关闭。" : status.finished ? "自动删除已停止，访问保持关闭，管理员可根据已保存的结果继续处理。" : "访问已经关闭，后台正在确认并删除供应商资源。" : status?.outcome === "failed" ? "创建已停止。可以删除这个环境后重新创建。" : "创建会在后台继续，可以关闭此页面。";
+  return <div className="m-auto w-full max-w-xl p-8"><section className="paper-card p-7"><div className="mb-5 inline-flex rounded-xl border border-foreground bg-yellow p-3"><Icon icon={serverIcon} width={28} /></div><h1 className="mb-2 text-2xl font-bold">{runner.name}</h1><p className="mb-2 font-semibold" role="status">{status ? managedStage[status.stage ?? ""] ?? status.stage : "正在读取生命周期状态…"}</p><p className="muted leading-7">{detail}</p>{status?.resource_ref && <p className="mt-4 break-all text-xs text-muted-foreground">资源：{status.resource_ref}</p>}{status?.expires_at && <p className="mt-1 text-xs text-muted-foreground">有效至：{new Date(status.expires_at).toLocaleString()}</p>}{status?.access_close_outcome && <p className="mt-1 text-xs text-muted-foreground">访问关闭：{status.access_close_outcome === "confirmed" ? "已确认" : status.access_close_outcome === "timed_out" ? "等待超时后继续" : "等待现有连接结束"}</p>}{error && <div className="error-box mt-4" role="alert">{error}</div>}<div className="mt-6 flex gap-3"><Button variant="outline" onClick={() => void load()}><Icon icon={refreshIcon} />刷新状态</Button>{status?.action !== "destroy" && <Button variant="ghost" onClick={() => setConfirming(true)}><Icon icon={deleteIcon} />删除环境</Button>}</div></section><Dialog open={confirming} onOpenChange={setConfirming}><DialogContent><DialogTitle className="mb-3 text-xl font-bold">删除 {runner.name}？</DialogTitle><DialogDescription className="muted mb-6">访问会立即关闭，后台将继续确认并删除供应商资源。</DialogDescription><Button variant="destructive" disabled={destroying} onClick={() => void destroy()}>{destroying ? "提交中…" : "确认删除"}</Button></DialogContent></Dialog></div>;
 }
 
 function AddMachine({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -90,6 +176,7 @@ function AddMachine({ open, onOpenChange }: { open: boolean; onOpenChange: (open
 function Workspace({ runner, onRevoke }: { runner: BoundRunner; onRevoke: () => Promise<void> }) {
   const [sessions, setSessions] = useState<Runtime[]>([]), [selected, setSelected] = useState<Runtime>(), [configs, setConfigs] = useState<AgentConfig[]>([]), [configID, setConfigID] = useState(""), [cwd, setCwd] = useState(""), [error, setError] = useState(""), [busy, setBusy] = useState(false), [editing, setEditing] = useState(false), [browsing, setBrowsing] = useState(false), [tab, setTab] = useState<"terminal" | "diff">("terminal"), [revoking, setRevoking] = useState(false);
   const alive = useRef(true);
+  const destroyKey = useRef(managedRequestKey());
   const loadSessions = async () => { const list = await call<Runtime[]>(runner.binding, "runtime.list"); if (alive.current) { setSessions(list); } };
   const loadConfigs = async () => { const list = await call<AgentConfig[]>(runner.binding, "agent.config", { action: "list" }); if (alive.current) setConfigs(list); };
   useEffect(() => { alive.current = true; if (!runner.online) return () => { alive.current = false; }; void Promise.all([call<{ home: string }>(runner.binding, "machine.info").then((info) => { if (alive.current) setCwd((old) => old || info.home); }), loadConfigs(), loadSessions()]).catch((e) => { if (alive.current) setError(errorText(e)); }); const timer = setInterval(() => void loadSessions().catch((e) => { if (alive.current) setError(errorText(e)); }), 4000); return () => { alive.current = false; clearInterval(timer); }; }, [runner.online]);
@@ -111,7 +198,7 @@ function Workspace({ runner, onRevoke }: { runner: BoundRunner; onRevoke: () => 
     <div className="session-layout"><nav className="session-list" aria-label="会话列表"><p className="muted mb-2 text-xs font-semibold">会话 · {sessions.length}</p>{sessions.map((runtime) => <button className={`session-row ${selected && runtimeKey(runtime) === runtimeKey(selected) ? "active" : ""}`} key={runtimeKey(runtime)} aria-label={`连接会话 ${runtime.title || runtime.adapter} ${runtime.id.slice(0, 6)}`} aria-current={selected && runtimeKey(runtime) === runtimeKey(selected) ? "true" : undefined} onClick={() => { setSelected(runtime); setTab("terminal"); }}><span className="block truncate text-sm font-semibold">{runtime.title || runtime.adapter}</span><span className="mt-1 block text-xs text-muted-foreground">{runtime.state === "running" ? "运行中" : `已退出 · ${runtime.exit_code}`} · {runtime.id.slice(0, 6)}</span>{(!selected || runtimeKey(runtime) !== runtimeKey(selected)) && <span className="mt-1 block text-xs text-muted-foreground">点击连接</span>}</button>)}{!sessions.length && <p className="text-xs leading-5 text-muted-foreground">从上方打开终端，或启动一个 Agent。</p>}</nav><section className="paper-card flex min-h-0 min-w-0 flex-col overflow-hidden">{selectedRuntime ? <><div className="flex flex-wrap items-center justify-between gap-2 border-b border-foreground/20 p-2"><div className="flex gap-1"><Button variant={tab === "terminal" ? "outline" : "ghost"} size="sm" onClick={() => setTab("terminal")}><Icon icon={terminalIcon} />{selectedRuntime.adapter === "acp" ? "对话" : "终端"}</Button><Button variant={tab === "diff" ? "outline" : "ghost"} size="sm" onClick={() => setTab("diff")}><Icon icon={codeIcon} />Git diff</Button></div><span className="min-w-0 flex-1 truncate px-2 font-mono text-xs text-muted-foreground" title={selectedRuntime.working_directory}>{selectedRuntime.working_directory}</span><Button variant="ghost" size="sm" onClick={() => setSelected(undefined)}><Icon icon={disconnectIcon} />断开连接</Button>{selectedRuntime.state === "running" ? <Button variant="ghost" size="sm" onClick={() => void sessionAction("runtime.stop")}><Icon icon={stopIcon} />{selectedRuntime.adapter === "pty" ? "结束并清除历史" : "停止"}</Button> : <Button variant="ghost" size="sm" onClick={() => void sessionAction("runtime.forget")}><Icon icon={deleteIcon} />删除会话与历史</Button>}</div>{tab === "terminal" ? selectedRuntime.adapter === "pty" ? <TerminalPane key={runtimeKey(selectedRuntime)} binding={runner.binding} runtime={selectedRuntime} /> : <ACPPane key={runtimeKey(selectedRuntime)} binding={runner.binding} runtime={selectedRuntime} /> : <Diff binding={runner.binding} cwd={selectedRuntime.working_directory || cwd} />}</> : <div className="m-auto p-8 text-center"><Icon icon={terminalIcon} width={36} className="mx-auto mb-4" /><h2 className="mb-2 text-lg font-bold">{selected ? "会话执行身份已变化或不可用" : sessions.length ? "选择一个会话再连接" : "准备开始工作"}</h2><p className="muted max-w-sm leading-6">{selected ? "原连接已关闭，请从会话列表重新选择。未确认的输入或操作不会重发。" : sessions.length ? "现有会话继续在开发机上运行。点击左侧会话才会连接，进入或刷新页面不会自动接入。" : "选择项目目录，打开普通终端。也可以保存自己的 Agent 命令，再从这里启动。"}</p></div>}</section></div>
     <AgentEditor binding={runner.binding} open={editing} onOpenChange={setEditing} configs={configs} onSave={loadConfigs} />
     <DirectoryPicker binding={runner.binding} path={cwd} open={browsing} onOpenChange={setBrowsing} onSelect={setCwd} />
-    <Dialog open={revoking} onOpenChange={setRevoking}><DialogContent><DialogTitle className="mb-3 text-xl font-bold">解绑 {runner.name}？</DialogTitle><DialogDescription className="muted mb-6">当前网页连接会被撤销。不会删除开发机文件，也不会终止远端 Agent 或终端进程。</DialogDescription><Button variant="destructive" onClick={() => void request(runnerPath(runner.binding, "binding"), { method: "DELETE" }).then(onRevoke).catch((e) => setError(errorText(e)))}>确认解绑</Button></DialogContent></Dialog>
+    <Dialog open={revoking} onOpenChange={setRevoking}><DialogContent><DialogTitle className="mb-3 text-xl font-bold">{runner.kind === "managed" ? "删除" : "解绑"} {runner.name}？</DialogTitle><DialogDescription className="muted mb-6">{runner.kind === "managed" ? "访问会立即关闭，后台将继续确认并删除供应商资源。" : "当前网页连接会被撤销。不会删除开发机文件，也不会终止远端 Agent 或终端进程。"}</DialogDescription><Button variant="destructive" onClick={() => { const action = runner.kind === "managed" ? request(`/api/managed/runners/${encodeURIComponent(runner.id)}`, { method: "DELETE", body: JSON.stringify({ request_key: destroyKey.current }) }) : request(runnerPath(runner.binding, "binding"), { method: "DELETE" }); void action.then(onRevoke).catch((e) => setError(errorText(e))); }}>确认{runner.kind === "managed" ? "删除" : "解绑"}</Button></DialogContent></Dialog>
   </>;
 }
 

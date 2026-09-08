@@ -162,6 +162,15 @@ func (s *Store) Operation(ctx context.Context, id string) (lifecycle.Operation, 
 	return scanOperation(s.db.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM dune_operations WHERE id=$1", id))
 }
 
+// ManagedRunnerOperation selects the lifecycle fact most relevant to a Runner
+// display: an active mutation, the latest destroy, or its original create.
+// Authorization belongs to the calling service.
+func (s *Store) ManagedRunnerOperation(ctx context.Context, runnerID string) (lifecycle.Operation, error) {
+	return scanOperation(s.db.QueryRowContext(ctx, `SELECT `+operationColumns+` FROM dune_operations
+		WHERE runner_id=$1
+		ORDER BY CASE WHEN exclusive=TRUE THEN 0 WHEN action='destroy' THEN 1 WHEN action='create' THEN 2 ELSE 3 END,created_at DESC,id DESC LIMIT 1`, runnerID))
+}
+
 // RecoverableManagedCreates returns trusted create-stage work whose execution
 // lease has expired according to the database clock. It excludes operations
 // that have already advanced past create, even though those workflows remain

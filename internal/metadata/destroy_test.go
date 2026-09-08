@@ -91,6 +91,10 @@ func TestManagedDestroyAcceptanceClosesAccessAtomically(t *testing.T) {
 			if destroyed.ID == "" || destroyed.Action != "destroy" || destroyed.RunnerID != selected.Runner.ID || destroyed.FabricID != "sandbox" || destroyed.BindingRevision != 1 || !destroyed.Exclusive || destroyed.Finished || destroyed.Outcome != "" || destroyed.ResourceRef != resource.Ref || destroyed.MachineID != selected.Runner.Binding.MachineID || destroyed.AccessCloseOutcome != lifecycle.AccessCloseWaiting || destroyed.AccessClosedAt.IsZero() || destroyed.CloseDeadline.Sub(destroyed.AccessClosedAt) != time.Minute {
 				t.Fatal("invalid destroy acceptance", destroyed)
 			}
+			currentOperation, err := other.ManagedRunnerOperation(ctx, selected.Runner.ID)
+			if err != nil || currentOperation.ID != destroyed.ID || currentOperation.Action != "destroy" {
+				t.Fatal("Runner status did not select its active destroy", currentOperation, err)
+			}
 			currentResource, err := s.ManagedResource(ctx, selected.Runner.ID)
 			if err != nil || !currentResource.AccessClosed || currentResource.Gone || currentResource.Ref != resource.Ref {
 				t.Fatal("destroy acceptance lost or deleted the resource", currentResource, err)

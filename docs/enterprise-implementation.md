@@ -411,3 +411,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - `pkg/fabric.DestroyProvider` 分离唯一一次 `Destroy` 与只读 `ReconcileDestroy`。首次动作预约明确提交并再次检查执行租约后才调用删除；unknown、timeout、进程恢复和租约接管保留原 action ID、issuer、execution revision 与 resource_ref，只核对原动作。错误返回的伴随字段不落库，成功必须包含同一资源的明确 Gone 事实。
 - worker 在巡检、续期、Bootstrap 和创建之前恢复可执行销毁。删除成功原子标记资源 Gone、完成 Operation 并释放业务互斥；明确失败或不确定结果不会恢复 access_closed。原生 PostgreSQL 备份夹具保存一个未决 Destroy 动作，确保恢复不会生成新动作键。
 - SQLite/PostgreSQL race 回归覆盖关闭等待、确认和 timeout、过滤与锁内复核、首次调用、接管只核对、deadline/普通错误、非法事实、worker 推进和持久恢复。当前没有跨节点关闭确认广播，绑定过机器的资源通常在固定 deadline 后以 timed_out 事实继续删除；宿主/Web 装配、人工核对和真实提供方验收仍待完成，S2 尚未闭环。
+
+### 已完成：Managed 宿主、Web API 与工作台装配
+
+- `host.Options.Managed` 接收不可变公开模板、按 Fabric 配齐的 Create/Bootstrap/Inspect/Renew/Destroy 接口和有界 worker 设置。Host 在打开数据库前验证目录及明显配置，随后复用同一身份、权限、Store、Gateway 和应用 context 构造业务服务与恢复 worker；关闭等待 worker，worker 的持久错误取消应用并进入现有失败可见路径。未配置时不发布 Managed 路由或工作台入口。
+- PostgreSQL 配置准入现在自动覆盖模板目录摘要、提供方命名空间和 worker 行为，并要求任何 Managed 宿主声明 `ConfigurationVersion` 表达私有 SDK 语义。它不保存或比较凭据。配置失败释放 SQLite 所有权；多副本只有相同非敏感行为摘要可同时续约准入。
+- 可复用 Web 增加经过浏览器认证与服务端访问检查的模板列表/详情、创建、销毁、Operation 状态和 Runner 当前生命周期状态。状态由持久 Operation、动作、资源和关闭记录推导，区分 queued、creating、bootstrapping、waiting_connection、renewing、closing_access、destroying 与终态；响应不包含 principal、请求键、worker、执行修订或 provider action key。销毁接受后本机 Gateway 立即断开原 machine，未把断开动作误报为跨节点关闭确认。
+- 工作台只在启动能力明确启用时显示托管入口。动态表单保留模板精确版本，`int64` 以字符串验证边界并直接写入 JSON 数字，避免 JavaScript 精度损失；创建后展示持久阶段，unknown 提示只会核对原动作，Managed 删除走独立销毁流程，Attached 仍走解绑语义。关闭页面不影响后台恢复。
+- 相关 Go 包竞态检查、前端类型检查与生产构建通过；Host 集成夹具验证 worker 领取、前缀 API、跨用户隐藏和响应字段边界。当前没有真实 Managed 提供方、浏览器自动化、跨节点主动关闭确认或人工核对入口；这些限制仍阻止 S2 闭环。

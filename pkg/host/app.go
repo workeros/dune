@@ -6,6 +6,7 @@ package host
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	managedmodule "github.com/aiomni/dune/internal/managed"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/access"
@@ -49,9 +51,12 @@ type Options struct {
 	// AccessChecker selects enterprise policy instead of the default owner check.
 	// It must honor cancellation and must not retain credentials or work content.
 	AccessChecker access.Checker
-	// ConfigurationVersion identifies nonsecret custom identity/policy behavior.
-	// Required for PostgreSQL with custom modules; replicas must use the same
-	// value and change it whenever incompatible module settings change.
+	// Managed enables configured templates, the browser lifecycle API and the
+	// durable provider worker. Nil leaves Managed unavailable.
+	Managed *ManagedOptions
+	// ConfigurationVersion identifies nonsecret custom identity, policy and
+	// Managed provider behavior. PostgreSQL replicas with any such module must
+	// use the same value and change it for incompatible settings.
 	ConfigurationVersion string
 	// DialGateway optionally connects the workbench to this application's tunnel
 	// using the supplied short-lived credential. The returned connection belongs
@@ -96,6 +101,10 @@ func Open(parent context.Context, options Options) (*App, error) {
 		return nil, err
 	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
+	if err != nil {
+		return nil, err
+	}
+	managedConfig, err := prepareManaged(options.Managed, addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +158,11 @@ func Open(parent context.Context, options Options) (*App, error) {
 		service = external
 	}
 	if database.Postgres != nil {
-		admission, instance, err = registerInstance(ctx, store, options, addresses, service)
+		managedFingerprint := ""
+		if managedConfig != nil {
+			managedFingerprint = managedConfig.fingerprint
+		}
+		admission, instance, err = registerInstance(ctx, store, options, addresses, service, managedFingerprint)
 		if err != nil {
 			return nil, err
 		}
@@ -159,6 +172,18 @@ func Open(parent context.Context, options Options) (*App, error) {
 		return nil, err
 	}
 	authorizer := authorization.New(ctx, service, store, options.AccessChecker)
+	var managedService *managedmodule.Service
+	var managedWorker *managedmodule.Worker
+	if managedConfig != nil {
+		managedService, err = managedmodule.New(managedConfig.catalog, service, authorizer, store)
+		if err != nil {
+			return nil, err
+		}
+		managedWorker, err = managedmodule.NewWorker(store, managedConfig.providers, managedConfig.worker)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var online func(context.Context, []string) (map[string]bool, error)
 	var peerHandler http.Handler
 	if transport != nil {
@@ -182,6 +207,13 @@ func Open(parent context.Context, options Options) (*App, error) {
 		External:    external,
 		Online:      online,
 		Admission:   admission,
+		Managed:     managedService,
+		DestroyAccessCloseTimeout: func() time.Duration {
+			if managedConfig == nil {
+				return 0
+			}
+			return managedConfig.destroyCloseTimeout
+		}(),
 	}, store, service, authorizer, core)
 	if err != nil {
 		return nil, err
@@ -191,6 +223,10 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if admission != nil {
 		app.active.Add(1)
 		go app.renewAdmission(instance)
+	}
+	if managedWorker != nil {
+		app.active.Add(1)
+		go app.runManaged(managedWorker)
 	}
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil
@@ -297,10 +333,25 @@ func (a *App) Close() error {
 		}
 		a.active.Wait()
 		<-a.core.Drain()
-		a.err = a.store.Close()
+		storeErr := a.store.Close()
+		a.mu.Lock()
+		a.err = errors.Join(a.err, storeErr)
+		a.mu.Unlock()
 		close(a.done)
 	})
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return a.err
+}
+
+func (a *App) runManaged(worker *managedmodule.Worker) {
+	defer a.active.Done()
+	if err := worker.Run(a.ctx); err != nil {
+		a.mu.Lock()
+		a.err = errors.Join(a.err, err)
+		a.mu.Unlock()
+		a.cancel()
+	}
 }
 
 // Done is closed after all application-owned resources have been released.

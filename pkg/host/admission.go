@@ -19,22 +19,25 @@ import (
 	"github.com/aiomni/dune/pkg/gateway"
 )
 
-func configurationFingerprint(options Options, urls deployment.URLs, service identity.Service) (string, error) {
+func configurationFingerprint(options Options, urls deployment.URLs, service identity.Service, managedFingerprint string) (string, error) {
 	revision := options.ConfigurationVersion
 	if len(revision) > 128 || !utf8.ValidString(revision) || strings.ContainsFunc(revision, unicode.IsControl) {
 		return "", fmt.Errorf("configuration version must be a nonsecret identifier of at most 128 bytes")
 	}
-	if (options.Identity != nil || options.AccessChecker != nil) && revision == "" {
-		return "", fmt.Errorf("PostgreSQL hosts with custom identity or policy require ConfigurationVersion")
+	if (options.Identity != nil || options.AccessChecker != nil || options.Managed != nil) && revision == "" {
+		return "", fmt.Errorf("PostgreSQL hosts with custom identity, policy or Managed providers require ConfigurationVersion")
 	}
 	// Origins and direct peer addresses identify instances and may differ. The
 	// mounted path and behavior must agree. Opaque provider/checker configuration
 	// is represented by the version supplied by the application, never by secrets.
 	description := struct {
 		Protocol, Path, Namespace, Policy, Version string
-		Lifetime                                   time.Duration
-		Registration, Cluster                      bool
-	}{Protocol: api.Version, Path: urls.Path, Namespace: service.Namespace(), Lifetime: identity.SessionLifetime, Registration: options.Identity == nil && !options.DisableRegistration, Cluster: options.Cluster != nil, Policy: "owner-v1", Version: revision}
+		// Omitting the empty addition preserves the admission fingerprint of
+		// deployments that have not enabled Managed.
+		Managed               string `json:",omitempty"`
+		Lifetime              time.Duration
+		Registration, Cluster bool
+	}{Protocol: api.Version, Path: urls.Path, Namespace: service.Namespace(), Lifetime: identity.SessionLifetime, Registration: options.Identity == nil && !options.DisableRegistration, Cluster: options.Cluster != nil, Policy: "owner-v1", Version: revision, Managed: managedFingerprint}
 	if options.Identity != nil {
 		description.Lifetime = options.Identity.SessionLifetime
 		if description.Lifetime == 0 {
@@ -52,8 +55,8 @@ func configurationFingerprint(options Options, urls deployment.URLs, service ide
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func registerInstance(ctx context.Context, store *metadata.Store, options Options, urls deployment.URLs, service identity.Service) (*gateway.AdmissionLease, metadata.InstanceConfig, error) {
-	fingerprint, err := configurationFingerprint(options, urls, service)
+func registerInstance(ctx context.Context, store *metadata.Store, options Options, urls deployment.URLs, service identity.Service, managedFingerprint string) (*gateway.AdmissionLease, metadata.InstanceConfig, error) {
+	fingerprint, err := configurationFingerprint(options, urls, service, managedFingerprint)
 	if err != nil {
 		return nil, metadata.InstanceConfig{}, err
 	}

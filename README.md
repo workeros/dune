@@ -92,7 +92,9 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；官方 `dune web --cluster-config FILE` 使用同一装配；PostgreSQL 配置一致性由有界准入租约校验；就绪探针和限时排空的使用方式见[就绪与退出](docs/peer-transport.md#就绪与退出)。
 
-宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
+宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份、授权、集群及 Managed 生命周期的实现和剩余真实平台验收见[实施记录](docs/enterprise-implementation.md)。
+
+Go 宿主通过 `Options.Managed` 注入公开模板和按 Fabric 命名的 `Create`、`Bootstrap`、`Inspect`、`Renew`、`Destroy` 五种窄接口，并从 `DefaultManagedWorkerOptions()` 开始配置有界 worker。配置完整时，同一工作台开放模板发现、创建、生命周期状态与销毁 API，后台 worker 独立于浏览器恢复持久操作；配置缺失时这些路由与入口不会发布。适配器保存私有 SDK 配置和凭据，Dune 只持有接口及公开模板。当前仓库没有随官方 CLI 提供真实平台适配器，测试夹具不能当作已支持的云环境。
 
 可信宿主可调用 `App.SetPrincipalEnabled(ctx, principalID, false)` 停用 Dune 用户；宿主负责校验管理员权限。停用在同一事务中撤销该用户的全部会话与待消费安装命令，已有用户连接会关闭，机器身份和远端任务保留。传入 `true` 重新启用后必须重新登录，旧 Cookie 不会恢复。此接口没有对应的匿名或普通用户 HTTP 管理入口，也不等同于上游企业身份源的停用同步。
 
@@ -162,7 +164,7 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 
 机器使用独立入口时显式传入 `--gateway-url wss://machines.example.com/private/connect`，并将该入口代理到 Web 服务的 `/tools/dune/tunnel`。此覆盖只改变安装绑定返回的机器地址，不改变浏览器或内部工作台连接的路径。原有 `--url` 与机器配置中 `gateway` 不同的部署（例如额外 loopback 浏览器入口），升级时也应显式填写 `--gateway-url`。省略 `--url` 时仍从原配置的 `gateway` 派生浏览器地址。
 
-工作台从部署目录下的 `api/bootstrap` 读取登录方式、注册状态、Attached/Managed 能力和公开地址。默认装配本地账号与 Attached，Managed 尚不可用。添加 `--disable-registration` 可关闭本地注册，已有账号仍可登录；服务端同步拒绝注册请求。启动信息读取失败时页面提示重试，不假定所有功能可用。
+工作台从部署目录下的 `api/bootstrap` 读取登录方式、注册状态、Attached/Managed 能力和公开地址。默认官方 CLI 装配本地账号与 Attached；Go 宿主提供完整 `Options.Managed` 时才显示托管模板、精确参数表单和持久生命周期状态。添加 `--disable-registration` 可关闭本地注册，已有账号仍可登录；服务端同步拒绝注册请求。启动信息读取失败时页面提示重试，不假定所有功能可用。
 
 企业浏览器登录可添加 `web --identity-config /absolute/private/identity.yaml`，配置如下。文件须属于当前用户且权限为 0600；部署到 HTTPS，并在身份源注册精确回调地址，例如 `https://example.com/tools/dune/api/auth/external/callback`。仅数字 loopback 地址允许 HTTP 本地调试。
 
@@ -178,7 +180,7 @@ session_lifetime: 8h
 
 Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。关联已有账号时，可信管理员可按[身份关联流程](docs/metadata-operations.md#显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限。通过 `host.Options.AccessChecker` 选择企业检查器，统一控制发现、Attached 管理、Web/CLI 执行和持续流；拒绝或故障不回退到 owner 规则。公开契约、操作映射与分页规则见[访问检查](docs/access-checks.md)。
 
-PostgreSQL 下使用自定义身份或权限模块时，宿主须设置共同的 `Options.ConfigurationVersion`；官方 OIDC CLI 对应 `--configuration-version oidc-policy-v1`。不兼容配置不能与旧实例同时运行，变更前协调停站并等待原准入期限到期；具体配置约定见 [配置准入](docs/peer-transport.md#配置准入与变更)。
+PostgreSQL 下使用自定义身份、权限或 Managed 提供方模块时，宿主须设置共同的 `Options.ConfigurationVersion`；官方 OIDC CLI 对应 `--configuration-version oidc-policy-v1`。Managed 的公开模板、提供方命名空间和 worker 行为另自动进入非敏感指纹，私有 SDK 配置变化仍由宿主推进声明版本。不兼容配置不能与旧实例同时运行，变更前协调停站并等待原准入期限到期；具体配置约定见 [配置准入](docs/peer-transport.md#配置准入与变更)。
 
 企业检查器取得本次登录验证过的 `Namespace` / `Subject` 与 Dune principal，CLI、连接凭据和安装材料保留同一引用，不按邮箱或关联列表猜测身份。主体与会话的持久化边界见[身份说明](docs/metadata-operations.md#身份源与本次登录主体)。
 

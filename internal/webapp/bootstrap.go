@@ -27,7 +27,7 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		LoginMethods:      methods,
 		LocalRegistration: s.identity.RegistrationAllowed(),
 		Attached:          true,
-		Managed:           false,
+		Managed:           s.options.Managed != nil,
 		PublicURL:         s.urls.PublicURL,
 		GatewayURL:        s.urls.GatewayURL,
 	})

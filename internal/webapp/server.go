@@ -18,10 +18,12 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
+	"github.com/aiomni/dune/pkg/fabric"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
@@ -41,8 +43,22 @@ type Options struct {
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
 	// Online optionally reads shared directory facts for already authorized IDs.
-	Online    func(context.Context, []string) (map[string]bool, error)
-	Admission *gateway.AdmissionLease
+	Online                    func(context.Context, []string) (map[string]bool, error)
+	Admission                 *gateway.AdmissionLease
+	Managed                   ManagedService
+	DestroyAccessCloseTimeout time.Duration
+}
+
+// ManagedService is the finite lifecycle surface used by the reusable Web API.
+// Hosts may omit it; startup discovery and every route then report Managed as
+// unavailable without weakening Attached behavior.
+type ManagedService interface {
+	Templates(context.Context, string) ([]fabric.Template, error)
+	Template(context.Context, string, string, string, string) (fabric.Template, error)
+	Create(context.Context, string, string, fabric.CreateRequest) (lifecycle.Creation, error)
+	Destroy(context.Context, string, string, string, time.Duration) (lifecycle.ManagedDestruction, error)
+	Status(context.Context, string, string) (lifecycle.ManagedStatus, error)
+	RunnerStatus(context.Context, string, string) (lifecycle.ManagedStatus, error)
 }
 
 type authRate struct {
@@ -98,6 +114,14 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	s.mux.HandleFunc("GET /api/cli/machines", s.cliMachines)
 	s.mux.HandleFunc("GET /api/runners", s.runners)
 	s.mux.HandleFunc("GET /api/runners/{runner}", s.runner)
+	if options.Managed != nil {
+		s.mux.HandleFunc("GET /api/managed/templates", s.managedTemplates)
+		s.mux.HandleFunc("GET /api/managed/templates/{fabric}/{template}/{version}", s.managedTemplate)
+		s.mux.HandleFunc("POST /api/managed/runners", s.createManagedRunner)
+		s.mux.HandleFunc("DELETE /api/managed/runners/{runner}", s.destroyManagedRunner)
+		s.mux.HandleFunc("GET /api/managed/runners/{runner}", s.managedRunnerStatus)
+		s.mux.HandleFunc("GET /api/managed/operations/{operation}", s.managedOperation)
+	}
 	s.mux.HandleFunc("GET /api/cli/runners", s.cliRunners)
 	s.mux.HandleFunc("GET /api/cli/runners/{runner}", s.cliRunner)
 	s.mux.HandleFunc("POST /api/cli/runner-access", s.cliRunnerAccess)

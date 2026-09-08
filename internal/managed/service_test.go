@@ -296,6 +296,10 @@ func TestDestroyChecksManagedRunnerAndClosesAccess(t *testing.T) {
 	if resource, err := fixture.store.RunnerResource(fixture.ctx, created.RunnerID); err != nil || resource.Runner.Binding != nil {
 		t.Fatal("destroy did not revoke the current machine", resource, err)
 	}
+	status, err := service.RunnerStatus(fixture.ctx, fixture.cookie, created.RunnerID)
+	if err != nil || status.Stage != "closing_access" || !status.AccessClosed || status.AccessCloseOutcome != lifecycle.AccessCloseWaiting || !status.AccessCloseDeadline.Equal(destroyed.CloseDeadline) {
+		t.Fatal("destroy status did not preserve access-close facts", status, err)
+	}
 }
 
 func TestDestroyRejectsDeniedStaleAndAttachedRequests(t *testing.T) {
@@ -331,5 +335,55 @@ func TestDestroyRejectsDeniedStaleAndAttachedRequests(t *testing.T) {
 	}
 	if _, err := stale.Destroy(fixture.ctx, "missing-browser-session", "attached-destroy", attached.RunnerID, time.Minute); !errors.Is(err, authorization.ErrNotFound) {
 		t.Fatal("Managed destroy accepted an Attached Runner", err)
+	}
+}
+
+func TestStatusShowsDurableStageWithoutProviderActionKeys(t *testing.T) {
+	fixture := newServiceFixture(t)
+	service := newService(t, fixture, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return allowDecision(), nil
+	}), nil)
+	created, err := service.Create(fixture.ctx, fixture.cookie, "status-create", createRequest("visible"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.Status(fixture.ctx, fixture.cookie, created.Operation.ID)
+	if err != nil || status.Stage != "queued" || status.ID != created.Operation.ID || status.ResourceRef != "" {
+		t.Fatal("queued status was inaccurate", status, err)
+	}
+	claimed, err := fixture.store.ClaimOperation(fixture.ctx, created.Operation.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, dispatch, err := fixture.store.BeginProviderAction(fixture.ctx, claimed, lifecycle.ActionRequest{Kind: "create", Digest: claimed.Digest})
+	if err != nil || !dispatch {
+		t.Fatal("create action setup", dispatch, err)
+	}
+	if err := fixture.store.RecordProviderAction(fixture.ctx, claimed, action.ID, lifecycle.ActionObservation{Outcome: "unknown", ResourceRef: "possible-resource"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err = service.Status(fixture.ctx, fixture.cookie, created.Operation.ID)
+	if err != nil || status.Stage != "creating" || status.ProviderOutcome != "unknown" || status.ResourceRef != "possible-resource" || status.Finished {
+		t.Fatal("unknown provider status was inaccurate", status, err)
+	}
+	runnerStatus, err := service.RunnerStatus(fixture.ctx, fixture.cookie, created.Runner.ID)
+	if err != nil || runnerStatus.ID != status.ID || runnerStatus.Stage != status.Stage || runnerStatus.ProviderOutcome != status.ProviderOutcome {
+		t.Fatal("Runner status did not select the active lifecycle", runnerStatus, err)
+	}
+
+	other, _, err := fixture.session.Register(fixture.ctx, "status-other@example.test", "status-other-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSession := fixedSessions{user: other}
+	otherService := newService(t, fixture, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return allowDecision(), nil
+	}), otherSession)
+	if _, err := otherService.Status(fixture.ctx, "ignored", created.Operation.ID); !errors.Is(err, authorization.ErrNotFound) {
+		t.Fatal("status disclosed another actor's operation", err)
+	}
+	sharedStatus, err := otherService.RunnerStatus(fixture.ctx, "ignored", created.Runner.ID)
+	if err != nil || sharedStatus.ID != created.Operation.ID || sharedStatus.Stage != "creating" {
+		t.Fatal("authorized collaborator could not read the Runner lifecycle", sharedStatus, err)
 	}
 }

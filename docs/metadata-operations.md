@@ -109,3 +109,7 @@ Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.d
 访问关闭与提供方删除是不同事实。有机器绑定的销毁先记录 `waiting` 和数据库时钟生成的固定 deadline；没有绑定可立即记为 `confirmed`。可信的本地关闭观察必须携带接受时保存的 machine ID，重复确认幂等；deadline 先到则只记为 `timed_out`，不能伪装成连接已经确认退出。worker 只领取 confirmed/timed_out 的销毁，并在锁内重复核对 access_closed、resource_ref 和数据库时钟。
 
 公开 `fabric.DestroyProvider` 把首次删除和只读 `ReconcileDestroy` 分开。只有 Destroy 动作预约明确提交并再次复核执行权后才可首次调用；超时、unknown、重启或租约接管只查询原动作键。适配器错误的伴随字段会丢弃，成功必须给出同一 resource_ref 的明确 Gone 事实，才原子完成动作与 Operation；失败或不确定结果都不会恢复访问。Dune 当前没有跨节点关闭确认广播，因此绑定过机器的资源通常由固定 deadline 进入 timed_out 后继续清理；该状态明确保留了关闭确认不足的事实。
+
+`host.Options.Managed` 把不可变模板目录、同一 Fabric 的五种完整能力、业务服务和一个持久 worker 装进现有 Host/Web 生命周期。启动先验证目录、提供方集合、公开地址及所有时间界限；失败时不留下 worker 或存储锁。PostgreSQL 准入指纹自动包含公开目录、提供方命名空间和 worker 行为，并要求宿主另给出 `ConfigurationVersion` 表达 Dune 无法读取的私有 SDK 语义。
+
+浏览器 API 只有配置完整时才注册。模板列表和详情逐项执行访问检查；创建返回 durable acceptance，销毁返回 access-close acceptance。Operation 状态只允许原浏览器主体读取，Runner 状态要求当前 Runner 访问权；响应保留 action、stage、provider outcome、已知 resource_ref/expiry 和销毁关闭事实，不返回 principal、请求键、worker、执行修订或 provider action key。工作台按字符串边界检查模板的 `int64` 并把原十进制词法直接写入 JSON，避免 JavaScript 浮点转换；unknown 明示为只核对原动作，页面关闭不会停止 worker。
