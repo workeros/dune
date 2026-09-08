@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -166,18 +167,112 @@ func (s *Store) Operation(ctx context.Context, id string) (lifecycle.Operation, 
 // that have already advanced past create, even though those workflows remain
 // unfinished while bootstrap or the first connection is pending.
 func (s *Store) RecoverableManagedCreates(ctx context.Context, limit int) ([]lifecycle.Operation, error) {
+	return s.recoverableManagedCreates(ctx, nil, limit)
+}
+
+// RecoverableManagedCreatesFor limits recovery to configured Fabric namespaces.
+func (s *Store) RecoverableManagedCreatesFor(ctx context.Context, fabricIDs []string, limit int) ([]lifecycle.Operation, error) {
 	if limit < 1 || limit > 32 {
 		return nil, ErrInvalidArgument
 	}
+	if len(fabricIDs) == 0 {
+		return []lifecycle.Operation{}, nil
+	}
+	return s.recoverableManagedCreates(ctx, fabricIDs, limit)
+}
+
+func managedFabricFilter(fabricIDs []string) (string, []any, error) {
+	placeholders := make([]string, len(fabricIDs))
+	args := make([]any, len(fabricIDs))
+	for i, id := range fabricIDs {
+		if id == "" || id == "attached" || len(id) > 128 || !utf8.ValidString(id) || strings.TrimSpace(id) != id || strings.ContainsFunc(id, unicode.IsControl) {
+			return "", nil, ErrInvalidArgument
+		}
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i] = id
+	}
+	if len(placeholders) == 0 {
+		return "", nil, nil
+	}
+	return " AND o.fabric_id IN (" + strings.Join(placeholders, ",") + ")", args, nil
+}
+
+func (s *Store) recoverableManagedCreates(ctx context.Context, fabricIDs []string, limit int) ([]lifecycle.Operation, error) {
+	if limit < 1 || limit > 32 {
+		return nil, ErrInvalidArgument
+	}
+	fabricFilter, fabricArgs, err := managedFabricFilter(fabricIDs)
+	if err != nil {
+		return nil, err
+	}
 	columns := "o." + strings.ReplaceAll(operationColumns, ",", ",o.")
+	args := append([]any{limit}, fabricArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+`
 		FROM dune_operations o
 		JOIN dune_runners r ON r.id=o.runner_id
 		LEFT JOIN dune_provider_actions a ON a.operation_id=o.id AND a.kind='create'
 		WHERE r.kind='managed' AND o.action='create' AND o.finished=FALSE
 			AND o.exclusive=TRUE AND o.lease_until<=`+s.databaseClock()+`
-			AND (a.id IS NULL OR a.completed_at=0)
-		ORDER BY o.created_at,o.id LIMIT $1`, limit)
+			AND (a.id IS NULL OR a.completed_at=0)`+fabricFilter+`
+		ORDER BY o.created_at,o.id LIMIT $1`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	operations := make([]lifecycle.Operation, 0, limit)
+	for rows.Next() {
+		op, err := scanOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, op)
+	}
+	return operations, rows.Err()
+}
+
+// RecoverableManagedBootstraps returns create workflows whose resource is
+// confirmed but whose Bootstrap action is absent or unresolved. The resource
+// checks use the database clock so an expired target is never scheduled merely
+// because one worker's local clock differs.
+func (s *Store) RecoverableManagedBootstraps(ctx context.Context, limit int) ([]lifecycle.Operation, error) {
+	return s.recoverableManagedBootstraps(ctx, nil, limit)
+}
+
+// RecoverableManagedBootstrapsFor limits recovery to configured Bootstrap
+// adapters, preventing older unsupported namespaces from filling the batch.
+func (s *Store) RecoverableManagedBootstrapsFor(ctx context.Context, fabricIDs []string, limit int) ([]lifecycle.Operation, error) {
+	if limit < 1 || limit > 32 {
+		return nil, ErrInvalidArgument
+	}
+	if len(fabricIDs) == 0 {
+		return []lifecycle.Operation{}, nil
+	}
+	return s.recoverableManagedBootstraps(ctx, fabricIDs, limit)
+}
+
+func (s *Store) recoverableManagedBootstraps(ctx context.Context, fabricIDs []string, limit int) ([]lifecycle.Operation, error) {
+	if limit < 1 || limit > 32 {
+		return nil, ErrInvalidArgument
+	}
+	fabricFilter, fabricArgs, err := managedFabricFilter(fabricIDs)
+	if err != nil {
+		return nil, err
+	}
+	columns := "o." + strings.ReplaceAll(operationColumns, ",", ",o.")
+	args := append([]any{limit}, fabricArgs...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+`
+		FROM dune_operations o
+		JOIN dune_runners r ON r.id=o.runner_id
+		JOIN dune_provider_actions created ON created.operation_id=o.id AND created.kind='create'
+		JOIN dune_managed_resources resource ON resource.runner_id=o.runner_id AND resource.fabric_id=o.fabric_id
+		LEFT JOIN dune_provider_actions bootstrap ON bootstrap.operation_id=o.id AND bootstrap.kind='bootstrap'
+		WHERE r.kind='managed' AND o.action='create' AND o.finished=FALSE
+			AND o.exclusive=TRUE AND o.lease_until<=`+s.databaseClock()+`
+			AND created.completed_at>0 AND created.outcome='succeeded'
+			AND resource.gone=FALSE AND resource.access_closed=FALSE
+			AND (resource.expires_at=0 OR resource.expires_at>`+s.databaseClock()+`)
+			AND (bootstrap.id IS NULL OR bootstrap.completed_at=0)`+fabricFilter+`
+		ORDER BY o.created_at,o.id LIMIT $1`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +307,7 @@ func (s *Store) ClaimOperation(ctx context.Context, id, worker string, ttl time.
 // by RecoverableManagedCreates. The condition is repeated under row locks so a
 // stale scan cannot reclaim a workflow that has already advanced to bootstrap.
 func (s *Store) ClaimRecoverableManagedCreate(ctx context.Context, id, worker string, ttl time.Duration) (lifecycle.Operation, error) {
-	return s.claimOperation(ctx, id, worker, ttl, func(tx *sql.Tx, op lifecycle.Operation) error {
+	return s.claimOperation(ctx, id, worker, ttl, func(tx *sql.Tx, op lifecycle.Operation, _ int64) error {
 		if op.Action != "create" || !op.Exclusive {
 			return lifecycle.ErrBusy
 		}
@@ -231,7 +326,45 @@ func (s *Store) ClaimRecoverableManagedCreate(ctx context.Context, id, worker st
 	})
 }
 
-func (s *Store) claimOperation(ctx context.Context, id, worker string, ttl time.Duration, eligible func(*sql.Tx, lifecycle.Operation) error) (lifecycle.Operation, error) {
+// ClaimRecoverableManagedBootstrap repeats the Bootstrap-stage checks while
+// holding the Runner and Operation locks. This prevents a stale recovery scan
+// from claiming a workflow after its resource or action has changed.
+func (s *Store) ClaimRecoverableManagedBootstrap(ctx context.Context, id, worker string, ttl time.Duration) (lifecycle.Operation, error) {
+	return s.claimOperation(ctx, id, worker, ttl, func(tx *sql.Tx, op lifecycle.Operation, now int64) error {
+		if op.Action != "create" || !op.Exclusive {
+			return lifecycle.ErrBusy
+		}
+		var createdCompleted, expires int64
+		var createdOutcome, fabricID, resourceRef string
+		var gone, accessClosed bool
+		err := tx.QueryRowContext(ctx, `SELECT a.completed_at,a.outcome,r.fabric_id,r.resource_ref,r.expires_at,r.gone,r.access_closed
+			FROM dune_provider_actions a JOIN dune_managed_resources r ON r.runner_id=$2
+			WHERE a.operation_id=$1 AND a.kind='create'`, op.ID, op.RunnerID).Scan(&createdCompleted, &createdOutcome, &fabricID, &resourceRef, &expires, &gone, &accessClosed)
+		if errors.Is(err, sql.ErrNoRows) {
+			return lifecycle.ErrBusy
+		}
+		if err != nil {
+			return err
+		}
+		if createdCompleted == 0 || createdOutcome != "succeeded" || fabricID != op.FabricID || resourceRef == "" || gone || accessClosed || (expires != 0 && expires <= now) {
+			return lifecycle.ErrBusy
+		}
+		var bootstrapCompleted int64
+		err = tx.QueryRowContext(ctx, `SELECT completed_at FROM dune_provider_actions WHERE operation_id=$1 AND kind='bootstrap'`, op.ID).Scan(&bootstrapCompleted)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if bootstrapCompleted != 0 {
+			return lifecycle.ErrBusy
+		}
+		return nil
+	})
+}
+
+func (s *Store) claimOperation(ctx context.Context, id, worker string, ttl time.Duration, eligible func(*sql.Tx, lifecycle.Operation, int64) error) (lifecycle.Operation, error) {
 	if !validWorker(worker) || !validLeaseDuration(ttl) {
 		return lifecycle.Operation{}, ErrInvalidArgument
 	}
@@ -241,7 +374,7 @@ func (s *Store) claimOperation(ctx context.Context, id, worker string, ttl time.
 			return lifecycle.ErrBusy
 		}
 		if eligible != nil {
-			if err := eligible(tx, op); err != nil {
+			if err := eligible(tx, op, now); err != nil {
 				return err
 			}
 		}

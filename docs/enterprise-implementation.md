@@ -369,3 +369,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - `pkg/fabric.BootstrapProvider` 接收原动作身份、已确认 resource_ref、一次性 enrollment、规范化的公开/Gateway 地址和安装版本；私有适配器配置仍不进入调用或数据库。Bootstrap 必须使用动作 ID 去重或隔离，`ReconcileBootstrap` 只能查询原动作，不能重新注入、安装或启动。
 - 内部 Bootstrap executor 把地址、版本和有效期编码为非敏感动作摘要。只有动作与 grant 首次明确提交且执行权再次检查通过后调用一次 Bootstrap；unknown、timeout、重启、接管和配置变化都使用原动作查询。适配器错误忽略伴随字段并保守落库，已消费 grant 形成的当前 Managed Runner 机器绑定可作为可信成功证据，无需依赖提供方查询。
 - 验证：race 回归覆盖规范化配置快照、一次性明文 grant、终态幂等、unknown 接管、配置变化时保持原 issuer/revision、本地绑定收敛、provider deadline 与数据库写入 context 分离，以及缺失/非法配置不预约。当前仍是测试适配器；持久 worker 尚未领取 Bootstrap 阶段，也未验证真实安装、fabricd 反向连接、首次在线、续期或销毁。
+
+### 已完成：Managed create/Bootstrap 持久阶段推进
+
+- 同一个 worker 先推进已经确认资源的 Bootstrap，再领取新的 create；每次只进行一个提供方调用，并在调用期间续约同一 Operation 执行租约。终态交还执行租约，Bootstrap 成功释放创建业务互斥进入等待连接；unknown/timed_out 保留租约作为最短核对间隔，下一位 claimant 只能核对原动作。
+- 两类候选都按当前进程配置的 Fabric 在 SQL 中过滤，未配置的旧任务不会占满 32 条批次。Bootstrap 候选要求 create 已明确成功、资源仍属于原 Runner/Fabric、访问未关闭且按数据库时钟未过期；领取事务在 Runner → Operation 锁内重复这些条件及动作终态检查。
+- 验证：SQLite/PostgreSQL race 回归覆盖 create → Bootstrap 顺序、一次性 grant、timeout 后仅核对、终态租约与业务互斥变化、配置过滤、资源关闭后的旧扫描拒绝及 worker 持续轮询。当前未接入宿主启动配置或真实提供方，也未把首次 fabricd 在线确认为 Operation 成功；续期、销毁和人工核对 worker 仍待实现。

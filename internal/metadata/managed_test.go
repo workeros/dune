@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -142,6 +143,15 @@ func TestRecoverableManagedCreateAdvancesOnlyCurrentStage(t *testing.T) {
 			if err != nil || len(candidates) != 1 || candidates[0].ID != created.Operation.ID {
 				t.Fatal("queued create was not recoverable", candidates, err)
 			}
+			if candidates, err := s.RecoverableManagedCreatesFor(ctx, []string{"another-fabric"}, 1); err != nil || len(candidates) != 0 {
+				t.Fatal("Fabric-filtered create scan returned unsupported work", candidates, err)
+			}
+			if candidates, err := s.RecoverableManagedCreatesFor(ctx, []string{"sandbox"}, 1); err != nil || len(candidates) != 1 || candidates[0].ID != created.Operation.ID {
+				t.Fatal("Fabric-filtered create scan lost configured work", candidates, err)
+			}
+			if _, err := s.RecoverableManagedCreatesFor(ctx, []string{" attached"}, 1); !errors.Is(err, ErrInvalidArgument) {
+				t.Fatal("invalid recovery Fabric accepted", err)
+			}
 			claimed, err := s.ClaimRecoverableManagedCreate(ctx, created.Operation.ID, wire.ID(), time.Minute)
 			if err != nil {
 				t.Fatal(err)
@@ -161,6 +171,72 @@ func TestRecoverableManagedCreateAdvancesOnlyCurrentStage(t *testing.T) {
 			}
 			if _, err := s.ClaimRecoverableManagedCreate(ctx, created.Operation.ID, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("stale scan reclaimed the next workflow stage", err)
+			}
+		})
+	}
+}
+
+func TestRecoverableManagedBootstrapRechecksCurrentResource(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			s, _, user, hash := managedFixture(t, backend)
+			created, err := s.CreateManaged(ctx, user, hash, wire.ID(), managedSpec())
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := s.ClaimRecoverableManagedCreate(ctx, created.Operation.ID, wire.ID(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			action, dispatch, err := s.BeginProviderAction(ctx, claimed, lifecycle.ActionRequest{Kind: "create", Digest: claimed.Digest})
+			if err != nil || !dispatch {
+				t.Fatal("create action was not reserved", dispatch, err)
+			}
+			if err := s.RecordProviderAction(ctx, claimed, action.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "bootstrap-stage-resource", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.YieldOperationLease(ctx, claimed); err != nil {
+				t.Fatal(err)
+			}
+			candidates, err := s.RecoverableManagedBootstraps(ctx, 32)
+			if err != nil || len(candidates) != 1 || candidates[0].ID != created.Operation.ID {
+				t.Fatal("confirmed resource was not recoverable for bootstrap", candidates, err)
+			}
+			if candidates, err := s.RecoverableManagedBootstrapsFor(ctx, []string{"another-fabric"}, 1); err != nil || len(candidates) != 0 {
+				t.Fatal("Fabric-filtered Bootstrap scan returned unsupported work", candidates, err)
+			}
+			if candidates, err := s.RecoverableManagedBootstrapsFor(ctx, []string{"sandbox"}, 1); err != nil || len(candidates) != 1 || candidates[0].ID != created.Operation.ID {
+				t.Fatal("Fabric-filtered Bootstrap scan lost configured work", candidates, err)
+			}
+			if _, err := s.db.ExecContext(ctx, `UPDATE dune_managed_resources SET access_closed=TRUE WHERE runner_id=$1`, created.Runner.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimRecoverableManagedBootstrap(ctx, created.Operation.ID, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
+				t.Fatal("stale scan claimed a closed resource", err)
+			}
+			if _, err := s.db.ExecContext(ctx, `UPDATE dune_managed_resources SET access_closed=FALSE WHERE runner_id=$1`, created.Runner.ID); err != nil {
+				t.Fatal(err)
+			}
+			bootstrapClaim, err := s.ClaimRecoverableManagedBootstrap(ctx, created.Operation.ID, wire.ID(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant, dispatch, err := s.BeginManagedBootstrap(ctx, bootstrapClaim, strings.Repeat("b", 64), time.Minute)
+			if err != nil || !dispatch {
+				t.Fatal("bootstrap was not reserved", dispatch, err)
+			}
+			if err := s.RecordProviderAction(ctx, bootstrapClaim, grant.Action.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "bootstrap-stage-resource"}); err != nil {
+				t.Fatal(err)
+			}
+			if candidates, err := s.RecoverableManagedBootstraps(ctx, 32); err != nil || len(candidates) != 0 {
+				t.Fatal("completed bootstrap remained recoverable", candidates, err)
+			}
+			if _, err := s.ClaimRecoverableManagedBootstrap(ctx, created.Operation.ID, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
+				t.Fatal("completed bootstrap was reclaimed", err)
+			}
+			if _, err := s.RecoverableManagedBootstraps(ctx, 0); !errors.Is(err, ErrInvalidArgument) {
+				t.Fatal("invalid bootstrap recovery batch accepted", err)
 			}
 		})
 	}

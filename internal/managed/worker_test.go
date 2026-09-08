@@ -29,7 +29,7 @@ func TestWorkerClaimsCreateAndYieldsItsExecutionLease(t *testing.T) {
 	fixture := newServiceFixture(t)
 	created := pendingCreation(t, fixture)
 	provider := &createProvider{createResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: "created-resource"}}
-	worker, err := NewWorker(fixture.store, map[string]fabric.CreateProvider{"sandbox": provider}, testWorkerConfig())
+	worker, err := NewWorker(fixture.store, ProviderSet{Create: map[string]fabric.CreateProvider{"sandbox": provider}}, testWorkerConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +43,89 @@ func TestWorkerClaimsCreateAndYieldsItsExecutionLease(t *testing.T) {
 	}
 	if worked, err := worker.RunOnce(fixture.ctx); err != nil || worked {
 		t.Fatal("completed create stage was scheduled again", worked, err)
+	}
+}
+
+func TestWorkerAdvancesCreateThenBootstrap(t *testing.T) {
+	fixture := newServiceFixture(t)
+	created := pendingCreation(t, fixture)
+	create := &createProvider{createResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: "worker-bootstrap-resource", ExpiresAt: time.Now().Add(time.Hour)}}
+	bootstrap := &bootstrapProvider{bootstrapResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: "worker-bootstrap-resource"}}
+	config := testWorkerConfig()
+	config.Bootstrap = bootstrapConfig()
+	worker, err := NewWorker(fixture.store, ProviderSet{
+		Create:    map[string]fabric.CreateProvider{"sandbox": create},
+		Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": bootstrap},
+	}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || !worked {
+		t.Fatal("worker did not create the resource", worked, err)
+	}
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || !worked {
+		t.Fatal("worker did not bootstrap the confirmed resource", worked, err)
+	}
+	operation, err := fixture.store.Operation(fixture.ctx, created.Operation.ID)
+	if err != nil || operation.Finished || operation.Exclusive || operation.Worker != "" || !operation.Until.IsZero() {
+		t.Fatal("bootstrap did not enter the unlocked connection-wait stage", operation, err)
+	}
+	bootstrap.mu.Lock()
+	defer bootstrap.mu.Unlock()
+	if len(bootstrap.bootstrapCalls) != 1 || bootstrap.bootstrapCalls[0].EnrollmentToken == "" || len(bootstrap.reconcileCalls) != 0 {
+		t.Fatal("worker did not deliver exactly one bootstrap grant", bootstrap.bootstrapCalls, bootstrap.reconcileCalls)
+	}
+}
+
+type timeoutBootstrapProvider struct {
+	bootstrapCalls int
+	reconcileCalls int
+}
+
+func (p *timeoutBootstrapProvider) Bootstrap(ctx context.Context, _ fabric.BootstrapCall) (fabric.Observation, error) {
+	p.bootstrapCalls++
+	<-ctx.Done()
+	return fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: "ignored"}, ctx.Err()
+}
+
+func (p *timeoutBootstrapProvider) ReconcileBootstrap(_ context.Context, call fabric.BootstrapReconcileCall) (fabric.Observation, error) {
+	p.reconcileCalls++
+	if call.Action.ID == "" || call.Action.ResourceRef != "bootstrap-resource" {
+		return fabric.Observation{}, errors.New("wrong bootstrap reconciliation identity")
+	}
+	return fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: "bootstrap-resource"}, nil
+}
+
+func TestWorkerPersistsBootstrapTimeoutThenOnlyReconciles(t *testing.T) {
+	fixture := newServiceFixture(t)
+	claimed := claimedBootstrap(t, fixture, time.Minute)
+	if err := fixture.store.YieldOperationLease(fixture.ctx, claimed); err != nil {
+		t.Fatal(err)
+	}
+	provider := &timeoutBootstrapProvider{}
+	config := testWorkerConfig()
+	config.CallTimeout = 40 * time.Millisecond
+	config.Bootstrap = bootstrapConfig()
+	worker, err := NewWorker(fixture.store, ProviderSet{Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": provider}}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || !worked {
+		t.Fatal("timed out bootstrap did not produce a recovery point", worked, err)
+	}
+	action, err := fixture.store.ProviderAction(fixture.ctx, claimed.ID, "bootstrap")
+	if err != nil || action.Outcome != "timed_out" || !action.CompletedAt.IsZero() {
+		t.Fatal("bootstrap timeout was not durably recorded", action, err)
+	}
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || worked {
+		t.Fatal("pending bootstrap ignored its recovery lease", worked, err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if worked, err := worker.RunOnce(fixture.ctx); err != nil || !worked {
+		t.Fatal("timed out bootstrap was not reconciled", worked, err)
+	}
+	if provider.bootstrapCalls != 1 || provider.reconcileCalls != 1 {
+		t.Fatal("bootstrap mutation was replayed", provider.bootstrapCalls, provider.reconcileCalls)
 	}
 }
 
@@ -69,7 +152,7 @@ func TestWorkerPersistsCallTimeoutThenOnlyReconciles(t *testing.T) {
 	provider := &timeoutProvider{}
 	config := testWorkerConfig()
 	config.CallTimeout = 40 * time.Millisecond
-	worker, err := NewWorker(fixture.store, map[string]fabric.CreateProvider{"sandbox": provider}, config)
+	worker, err := NewWorker(fixture.store, ProviderSet{Create: map[string]fabric.CreateProvider{"sandbox": provider}}, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +200,7 @@ func TestWorkerRenewsLeaseWhileProviderCallIsActive(t *testing.T) {
 	provider := &heldProvider{called: make(chan struct{}), release: make(chan struct{})}
 	config := testWorkerConfig()
 	config.CallTimeout = 4 * time.Second
-	worker, err := NewWorker(fixture.store, map[string]fabric.CreateProvider{"sandbox": provider}, config)
+	worker, err := NewWorker(fixture.store, ProviderSet{Create: map[string]fabric.CreateProvider{"sandbox": provider}}, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +238,7 @@ func TestWorkerRenewsLeaseWhileProviderCallIsActive(t *testing.T) {
 func TestWorkerLeavesUnsupportedFabricUnclaimed(t *testing.T) {
 	fixture := newServiceFixture(t)
 	created := pendingCreation(t, fixture)
-	worker, err := NewWorker(fixture.store, nil, testWorkerConfig())
+	worker, err := NewWorker(fixture.store, ProviderSet{}, testWorkerConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +249,11 @@ func TestWorkerLeavesUnsupportedFabricUnclaimed(t *testing.T) {
 	if err != nil || claimed.Revision != 1 {
 		t.Fatal("unsupported operation was changed", claimed, err)
 	}
-	if _, err := NewWorker(fixture.store, nil, WorkerConfig{}); err == nil {
+	if _, err := NewWorker(fixture.store, ProviderSet{}, WorkerConfig{}); err == nil {
 		t.Fatal("invalid worker bounds were accepted")
+	}
+	if _, err := NewWorker(fixture.store, ProviderSet{Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": &bootstrapProvider{}}}, testWorkerConfig()); err == nil {
+		t.Fatal("Bootstrap provider without a frozen target was accepted")
 	}
 	if _, err := fixture.store.RecoverableManagedCreates(fixture.ctx, 0); !errors.Is(err, metadata.ErrInvalidArgument) {
 		t.Fatal("invalid recovery batch accepted", err)
@@ -177,7 +263,7 @@ func TestWorkerLeavesUnsupportedFabricUnclaimed(t *testing.T) {
 func TestWorkerRunPollsForLaterWorkAndStops(t *testing.T) {
 	fixture := newServiceFixture(t)
 	provider := &createProvider{createResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: "polled-resource"}}
-	worker, err := NewWorker(fixture.store, map[string]fabric.CreateProvider{"sandbox": provider}, testWorkerConfig())
+	worker, err := NewWorker(fixture.store, ProviderSet{Create: map[string]fabric.CreateProvider{"sandbox": provider}}, testWorkerConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
