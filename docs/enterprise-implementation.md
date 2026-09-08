@@ -466,3 +466,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 每个事务最多删除 32 条 Operation。超过窗口的终态 Renew 可独立删除；完整 Runner 只在资源已 Gone 且访问关闭得到 confirmed，或 Create 明确失败且没有资源时归档，并要求机器、enrollment、未完成/近期记录都不存在。unknown/timed_out、残留引用、未确认关闭及近期请求键继续保留。
 - PostgreSQL 使用行锁和 `SKIP LOCKED` 支持多个 worker 竞争同一批历史；删除包含关联的 action、人工核对、续期、销毁关闭和创建快照，避免留下孤立业务记录。普通用户没有清理入口，超过窗口的旧键不再构成重试证据，必须由调用方形成新的显式操作。
 - 验证覆盖 SQLite/PostgreSQL 的窗口与保留条件、累计批次预算、关联记录删除、跨连接池竞争和配置边界。受影响包的 race 回归通过；专用 PostgreSQL 17 的较宽回归通过（metadata 26.525 秒、Managed 20.824 秒、Host 3.805 秒），冻结源码的全量回归通过（正式多进程 tests 350.159 秒），随后累计预算加固又在同一 PostgreSQL 上连续三次通过定向 race，`make build` 与 `make check-go` 通过。
+
+### 已完成验收：Linux 上的三实例集群与双机器隧道
+
+- 从提交 `47f85b8` 重新构建 Go 1.27 静态 Linux amd64 二进制，并与固定版本的 bundled tmux 一同部署到已授权 Linux 5.15.120 x86_64 主机的专用 `/tmp` 目录。三个正式 `dune web` 进程使用独立公开/peer 端口、同一恢复代次和独立 mTLS 叶证书；共享 PostgreSQL 17 位于另一台主机，只在本次随机端口接受该 Linux 主机的 SCRAM 连接。
+- 两个正式 fabricd 进程分别固定连接 B、C。两名本地身份用户各自拥有一台 Linux machine，所有 SDK 请求从另一主机进入 A；目录先确认两个 owner 后，发现结果只包含当前用户的 Runner，跨用户目标不能签发连接票据。两个目标都经实际 mTLS peer 完成 Linux `uname`/Exec、File 写读、Git 状态、PTY 输入输出和原始 ACP JSON。
+- 首轮为两台机器分别保留 PTY 后，以三秒排空预算终止并重新启动 owner B。原 fabricd PID 在断链期间保持运行并自动重连；B 恢复 ready 后，两台机器原 Runtime ID 与 incarnation 均保持，重新附加和输入成功，C 的隧道同时可用。A、B、C 最终均报告 accepting/serving，三个宿主与两个 fabricd 的日志没有 panic、fatal、race 或 error 标记。
+- 验收结束先停止 Runtime，再停止两份 fabricd 和三个宿主，按专用路径关闭保留会话所用的私有 tmux server；随后删除远端目录，并停止、删除本地临时数据库和凭据。没有安装系统包、创建服务单元或修改远端现有服务。此次证明同一 Linux 主机上的三实例进程、跨主机数据库和实际入口到 owner 路径；它不等同于三台独立 Linux 主机、Linux PostgreSQL/HA、内核丢包、真实 Agent 或 Managed 提供方闭环。
