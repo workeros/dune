@@ -88,7 +88,7 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 `pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)。
 
-Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；官方 `dune web --cluster-config FILE` 使用同一装配；配置一致性和排空仍在实施。
+Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；官方 `dune web --cluster-config FILE` 使用同一装配；PostgreSQL 配置一致性由有界准入租约校验，readiness 和排空仍在实施。
 
 宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份/授权、Managed 与集群仍在实施，见[实施记录](docs/enterprise-implementation.md)。
 
@@ -175,6 +175,8 @@ session_lifetime: 8h
 配置后页面只显示企业登录，本地密码登录和注册均关闭。会话期限默认 8 小时，可设为 1 分钟至 24 小时；不会保存上游 access/refresh token。Dune 按 issuer 和 subject 识别用户，邮箱只作展示，不自动合并同邮箱账号。退出撤销 Dune 会话，不注销身份源会话。上游停用尚无自动同步，已有 Dune 会话以配置期限为界，宿主也可主动停用用户。身份源切换和旧数据升级见[迁移说明](docs/metadata-migration.md)。
 
 Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。迁移已有账号时，可信管理员可按[身份关联流程](docs/metadata-migration.md#schema-4显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限。通过 `host.Options.AccessChecker` 选择企业检查器，统一控制发现、Attached 管理、Web/CLI 执行和持续流；拒绝或故障不回退到 owner 规则。公开契约、操作映射与分页规则见[访问检查](docs/access-checks.md)。
+
+PostgreSQL 下使用自定义身份或权限模块时，宿主须设置共同的 `Options.ConfigurationVersion`；官方 OIDC CLI 对应 `--configuration-version oidc-policy-v1`。不兼容配置不能与旧实例同时运行，变更前协调停站并等待原准入期限到期；具体版本和迁移约定见 [配置准入](docs/peer-transport.md#配置准入与变更)。
 
 企业检查器取得本次登录验证过的 `Namespace` / `Subject` 与 Dune principal，CLI、连接凭据和安装材料保留同一引用，不按邮箱或关联列表猜测身份。[schema 8 升级](docs/metadata-migration.md#schema-8本次登录的外部主体)会要求旧企业会话重新登录、旧安装材料重新签发，保留已接入机器及其工作内容。
 

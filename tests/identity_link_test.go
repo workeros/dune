@@ -3,12 +3,15 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/aiomni/dune/internal/metadata"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/identity"
@@ -17,7 +20,8 @@ import (
 func TestLinkedBrowserIdentityMigration(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			defer cancel()
 			const site = "https://dune.example.test/tools/dune/"
 			options := host.Options{PublicURL: site, DataDir: filepath.Join(t.TempDir(), "metadata")}
 			if backend == "postgres" {
@@ -63,8 +67,25 @@ func TestLinkedBrowserIdentityMigration(t *testing.T) {
 				t.Fatal("closed host admitted audit read")
 			}
 			options.Identity = &identity.Options{Provider: &browserIdentityFixture{}}
-			app, err = host.Open(ctx, options)
-			must(t, err)
+			options.ConfigurationVersion = "linked-browser-identity-v1"
+			// Changing login behavior requires the stopped host's original
+			// admission reservation to expire. Retry only explicit conflicts;
+			// an uncertain database result must not be replayed.
+			for {
+				next, err := host.Open(ctx, options)
+				if err == nil {
+					app = next
+					break
+				}
+				if !errors.Is(err, metadata.ErrConfigurationConflict) {
+					t.Fatal(err)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("identity configuration did not become admissible")
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
 			stored, err := app.IdentityLink(ctx, decision.RequestID)
 			must(t, err)
 			if stored != record {

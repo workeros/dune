@@ -41,7 +41,7 @@ func (s *Store) instanceLease(ctx context.Context, instance InstanceConfig, rene
 			return err
 		}
 		var recovery string
-		err := tx.QueryRowContext(ctx, `SELECT recovery_generation FROM dune_cluster WHERE id=1`).Scan(&recovery)
+		err := tx.QueryRowContext(ctx, `SELECT recovery_generation FROM dune_cluster WHERE id=1 FOR SHARE`).Scan(&recovery)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

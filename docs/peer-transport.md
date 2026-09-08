@@ -1,6 +1,6 @@
 # Peer 传输接入
 
-`pkg/transport/peer` 提供目录模式 Gateway 的双向 TLS 1.3 / WebSocket 接入，继续使用已有 Yamux 和长度前缀 protobuf。`host.Options.Cluster` 已提供同一 PostgreSQL 后端的宿主装配和独立 peer 监听入口；配置一致性准入、readiness/排空和多进程故障验收仍在实施，不把当前接口等同于已部署的 HA 服务。
+`pkg/transport/peer` 提供目录模式 Gateway 的双向 TLS 1.3 / WebSocket 接入，继续使用已有 Yamux 和长度前缀 protobuf。`host.Options.Cluster` 已提供同一 PostgreSQL 后端的宿主装配和独立 peer 监听入口；配置一致性准入已接入；readiness/排空和多进程故障验收仍在实施，不把当前接口等同于已部署的 HA 服务。
 
 ## 身份与边界
 
@@ -18,7 +18,17 @@ peer 必须使用独立监听入口。模块要求实际 TLS 连接，忽略 `X-
 
 机器可以连到不同于用户入口的副本，工作台和人类 CLI 请求按原目录 owner 转发一次。工作台的机器列表、Runner 列表/详情及 CLI 机器列表仅针对用户已获准查看的绑定批量读取在线事实，一页最多一百个 ID、查询最多一秒；未确认、过期和旧恢复代次路由不作为在线连接，存储故障返回服务错误。在线是展示信息，执行仍独立校验固定绑定和归属。
 
-SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能缺少 Cluster 配置启动单机宿主。这个启动检查**尚未构成持续的配置一致性租约**，也不能阻止并发启动的混合模式；当前切换必须先停止整个部署，并确保所有副本的身份、授权和公开入口配置一致。跨副本配置指纹、运行期准入及 readiness/排空将在后续功能点完成。
+SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能缺少 Cluster 配置启动单机宿主。所有 PostgreSQL 宿主（包括单机模式）现在共用配置准入租约，同时启动的单机/集群模式或不兼容配置不能同时注册。readiness/排空仍在实施。
+
+## 配置准入与变更
+
+同一 PostgreSQL schema 保存实例启动身份、非敏感配置摘要、恢复代次与十五秒期限，五秒续约。注册串行比较尚未过期的实例；同一配置可增加副本，冲突配置拒绝。已初始化集群的数据库还要求匹配恢复代次。恢复代次读取与离线旋转使用数据库行锁，不能在旧代次检查完成后越过同时发生的旋转继续提交。
+
+摘要包含协议版本、挂载路径、身份源 namespace、会话期限、注册开关、默认/自定义访问模式和宿主声明的 `ConfigurationVersion`。每实例的公开 origin、peer 广告地址可以不同；它们不代表另一套业务配置。自定义身份或权限模块在 PostgreSQL 模式必须提供 `host.Options.ConfigurationVersion`，CLI 对应 `--configuration-version oidc-policy-v1`。宿主应在 OIDC client ID、企业 SDK/策略、模板或其他不兼容的模块设置变化时更换这个非敏感版本；Dune 不解析企业实现内部的闭包和私有配置，也不把密码、client secret、证书私钥加入摘要。凭据的兼容轮换可保留版本。
+
+宿主从数据库调用开始时刻折算保守的单调本地期限，续约不延长已经发给 fabricd 的原 grant。`gateway.AdmissionLease` 只表达额外的输入期限，core 不读取配置或 SQL；连接准入、应用 hook、发送和反向连接输入 grant 都受期限约束，定时器未调度时仍逐次检查。配置准入过期、续约失败或回执未知会关闭本次 App，不重放续约、不让旧 boot 复活，也不回滚此前已受理的工作。
+
+`App.Close` 停止续约，但不提前删除原数据库预约：旧输入可能仍在缓冲区，冲突配置须等它的原期限自然结束。相同配置可立即重启；变更不兼容配置时，先停止旧实例并等待旧预约到期，再启动全部新实例。首次升级到 schema 12 也须协调停站，旧二进制不参与新准入协议。这里的十五秒是正常数据库时钟下的期限，不等同于排空窗口；修改数据库时钟或灾难恢复仍须按离线恢复步骤停站和隔离旧实例。
 
 ## 官方 CLI 配置
 
@@ -61,3 +71,5 @@ CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任�
 `go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s` 使用两个正式 `host.App` 和独立 mTLS peer 监听器，机器由真实 fabricd 进程连接 B，工作台与人类 CLI 固定进入 A。覆盖共享在线事实、Runner 快照、真实 PTY、企业共享访问/拒绝及空闲撤销。它仍是同机双宿主测试，不证明三进程网络分区、配置漂移、真实企业权限 SDK 或 Linux 集群部署。
 
 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s` 启动三个独立官方 CLI 服务进程和真实 fabricd，A 签发安装材料、B 消费并持有机器连接，A/C 的 Web 和人类 CLI 经 peer 访问 B，另一入口退出用户后验证既有访问失效。测试证书写入专用临时目录，结束后连同进程、schema 一起清理；该回归是三进程正常运行链路，不是网络分区、时钟扰动或 Linux 集群故障验收。
+
+配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、schema 11 升级及 rollback、独立关闭计时器和有界输入。正式 CLI 的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。

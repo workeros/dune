@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/aiomni/dune/internal/wire"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -138,6 +139,9 @@ func TestSQLiteTransferTransactions(t *testing.T) {
 			}
 			// Preserve even expired capabilities verbatim during offline transfer;
 			// their session/boot/request validation still applies after restoration.
+			if _, err := source.db.Exec(`INSERT INTO dune_instances(boot_id,fingerprint,recovery_generation,expires_at) VALUES($1,$2,'',0)`, wire.ID(), strings.Repeat("a", 64)); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := source.db.Exec(`INSERT INTO dune_peer_access(hash,session_hash,machine_id,source_boot_id,owner_boot_id,identity_namespace,request_digest,expires_at,context) SELECT 'peer-hash',a.session_hash,a.machine_id,'source-boot','owner-boot',a.identity_namespace,'request-digest',0,'expired-test-context' FROM dune_access_tickets a LIMIT 1`); err != nil {
 				t.Fatal(err)
 			}

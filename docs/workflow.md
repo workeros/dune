@@ -129,3 +129,5 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 宿主集群装配使用 `go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s`，启用专用 PostgreSQL。两个正式 `host.App` 的 peer 经各自独立 mTLS 监听器连接，真实 fabricd 进程固定在 B，Web 与人类 CLI 固定在 A，验证远端在线事实、Runner/Runtime、PTY 和授权撤销。`internal/metadata/TestPostgresOnlineConnections` 检查未发布/过期/旧代次与有界 ID 查询，`pkg/host` 检查非法配置和监听器所有权。此范围不替代多进程集群故障、配置一致性租约或 Linux 部署验收。
 
 官方集群 CLI 使用 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s`。它启动三个正式服务进程及独立 fabricd，经私有配置加载测试证书，在共享 PostgreSQL 上验证跨进程安装、在线发现、Web/人类 CLI 定向执行和退出撤销。此正常运行检查不替代三节点故障矩阵；配置读取的私有权限、相对路径和证书错误另由 `internal/config/TestPrivateClusterConfiguration` 覆盖。
+
+配置准入使用 `go test -race ./pkg/gateway ./internal/metadata ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`，启用专用 PostgreSQL。覆盖并发不兼容配置、跨池续约、锁等待、未知提交、升级与原生恢复；宿主回归观察实际续约、Close 后保留原期限及到期后变更。`TestPostgresAdmissionSurvivesProcessPause` 暂停正式 CLI 宿主超过十五秒，确认恢复后旧进程退出、旧终端输入未执行、替换配置后原 PTY 可继续使用。它证明同机 PostgreSQL 准入与进程暂停边界，不证明数据库时钟跳变、三节点分区或 Linux 部署。

@@ -24,7 +24,6 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/internal/wire"
-	"github.com/jackc/pgx/v5"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,14 +32,6 @@ func TestPostgresClusterCLIProcesses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	dir := t.TempDir()
-	parsed, err := pgx.ParseConfig(database.Postgres.URL)
-	must(t, err)
-	must(t, database.Postgres.BeforeConnect(ctx, parsed))
-	address, err := url.Parse(database.Postgres.URL)
-	must(t, err)
-	query := address.Query()
-	query.Set("search_path", parsed.RuntimeParams["search_path"])
-	address.RawQuery = query.Encode()
 	writeYAML := func(path string, value any) {
 		t.Helper()
 		data, err := yaml.Marshal(value)
@@ -48,7 +39,7 @@ func TestPostgresClusterCLIProcesses(t *testing.T) {
 		must(t, os.WriteFile(path, data, 0600))
 	}
 	databaseFile := filepath.Join(dir, "database.yaml")
-	writeYAML(databaseFile, map[string]any{"postgres": map[string]string{"url": address.String()}})
+	writeYAML(databaseFile, map[string]any{"postgres": map[string]string{"url": postgresWorkbenchURL(t, database)}})
 	ca, recovery := testcert.New(t), wire.ID()
 	sites := make([]string, 3)
 	for i := range sites {

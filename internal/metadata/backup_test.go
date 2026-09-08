@@ -128,6 +128,10 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err := s.CreatePeerAccess(ctx, tokenHash(wire.ID()), peer, 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
+	instance := InstanceConfig{BootID: wire.ID(), Fingerprint: strings.Repeat("a", 64), RecoveryGeneration: recovery}
+	if _, err := s.RegisterInstance(ctx, instance); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -188,6 +192,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if _, err := s.ConnectionDirectory(ctx, recovery); !errors.Is(err, gateway.ErrRouteStale) {
 		t.Fatal("restored old service identity remained usable", err)
+	}
+	if _, err := s.RenewInstance(ctx, instance); !errors.Is(err, ErrConfigurationConflict) {
+		t.Fatal("restore revived historical instance admission", err)
 	}
 	recovered, err := s.ConnectionDirectory(ctx, next)
 	if err != nil {

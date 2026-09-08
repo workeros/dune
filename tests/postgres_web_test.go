@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/jackc/pgx/v5"
 	"net/http/httptest"
+	"net/url"
 )
 
 func TestPostgresWorkbenchEnrollmentAndTerminal(t *testing.T) {
@@ -95,4 +96,19 @@ func TestPostgresHostClusterConfiguration(t *testing.T) {
 	if response.Code != 404 {
 		t.Fatal("public listener exposed peer", response.Code)
 	}
+}
+
+// Preserve the test schema in child-process connection configuration without
+// putting its password into arguments or command output.
+func postgresWorkbenchURL(t *testing.T, database storage.Config) string {
+	t.Helper()
+	parsed, err := pgx.ParseConfig(database.Postgres.URL)
+	must(t, err)
+	must(t, database.Postgres.BeforeConnect(context.Background(), parsed))
+	address, err := url.Parse(database.Postgres.URL)
+	must(t, err)
+	query := address.Query()
+	query.Set("search_path", parsed.RuntimeParams["search_path"])
+	address.RawQuery = query.Encode()
+	return address.String()
 }
