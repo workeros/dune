@@ -36,8 +36,8 @@ func (s *Store) instanceLease(ctx context.Context, instance InstanceConfig, rene
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		// Serialize membership changes in this schema, including simultaneous
 		// standalone/cluster startup. This lock carries no process authority itself.
-		var version int
-		if err := tx.QueryRowContext(ctx, `SELECT version FROM dune_schema WHERE id=1 FOR UPDATE`).Scan(&version); err != nil {
+		var schemaID int
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM dune_schema WHERE id=1 FOR UPDATE`).Scan(&schemaID); err != nil {
 			return err
 		}
 		var recovery string

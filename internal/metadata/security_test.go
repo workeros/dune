@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -98,4 +99,9 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func hexValue(value string, size int) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded)*2 == size && len(value) == size
 }

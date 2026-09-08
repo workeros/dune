@@ -156,7 +156,7 @@ make release   # 构建页面和 Linux/macOS × amd64/arm64 安装包（含 tmux
 
 会话选择同时固定 Runtime 的 ID、incarnation 和 generation；同 ID 的执行身份变化后需要重新点选，自动重连不能跟随新身份。Runner 与旧机器事件 API 都要求完整 Runtime 查询参数，升级时须同步后端、静态资源和自定义订阅客户端，详见[浏览器入口契约](docs/access-checks.md#浏览器-runner-入口)。
 
-工作台默认使用 `--data` 目录内的 SQLite，无需安装数据库服务；同一目录只允许一个实例持有。使用 PostgreSQL 时传入 `--database-config /absolute/private/database.yaml`，文件须属于当前用户且权限为 0600，内容为 `postgres: {url: "postgres://…"}`，不能同时指定 `--data`。两种后端使用同一套业务事务。旧 `accounts.json` 必须先[离线导入 SQL](docs/metadata-migration.md)，新版本不会将旧数据静默替换为空库。
+工作台默认使用 `--data` 目录内的 SQLite，无需安装数据库服务；同一目录只允许一个实例持有。使用 PostgreSQL 时传入 `--database-config /absolute/private/database.yaml`，文件须属于当前用户且权限为 0600，内容为 `postgres: {url: "postgres://…"}`，不能同时指定 `--data`。两种后端使用同一套业务事务。当前按完整结构初始化空库，不提供旧数据迁移；存储配置与同结构备份恢复见[元数据说明](docs/metadata-operations.md)。
 
 `web --url` 可包含部署前缀，例如 `https://example.com/tools/dune/`。API、静态文件、Cookie、浏览器 WebSocket 和安装引导均使用该前缀；机器默认连接 `wss://example.com/tools/dune/tunnel`。反向代理须保留前缀交给当前官方 Web 入口，末尾缺少 `/` 的浏览器入口会跳转到规范地址。
 
@@ -174,13 +174,13 @@ oidc:
 session_lifetime: 8h
 ```
 
-配置后页面只显示企业登录，本地密码登录和注册均关闭。会话期限默认 8 小时，可设为 1 分钟至 24 小时；不会保存上游 access/refresh token。Dune 按 issuer 和 subject 识别用户，邮箱只作展示，不自动合并同邮箱账号。退出撤销 Dune 会话，不注销身份源会话。上游停用尚无自动同步，已有 Dune 会话以配置期限为界，宿主也可主动停用用户。身份源切换和旧数据升级见[迁移说明](docs/metadata-migration.md)。
+配置后页面只显示企业登录，本地密码登录和注册均关闭。会话期限默认 8 小时，可设为 1 分钟至 24 小时；不会保存上游 access/refresh token。Dune 按 issuer 和 subject 识别用户，邮箱只作展示，不自动合并同邮箱账号。退出撤销 Dune 会话，不注销身份源会话。上游停用尚无自动同步，已有 Dune 会话以配置期限为界，宿主也可主动停用用户。身份源配置和恢复边界见[元数据说明](docs/metadata-operations.md)。
 
-Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。迁移已有账号时，可信管理员可按[身份关联流程](docs/metadata-migration.md#schema-4显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限。通过 `host.Options.AccessChecker` 选择企业检查器，统一控制发现、Attached 管理、Web/CLI 执行和持续流；拒绝或故障不回退到 owner 规则。公开契约、操作映射与分页规则见[访问检查](docs/access-checks.md)。
+Go 宿主通过 `host.Options.Identity` 注入 `pkg/identity.Options`。内置 `pkg/identity/oidc.Open` 提供 OIDC 适配器，也可实现公开 `identity.Provider` 接入其他可信协议；提供方必须校验协议、响应 context，并支持并发和跨实例回调。关联已有账号时，可信管理员可按[身份关联流程](docs/metadata-operations.md#显式关联既有账号)调用 `App.LinkIdentity`，保留原用户和机器归属并记录决定。身份提供方不决定 Runner 访问权限。通过 `host.Options.AccessChecker` 选择企业检查器，统一控制发现、Attached 管理、Web/CLI 执行和持续流；拒绝或故障不回退到 owner 规则。公开契约、操作映射与分页规则见[访问检查](docs/access-checks.md)。
 
-PostgreSQL 下使用自定义身份或权限模块时，宿主须设置共同的 `Options.ConfigurationVersion`；官方 OIDC CLI 对应 `--configuration-version oidc-policy-v1`。不兼容配置不能与旧实例同时运行，变更前协调停站并等待原准入期限到期；具体版本和迁移约定见 [配置准入](docs/peer-transport.md#配置准入与变更)。
+PostgreSQL 下使用自定义身份或权限模块时，宿主须设置共同的 `Options.ConfigurationVersion`；官方 OIDC CLI 对应 `--configuration-version oidc-policy-v1`。不兼容配置不能与旧实例同时运行，变更前协调停站并等待原准入期限到期；具体配置约定见 [配置准入](docs/peer-transport.md#配置准入与变更)。
 
-企业检查器取得本次登录验证过的 `Namespace` / `Subject` 与 Dune principal，CLI、连接凭据和安装材料保留同一引用，不按邮箱或关联列表猜测身份。[schema 8 升级](docs/metadata-migration.md#schema-8本次登录的外部主体)会要求旧企业会话重新登录、旧安装材料重新签发，保留已接入机器及其工作内容。
+企业检查器取得本次登录验证过的 `Namespace` / `Subject` 与 Dune principal，CLI、连接凭据和安装材料保留同一引用，不按邮箱或关联列表猜测身份。主体与会话的持久化边界见[身份说明](docs/metadata-operations.md#身份源与本次登录主体)。
 
 也可在已安装 Dune 的机器手动绑定：
 

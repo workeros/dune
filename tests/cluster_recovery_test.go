@@ -13,7 +13,6 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/gateway"
-	"github.com/aiomni/dune/pkg/migrate"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -42,10 +41,10 @@ func TestPostgresClusterRecoveryCLI(t *testing.T) {
 	must(t, err)
 	file := filepath.Join(t.TempDir(), "database.json")
 	must(t, os.WriteFile(file, encoded, 0600))
-	run := func(args ...string) (migrate.RecoveryReport, error) {
+	run := func(args ...string) (recoveryReport, error) {
 		command := exec.CommandContext(ctx, binary, append([]string{"metadata", "cluster-recovery", "--database-config", file}, args...)...)
 		output, err := command.Output()
-		var report migrate.RecoveryReport
+		var report recoveryReport
 		if err == nil {
 			err = json.Unmarshal(output, &report)
 		}
@@ -72,4 +71,9 @@ func TestPostgresClusterRecoveryCLI(t *testing.T) {
 	if _, err := store.ConnectionDirectory(ctx, original); !errors.Is(err, gateway.ErrRouteStale) {
 		t.Fatal("old service identity survived CLI rotation", err)
 	}
+}
+
+type recoveryReport struct {
+	Generation string `json:"generation"`
+	Outcome    string `json:"outcome"`
 }

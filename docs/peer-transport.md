@@ -12,7 +12,7 @@ peer 必须使用独立监听入口。模块要求实际 TLS 连接，忽略 `X-
 
 ## 工作台宿主
 
-通过 `host.Options.Database` 选择 PostgreSQL，设置 `Cluster: &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{Address: address, Certificate: certificate, Roots: roots}}`。`host.Open` 从同一存储池创建目录、用户授权和 peer 上下文；每次启动获得新的 Gateway boot 身份。恢复代次是所有副本共同配置的 32 位小写十六进制值，已有值不在启动时替换，离线恢复使用[代次工具](metadata-migration.md)。证书、私钥和 CA 的读取由宿主管理。
+通过 `host.Options.Database` 选择 PostgreSQL，设置 `Cluster: &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{Address: address, Certificate: certificate, Roots: roots}}`。`host.Open` 从同一存储池创建目录、用户授权和 peer 上下文；每次启动获得新的 Gateway boot 身份。恢复代次是所有副本共同配置的 32 位小写十六进制值，已有值不在启动时替换，离线恢复使用[代次工具](metadata-operations.md)。证书、私钥和 CA 的读取由宿主管理。
 
 公开 HTTP 服务仍调用 `App.Serve` 或挂载 `App`；另创建普通 TCP listener，交给 `App.ServePeer(listener)`，由 App 加上自己的双向 TLS 策略并接管监听器。完整广告地址必须直接到达该实例的这个端口，peer 不挂载到公开 HTTP 路由。父 context 取消或 `App.Close` 一起关闭这些监听器、升级连接和用户请求；监听器启动失败应由宿主取消整个应用。关闭后仍保留远端 tmux。
 
@@ -28,7 +28,7 @@ SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能�
 
 宿主从数据库调用开始时刻折算保守的单调本地期限，续约不延长已经发给 fabricd 的原 grant。`gateway.AdmissionLease` 只表达额外的输入期限，core 不读取配置或 SQL；连接准入、应用 hook、发送和反向连接输入 grant 都受期限约束，定时器未调度时仍逐次检查。配置准入过期、续约失败或回执未知会关闭本次 App，不重放续约、不让旧 boot 复活，也不回滚此前已受理的工作。
 
-`App.Close` 停止续约，但不提前删除原数据库预约：旧输入可能仍在缓冲区，冲突配置须等它的原期限自然结束。相同配置可立即重启；变更不兼容配置时，先停止旧实例并等待旧预约到期，再启动全部新实例。首次升级到 schema 12 也须协调停站，旧二进制不参与新准入协议。这里的十五秒是正常数据库时钟下的期限，不等同于排空窗口；修改数据库时钟或灾难恢复仍须按离线恢复步骤停站和隔离旧实例。
+`App.Close` 停止续约，但不提前删除原数据库预约：旧输入可能仍在缓冲区，冲突配置须等它的原期限自然结束。相同配置可立即重启；变更不兼容配置时，先停止旧实例并等待旧预约到期，再启动全部新实例。这里的十五秒是正常数据库时钟下的期限，不等同于排空窗口；修改数据库时钟或灾难恢复仍须按离线恢复步骤停站和隔离旧实例。
 
 ## 就绪与退出
 
@@ -86,7 +86,7 @@ CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任�
 
 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s` 启动三个独立官方 CLI 服务进程和真实 fabricd，A 签发安装材料、B 消费并持有机器连接，A/C 的 Web 和人类 CLI 经 peer 访问 B，另一入口退出用户后验证既有访问失效。测试证书写入专用临时目录，结束后连同进程、schema 一起清理；该回归是三进程正常运行链路，不是网络分区、时钟扰动或 Linux 集群故障验收。
 
-配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、schema 11 升级及 rollback、独立关闭计时器和有界输入。正式 CLI 的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。
+配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、独立关闭计时器和有界输入。正式 CLI 的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。
 
 ## 已验证的网络故障范围
 

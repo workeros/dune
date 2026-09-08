@@ -2,7 +2,6 @@ package metadata
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -216,112 +215,6 @@ func TestAuthenticatedSubjectIsFixed(t *testing.T) {
 				if !seen[operation] {
 					t.Fatal("policy path not exercised", operation)
 				}
-			}
-		})
-	}
-}
-
-func TestSchemaSevenRequiresKnownLoginSubject(t *testing.T) {
-	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			ctx := context.Background()
-			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
-			if backend == "postgres" {
-				config, _, _ = postgresConfig(t)
-			}
-			s, err := Open(ctx, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { s.Close() }()
-			local := identity.NewLocal(s, true)
-			user, cookie, err := local.Register(ctx, "subject-upgrade@example.test", "upgrade-test-password")
-			if err != nil {
-				t.Fatal(err)
-			}
-			token, _, err := s.IssueEnrollment(ctx, user.ID, "preserved machine")
-			if err != nil {
-				t.Fatal(err)
-			}
-			machine, credential, err := s.Enroll(ctx, token, "linux", "amd64")
-			if err != nil {
-				t.Fatal(err)
-			}
-			grant, err := authorization.NewLocal(ctx, local, s).Client(ctx, cookie, machine.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			pending, _, err := s.IssueEnrollment(ctx, user.ID, "unknown issuer")
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, subject := range []string{"alpha", "beta"} {
-				if _, err := s.ExternalLogin(ctx, "issuer", public.Subject{ID: subject}, wire.ID(), tokenHash(subject), time.Now().Add(time.Hour).Unix(), 32); err != nil {
-					t.Fatal(err)
-				}
-			}
-			// Remove only v8 columns to recreate old data with no per-login subject.
-			err = s.transaction(ctx, func(tx *sql.Tx) error {
-				for _, statement := range []string{
-					`DROP TABLE dune_instances`, `DROP TABLE dune_peer_access`, `DROP TABLE dune_routes`,
-					`DROP TABLE dune_cluster`,
-					`DROP TABLE dune_operations`,
-					`ALTER TABLE dune_enrollments DROP COLUMN identity_subject`,
-					`ALTER TABLE dune_enrollments DROP COLUMN identity_namespace`,
-					`ALTER TABLE dune_access_tickets DROP COLUMN identity_subject`,
-					`ALTER TABLE dune_sessions DROP COLUMN identity_subject`,
-					`UPDATE dune_schema SET version=7`,
-				} {
-					if _, err := tx.Exec(statement); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// A mid-upgrade failure rolls back preceding ALTERs and keeps all records.
-			if _, err := s.db.Exec(`ALTER TABLE dune_enrollments ADD COLUMN identity_namespace TEXT`); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.migrate(ctx); err == nil {
-				t.Fatal("partial schema accepted")
-			}
-			var count int
-			if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE identity_namespace='issuer'`).Scan(&count); err != nil || count != 2 {
-				t.Fatal("failed upgrade revoked sessions", count, err)
-			}
-			if _, err := s.db.Exec(`ALTER TABLE dune_enrollments DROP COLUMN identity_namespace`); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
-			s, err = Open(ctx, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, subject := range []string{"alpha", "beta"} {
-				if _, err := s.ReadSession(ctx, tokenHash(subject), time.Now().Unix()); !errors.Is(err, identity.ErrUnauthorized) {
-					t.Fatal("old subject inferred", err)
-				}
-			}
-			if _, err := s.EnrollmentUser(ctx, pending); !errors.Is(err, identity.ErrUnauthorized) {
-				t.Fatal("unknown enrollment issuer accepted", err)
-			}
-			if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_external_identities`).Scan(&count); err != nil || count != 2 {
-				t.Fatal("upgrade lost identity mappings", count, err)
-			}
-			local = identity.NewLocal(s, true)
-			if got, err := local.Authenticate(ctx, cookie); err != nil || got.Subject != "" {
-				t.Fatal("local login changed", err)
-			}
-			if _, _, err := authorization.NewLocal(ctx, local, s).Authorize(grant.Token()); err != nil {
-				t.Fatal("local ticket lost", err)
-			}
-			if got, err := s.MachineCredential(ctx, credential); err != nil || got != machine.ID {
-				t.Fatal("machine identity changed", err)
 			}
 		})
 	}

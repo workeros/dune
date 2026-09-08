@@ -1,6 +1,6 @@
 # 企业扩展方案实施记录
 
-实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。S0a、S0b、S0c 已通过本地验收；S1–S3 尚未交付。
+实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。本文按时间记录实施过程；下文历史 schema 编号及迁移验收不代表当前支持，旧数据兼容已按开发阶段要求移除，当前存储行为以[元数据存储与恢复](metadata-operations.md)为准。S0a、S0b、S0c 已通过本地验收；S1–S3 尚未交付。
 
 ## S0a：连接与传输
 
@@ -73,27 +73,16 @@
 ### 已完成：统一 SQL 后端基础
 
 - `internal/metadata` 实现同一组身份、会话、Attached Runner/机器及 enrollment 事务，使用一个 SQL 连接池和内部事务入口；不开放可分别替换的领域 Store。账号与首个会话、消费 enrollment 与 Runner/机器身份均一起提交。提交确认丢失返回明确的结果未知错误，不自动重放。
-- SQLite 使用私有文件、WAL、外键和完整同步，沿用原 `accounts.lock` 排斥同目录的旧进程及第二实例；拒绝符号/硬链接和未经导入的旧 JSON。PostgreSQL 用事务内 schema 锁协调初始化，用 principal 行锁保证跨连接池的注册和会话数量限制。初始 Attached Runner ID 沿用机器 ID，绑定修订为 1。
+- SQLite 使用私有文件、WAL、外键和完整同步，用 `metadata.lock` 排斥同目录第二实例，拒绝符号/硬链接。PostgreSQL 用事务内 schema 锁协调初始化，用 principal 行锁保证跨连接池的注册和会话数量限制。初始 Attached Runner ID 沿用机器 ID，绑定修订为 1。
 - `pkg/storage.Config` 只选择支持的后端与连接配置。PostgreSQL 的 `BeforeConnect` 对每条新物理连接取得独立配置副本，可通过私有 SDK 更新鉴权；连接仍须属于同一数据库命名空间。采用固定版本的 [modernc SQLite](https://pkg.go.dev/modernc.org/sqlite) 与 [pgx stdlib](https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib)，SQL 驱动未进入协议核心。
 - 本机独立 PostgreSQL 17 实例使用真实 SCRAM 密码认证。共同契约已验证跨对象失败回滚、并发单次消费、跨池会话上限、重启恢复和撤销；另外验证并发 schema 初始化、实际密码轮换及池恢复。提交丢失测试在真实 SQLite 提交之后注入回执错误，确认只提交一次并保留已落库状态。
 - 验证：启用该独立 PostgreSQL 的全量 `make test`、SQL `make test-race` 和 `make check-go` 通过；新增存储包以 `CGO_ENABLED=0` 交叉编译通过 Linux amd64/arm64、macOS amd64，本机 macOS arm64 完成运行测试。交叉编译不代替目标平台运行验收。
 
-### 已完成：离线 JSON 导入与 SQL 工作台
+### 已完成：SQL 工作台与原生备份恢复
 
-- `pkg/migrate.JSON` 和 `dune metadata import-json` 将旧目录导入空 SQLite/PostgreSQL 目标。离线命令不要求 Gateway 配置；源目录持锁至结束，严格校验重复键（含大小写字段别名）、版本、凭据唯一性及关联，失败不改源文件。所有业务记录同事务导入，保留账号、密码/凭据哈希、原机器 ID 和会话/enrollment 到期时间。
-- 官方 CLI 与 `pkg/host` 默认使用 SQLite，另可通过私有 `--database-config` 文件或 Go `Options.Database` 选择 PostgreSQL。旧 JSON 运行时和相关内存保存代码已删除；有旧数据但未导入的目录明确拒绝启动。身份策略测试迁至同一 SQL 契约，覆盖错误密码、取消、过期、会话上限与凭据哈希。
-- SQL 故障不会伪装成账号错误或机器不存在；提交确认丢失返回 `RESULT_UNKNOWN`，普通后端故障返回 503，禁止自动重放。连接期间的持久访问查询有界，注销后空闲终端仍会被撤销。
-- 两种后端均通过注册、CLI enrollment、真实 fabricd 接入、PTY 输入输出和退出撤销；外部 Go module 宿主继续使用同一 SQL 应用。真实 PostgreSQL 启用下的全量 `make test`、metadata/Web/host `make test-race` 和 `make check-go` 通过；最后新增的 JSON 字段别名回归也通过。
-- 真实升级演练使用 `8aba205` 的旧 JSON 工作台建立账号、机器和 PTY，停站备份并导入 SQLite 后在原地址启动新版本。原 Cookie/密码、机器配置、Runtime ID、incarnation/generation 及终端历史保持不变，fabricd 无需重装或重新签发凭据；浏览器登录并连接该原会话，看到 `BEFORE_SQL_IMPORT_OK`、`AFTER_SQL_IMPORT_OK`，输入后显示 `SQL_MIGRATION_UI_OK`。完成后已停止测试 Runtime、fabricd 和站点。
-- 安装配置、导入顺序和回退边界见[元数据迁移](metadata-migration.md)。SQL 转库与备份恢复验收见下节，S1–S3 仍未交付。
-
-### 已完成：SQLite 转库与 SQL 备份恢复
-
-- `pkg/migrate.SQLite` / `dune metadata copy-sqlite` 将停站 SQLite 的全部当前业务字段复制到空 SQLite/PostgreSQL 目标。源库独占且不会被初始化或升级，复制使用单一源快照和目标事务，按外键顺序逐行传输，不引入双写或外部副作用。固定字段清单有 schema 覆盖回归，避免后续新增持久字段时漏迁移。
-- 两种目标均逐字段验证源与目标一致，包括 JSON 中没有的 Fabric ID 和 binding revision；注入最后一张表的插入失败，确认之前的所有记录完整回滚。目标重启后数据保持一致，重复复制拒绝非空库。不存在/未知源库、源仍运行、源目标相同均明确失败。
-- SQLite 完成离线备份、再复制恢复和原密码/会话验证。真实 PostgreSQL 17 使用 `pg_dump` 归档测试 schema，删除该测试 schema，再以 `pg_restore --single-transaction --exit-on-error --no-owner --no-privileges` 恢复，逐字段验证并确认原 Cookie 和机器凭据有效。未引入自制 PostgreSQL 备份格式。
-- 真实 CLI 演练从旧 JSON 经 SQLite 再切换 PostgreSQL，整个过程保持同一 fabricd、机器配置及部署地址。切换后原会话/密码、机器绑定、Runtime ID、incarnation/generation 和 PTY 历史保留，原终端执行并显示 `AFTER_POSTGRES_TRANSFER_OK`；测试 Runtime、连接进程、站点及专用测试 schema 已清理。
-- 验证：启用真实 PostgreSQL 及其备份工具的全量 `make test` 通过；SQL/迁移 `make test-race` 和 `make check-go` 通过。材料明确限定当前 schema 1、SQLite 与 PostgreSQL 17 的已验收组合，不承诺任意未来版本混用或降级。
+- 官方 CLI 与 `pkg/host` 默认使用 SQLite，另可通过私有 `--database-config` 文件或 Go `Options.Database` 选择 PostgreSQL。SQL 故障返回后端错误，提交确认丢失返回 `RESULT_UNKNOWN`，不会自动重放。
+- 两种后端通过注册、CLI enrollment、真实 fabricd 接入、PTY 输入输出和退出撤销。PostgreSQL 使用原生 `pg_dump` / `pg_restore` 验证同结构数据、原会话和机器身份恢复。
+- 历史导入、转库与升级演练已退出当前范围，相关实现和入口已删除。当前结构初始化、备份和恢复见[元数据存储与恢复](metadata-operations.md)。
 
 S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器及人类 CLI 登录、短期访问凭据、稳定 Runner/绑定和全部操作的访问检查。真实身份源及后续 Managed/集群仍需对应实现和实际环境证据。
 
@@ -122,7 +111,7 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - schema 4 将关联和成功决定记录、授权版本递增、会话/enrollment 撤销原子提交，审计写入失败时整体回滚。相同请求及字段只执行一次，冲突请求不改变数据；`App.IdentityLink` 支持提交回执丢失后的核对。该记录只覆盖成功关联，宿主另行审计拒绝和授权过程。
 - 首次外部登录与管理员关联使用同一身份锁，SQLite/PostgreSQL 并发回归验证不会串入其他账号，关闭重开后决定保留。SQL 转库字段清单覆盖审计记录，备份恢复包含相同数据。公开宿主回归从本地注册、显式关联、关闭重开到外部浏览器回调，确认稳定 principal ID、Cookie 撤销和新会话重试不受影响。
 - 真实 SQLite/PostgreSQL 工作台 PTY 回归中，关联撤销空闲用户连接，重新登录可读取原 Runtime ID、incarnation/generation 和终端历史，现有 fabricd 和机器配置保持有效。这是可信测试身份适配器与真实执行进程的组合验证，不声称新增了某企业 IdP 的部署验收。
-- 验证：启用真实 PostgreSQL 17 和备份工具的全量 `make test`、metadata/host race 和 `make check-go`；身份关联及其持久化/撤销/并发/回执丢失回归通过。迁移步骤与审计边界见[元数据迁移](metadata-migration.md#schema-4显式关联既有账号)。下一检查点继续人类 CLI 登录和访问授权，S1 未整体完成。
+- 验证：启用真实 PostgreSQL 17 和备份工具的全量 `make test`、metadata/host race 和 `make check-go`；身份关联及其持久化/撤销/并发/回执丢失回归通过。迁移步骤与审计边界见[元数据存储与恢复](metadata-operations.md#显式关联既有账号)。下一检查点继续人类 CLI 登录和访问授权，S1 未整体完成。
 
 ### 已完成：跨实例短期连接凭据
 
@@ -193,7 +182,7 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 
 - `access.Scope` 新增本次登录验证的 `Subject`，与 `Namespace` 共同标识外部身份；Dune principal 仍为稳定产品用户，本地登录的两个外部字段为空。身份引用不含原始声明、邮箱或上游令牌，不暴露到浏览器用户 JSON。企业适配器可以同时实现身份验证和权限检查，不需要反查或猜测同一 principal 的多个关联身份。
 - schema 8 随浏览器会话保存 subject，CLI 复制确认的父会话引用，短期连接凭据在事务中捕获同一引用；父子会话、原访问凭据及持续流不能更换 subject。发现、管理和流检查均取得这一身份。Attached 材料保存实际签发者的 namespace/subject，消费时使用原引用并拒绝跨身份源；仍保持独立十分钟单次能力的原有退出边界。
-- 旧企业会话和旧安装材料缺少可靠的签发身份，升级分别要求重新登录和重新签发，不按映射猜测。原本地访问、外部关联、机器凭据、Runner 绑定及远端 Runtime 保留。迁移、转库、备份与回退边界见[元数据迁移](metadata-migration.md#schema-8本次登录的外部主体)。
+- 旧企业会话和旧安装材料缺少可靠的签发身份，升级分别要求重新登录和重新签发，不按映射猜测。原本地访问、外部关联、机器凭据、Runner 绑定及远端 Runtime 保留。迁移、转库、备份与回退边界见[元数据存储与恢复](metadata-operations.md#身份源与本次登录主体)。
 - SQLite 重开和真实 PostgreSQL 跨池回归验证同一 principal/namespace 关联两个 subject 时的明确允许/拒绝隔离，CLI/凭据/安装材料持久身份、错误父子引用及写入身份拒绝。真实宿主浏览器回调将已验证 subject 交给同一提供方实现的 Checker；执行流回归验证 Bind 后修改原对象不能替换身份。schema 7 升级及失败回滚、SQLite 转库和 PostgreSQL 17 原生备份恢复均覆盖新增字段。
 - 验证：启用 PostgreSQL 17 与备份工具的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=300s'`、metadata/Web/host/access race、`make build check-go` 通过。最后补充的写入身份隔离及宿主回调定向回归通过。本次没有前端改动，身份适配器为可信测试实现，没有重复声称企业 IdP 或私有权限 SDK 已取得新的部署证据。
 
@@ -324,3 +313,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 分别阻塞入口 A 和 owner B 的 SQL 链路，观察准入失效导致实际进程退出。入口失效后 C 的新用户连接仍能访问原 B；owner 失效后明确修改机器入口，仅让新连接去 C，原 fabricd 进程保持，目录 epoch、owner boot 与连接 generation 正确推进，原 Runtime/PTY 保留。恢复旧节点不会在启动时替换 C 的有效归属，原未知写入也没有重放。
 - 验证：专用 PostgreSQL 17 下新测试定向 race 通过（跨进程包 31.646 秒）；修正夹具监听地址以保留回环数据库地址族后，冻结源码执行正常三进程、网络停滞及真实进程暂停组合 race，75.890 秒通过。`make check-go` 通过。首次编译因 Binding 含 slice 不能直接比较而失败，改用完整值比较后通过。此次只新增测试与验收说明，沿用上一功能点已完成的 PostgreSQL 全量证据，没有重跑不受影响的全量构建或声明真实 Agent 通过。
 - 这一步验证同机三进程在指定链路停滞下的行为；跨主机内核丢包、主机/数据库时钟扰动、Linux 部署、ACP 故障组合及 Managed worker/提供方调用仍需对应证据。后续继续 S2 的实际资源生命周期与未完成的 S3 验收，不将本次通过视为完整方案交付。
+
+### 已完成：移除开发阶段的历史兼容与数据迁移
+
+- 删除 `pkg/migrate`、旧 JSON 解析/导入、SQL 转库、逐版本升级链及对应兼容测试。CLI 元数据入口仅保留当前 PostgreSQL 集群恢复；恢复编排归 CLI，数据库事务仍归内部存储。
+- SQL 直接创建完整当前结构，以内容指纹识别当前格式。初始化在一个事务内完成，PostgreSQL 同时启动通过事务锁协调；结构不匹配时拒绝打开，不自动升级、转换或删除数据。SQLite 独占锁使用 `metadata.lock`，不依赖旧文件约定。
+- 保留当前业务的身份关联、绑定与授权修订、操作执行租约和集群灾难恢复。测试快照清单仅用于回滚和原生恢复断言，不再承担数据转换。方案、README 与运行说明同步移除旧入口，当前配置和恢复流程见[元数据存储与恢复](metadata-operations.md)。
+- 验证：临时 PostgreSQL 17（SCRAM 认证及匹配原生备份工具）和 SQLite 的 metadata/CLI race 回归通过；完整结构建库失败回滚、并发初始化、重开、不匹配拒绝、业务事务与原生恢复通过。`make build check-go` 和启用该 PostgreSQL 的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过；正式 CLI、真实 PTY 与集群进程回归通过。本次未调用真实 Agent 或远端环境。

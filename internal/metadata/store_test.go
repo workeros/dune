@@ -227,7 +227,7 @@ func TestSQLiteExclusivitySchemaAndConstraints(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO dune_sessions(hash,principal_id,expires_at) VALUES('hash','missing',1)`); err == nil {
 		t.Fatal("foreign keys disabled on a pooled connection")
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE dune_schema SET version=999`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE dune_schema SET fingerprint='unknown'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -252,7 +252,7 @@ func TestSQLiteExclusivitySchemaAndConstraints(t *testing.T) {
 	}
 }
 
-func TestSQLiteRejectsUnsafeOrUnmigratedData(t *testing.T) {
+func TestSQLiteRejectsUnsafeData(t *testing.T) {
 	ctx := context.Background()
 	for _, config := range []storage.Config{{}, {SQLiteDir: "relative"}, {SQLiteDir: "/"}, {SQLiteDir: t.TempDir(), Postgres: &storage.Postgres{URL: "postgres://localhost/postgres"}}} {
 		if store, err := Open(ctx, config); err == nil {
@@ -260,21 +260,7 @@ func TestSQLiteRejectsUnsafeOrUnmigratedData(t *testing.T) {
 			t.Fatal("invalid database combination or directory accepted")
 		}
 	}
-	dir := filepath.Join(t.TempDir(), "legacy")
-	if err := os.Mkdir(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "accounts.json"), []byte(`{"version":1}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if store, err := Open(ctx, storage.Config{SQLiteDir: dir}); err == nil {
-		store.Close()
-		t.Fatal("legacy metadata silently replaced with an empty SQL database")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "metadata.sqlite")); !os.IsNotExist(err) {
-		t.Fatal("failed legacy open created a replacement database")
-	}
-	dir = filepath.Join(t.TempDir(), "unsafe")
+	dir := filepath.Join(t.TempDir(), "unsafe")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}

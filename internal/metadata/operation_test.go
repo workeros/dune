@@ -283,62 +283,6 @@ func TestOperationIntentRollbackAndValidation(t *testing.T) {
 	}
 }
 
-func TestOperationSchemaUpgrade(t *testing.T) {
-	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			ctx := context.Background()
-			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
-			if backend == "postgres" {
-				config, _, _ = postgresConfig(t)
-			}
-			s, err := Open(ctx, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { s.Close() }()
-			intent := operationFixture(t, s)
-			if err := s.transaction(ctx, func(tx *sql.Tx) error {
-				for _, table := range []string{"dune_instances", "dune_peer_access", "dune_routes", "dune_cluster"} {
-					if _, err := tx.Exec("DROP TABLE " + table); err != nil {
-						return err
-					}
-				}
-				if _, err := tx.Exec(`DROP TABLE dune_operations`); err != nil {
-					return err
-				}
-				_, err := tx.Exec(`UPDATE dune_schema SET version=8`)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			// Force the second migration statement to fail; table creation rolls back.
-			if _, err := s.db.Exec(`CREATE INDEX dune_operations_active_runner ON dune_runners(id)`); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.migrate(ctx); err == nil {
-				t.Fatal("partial upgrade accepted")
-			}
-			var version int
-			if err := s.db.QueryRow(`SELECT version FROM dune_schema`).Scan(&version); err != nil || version != 8 {
-				t.Fatal("failed upgrade advanced version", err)
-			}
-			if _, err := s.db.Exec(`DROP INDEX dune_operations_active_runner`); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
-			s, err = Open(ctx, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := s.BeginOperation(ctx, intent); err != nil {
-				t.Fatal("upgrade lost original binding", err)
-			}
-		})
-	}
-}
-
 func TestOperationWriteRechecksDatabaseLease(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {

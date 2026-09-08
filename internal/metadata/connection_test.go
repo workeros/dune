@@ -80,7 +80,7 @@ func TestPostgresCredentialRotation(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentSchemaMigration(t *testing.T) {
+func TestPostgresConcurrentSchemaInitialization(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

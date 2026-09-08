@@ -40,22 +40,13 @@ func Open(ctx context.Context, config storage.Config) (*Store, error) {
 	return open(ctx, config, true)
 }
 
-// OpenPostgresSource opens an existing current schema without initialization or
-// migration. Offline recovery inspection must not silently upgrade a database.
-func OpenPostgresSource(ctx context.Context, config *storage.Postgres) (*Store, error) {
+// OpenExistingPostgres opens the current format without initializing a database.
+// Offline recovery inspection must not create metadata on a mistaken target.
+func OpenExistingPostgres(ctx context.Context, config *storage.Postgres) (*Store, error) {
 	if config == nil {
 		return nil, fmt.Errorf("PostgreSQL configuration required")
 	}
 	return open(ctx, storage.Config{Postgres: config}, false)
-}
-
-// OpenSQLiteSource takes the normal exclusive lock but never initializes or
-// upgrades a source database. A typo or unrelated SQLite file must fail closed.
-func OpenSQLiteSource(ctx context.Context, dir string) (*Store, error) {
-	if _, err := os.Lstat(dir); err != nil {
-		return nil, err
-	}
-	return open(ctx, storage.Config{SQLiteDir: dir}, false)
 }
 
 func open(ctx context.Context, config storage.Config, initialize bool) (*Store, error) {
@@ -94,17 +85,7 @@ func open(ctx context.Context, config storage.Config, initialize bool) (*Store, 
 			return nil, err
 		}
 		file := filepath.Join(config.SQLiteDir, "metadata.sqlite")
-		if _, legacyErr := os.Lstat(filepath.Join(config.SQLiteDir, "accounts.json")); legacyErr == nil {
-			info, dbErr := os.Lstat(file)
-			if os.IsNotExist(dbErr) || (dbErr == nil && info.Size() == 0) {
-				s.Close()
-				return nil, fmt.Errorf("legacy JSON metadata requires explicit import into a new SQL directory")
-			}
-		}
-		flags := os.O_RDWR | syscall.O_NOFOLLOW
-		if initialize {
-			flags |= os.O_CREATE
-		}
+		flags := os.O_CREATE | os.O_RDWR | syscall.O_NOFOLLOW
 		f, err := os.OpenFile(file, flags, 0600)
 		if err == nil {
 			info, statErr := f.Stat()
@@ -112,8 +93,6 @@ func open(ctx context.Context, config storage.Config, initialize bool) (*Store, 
 				err = statErr
 			} else if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Getuid() || stat.Nlink != 1 || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 				err = fmt.Errorf("SQLite file must be private, owned by this user, regular and not hard-linked")
-			} else if !initialize && info.Size() == 0 {
-				err = fmt.Errorf("an existing SQLite metadata source is required")
 			}
 			f.Close()
 		}
@@ -143,12 +122,12 @@ func open(ctx context.Context, config storage.Config, initialize bool) (*Store, 
 	}
 	if err == nil {
 		if initialize {
-			err = s.migrate(ctx)
+			err = s.initializeSchema(ctx)
 		} else {
-			var version int
-			err = s.db.QueryRowContext(ctx, `SELECT version FROM dune_schema WHERE id=1`).Scan(&version)
-			if err == nil && version != schemaVersion {
-				err = fmt.Errorf("unsupported metadata schema version %d", version)
+			var fingerprint string
+			err = s.db.QueryRowContext(ctx, `SELECT fingerprint FROM dune_schema WHERE id=1`).Scan(&fingerprint)
+			if err == nil {
+				err = checkSchema(fingerprint)
 			}
 		}
 	}
@@ -174,9 +153,7 @@ func lockDirectory(dir string) (*os.File, error) {
 	if !info.IsDir() || info.Mode().Perm()&0077 != 0 || !ok || int(stat.Uid) != os.Getuid() {
 		return nil, fmt.Errorf("metadata directory must be owned by this user and mode 0700, not a symlink")
 	}
-	// Reuse the legacy lock name so an older JSON process cannot write into
-	// this directory while its SQL replacement is running.
-	lock, err := os.OpenFile(filepath.Join(dir, "accounts.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	lock, err := os.OpenFile(filepath.Join(dir, "metadata.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
 	}

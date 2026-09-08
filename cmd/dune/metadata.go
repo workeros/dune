@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/aiomni/dune/internal/config"
-	"github.com/aiomni/dune/pkg/migrate"
+	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/storage"
 )
 
@@ -17,42 +17,7 @@ func runMetadata(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "cluster-recovery" {
 		return runClusterRecovery(ctx, args[1:])
 	}
-	if len(args) == 0 || (args[0] != "import-json" && args[0] != "copy-sqlite") {
-		return fmt.Errorf("metadata import-json|copy-sqlite --source DIR [--data SQLITE_DIR | --database-config FILE]")
-	}
-	flags := flag.NewFlagSet("metadata "+args[0], flag.ContinueOnError)
-	source := flags.String("source", "", "offline source directory")
-	data := flags.String("data", "", "empty target SQLite directory (separate from source)")
-	database := flags.String("database-config", "", "private SQL target configuration file")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 || *source == "" || (*data == "") == (*database == "") {
-		return fmt.Errorf("source and exactly one SQL target required")
-	}
-	dir, err := filepath.Abs(*source)
-	if err != nil {
-		return err
-	}
-	var target storage.Config
-	if *database != "" {
-		target, err = config.Database(*database)
-	} else {
-		target.SQLiteDir, err = filepath.Abs(*data)
-	}
-	if err != nil {
-		return err
-	}
-	var report any
-	if args[0] == "copy-sqlite" {
-		report, err = migrate.SQLite(ctx, dir, target)
-	} else {
-		report, err = migrate.JSON(ctx, dir, target)
-	}
-	if err != nil {
-		return err
-	}
-	return json.NewEncoder(os.Stdout).Encode(report)
+	return fmt.Errorf("metadata cluster-recovery --database-config FILE [--rotate-from GENERATION]")
 }
 
 func runClusterRecovery(ctx context.Context, args []string) error {
@@ -69,11 +34,44 @@ func runClusterRecovery(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := migrate.ClusterRecovery(ctx, database, *expected)
+	report, err := clusterRecovery(ctx, database, *expected)
 	if err == nil || report.Outcome == "unknown" {
 		if outputErr := json.NewEncoder(os.Stdout).Encode(report); outputErr != nil {
 			return fmt.Errorf("recovery report unavailable; inspect current generation before any retry: %w", outputErr)
 		}
 	}
 	return err
+}
+
+type recoveryReport struct {
+	Generation string `json:"generation"`
+	Outcome    string `json:"outcome"`
+}
+
+// clusterRecovery reads the current recovery generation when expected is empty.
+// Otherwise it rotates only that exact generation to a fresh random identity.
+// Before rotating, stop all cluster replicas and restore/verify the database.
+// Deploy the returned generation before restarting. An unknown outcome returns
+// the candidate with its error: read again to reconcile; never blindly rotate.
+func clusterRecovery(ctx context.Context, database storage.Config, expected string) (recoveryReport, error) {
+	if database.Postgres == nil || database.SQLiteDir != "" {
+		return recoveryReport{}, fmt.Errorf("cluster recovery requires PostgreSQL")
+	}
+	store, err := metadata.OpenExistingPostgres(ctx, database.Postgres)
+	if err != nil {
+		return recoveryReport{}, err
+	}
+	defer store.Close()
+	if expected == "" {
+		current, err := store.ConnectionRecovery(ctx)
+		return recoveryReport{Generation: current, Outcome: "current"}, err
+	}
+	generation, err := store.RotateConnectionRecovery(ctx, expected)
+	if errors.Is(err, metadata.ErrCommitUnknown) {
+		return recoveryReport{Generation: generation, Outcome: "unknown"}, err
+	}
+	if err != nil {
+		return recoveryReport{}, err
+	}
+	return recoveryReport{Generation: generation, Outcome: "changed"}, nil
 }

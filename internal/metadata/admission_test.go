@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/wire"
-	"github.com/aiomni/dune/pkg/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -118,7 +116,7 @@ func TestPostgresAdmissionRechecksAfterLockWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT version FROM dune_schema WHERE id=1 FOR UPDATE`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT id FROM dune_schema WHERE id=1 FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
@@ -169,54 +167,5 @@ func TestPostgresAdmissionCommitLoss(t *testing.T) {
 	other := InstanceConfig{BootID: wire.ID(), Fingerprint: strings.Repeat("b", 64)}
 	if _, err := store.RegisterInstance(ctx, other); !errors.Is(err, ErrConfigurationConflict) {
 		t.Fatal("unknown acknowledgement erased live reservation", err)
-	}
-}
-
-func TestAdmissionSchemaUpgrade(t *testing.T) {
-	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			ctx := context.Background()
-			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
-			if backend == "postgres" {
-				config, _, _ = postgresConfig(t)
-			}
-			store, err := Open(ctx, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer store.Close()
-			intent := operationFixture(t, store)
-			if _, err := store.db.Exec(`DROP TABLE dune_instances`); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.db.Exec(`UPDATE dune_schema SET version=11`); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.db.Exec(`CREATE VIEW dune_instances AS SELECT id FROM dune_principals`); err != nil {
-				t.Fatal(err)
-			}
-			if err := store.migrate(ctx); err == nil {
-				t.Fatal("schema collision accepted")
-			}
-			var version int
-			if err := store.db.QueryRow(`SELECT version FROM dune_schema`).Scan(&version); err != nil || version != 11 {
-				t.Fatal("failed migration advanced schema", err)
-			}
-			if _, err := store.db.Exec(`DROP VIEW dune_instances`); err != nil {
-				t.Fatal(err)
-			}
-			if err := store.migrate(ctx); err != nil {
-				t.Fatal(err)
-			}
-			var runner string
-			if err := store.db.QueryRow(`SELECT id FROM dune_runners WHERE id=$1`, intent.RunnerID).Scan(&runner); err != nil {
-				t.Fatal("upgrade lost existing runner", err)
-			}
-			if backend == "sqlite" {
-				if _, err := store.RegisterInstance(ctx, InstanceConfig{BootID: wire.ID(), Fingerprint: strings.Repeat("a", 64)}); !errors.Is(err, ErrInvalidArgument) {
-					t.Fatal("SQLite admitted a shared instance", err)
-				}
-			}
-		})
 	}
 }

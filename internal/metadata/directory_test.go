@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/gateway"
-	"github.com/aiomni/dune/pkg/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -185,56 +183,6 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 	}
 }
 
-func TestDirectoryBackendAndSchemaUpgrade(t *testing.T) {
-	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
-			if backend == "postgres" {
-				config, _, _ = postgresConfig(t)
-			}
-			ctx := context.Background()
-			s, err := Open(ctx, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			if backend == "sqlite" {
-				if _, err := s.ConnectionDirectory(ctx, wire.ID()); err == nil {
-					t.Fatal("SQLite accepted clustered ownership")
-				}
-			}
-			claim := directoryClaim(t, s, wire.ID())
-			if err := s.transaction(ctx, func(tx *sql.Tx) error {
-				for _, query := range []string{`DROP TABLE dune_instances`, `DROP TABLE dune_peer_access`, `DROP TABLE dune_routes`, `DROP TABLE dune_cluster`, `UPDATE dune_schema SET version=9`, `CREATE TABLE dune_routes (collision TEXT)`} {
-					if _, err := tx.Exec(query); err != nil {
-						return err
-					}
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.migrate(ctx); err == nil {
-				t.Fatal("partial directory migration accepted")
-			}
-			var version int
-			if err := s.db.QueryRow(`SELECT version FROM dune_schema`).Scan(&version); err != nil || version != 9 {
-				t.Fatal("failed migration advanced version", err)
-			}
-			if _, err := s.db.Exec(`DROP TABLE dune_routes`); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.migrate(ctx); err != nil {
-				t.Fatal("migration did not roll back cluster table", err)
-			}
-			var target string
-			if err := s.db.QueryRow(`SELECT id FROM dune_machines WHERE id=$1`, claim.Target).Scan(&target); err != nil {
-				t.Fatal("upgrade lost machine identity", err)
-			}
-		})
-	}
-}
-
 func TestPostgresDirectoryRechecksExpiredLeaseAfterLock(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx := context.Background()
@@ -337,7 +285,7 @@ func TestPostgresDirectoryCommitLoss(t *testing.T) {
 func TestPostgresRecoveryRequiresExistingSchema(t *testing.T) {
 	config, admin, schema := postgresConfig(t)
 	ctx := context.Background()
-	if source, err := OpenPostgresSource(ctx, config.Postgres); err == nil {
+	if source, err := OpenExistingPostgres(ctx, config.Postgres); err == nil {
 		source.Close()
 		t.Fatal("recovery opened an uninitialized database")
 	}
@@ -350,14 +298,9 @@ func TestPostgresRecoveryRequiresExistingSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := s.db.Exec(`UPDATE dune_schema SET version=9`); err != nil {
+	if source, err := OpenExistingPostgres(ctx, config.Postgres); err != nil {
 		t.Fatal(err)
-	}
-	if source, err := OpenPostgresSource(ctx, config.Postgres); err == nil {
+	} else {
 		source.Close()
-		t.Fatal("recovery accepted outdated schema")
-	}
-	if err := s.db.QueryRow(`SELECT version FROM dune_schema`).Scan(&count); err != nil || count != 9 {
-		t.Fatal("recovery upgraded schema", count, err)
 	}
 }

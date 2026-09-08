@@ -60,13 +60,13 @@ go test -race ./internal/metadata -count=1 -timeout=180s
 go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeout=180s
 ```
 
-运行前从私有配置设置 `DUNE_TEST_POSTGRES` 为测试连接 URL。测试创建随机 `dune_test_` 或 `dune_workbench_` schema，结束后删除；密码轮换测试还创建并清理随机测试角色，因此测试账号需要创建 schema 和角色的权限，服务器须实际使用密码认证。不要使用业务数据库。SQLite 的私有目录、独占锁、schema 校验、并发与事务失败测试始终在临时目录运行。PostgreSQL 工作台测试与 SQLite 复用同一注册、CLI enrollment、fabricd 接入、真实 PTY 和退出撤销流程。
+运行前从私有配置设置 `DUNE_TEST_POSTGRES` 为测试连接 URL。测试创建随机 `dune_test_` 或 `dune_workbench_` schema，结束后删除；密码轮换测试还创建并清理随机测试角色，因此测试账号需要创建 schema 和角色的权限，服务器须实际使用密码认证。不要使用业务数据库。SQLite 的私有目录、独占锁、结构校验、并发与事务失败测试始终在临时目录运行。`TestSchemaInitializationIsAtomic` 验证建库失败完整回滚及不匹配结构不被改写；`TestPostgresConcurrentSchemaInitialization` 验证多个连接池同时创建当前结构。PostgreSQL 工作台测试与 SQLite 复用同一注册、CLI enrollment、fabricd 接入、真实 PTY 和退出撤销流程。
 
-`TestPostgresBackupRestore` 还需要与服务器版本匹配的 `pg_dump`、`pg_restore`（从 PATH 查找，或通过 `DUNE_TEST_PG_BIN` 指定目录）。该测试只备份、删除并恢复自己新建的随机 schema，再逐字段核对记录和原会话/机器身份。工具缺失时明确跳过，不能计为备份验收。`pkg/migrate` 的 SQLite 备份恢复始终在临时目录运行；操作顺序见[元数据迁移](metadata-migration.md)。
+`TestPostgresBackupRestore` 还需要与服务器版本匹配的 `pg_dump`、`pg_restore`（从 PATH 查找，或通过 `DUNE_TEST_PG_BIN` 指定目录）。该测试只备份、删除并恢复自己新建的随机 schema，再逐字段核对记录和原会话/机器身份。工具缺失时明确跳过，不能计为备份验收。同结构备份恢复的操作顺序见[元数据存储与恢复](metadata-operations.md)。
 
 `TestDurableAccessCredentials` 检查短期凭据的 SQLite 重开、PostgreSQL 跨池单次消费、期限、会话/身份源隔离及固定绑定。`TestPostgresAccessIssuerAndGateway` 用两个独立宿主和真实 fabricd/PTY，验证 A 签发后由 B 消费，并从 A 撤销 B 的空闲用户访问；它显式选择目标 Gateway，不证明 S3 的目录或自动跨节点转发。
 
-协议 peer 回归使用 `go test -race ./pkg/gateway -run Peer -count=1 -timeout=60s`，覆盖双端请求授权、独立角色和启动身份、错误归属、禁止第三跳、上下文界限及断线不重拨。用户上下文另跑 `go test -race ./internal/metadata ./internal/authorization -run Peer -count=1 -timeout=90s`，验证 SQLite 重开、PostgreSQL 跨池单次消费、身份/请求/绑定隔离、有界期限与容量、提交回执丢失和迁移回滚。PostgreSQL 子测试仍需专用配置，不把跳过计作通过。
+协议 peer 回归使用 `go test -race ./pkg/gateway -run Peer -count=1 -timeout=60s`，覆盖双端请求授权、独立角色和启动身份、错误归属、禁止第三跳、上下文界限及断线不重拨。用户上下文另跑 `go test -race ./internal/metadata ./internal/authorization -run Peer -count=1 -timeout=90s`，验证 SQLite 重开、PostgreSQL 跨池单次消费、身份/请求/绑定隔离、有界期限与容量、提交回执丢失。PostgreSQL 子测试仍需专用配置，不把跳过计作通过。
 
 启用专用 PostgreSQL 后运行 `go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s`：三个独立协议 Gateway 使用各自的 peer HTTPS 监听器，经双向 TLS、WebSocket 和 Yamux 连接；客户端固定入口，fabricd 在两个 owner 间顺序迁移。验证目录续租、竞争拒绝、旧 peer 失效、显式重接后真实 PTY 保留及恢复代次隔离。用户上下文使用正式 SQL 签发与消费路径，验证入口允许不能覆盖目标拒绝；故意让入口的有效性回答保持过期状态后，另一 SQL 池退出用户，目标的独立检查仍关闭空闲终端。测试 CA 在内存中临时生成；SDK 与反向连接仍是本地协议夹具，不证明完整 host/CLI 部署或三节点进程/网络故障矩阵。
 
@@ -114,13 +114,13 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 
 `TestRuntimeSelection` 检查事件订阅的完整执行身份及重复、缺失、溢出参数；前缀工作台与企业共享进程回归在实际 PTY 上拒绝错误 incarnation/generation，并验证随后合法订阅可用。浏览器验收还需确认刷新及自动重连保留选定 Runtime 身份，同 ID 身份变化后必须重新点选。仅在专用测试进程中改变持久 Runtime 身份的夹具用于模拟执行身份变化，不代表生产生命周期支持直接修改该字段。
 
-`TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份；`TestSchemaSevenRequiresKnownLoginSubject` 检查旧企业会话及安装材料撤销、本地访问和机器身份保留、迁移失败回滚。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
+`TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
 
 `make test TEST_PKGS=./internal/lifecycle` 验证个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实及配置边界。当前只有纯策略计算，没有提供方调用或持久调度；这些测试不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
 
-生命周期 SQL 协调使用 `make test-race TEST_PKGS=./internal/metadata TEST_FLAGS='-run Operation -count=1 -timeout=180s'`，启用上述 PostgreSQL 配置后验证跨连接池领取、重开恢复、业务互斥、数据库租约到期、暂停后的条件写入、旧 worker 拒绝和等待连接时的维护串行化。`TestCommitAcknowledgementLossIsNotReplayed` 另覆盖意图、领取及完成的回执丢失；转库和原生备份测试保存实际 unknown 操作行。协调夹具使用已有 Runner 元数据，没有模拟或调用 Managed 提供方，不能用这些结果替代外部副作用与完整阶段恢复验收。
+生命周期 SQL 协调使用 `make test-race TEST_PKGS=./internal/metadata TEST_FLAGS='-run Operation -count=1 -timeout=180s'`，启用上述 PostgreSQL 配置后验证跨连接池领取、重开恢复、业务互斥、数据库租约到期、暂停后的条件写入、旧 worker 拒绝和等待连接时的维护串行化。`TestCommitAcknowledgementLossIsNotReplayed` 另覆盖意图、领取及完成的回执丢失；原生备份测试保存实际 unknown 操作行。协调夹具使用已有 Runner 元数据，没有模拟或调用 Managed 提供方，不能用这些结果替代外部副作用与完整阶段恢复验收。
 
-连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock` 和 `TestPostgresDirectoryCommitLoss`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查及回执丢失不重放。`TestDirectoryBackendAndSchemaUpgrade` 检查 SQLite 拒绝集群、schema 9 升级与失败回滚；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCLI` 执行正式离线读取/旋转命令。它们仅证明目录事务与恢复工具，不代表 Gateway 已使用目录或三节点转发已经通过。
+连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock` 和 `TestPostgresDirectoryCommitLoss`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查及回执丢失不重放。`TestSQLiteRejectsSharedClusterServices` 检查 SQLite 拒绝集群目录和共享准入；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCLI` 执行正式离线读取/旋转命令。它们仅证明目录事务与恢复工具，不代表 Gateway 已使用目录或三节点转发已经通过。
 
 `pkg/fabricd/TestPostgresOwnedReverseConnections` 将两个独立 SQL 池与两个真实协议 Gateway、fabricd 引擎相连，检查 live owner 竞争拒绝、确认后发布、持续数据库续约、原请求 epoch、owner 释放后接管、旧清理拒绝和原 PTY 重新输入；测试中主动旋转恢复代次作为故障注入，验证已有旧连接关闭，不代表生产恢复可以跳过停站。`pkg/gateway/TestOwnership*` 和 `TestOwnedHandshakeRequiresEpochConfirmation` 检查迟到目录响应、保守本地期限、过期不复活及错误确认不发布；`TestInputGrantCannotCrossOwnershipTerm` 单独验证有效输入 grant 不能跨归属。此范围不涵盖 HTTP peer、负载均衡或三节点网络分区。
 
@@ -130,7 +130,7 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 
 官方集群 CLI 使用 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s`。它启动三个正式服务进程及独立 fabricd，经私有配置加载测试证书，在共享 PostgreSQL 上验证跨进程安装、在线发现、Web/人类 CLI 定向执行和退出撤销。此正常运行检查不替代三节点故障矩阵；配置读取的私有权限、相对路径和证书错误另由 `internal/config/TestPrivateClusterConfiguration` 覆盖。
 
-配置准入使用 `go test -race ./pkg/gateway ./internal/metadata ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`，启用专用 PostgreSQL。覆盖并发不兼容配置、跨池续约、锁等待、未知提交、升级与原生恢复；宿主回归观察实际续约、Close 后保留原期限及到期后变更。`TestPostgresAdmissionSurvivesProcessPause` 暂停正式 CLI 宿主超过十五秒，确认恢复后旧进程退出、旧终端输入未执行、替换配置后原 PTY 可继续使用。它证明同机 PostgreSQL 准入与进程暂停边界，不证明数据库时钟跳变、三节点分区或 Linux 部署。
+配置准入使用 `go test -race ./pkg/gateway ./internal/metadata ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`，启用专用 PostgreSQL。覆盖并发不兼容配置、跨池续约、锁等待、未知提交与原生恢复；宿主回归观察实际续约、Close 后保留原期限及到期后变更。`TestPostgresAdmissionSurvivesProcessPause` 暂停正式 CLI 宿主超过十五秒，确认恢复后旧进程退出、旧终端输入未执行、替换配置后原 PTY 可继续使用。它证明同机 PostgreSQL 准入与进程暂停边界，不证明数据库时钟跳变、三节点分区或 Linux 部署。
 
 就绪与排空运行 `go test -race ./pkg/gateway ./pkg/host ./pkg/transport/peer ./internal/webapp -count=1 -timeout=90s`，覆盖入口/owner 排空期间原流双向收发、新流拒绝、清理回调等待，HTTP 完整响应/部分请求超时、挂载与自有监听器、并发 Close/Shutdown 及前缀探针。`go test -race ./tests -run TestWebCLIShutdownPreservesPTY -count=1 -timeout=90s` 启动正式 SQLite CLI 和真实 fabricd/PTY，验证 SIGTERM、限时退出、旧连接新请求拒绝、原终端重接与空闲隧道不延迟退出。该测试没有执行 Agent，也不替代 PostgreSQL 三节点分区或 Managed worker 排空验收。
 
