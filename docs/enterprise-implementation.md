@@ -473,3 +473,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 两个正式 fabricd 进程分别固定连接 B、C。两名本地身份用户各自拥有一台 Linux machine，所有 SDK 请求从另一主机进入 A；目录先确认两个 owner 后，发现结果只包含当前用户的 Runner，跨用户目标不能签发连接票据。两个目标都经实际 mTLS peer 完成 Linux `uname`/Exec、File 写读、Git 状态、PTY 输入输出和原始 ACP JSON。
 - 首轮为两台机器分别保留 PTY 后，以三秒排空预算终止并重新启动 owner B。原 fabricd PID 在断链期间保持运行并自动重连；B 恢复 ready 后，两台机器原 Runtime ID 与 incarnation 均保持，重新附加和输入成功，C 的隧道同时可用。A、B、C 最终均报告 accepting/serving，三个宿主与两个 fabricd 的日志没有 panic、fatal、race 或 error 标记。
 - 验收结束先停止 Runtime，再停止两份 fabricd 和三个宿主，按专用路径关闭保留会话所用的私有 tmux server；随后删除远端目录，并停止、删除本地临时数据库和凭据。没有安装系统包、创建服务单元或修改远端现有服务。此次证明同一 Linux 主机上的三实例进程、跨主机数据库和实际入口到 owner 路径；它不等同于三台独立 Linux 主机、Linux PostgreSQL/HA、内核丢包、真实 Agent 或 Managed 提供方闭环。
+
+### 已完成验收：连接目录与 Managed 续期容量基线
+
+- 新增显式 opt-in 的 PostgreSQL 基线用例，固定 128 台已确认在线的 Managed machine、128 条到期续期计划和 16 个并发调用者。普通回归默认跳过；启用时从公开生命周期事务建立完整资源、Bootstrap、机器、route 和续期状态，再分别测量目录 Resolve/续租、续期候选扫描和一次性领取。用例只检查操作正确完成，不把当前机器数据写成发布门槛或 SLO。
+- 在 Apple M5 Pro、51.5 GB 内存、macOS 26.6.2、Go 1.27.0 和本机回环 PostgreSQL 17.11 上连续运行三次。目录 Resolve 每轮 4096 次，吞吐 9.3k–10.1k 次/秒，p50 1.147–1.163 ms、p95 4.216–4.566 ms、p99 6.631–12.455 ms；目录 Renew 每轮 1024 次，吞吐 6.9k–8.0k 次/秒，p50 1.400–1.427 ms、p95 4.046–4.974 ms、p99 9.820–32.133 ms。
+- 续期扫描每轮 512 次、每次读取最多 32 条，调用吞吐 7.9k–17.6k 次/秒，p50 0.704–0.728 ms、p95 1.723–2.005 ms、p99 4.300–39.829 ms；128 条计划的并发领取吞吐 415–1165 次/秒，p50 10.029–12.358 ms、p95 35.084–216.310 ms、p99 43.274–225.954 ms。领取尾延迟波动明显，因此这里只保留实测范围，不推导生产容量。
+- 同一固定负载的 race 运行通过，随后默认跳过路径及 metadata vet 通过。测量不包含 Provider SDK、跨主机数据库网络、真实 worker 调用耗时、活跃业务流、故障恢复或访问撤销延迟；这些变量必须按具体部署目标另建基线。
