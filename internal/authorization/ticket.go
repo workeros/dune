@@ -8,6 +8,7 @@ import (
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -38,6 +39,7 @@ type Repository interface {
 	SaveCursor(context.Context, string, string, string, string) (string, error)
 	EnrollmentIdentity(context.Context, string) (identity.User, string, error)
 	MachineCredential(context.Context, string) (string, error)
+	ConfirmMachineOnline(context.Context, api.Binding) error
 	CreateRunnerAccess(context.Context, string, string, string, string, runner.Binding, int64) (ConnectionAccess, error)
 	ConsumeAccess(context.Context, string, string, int64) (ConnectionAccess, error)
 	CheckAccess(context.Context, ConnectionAccess, int64) (bool, error)

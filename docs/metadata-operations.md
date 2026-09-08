@@ -93,3 +93,5 @@ Managed Bootstrap 的提供方动作和一次性 enrollment 哈希由一个事�
 Bootstrap executor 固定规范化的公开 enrollment 地址、完整 Gateway WS(S) 地址、安装版本和令牌有效期，并用它们生成非敏感动作摘要。首次明确提交同时得到动作和明文 grant 后才调用 `Bootstrap`；此后只用原动作调用 `ReconcileBootstrap`，即使当前启动配置已变化也不改写旧动作。若原 grant 已被 fabricd 消费，已有机器与同一 Runner/Fabric/binding revision 的绑定是本地可信完成证据，可直接结束原 Bootstrap 动作而无需查询提供方。适配器错误只记录 timeout/unknown，不采信伴随错误返回的字段。
 
 Managed worker 在同一持久循环中依次处理 Bootstrap 与 create，每次只执行一个提供方调用。候选 SQL 只扫描本进程已配置的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
+
+Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍停留在等待连接。机器凭据的 Gateway 握手先确认 fabricd 输入 grant；集群模式再发布当前 owner 路由，然后通过有界可信回调提交首次在线事实。元数据事务重新锁定 Runner 和原创建 Operation，核对机器绑定、binding revision、Create/Bootstrap 终态、resource_ref、访问门及数据库时钟有效期，才将创建标成 succeeded。PostgreSQL 集群还要求回调携带当前恢复代次和 epoch，并与刚发布、未过期的完整路由绑定相同；SQLite 或没有集群记录的 PostgreSQL 要求路由字段为空。回调完成前本机路由不对业务流可见，失败时握手和已发布 owner 都会撤销。提交回执未知不会在同一握手内重试；已提交的结果由后续重连幂等核对。Attached 机器不进入 Managed 生命周期事务。

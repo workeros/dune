@@ -134,6 +134,8 @@ Managed Bootstrap 执行器使用 `go test -race ./internal/managed ./internal/m
 
 Managed 阶段 worker 使用 `go test -race ./internal/managed ./internal/metadata -run 'Worker|RecoverableManaged' -count=1 -timeout=120s`。检查 create → Bootstrap 顺序、数据库时钟下的资源与动作复核、终态交还租约、timeout 后仅核对、配置 Fabric 过滤以及锁外快照失效后拒绝领取。SQLite 与 PostgreSQL 都应执行；测试适配器不证明安装脚本、真实资源或首次反向连接可用。
 
+Managed 首次连接确认使用 `go test -race ./pkg/gateway ./internal/metadata -run 'DaemonOnlineCallback|ManagedCreateFinishes|AttachedMachineOnline' -count=1 -timeout=120s`。Gateway 回归检查回调位于输入确认和集群 Publish 之后、本机路由可见之前，失败或超时不暴露路由，并隔离回调对绑定快照的修改。metadata 在 SQLite/PostgreSQL 检查 Bootstrap 前拒绝、资源和绑定复核、精确集群 route、提交回执丢失及重连幂等；PostgreSQL 子例需要专用测试库。这里确认的是可信 Gateway 观察与持久创建状态的衔接，尚不证明某个真实提供方已成功安装并回连。
+
 连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock` 和 `TestPostgresDirectoryCommitLoss`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查及回执丢失不重放。`TestSQLiteRejectsSharedClusterServices` 检查 SQLite 拒绝集群目录和共享准入；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCLI` 执行正式离线读取/旋转命令。它们仅证明目录事务与恢复工具，不代表 Gateway 已使用目录或三节点转发已经通过。
 
 `pkg/fabricd/TestPostgresOwnedReverseConnections` 将两个独立 SQL 池与两个真实协议 Gateway、fabricd 引擎相连，检查 live owner 竞争拒绝、确认后发布、持续数据库续约、原请求 epoch、owner 释放后接管、旧清理拒绝和原 PTY 重新输入；测试中主动旋转恢复代次作为故障注入，验证已有旧连接关闭，不代表生产恢复可以跳过停站。`pkg/gateway/TestOwnership*` 和 `TestOwnedHandshakeRequiresEpochConfirmation` 检查迟到目录响应、保守本地期限、过期不复活及错误确认不发布；`TestInputGrantCannotCrossOwnershipTerm` 单独验证有效输入 grant 不能跨归属。此范围不涵盖 HTTP peer、负载均衡或三节点网络分区。

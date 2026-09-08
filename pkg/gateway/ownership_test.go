@@ -194,6 +194,103 @@ func TestOwnedHandshakeRequiresEpochConfirmation(t *testing.T) {
 	}
 }
 
+func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
+	for _, behavior := range []string{"success", "failure", "timeout"} {
+		t.Run(behavior, func(t *testing.T) {
+			var published, released, callbacks atomic.Int32
+			directory := directoryStub{
+				acquire: func(_ context.Context, claim RouteClaim, _ uint64) (RouteLease, error) {
+					return RouteLease{Route: Route{RouteClaim: claim, Epoch: 4}, ValidFor: ownerLeaseLimit}, nil
+				},
+				publish: func(context.Context, Route) error { published.Add(1); return nil },
+				release: func(context.Context, Route) error { released.Add(1); return nil },
+			}
+			g, err := NewWithDirectory(directory, "https://instance.test/peer", wire.ID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer g.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			bindingSeen := make(chan api.Binding, 1)
+			online := func(callbackCtx context.Context, binding api.Binding) error {
+				callbacks.Add(1)
+				if published.Load() != 1 || g.Online("machine") {
+					t.Error("callback ran outside the publish/visibility boundary")
+				}
+				observed := binding
+				observed.Capabilities = append([]string(nil), binding.Capabilities...)
+				bindingSeen <- observed
+				binding.Capabilities[0] = "mutated"
+				switch behavior {
+				case "failure":
+					return errors.New("confirmation rejected")
+				case "timeout":
+					<-callbackCtx.Done()
+				}
+				return nil
+			}
+			left, right := net.Pipe()
+			done := make(chan struct{})
+			go func() {
+				_ = g.ServeConn(ctx, right, BindingContext{Target: "machine", Role: RoleDaemon, Online: online}, ownedHandler{})
+				close(done)
+			}()
+			peer, err := yamux.Client(left, wire.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer peer.Close()
+			control, welcome, err := wire.Handshake(peer, &pb.Message{Kind: "hello", InputLeaseId: wire.ID(), Target: "machine", Incarnation: wire.ID(), ConnectionGeneration: 2, Payload: api.Payload(api.Hello{Version: api.Version, Role: RoleDaemon}), Data: api.Payload(api.Binding{Capabilities: []string{"runtime.list"}})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteRecovery: g.recovery, RouteEpoch: 4}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case observed := <-bindingSeen:
+				if observed.Target != "machine" || observed.Generation != 2 || observed.RouteRecovery != g.recovery || observed.RouteEpoch != 4 {
+					t.Fatal("callback received a different binding", observed)
+				}
+			case <-ctx.Done():
+				t.Fatal("online callback was not invoked")
+			}
+			if behavior == "success" {
+				for !g.Online("machine") {
+					select {
+					case <-ctx.Done():
+						t.Fatal("successful callback did not expose route")
+					case <-time.After(time.Millisecond):
+					}
+				}
+				g.mu.Lock()
+				capability := g.routes["machine"].b.Capabilities[0]
+				g.mu.Unlock()
+				if capability != "runtime.list" {
+					t.Fatal("callback mutated the routed binding", capability)
+				}
+				peer.Close()
+			} else {
+				_ = control.SetReadDeadline(time.Now().Add(2 * time.Second))
+				failure, err := control.Recv()
+				if err != nil || failure.Code != "HANDSHAKE" || g.Online("machine") {
+					t.Fatal("failed callback exposed route", failure, err)
+				}
+				peer.Close()
+			}
+			select {
+			case <-done:
+			case <-ctx.Done():
+				t.Fatal("callback connection cleanup blocked")
+			}
+			if callbacks.Load() != 1 || published.Load() != 1 || released.Load() != 1 {
+				t.Fatal("callback lifecycle was not exactly once", callbacks.Load(), published.Load(), released.Load())
+			}
+		})
+	}
+}
+
 type ownedLocalHandler struct {
 	ownedHandler
 	opened chan *Stream

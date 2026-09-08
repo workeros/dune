@@ -12,6 +12,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/gateway"
 	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
@@ -105,8 +106,10 @@ func TestDurableAccessCredentials(t *testing.T) {
 			if _, _, err := receiver.Authorize(cookie); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("browser cookie authenticated tunnel", err)
 			}
-			if binding, _, err := receiver.Authorize(credential); err != nil || binding.Role != gateway.RoleDaemon {
+			if binding, _, err := receiver.Authorize(credential); err != nil || binding.Role != gateway.RoleDaemon || binding.Online == nil {
 				t.Fatal("machine identity broken", err)
+			} else if err := binding.Online(ctx, api.Binding{Version: api.Version, Target: machine.ID, Incarnation: "attached-test", Generation: 1}); err != nil {
+				t.Fatal("attached machine online callback changed behavior", err)
 			}
 			if _, err := receiver.Client(ctx, credential, machine.ID); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("machine authenticated as user", err)

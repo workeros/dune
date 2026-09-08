@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/gateway"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
@@ -17,6 +18,7 @@ type Grant struct {
 	Target string
 	Role   string
 	Valid  func() bool
+	Online func(context.Context, api.Binding) error
 	// Policy optionally enforces per-operation checks on an authenticated SDK connection.
 	Policy *Policy
 }
@@ -33,6 +35,9 @@ func (g Grant) Bind() (gateway.BindingContext, gateway.ConnectionHandler, error)
 	if g.Target == "" || (g.Role != gateway.RoleSDK && g.Role != gateway.RoleDaemon && g.Role != gateway.RoleEither) {
 		return gateway.BindingContext{}, nil, fmt.Errorf("invalid grant")
 	}
+	if g.Online != nil && g.Role != gateway.RoleDaemon {
+		return gateway.BindingContext{}, nil, fmt.Errorf("online callback requires daemon grant")
+	}
 	if g.Policy != nil {
 		policy := *g.Policy
 		if g.Role != gateway.RoleSDK || policy.Checker == nil || policy.Scope.PrincipalID == "" || !policy.Scope.Binding.Valid() || policy.Scope.Binding.MachineID != g.Target {
@@ -43,7 +48,7 @@ func (g Grant) Bind() (gateway.BindingContext, gateway.ConnectionHandler, error)
 	if err := g.check(); err != nil {
 		return gateway.BindingContext{}, nil, err
 	}
-	return gateway.BindingContext{Target: g.Target, Role: g.Role}, &connection{grant: g}, nil
+	return gateway.BindingContext{Target: g.Target, Role: g.Role, Online: g.Online}, &connection{grant: g}, nil
 }
 
 type connection struct {

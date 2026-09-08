@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -157,7 +158,12 @@ func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.Conne
 	if err != nil {
 		return gateway.BindingContext{}, nil, err
 	}
-	return (access.Grant{Target: target, Role: gateway.RoleDaemon, Valid: func() bool {
+	return (access.Grant{Target: target, Role: gateway.RoleDaemon, Online: func(ctx context.Context, binding api.Binding) error {
+		if binding.Target != target {
+			return identity.ErrUnauthorized
+		}
+		return l.bindings.ConfirmMachineOnline(ctx, binding)
+	}, Valid: func() bool {
 		if l.ctx.Err() != nil {
 			return false
 		}

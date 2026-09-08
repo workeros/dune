@@ -375,3 +375,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 同一个 worker 先推进已经确认资源的 Bootstrap，再领取新的 create；每次只进行一个提供方调用，并在调用期间续约同一 Operation 执行租约。终态交还执行租约，Bootstrap 成功释放创建业务互斥进入等待连接；unknown/timed_out 保留租约作为最短核对间隔，下一位 claimant 只能核对原动作。
 - 两类候选都按当前进程配置的 Fabric 在 SQL 中过滤，未配置的旧任务不会占满 32 条批次。Bootstrap 候选要求 create 已明确成功、资源仍属于原 Runner/Fabric、访问未关闭且按数据库时钟未过期；领取事务在 Runner → Operation 锁内重复这些条件及动作终态检查。
 - 验证：SQLite/PostgreSQL race 回归覆盖 create → Bootstrap 顺序、一次性 grant、timeout 后仅核对、终态租约与业务互斥变化、配置过滤、资源关闭后的旧扫描拒绝及 worker 持续轮询。当前未接入宿主启动配置或真实提供方，也未把首次 fabricd 在线确认为 Operation 成功；续期、销毁和人工核对 worker 仍待实现。
+
+### 已完成：Managed 首次可用连接确认
+
+- 机器凭据授权向 Gateway 注入有界在线回调。fabricd 先完成原输入 challenge；目录模式再 Publish 当前 owner，随后回调核对持久事实，成功后本机路由才对 SDK 流可见。回调失败、超时或忽略取消都使握手失败并释放 owner，不替换已有业务路由。传给回调的 capabilities/limits 是深拷贝，业务回调不能改写核心保存的执行绑定。
+- 元数据事务按 Runner → 创建 Operation 顺序加锁，重新核对当前机器、Fabric、binding revision、Create 与 Bootstrap 的明确成功、同一 resource_ref、访问未关闭和数据库时钟下的资源期限。只有仍在 waiting_connection 的创建被标成 succeeded，并清理残留 worker 租约；重复连接只核对原结果。Attached 机器沿用原连接行为，不创建 Managed 状态。
+- PostgreSQL 集群确认要求回调的恢复代次、epoch 和完整 fabricd 绑定与刚发布且未过期的 route 完全一致。SQLite 及没有集群记录的 PostgreSQL 接受 Gateway 的本机可信观察，但要求 route 字段为空。提交回执丢失返回 unknown 并拒绝本次握手，不在连接路径重试写入；后续新握手可幂等确认已提交的 succeeded。
+- 验证：Gateway、访问/授权和 metadata 全包竞态检查在专用 PostgreSQL 17 下通过；最终冻结源码的全量 PostgreSQL 回归通过，跨进程包耗时 349.471 秒，构建与静态检查通过。新增测试覆盖 Publish/可见性顺序、回调错误与一秒超时、绑定隔离、Bootstrap 未完成、资源过期、错误/释放 route、提交回执丢失和重复连接。这里仍使用受控生命周期事实和协议客户端，没有接入真实 Managed 提供方或把 worker 装配进宿主；续期、销毁、状态 API 与人工核对继续实施。

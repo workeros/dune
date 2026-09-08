@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
@@ -29,6 +30,9 @@ type BindingContext struct {
 	PeerBootID string
 	// Admission optionally bounds this connection by a shared application lease.
 	Admission *AdmissionLease
+	// Online is called for an authenticated daemon after its input challenge and
+	// any shared ownership publication succeed, before the route becomes visible.
+	Online func(context.Context, api.Binding) error
 }
 
 func (b BindingContext) valid() bool {
@@ -37,9 +41,9 @@ func (b BindingContext) valid() bool {
 	}
 	switch b.Role {
 	case RoleSDK, RoleDaemon, RoleEither:
-		return b.PeerBootID == ""
+		return b.PeerBootID == "" && (b.Online == nil || b.Role == RoleDaemon)
 	case RolePeer:
-		return wire.ValidID(b.PeerBootID)
+		return wire.ValidID(b.PeerBootID) && b.Online == nil
 	default:
 		return false
 	}

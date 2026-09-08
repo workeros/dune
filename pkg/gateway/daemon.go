@@ -88,6 +88,28 @@ func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, contr
 			return nil
 		}
 	}
+	if admission.Online != nil {
+		bounded, cancel := context.WithTimeout(ctx, HandlerTimeout)
+		onlineBinding := r.b
+		if r.b.Capabilities != nil {
+			onlineBinding.Capabilities = append([]string{}, r.b.Capabilities...)
+		}
+		if r.b.Limits != nil {
+			onlineBinding.Limits = make(map[string]int, len(r.b.Limits))
+			for key, value := range r.b.Limits {
+				onlineBinding.Limits[key] = value
+			}
+		}
+		err := admission.Online(bounded, onlineBinding)
+		if err == nil {
+			err = bounded.Err()
+		}
+		cancel()
+		if err != nil {
+			control.Fail("HANDSHAKE", err)
+			return nil
+		}
+	}
 	// The route becomes visible only after fabricd confirms that its original
 	// challenge still permits input. Failed handshakes cannot evict a live route.
 	g.mu.Lock()
