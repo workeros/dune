@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/observe"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -112,6 +113,8 @@ func TestPostgresHostStopsWhenAdmissionRenewalFails(t *testing.T) {
 	must(t, err)
 	defer inspect.Close(context.Background())
 	options := host.Options{PublicURL: "http://instance.test/dune/", Database: &database}
+	events := make(chan observe.Event, 8)
+	options.Observer = observe.SinkFunc(func(_ context.Context, event observe.Event) { events <- event })
 	app, err := host.Open(ctx, options)
 	must(t, err)
 	defer app.Close()
@@ -122,6 +125,15 @@ func TestPostgresHostStopsWhenAdmissionRenewalFails(t *testing.T) {
 	case <-app.Done():
 	case <-ctx.Done():
 		t.Fatal("failed admission renewal did not close host")
+	}
+	observed := false
+	for !observed {
+		select {
+		case event := <-events:
+			observed = event.Name == observe.HostAdmissionRenewal && event.Outcome == "failed" && event.Suboperation == "store" && event.OwnerID != "" && event.DurationMicros > 0
+		case <-time.After(time.Second):
+			t.Fatal("failed admission renewal was not observed")
+		}
 	}
 	response := httptest.NewRecorder()
 	app.ServeHTTP(response, httptest.NewRequest("GET", options.PublicURL+"api/bootstrap", nil))

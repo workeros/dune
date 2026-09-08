@@ -35,12 +35,8 @@ func (o managedProviderObserver) record(ctx context.Context, started time.Time, 
 	if outcome == "" {
 		outcome = "invalid"
 	}
-	duration := time.Since(started).Microseconds()
-	if duration < 1 {
-		duration = 1
-	}
 	event.Outcome = outcome
-	event.DurationMicros = duration
+	event.DurationMicros = observationMicros(started)
 	o.recorder.emit(event)
 }
 

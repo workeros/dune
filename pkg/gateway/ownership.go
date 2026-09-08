@@ -12,6 +12,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/observe"
 )
 
 const directoryTimeout = time.Second
@@ -41,6 +42,7 @@ type ownership struct {
 	mu        sync.Mutex
 	until     time.Time
 	changed   chan struct{}
+	emit      func(observe.Event)
 }
 
 func (g *Gateway) acquireOwner(ctx context.Context, binding api.Binding) (*ownership, error) {
@@ -72,7 +74,7 @@ func (g *Gateway) acquireOwner(ctx context.Context, binding api.Binding) (*owner
 	if !reflect.DeepEqual(lease.RouteClaim, claim) || lease.Epoch == 0 || lease.Epoch <= expected || lease.Published || lease.ValidFor <= 0 || lease.ValidFor > ownerLeaseLimit {
 		return nil, ErrRouteStale
 	}
-	owner := &ownership{directory: g.directory, route: lease.Route, until: started.Add(lease.ValidFor), changed: make(chan struct{}, 1)}
+	owner := &ownership{directory: g.directory, route: lease.Route, until: started.Add(lease.ValidFor), changed: make(chan struct{}, 1), emit: g.emit}
 	if bounded.Err() != nil || owner.remaining() <= 0 {
 		return nil, ErrRouteStale
 	}
@@ -101,12 +103,21 @@ func (o *ownership) publish(ctx context.Context) error {
 	return nil
 }
 
-func (o *ownership) renew(ctx context.Context) error {
+func (o *ownership) renew(ctx context.Context) (result error) {
+	started := time.Now()
+	defer func() {
+		if result != nil && ctx.Err() == nil && o.emit != nil {
+			o.emit(observe.Event{
+				Name: observe.GatewayRouteRenewal, Outcome: "failed", DurationMicros: elapsedMicros(started),
+				Target: o.route.Target, OwnerID: o.route.OwnerBootID, Incarnation: o.route.Binding.Incarnation,
+				Generation: o.route.Binding.Generation, Epoch: o.route.Epoch,
+			})
+		}
+	}()
 	remaining := o.remaining()
 	if remaining <= 0 {
 		return ErrRouteStale
 	}
-	started := time.Now()
 	bounded, cancel := context.WithTimeout(ctx, min(remaining, directoryTimeout))
 	defer cancel()
 	lease, err := o.directory.Renew(bounded, o.route)

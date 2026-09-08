@@ -106,6 +106,14 @@ func (r *observationRecorder) emit(event observe.Event) {
 	}
 }
 
+func observationMicros(started time.Time) int64 {
+	duration := time.Since(started).Microseconds()
+	if duration < 1 {
+		return 1
+	}
+	return duration
+}
+
 func (r *observationRecorder) status() ObservationStatus {
 	if r == nil || r.sink == nil {
 		return ObservationStatus{}

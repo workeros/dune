@@ -36,6 +36,8 @@ SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能�
 
 配置 `host.Options.Observer` 后，宿主还会发出连接 opened/closed、路由 online/replaced/offline、peer 拨号 connected/failed、业务流终态及固定容量拒绝事件。流事件用 `route=local|peer` 区分本机与一跳转发，携带绑定代次和请求 ID 但不携带 peer 地址、访问上下文或协议载荷，可用于计算跨实例比例、耗时和背压。协议 core 的独立嵌入者也可用 `Gateway.SetObserver` 接收同一事件；该回调直接位于 core 路径，必须立即返回，完整宿主默认通过异步有界队列隔离 sink。详见[结构化观测](observability.md)。
 
+owner 数据库续租失败或本地 term 已过期时，core 在关闭原连接前发出 `gateway.route_renewal failed`；PostgreSQL 配置准入续租失败或到期时，完整宿主在取消 App 前发出 `host.admission_renewal failed|expired`。正常排空和显式关闭不发失败。事件只含原 boot/binding/epoch 与固定阶段，不含数据库错误或地址。
+
 完整宿主还在每次 Managed provider 返回后发出调用类型、dispatch/reconcile 模式、耗时和受控动作身份。事件不记录错误正文、Create 的未校验返回引用、候选引用、Bootstrap enrollment 或适配器私有配置；provider outcome 在字段校验与数据库提交之前采集，因此只用于调用诊断，不能替代持久 Operation/action 状态。
 
 例如公开 URL 为 `https://dune.example.com/tools/dune/` 时，就绪路径为 `/tools/dune/health/ready`。允许接新工作时返回 200；排空、关闭、准入失效或本机 peer 证书到期返回 503。`health/live` 在排空但尚可服务时仍返回 200，关闭或本机准入失效返回 503。挂载到外部服务器时，关闭后的探针仍可返回状态；App 自己拥有的监听器关闭后不可继续探测。

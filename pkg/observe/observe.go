@@ -9,14 +9,16 @@ import (
 )
 
 const (
-	AccessCheck         = "access.check"
-	GatewayBackpressure = "gateway.backpressure"
-	GatewayConnection   = "gateway.connection"
-	GatewayPeerDial     = "gateway.peer_dial"
-	GatewayRoute        = "gateway.route"
-	GatewayStream       = "gateway.stream"
-	ManagedProviderCall = "managed.provider_call"
-	Dropped             = "observe.dropped"
+	AccessCheck          = "access.check"
+	GatewayBackpressure  = "gateway.backpressure"
+	GatewayConnection    = "gateway.connection"
+	GatewayPeerDial      = "gateway.peer_dial"
+	GatewayRoute         = "gateway.route"
+	GatewayRouteRenewal  = "gateway.route_renewal"
+	GatewayStream        = "gateway.stream"
+	HostAdmissionRenewal = "host.admission_renewal"
+	ManagedProviderCall  = "managed.provider_call"
+	Dropped              = "observe.dropped"
 )
 
 // Event contains only bounded operational facts and controlled identifiers.

@@ -130,7 +130,7 @@ Managed 创建恢复循环使用 `go test -race ./internal/managed ./internal/me
 
 宿主排空中的 Managed worker 边界使用 `go test -race ./internal/managed ./pkg/host -run 'Worker(Drain|ClosedDrain)|ManagedWorkerParticipatesInHostShutdown' -count=1 -timeout=120s`。回归检查已关闭 drain 不领取初始操作、已领取提供方调用在预算内完成后不领取下一操作，以及 deadline 取消当前调用并等待 worker 退出。测试使用可取消的可信适配器，不证明外部 SDK 一定遵守 context；实际适配器必须自行验证取消和幂等查询语义。
 
-结构化观测运行 `go test -race ./pkg/gateway ./pkg/host -run 'GatewayEmits|Observation|HostEmitsStructuredAccess|ManagedProviderCalls' -count=1 -timeout=120s`。覆盖本地与 peer 流、连接/路由生命周期、peer owner/epoch、容量拒绝、Managed Create 调用身份与保守错误归一化、回调 panic 隔离，以及宿主慢 sink 的有界队列和丢弃计数。Managed 用例还检查 provider 错误正文和未校验资源引用不会进入事件。事件不包含业务载荷；测试采集器也不是可靠审计存储。
+结构化观测运行 `go test -race ./pkg/gateway ./pkg/host -run 'GatewayEmits|OwnershipRenewalFailure|Observation|HostEmitsStructuredAccess|ManagedProviderCalls' -count=1 -timeout=120s`。覆盖本地与 peer 流、连接/路由生命周期、peer owner/epoch、owner 续租失败、容量拒绝、Managed Create 调用身份与保守错误归一化、回调 panic 隔离，以及宿主慢 sink 的有界队列和丢弃计数。Managed 用例还检查 provider 错误正文和未校验资源引用不会进入事件。实例准入续租观测由专用 PostgreSQL 的 `go test -race ./tests -run '^TestPostgresHostStopsWhenAdmissionRenewalFails$' -count=1 -timeout=60s` 验证：数据库侧失效必须先发固定失败事件，再关闭 Host。事件不包含业务载荷；测试采集器也不是可靠审计存储。
 
 Managed 资源绑定 enrollment 使用 `go test -race ./internal/metadata -run 'ManagedBootstrap|Enrollment' -count=1 -timeout=120s`，并为 PostgreSQL 配置专用测试库。检查 Bootstrap 动作与令牌哈希原子提交、明文不落库、提交回执丢失不重发、资源/Fabric/修订与数据库时钟有效期复核、访问检查区分 Managed、并发单次消费及绑定已有 Runner。原生 PostgreSQL 备份恢复还保留未消费的绑定 grant。
 

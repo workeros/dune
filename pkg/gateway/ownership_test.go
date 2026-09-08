@@ -10,6 +10,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/observe"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
 )
@@ -109,6 +110,30 @@ func TestOwnershipRenewalCannotReviveExpiredTerm(t *testing.T) {
 	if err := owner.renew(context.Background()); !errors.Is(err, ErrRouteStale) || calls.Load() != 1 {
 		t.Fatal("expired ownership performed another write", err)
 	}
+}
+
+func TestOwnershipRenewalFailureIsObserved(t *testing.T) {
+	g := New()
+	defer g.Close()
+	events := &observedGatewayEvents{}
+	g.SetObserver(events.add)
+	providerErr := errors.New("private directory failure")
+	owner := &ownership{
+		directory: directoryStub{renew: func(context.Context, Route) (RouteLease, error) {
+			return RouteLease{}, providerErr
+		}},
+		route: Route{RouteClaim: RouteClaim{
+			Target: "machine", OwnerBootID: "owner", Binding: api.Binding{Incarnation: "fabric", Generation: 3},
+		}, Epoch: 9},
+		until: time.Now().Add(time.Second), changed: make(chan struct{}, 1), emit: g.emit,
+	}
+	if err := owner.renew(context.Background()); !errors.Is(err, providerErr) {
+		t.Fatal(err)
+	}
+	events.wait(t, func(event observe.Event) bool {
+		return event.Name == observe.GatewayRouteRenewal && event.Outcome == "failed" && event.Target == "machine" &&
+			event.OwnerID == "owner" && event.Incarnation == "fabric" && event.Generation == 3 && event.Epoch == 9 && event.DurationMicros > 0
+	})
 }
 
 func TestOwnedHandshakeRequiresEpochConfirmation(t *testing.T) {

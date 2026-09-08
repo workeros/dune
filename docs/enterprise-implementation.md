@@ -511,3 +511,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 新增可信宿主方法 `App.ManagedStatusSnapshot`，用一个 statement 的数据库时钟视图返回全局计数：Managed Runner、已知及仍可访问资源、unknown/timed-out Operation、当前策略下的续期积压、`RenewBefore` 范围内的到期风险和残留资源。没有 Managed 配置时明确返回 `enabled=false` 的零状态；该方法没有普通用户 HTTP 路由，调用者负责运维身份与权限。
 - backlog 包含没有维护决定、策略版本已变化、检查时间已到或已有冻结续期决定的可访问资源。residual 包含访问已关闭但尚未确认 Gone 的资源，以及没有 machine 且相关 Operation/action 为 unknown、timed_out 或 failed 的资源；同一资源只计一次。快照不返回 principal、Runner ID、resource_ref、错误正文或适配器配置，也不访问 provider，读取成功不代表外部平台健康。
 - SQLite 和专用 PostgreSQL 17 的同一状态夹具均通过，覆盖策略漂移、到期提前量、unknown/timed-out 分离、残留去重和参数边界；宿主端回归还确认 provider 事件先于 SQL 时会轮询到最终持久事实。受影响包 race、构建和静态检查作为本功能提交前验证。至此 §9 要求的 Managed unknown、续期积压、到期风险和残留资源已有可轮询聚合出口；真实 provider 的监控接线仍随具体企业适配器验收。
+
+### 已完成组件：owner 与实例准入续租故障观测
+
+- 本机拥有 route 时，任何目录 Renew 错误、无效返回或本地 term 到期都会在原连接关闭前发出 `gateway.route_renewal failed`，保留 target、owner boot、incarnation、generation、epoch 和微秒耗时。取消中的业务 context 不发失败，避免正常连接退出、排空或 Gateway 关闭污染告警。
+- PostgreSQL Host 的配置准入续租遇到 Store 错误、调用 deadline、本地 lease 拒绝或自然到期时，在取消 App 前发出 `host.admission_renewal failed|expired`。事件用固定 suboperation 区分失败阶段，只保留 boot ID，实际续租失败另带耗时；它不记录 SQL 错误、数据库地址或配置指纹。原保守行为不变，未知续租仍立即关闭本实例且不重放写入。
+- Gateway 单元回归注入带私密正文的目录错误并核对固定字段；正式 PostgreSQL Host 回归在数据库中使本实例预约失效，验证事件已经由异步宿主 sink 接收后 App 才完成关闭。定向 race、Gateway/Host 全包 race、构建和静态检查作为提交验证。

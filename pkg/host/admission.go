@@ -17,6 +17,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/observe"
 )
 
 func configurationFingerprint(options Options, urls deployment.URLs, service identity.Service, managedFingerprint string) (string, error) {
@@ -87,6 +88,9 @@ func (a *App) renewAdmission(config metadata.InstanceConfig) {
 		case <-a.ctx.Done():
 			return
 		case <-a.admission.Done():
+			if a.ctx.Err() == nil {
+				a.observer.emit(observe.Event{Name: observe.HostAdmissionRenewal, Outcome: "expired", OwnerID: config.BootID})
+			}
 			a.cancel()
 			return
 		case <-ticker.C:
@@ -95,9 +99,23 @@ func (a *App) renewAdmission(config metadata.InstanceConfig) {
 			duration, err := a.store.RenewInstance(bounded, config)
 			expired := bounded.Err()
 			cancel()
-			if err != nil || expired != nil || a.admission.Renew(started.Add(duration)) != nil {
+			suboperation := "store"
+			if expired != nil {
+				suboperation = "deadline"
+			}
+			leaseErr := error(nil)
+			if err == nil && expired == nil {
+				leaseErr = a.admission.Renew(started.Add(duration))
+				if leaseErr != nil {
+					suboperation = "local_lease"
+				}
+			}
+			if err != nil || expired != nil || leaseErr != nil {
 				// An uncertain renewal cannot extend local authority. This boot stops;
 				// its database reservation expires naturally instead of being replayed.
+				if a.ctx.Err() == nil {
+					a.observer.emit(observe.Event{Name: observe.HostAdmissionRenewal, Outcome: "failed", Suboperation: suboperation, OwnerID: config.BootID, DurationMicros: observationMicros(started)})
+				}
 				a.cancel()
 				return
 			}
