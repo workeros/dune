@@ -90,6 +90,8 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 `App.Shutdown(ctx)` 先停止新请求、新流和新的 Managed worker 迭代，等待已受理工作后关闭；排空边界前已领取的生命周期迭代可在同一 deadline 内完成，超时则取消当前提供方调用并保留持久动作供恢复。没有 deadline 时默认等待五秒，远端 PTY 保留。要优雅退出，应先调用 Shutdown，再取消传给 Open 的生命周期 context；父 context 取消和 Close 仍立即停止。官方 `dune web` 的 SIGINT/SIGTERM 已按此处理，`--drain-timeout` 默认 `5s`、`0` 表示立即关闭。部署前缀下的 `health/ready` 在排空时返回 503，`health/live` 在已有工作仍可服务时返回 200。
 
+企业宿主可设置 `Options.Observer` 接收 `pkg/observe.Event`。事件经 256 项有界队列异步串行投递，当前覆盖产品 API、连接签发和持续流的最终访问检查结果与耗时；事件只含 Dune principal、受控对象/请求/决定标识及操作范围，不含外部 subject、命令、文件、终端、prompt、凭据或错误正文。慢 sink 不阻塞业务，超出容量的事件被丢弃，`App.ObservationStatus()` 可读取累计丢弃数；sink 必须响应每次调用的有界 context。该出口是尽力而为的观测与审计素材，不提供执行前可靠审计提交语义。
+
 Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；官方 `dune web --cluster-config FILE` 使用同一装配；PostgreSQL 配置一致性由有界准入租约校验；就绪探针和限时排空的使用方式见[就绪与退出](docs/peer-transport.md#就绪与退出)。
 
 宿主默认经浏览器公开入口的 WS(S) 隧道连接同一应用；可用 `DialGateway` 提供保留认证的本地网络路由或 TLS 信任配置。机器 `GatewayURL` 覆盖不改变这条工作台链路。`DataDir` 选择私有 SQLite 目录；也可通过 `Database: &storage.Config{Postgres: ...}` 选择 PostgreSQL，并用 `BeforeConnect` 更新每条新连接的鉴权配置。应用持有并关闭同一个数据库连接池，领域 Store 不作为可独立替换的公开接口。企业身份、授权、集群及 Managed 生命周期的实现和剩余真实平台验收见[实施记录](docs/enterprise-implementation.md)。

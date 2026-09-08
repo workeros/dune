@@ -232,6 +232,49 @@ func TestPolicyDecisionValidation(t *testing.T) {
 	}
 }
 
+func TestPolicyObserverReceivesFinalDecision(t *testing.T) {
+	request := Request{Scope: testScope(), RequestID: "observed-request", Operation: "runtime.list", Suboperation: "all"}
+	observed := make(chan struct {
+		request  Request
+		decision Decision
+		err      error
+		elapsed  time.Duration
+	}, 2)
+	observer := func(r Request, d Decision, err error, elapsed time.Duration) {
+		observed <- struct {
+			request  Request
+			decision Decision
+			err      error
+			elapsed  time.Duration
+		}{r, d, err, elapsed}
+	}
+	allowed := Policy{Scope: request.Scope, Checker: checkFunc(func(context.Context, Request) (Decision, error) {
+		return allow(request, time.Hour), nil
+	}), Observer: observer}
+	if _, err := allowed.check(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	first := <-observed
+	if first.request != request || first.decision.ID != request.RequestID || first.err != nil || first.elapsed < 0 {
+		t.Fatal("observer did not receive final allowed decision", first)
+	}
+
+	denied := Policy{Scope: request.Scope, Checker: checkFunc(func(context.Context, Request) (Decision, error) {
+		return Decision{Allowed: false, Reason: "TEST_DENY", ID: request.RequestID, ValidUntil: time.Now().Add(time.Minute)}, nil
+	}), Observer: observer}
+	if _, err := denied.check(context.Background(), request); !errors.Is(err, ErrDenied) {
+		t.Fatal("denial was not enforced", err)
+	}
+	second := <-observed
+	if !errors.Is(second.err, ErrDenied) || second.decision != (Decision{}) {
+		t.Fatal("observer did not receive normalized denial", second)
+	}
+	panicking := Policy{Scope: request.Scope, Checker: allowed.Checker, Observer: func(Request, Decision, error, time.Duration) { panic("diagnostic failure") }}
+	if _, err := panicking.check(context.Background(), request); err != nil {
+		t.Fatal("observer panic changed access result", err)
+	}
+}
+
 func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 	cases := []struct {
 		op        string

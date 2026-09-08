@@ -37,7 +37,7 @@ func scope(user identity.User, resource Resource) access.Scope {
 }
 
 func (l *Service) Check(ctx context.Context, user identity.User, resource Resource, operation, suboperation string) (access.Decision, error) {
-	return access.Evaluate(ctx, l.checker, access.Request{Scope: scope(user, resource), RequestID: wire.ID(), Operation: operation, Suboperation: suboperation})
+	return l.evaluate(ctx, access.Request{Scope: scope(user, resource), RequestID: wire.ID(), Operation: operation, Suboperation: suboperation})
 }
 
 func (l *Service) Resource(ctx context.Context, user identity.User, id string, machine bool, operation string) (Resource, access.Decision, error) {

@@ -80,7 +80,7 @@ peer 传输本身运行 `go test -race ./pkg/transport/peer -count=1 -timeout=60
 
 `TestRunnerBindingSnapshot` 在 SQLite/PostgreSQL 验证逻辑 Runner 与机器 ID 分离、owner 隔离、绑定修订变化后旧访问失效及重开恢复；替换环境在测试中直接构造数据库事实，不代表 Managed 生命周期已经实现。`TestHumanCLILoginAndExecution` 另通过正式 CLI 的 `runners`、`--runner` 和 `DialRunner` 执行真实命令。`TestRunnerDoesNotFollowReplacement` 验证过期快照不会触发 SDK 自动重新解析或重放。
 
-执行流授权运行 `go test -race ./pkg/access -count=1 -timeout=60s`。它使用独立 Gateway 和真实 fabricd/PTY，覆盖文件与上传提交、Git 暂存、端口输入、只读订阅、短期决定复用和空闲撤销；不调用真实 Agent。完整的语义映射与尚未装配的企业入口见[执行流访问检查](access-checks.md)。
+执行流授权运行 `go test -race ./pkg/access -count=1 -timeout=60s`。它使用独立 Gateway 和真实 fabricd/PTY，覆盖文件与上传提交、Git 暂存、端口输入、只读订阅、短期决定复用、空闲撤销和最终决定观测；不调用真实 Agent。宿主观测出口另运行 `go test -race ./pkg/host -run 'Observation|HostEmitsStructuredAccess' -count=1 -timeout=60s`，检查慢 sink 的有界队列、取消和丢弃计数，以及 API 检查事件的字段裁剪。完整语义见[执行流访问检查](access-checks.md)。
 
 以下操作会使用已配置的 Agent 账号或指定远端，仅在任务包含对应验收且已有授权时运行。沿用明确指定的账号、模型和机器；历史文档里的地址与登录状态不是当前授权或可用性证据。环境缺失时报告具体缺口，继续本地检查。
 

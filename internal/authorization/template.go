@@ -15,7 +15,7 @@ func (l *Service) TemplateDecision(ctx context.Context, user identity.User, temp
 	if operation != "template.list" && operation != "template.get" && operation != "runner.create" {
 		return access.Decision{}, access.ErrDenied
 	}
-	return access.Evaluate(ctx, l.checker, access.Request{
+	return l.evaluate(ctx, access.Request{
 		Scope:     access.Scope{PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, OwnerID: user.ID},
 		RequestID: wire.ID(), Operation: operation, Suboperation: "managed",
 		Resource: access.Resource{FabricID: template.FabricID, TemplateID: template.ID, TemplateVersion: template.Version},

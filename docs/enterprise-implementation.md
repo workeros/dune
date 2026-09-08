@@ -486,3 +486,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - `App.Shutdown` 开始排空时同时关闭 Managed worker 的新迭代入口。边界前已经领取的一轮继续使用应用 context，可以在调用方 deadline 内完成并保存明确或未知结果；完成后不再扫描、领取下一阶段或执行低优先级历史清理。没有配置 Managed 时使用同一已完成等待通道，保持统一关闭路径。
 - 正常排空等待 HTTP 请求、Gateway 流和当前 worker 迭代后再刷新自有 HTTP 服务并释放 Store。deadline 到达会沿用立即 Close 路径取消当前提供方调用，等待 worker 退出并返回 context 错误；动作身份、执行修订和既有 unknown/timed_out 接管规则保持不变。
 - 回归重复验证已关闭 drain 与零时长初始 timer 同时就绪时不会领取操作，并验证两条已排队创建中只完成边界前的一条。宿主测试分别覆盖提供方按时返回和超过排空预算：前者只调用一次且正常关闭，后者收到 context 取消、Shutdown 返回 deadline exceeded。测试适配器遵守 context；真实 Managed SDK 仍须单独证明取消、去重与关联查询行为。
+
+### 已完成组件：结构化观测出口与访问决定事件
+
+- 新增无产品实现依赖的公开 `pkg/observe` 事件与 Sink 契约，企业宿主通过 `host.Options.Observer` 注入采集器。宿主使用 256 项有界队列异步、串行投递，每次 sink 调用最多给出 100 ms context；慢 sink 不阻塞访问检查或业务请求，溢出和关闭时未投递事件计入 `App.ObservationStatus`。Sink 由调用方持有，Dune 不把尽力而为事件宣称为可靠审计存储。
+- 产品 API、连接凭据消费、首条执行请求、持续输入和授权中点复核统一从最终 `access.Evaluate` 结果发出 `access.check`。事件区分 allowed、denied 和 unavailable，记录微秒耗时、Dune principal/namespace、权威 Runner/machine/Fabric、operation/suboperation、请求与决定 ID；类型没有任意属性、subject、错误正文、命令、文件、终端、prompt 或凭据字段。
+- 回归覆盖允许与归一化拒绝的最终决定、Attached API 的实际允许/拒绝事件、字段裁剪、健康 sink 零丢弃，以及阻塞 sink 下队列上限、累计丢弃和有界关闭。本检查点只完成访问审计与通用投递基础；连接 owner/跨实例流、Managed 提供方耗时、unknown/续期风险和残留资源观测继续使用同一事件契约补齐。

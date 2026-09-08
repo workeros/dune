@@ -32,6 +32,10 @@ func (a *App) Readiness() Readiness {
 	return Readiness{Accepting: serving && !a.draining && core.Accepting && peerReady, Serving: serving, Draining: a.draining, Requests: a.requests, Gateway: core}
 }
 
+// ObservationStatus reports bounded dispatcher pressure without exposing event
+// contents. A nonzero Dropped count means the configured sink did not keep up.
+func (a *App) ObservationStatus() ObservationStatus { return a.observer.status() }
+
 func (a *App) health(w http.ResponseWriter, r *http.Request) bool {
 	ready := r.URL.Path == a.publicPath+"health/ready"
 	if !ready && r.URL.Path != a.publicPath+"health/live" {

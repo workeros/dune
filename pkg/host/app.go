@@ -24,6 +24,7 @@ import (
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
 	externalidentity "github.com/aiomni/dune/pkg/identity"
+	"github.com/aiomni/dune/pkg/observe"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/aiomni/dune/pkg/transport/ws"
@@ -52,6 +53,9 @@ type Options struct {
 	// AccessChecker selects enterprise policy instead of the default owner check.
 	// It must honor cancellation and must not retain credentials or work content.
 	AccessChecker access.Checker
+	// Observer receives best-effort structured operational and audit events on
+	// a bounded asynchronous dispatcher. The caller retains Sink ownership.
+	Observer observe.Sink
 	// Managed enables configured templates, the browser lifecycle API and the
 	// durable provider worker. Nil leaves Managed unavailable.
 	Managed *ManagedOptions
@@ -83,6 +87,7 @@ type App struct {
 	peer         *peer.Transport
 	peerHandler  http.Handler
 	admission    *gateway.AdmissionLease
+	observer     *observationRecorder
 	mu           sync.Mutex
 	closed       bool
 	draining     bool
@@ -134,6 +139,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
+	observer := newObservationRecorder(options.Observer)
 	var core *gateway.Gateway
 	var admission *gateway.AdmissionLease
 	var instance metadata.InstanceConfig
@@ -142,6 +148,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	defer func() {
 		if !assembled {
 			cancel()
+			observer.close()
 			admission.Close()
 			if core != nil {
 				core.Close()
@@ -176,7 +183,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	authorizer := authorization.New(ctx, service, store, options.AccessChecker)
+	authorizer := authorization.NewObserved(ctx, service, store, options.AccessChecker, accessObservation(observer))
 	var managedService *managedmodule.Service
 	var managedWorker *managedmodule.Worker
 	if managedConfig != nil {
@@ -225,7 +232,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), managedDrain: make(chan struct{}), managedDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), managedDrain: make(chan struct{}), managedDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
 	if admission != nil {
 		app.active.Add(1)
@@ -344,6 +351,7 @@ func (a *App) Close() error {
 		a.active.Wait()
 		<-a.core.Drain()
 		storeErr := a.store.Close()
+		a.observer.close()
 		a.mu.Lock()
 		a.err = errors.Join(a.err, storeErr)
 		a.mu.Unlock()

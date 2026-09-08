@@ -73,6 +73,8 @@ Runner 和旧机器路径的事件订阅还必须携带用户选定的 `incarnat
 
 每个新流在转发前检查。每种持续操作取得该流自己的短期决定，终端字节不逐个调用检查器。单次检查最多一秒，允许期限最多三十秒；外部绝对时间转换为本机单调期限。后台在有效期中点提前复核，独立定时器在截止时关闭流，因此空闲流或未返回的检查器也不能延长访问。复核失败立即关闭该流，迟到 allow 不恢复旧流。关闭访问不回滚已受理操作，也不停止远端任务。
 
+宿主配置 `Options.Observer` 后，每次最终检查结果都会异步发出 `access.check` 事件，包括 Dune principal、namespace、权威 Runner/machine/Fabric、operation/suboperation、请求与允许决定 ID，以及微秒耗时。拒绝和检查器故障分别记录为 `denied`、`unavailable`；无效、过期或超时决定已经按 `Evaluate` 归一化，不会被事件误报为允许。事件没有 subject、请求正文、命令、文件、终端、prompt、凭据或错误文本。投递是尽力而为的观测，不能代替要求先可靠保存再执行的审计 outbox。
+
 ## 操作映射
 
 检查请求保留固定 Scope、原始流 RequestID、实际 operation/子操作和必要的选择属性。没有自建企业角色目录，也不接受检查器下发任意协议约束。未识别的请求、子操作和模式拒绝。
@@ -101,6 +103,6 @@ Runner 和旧机器路径的事件订阅还必须携带用户选定的 `incarnat
 
 ## 验证
 
-`go test -race ./pkg/access -count=1 -timeout=60s` 使用独立 Gateway 和真实临时 fabricd/PTY，验证拒绝写入与上传提交、只读订阅的三种输入隔离、固定身份、内容裁剪、输入决定复用、空闲撤销以及阻塞/迟到检查器。测试使用构建产物 `bin/tmux`（也可通过 `DUNE_TMUX` 指定），在自身私有目录清理进程和 tmux 会话，不调用真实 Agent 服务。
+`go test -race ./pkg/access -count=1 -timeout=60s` 使用独立 Gateway 和真实临时 fabricd/PTY，验证拒绝写入与上传提交、只读订阅的三种输入隔离、固定身份、内容裁剪、输入决定复用、空闲撤销、阻塞/迟到检查器和最终决定观测。测试使用构建产物 `bin/tmux`（也可通过 `DUNE_TMUX` 指定），在自身私有目录清理进程和 tmux 会话，不调用真实 Agent 服务。
 
 `TestEnterpriseSharedExecutionAndRevocation` 使用 SQLite 和两个共享 PostgreSQL 的宿主，验证另一个账号的机器只能经企业决定访问，真实 Web PTY/CLI 执行、文件写入拒绝、空闲策略撤销和父会话撤销。`TestAuthorizedDiscoveryAndWrites` 覆盖扫描上限、游标隔离/重开/跨池、拒绝或故障无 owner 回退、固定归属和写入竞争；SQL 转库及 PostgreSQL 原生备份保留归属和游标字段。测试检查器是有意控制允许与拒绝的测试适配器，不代表某个企业权限 SDK 的部署验收。

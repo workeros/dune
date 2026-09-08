@@ -110,5 +110,5 @@ func (p *peerConnection) Open(ctx context.Context, m *pb.Message, flow *gateway.
 	if err != nil || request != r.Request {
 		return nil, identity.ErrUnauthorized
 	}
-	return (access.Grant{Target: p.target, Role: gateway.RoleSDK, Valid: l.validAccess(r.Connection), Policy: &access.Policy{Scope: r.Connection.Scope(), Checker: l.checker}}).Open(ctx, m, flow)
+	return (access.Grant{Target: p.target, Role: gateway.RoleSDK, Valid: l.validAccess(r.Connection), Policy: &access.Policy{Scope: r.Connection.Scope(), Checker: l.checker, Observer: l.observer}}).Open(ctx, m, flow)
 }

@@ -26,6 +26,7 @@ type Sessions interface {
 
 type Service struct {
 	checker   access.Checker
+	observer  access.CheckObserver
 	ownerOnly bool
 	ctx       context.Context
 	sessions  Sessions
@@ -37,11 +38,21 @@ func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Serv
 	return New(ctx, sessions, bindings, nil)
 }
 func New(ctx context.Context, sessions Sessions, bindings Repository, checker access.Checker) *Service {
+	return NewObserved(ctx, sessions, bindings, checker, nil)
+}
+func NewObserved(ctx context.Context, sessions Sessions, bindings Repository, checker access.Checker, observer access.CheckObserver) *Service {
 	ownerOnly := checker == nil
 	if checker == nil {
 		checker = access.Owner{}
 	}
-	return &Service{ctx: ctx, sessions: sessions, bindings: bindings, ownerOnly: ownerOnly, checker: &boundedChecker{Checker: checker, slots: make(chan struct{}, 64)}}
+	return &Service{ctx: ctx, sessions: sessions, bindings: bindings, ownerOnly: ownerOnly, checker: &boundedChecker{Checker: checker, slots: make(chan struct{}, 64)}, observer: observer}
+}
+
+func (l *Service) evaluate(ctx context.Context, request access.Request) (access.Decision, error) {
+	started := time.Now()
+	decision, err := access.Evaluate(ctx, l.checker, request)
+	l.observer.Notify(request, decision, err, time.Since(started))
+	return decision, err
 }
 
 // ClientGrant permits only the initial authenticated connection. Close removes
@@ -145,10 +156,10 @@ func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.Conne
 			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
 		fixed := record.Scope()
-		if _, err := access.Evaluate(ctx, l.checker, access.Request{Scope: fixed, RequestID: wire.ID(), Operation: "runner.connect", Suboperation: "attached"}); err != nil {
+		if _, err := l.evaluate(ctx, access.Request{Scope: fixed, RequestID: wire.ID(), Operation: "runner.connect", Suboperation: "attached"}); err != nil {
 			return gateway.BindingContext{}, nil, err
 		}
-		policy := &access.Policy{Scope: fixed, Checker: l.checker}
+		policy := &access.Policy{Scope: fixed, Checker: l.checker, Observer: l.observer}
 		if l.bootID != "" {
 			policy.Delegate = l.delegate(record)
 		}

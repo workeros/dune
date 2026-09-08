@@ -87,11 +87,26 @@ type Checker interface {
 	Check(context.Context, Request) (Decision, error)
 }
 
+// CheckObserver receives the final bounded decision returned by Evaluate. The
+// Request type excludes work contents and credentials. Observers must return
+// promptly and must not influence the access result.
+type CheckObserver func(Request, Decision, error, time.Duration)
+
+// Notify isolates a diagnostic callback from the access decision path.
+func (o CheckObserver) Notify(request Request, decision Decision, err error, elapsed time.Duration) {
+	if o == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	o(request, decision, err, elapsed)
+}
+
 // Policy selects one checker. There is no allow-by-either composition or owner
 // fallback when the selected checker rejects, times out, or fails.
 type Policy struct {
-	Scope   Scope
-	Checker Checker
+	Scope    Scope
+	Checker  Checker
+	Observer CheckObserver
 	// Delegate is invoked only after allowing the exact request on a remote
 	// route. It creates an independently verifiable, request-specific context.
 	// It must respect cancellation and must not retain or mutate the message.
@@ -109,7 +124,10 @@ func (Owner) Check(ctx context.Context, r Request) (Decision, error) {
 }
 
 func (p Policy) check(ctx context.Context, r Request) (Decision, error) {
-	return Evaluate(ctx, p.Checker, r)
+	started := time.Now()
+	decision, err := Evaluate(ctx, p.Checker, r)
+	p.Observer.Notify(r, decision, err, time.Since(started))
+	return decision, err
 }
 
 // Evaluate applies the same bounded decision contract to product API requests.
