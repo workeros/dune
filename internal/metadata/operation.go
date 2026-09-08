@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/pkg/runner"
@@ -22,7 +23,7 @@ func validOperationIntent(i lifecycle.Intent) bool {
 	}{
 		{i.ID, 128}, {i.RequestKey, 128}, {i.PrincipalID, 128}, {i.RunnerID, 128}, {i.FabricID, 128},
 	} {
-		if field.s == "" || len(field.s) > field.max || strings.ContainsFunc(field.s, unicode.IsControl) {
+		if field.s == "" || !utf8.ValidString(field.s) || len(field.s) > field.max || strings.ContainsFunc(field.s, unicode.IsControl) {
 			return false
 		}
 	}
@@ -30,7 +31,7 @@ func validOperationIntent(i lifecycle.Intent) bool {
 		s   string
 		max int
 	}{{i.Namespace, 2048}, {i.Subject, 512}} {
-		if len(field.s) > field.max || strings.ContainsFunc(field.s, unicode.IsControl) {
+		if !utf8.ValidString(field.s) || len(field.s) > field.max || strings.ContainsFunc(field.s, unicode.IsControl) {
 			return false
 		}
 	}

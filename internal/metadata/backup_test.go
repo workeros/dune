@@ -132,6 +132,10 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if _, err := s.RegisterInstance(ctx, instance); err != nil {
 		t.Fatal(err)
 	}
+	managed, err := s.CreateManaged(ctx, externalUser, tokenHash(externalCookie), wire.ID(), managedSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -183,6 +187,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, snapshotRecords(t, s)) {
 		t.Fatal("restored metadata differs from backup")
+	}
+	if got, err := s.ManagedCreation(ctx, externalUser.ID, managed.Operation.RequestKey); err != nil || !reflect.DeepEqual(got, managed) {
+		t.Fatal("restored creation lost immutable intent", err)
 	}
 	// A native restore preserves historical ownership bytes. Rotate recovery
 	// before allowing service startup; old terms cannot become live again.

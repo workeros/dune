@@ -24,7 +24,7 @@ func scanRunner(row interface{ Scan(...any) error }) (runner.Runner, error) {
 	return out, nil
 }
 
-// Runners is the default owner discovery. The Attached enrollment limit bounds
+// Runners is the default owner discovery. The per-owner Runner limit bounds
 // this result; enterprise candidate scanning is a separate authorization path.
 func (s *Store) Runners(ctx context.Context, owner string) ([]runner.Runner, error) {
 	rows, err := s.db.QueryContext(ctx, runnerSelect+` WHERE r.owner_id=$1 ORDER BY r.created_at,r.id`, owner)

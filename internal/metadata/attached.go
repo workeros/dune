@@ -114,7 +114,7 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 			return err
 		}
 		if count >= 32 {
-			return fmt.Errorf("%w: machine limit reached (32 per account)", ErrInvalidArgument)
+			return fmt.Errorf("%w: runner limit reached (32 per account)", ErrInvalidArgument)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'attached','attached',1,$4)`, machine.RunnerID, owner, machine.Name, machine.CreatedAt); err != nil {
 			return err

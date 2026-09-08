@@ -320,3 +320,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - SQL 直接创建完整当前结构，以内容指纹识别当前格式。初始化在一个事务内完成，PostgreSQL 同时启动通过事务锁协调；结构不匹配时拒绝打开，不自动升级、转换或删除数据。SQLite 独占锁使用 `metadata.lock`，不依赖旧文件约定。
 - 保留当前业务的身份关联、绑定与授权修订、操作执行租约和集群灾难恢复。测试快照清单仅用于回滚和原生恢复断言，不再承担数据转换。方案、README 与运行说明同步移除旧入口，当前配置和恢复流程见[元数据存储与恢复](metadata-operations.md)。
 - 验证：临时 PostgreSQL 17（SCRAM 认证及匹配原生备份工具）和 SQLite 的 metadata/CLI race 回归通过；完整结构建库失败回滚、并发初始化、重开、不匹配拒绝、业务事务与原生恢复通过。`make build check-go` 和启用该 PostgreSQL 的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过；正式 CLI、真实 PTY 与集群进程回归通过。本次未调用真实 Agent 或远端环境。
+
+### 已完成：Managed 创建意图与 Runner 原子提交
+
+- 内部 `CreateManaged` 固定名称、Fabric、模板版本及有界公开参数，规范 JSON 保存精确数字与参数摘要；数据层不接收提供方凭据或私有配置。上层仍须完成模板字段白名单、范围和访问检查。
+- 同一事务锁定发起者并复核本次浏览器会话，创建未绑定的 Managed Runner、创建 Operation、业务互斥和不可变参数快照。同一用户/请求键只能对应同一意图，不同已关联登录主体也不能混用；Managed 与 Attached 共用每用户 32 个 Runner 的上限。
+- 重复请求返回原操作和参数，不重置已有 unknown、执行修订或互斥。提交回执丢失返回结果未知，可按原用户与请求键读取持久事实；注销禁止新提交但不删除已受理的后台操作。创建本身不签发机器凭据，也不代表提供方资源或环境已经就绪。
+- 当前完整 schema 直接包含 Managed 类型和创建快照，无历史升级链。原生 PostgreSQL 备份恢复保存并重新读取该快照；SQLite 重开和 PostgreSQL 独立连接池覆盖重复与恢复语义。
+- 验证：临时 PostgreSQL 17 与 SQLite 的 lifecycle/metadata 全量 race 回归通过，覆盖晚期写入失败完整回滚、并发去重、共享数量上限、错误/过期/撤销会话、登录主体隔离及回执丢失；`make build check-go` 和启用该 PostgreSQL 的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过，含正式 CLI、PTY 与集群进程回归。模板服务、提供方、阶段执行和 Web 入口尚未装配，此检查点不代表 S2 Managed 闭环已完成。
