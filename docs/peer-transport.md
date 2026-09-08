@@ -100,4 +100,6 @@ CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任�
 | A 的 PostgreSQL 链路停滞 | A 在准入续约失败后退出，旧连接不能继续请求；用户显式进入 C 后访问同一 B 和原 PTY，A 恢复后可以作为新入口启动 |
 | B 的 PostgreSQL 链路停滞 | B 退出；将新的机器连接路由到 C 后，目录发布新 owner/epoch，fabricd incarnation 保持、connection generation 推进，原 PTY 可重新使用；恢复 B 后目录仍指向 C |
 
-这些回归使用同机进程和 TCP 转发代理，没有改变系统时钟或注入内核丢包；不代表跨主机网络、Linux 部署、原始/托管 ACP 的所有故障路径或 Managed 外部调用接管已经验收。原进程暂停与输入过期另有独立正式进程回归，不能把分开的证据视为所有组合均已验证。
+目录另用 `TestPostgresDirectoryDatabaseClockDisturbance` 在隔离 PostgreSQL schema 中替换目录 SQL 读取的 `clock_timestamp()`，依次注入一分钟回拨、前跳及恢复。回拨时数据库保留原有效期，返回给 Gateway 的本地时长仍钳在十五秒且竞争 owner 被拒绝；前跳后旧续约失败，新 owner 使用更高 epoch，旧 Publish/Renew/Release 都不能改写它；恢复正常时，前跳产生的未来期限继续阻止第三个 owner，因此选择可用性降低而不是缩短已经承诺的期限。Gateway 把这些相对时长转换为 Go 单调时钟 deadline，目录响应延迟不能延长本地权限。
+
+这些回归使用同机进程、TCP 转发代理和 schema 内的有效数据库时间，没有修改操作系统或 PostgreSQL 进程时钟，也没有注入内核丢包；不代表跨主机网络、NTP 实现、Linux 部署、原始/托管 ACP 的所有故障路径或 Managed 外部调用接管已经验收。原进程暂停与输入过期另有独立正式进程回归，不能把分开的证据视为所有组合均已验证。
