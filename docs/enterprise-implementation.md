@@ -453,3 +453,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 从当前源码重新构建静态 Linux amd64 发布包，在已授权的独立 Linux 主机上解压到专用 `/tmp` 目录并使用独立端口。`TestDirectRemote` 的本机 race 客户端直接访问远端 WS 地址，SSH 只负责部署和清理；实际远端返回 Linux，并通过错误 token 拒绝、Exec、File、106496 字节上传、Git、PTY、原始 ACP 和 TCP 双向/半关闭检查。
 - 随后把同一发布包切换为独立 Gateway 与唯一命名的 systemd user fabricd 服务。创建保留 PTY 后重启该服务，原 Runtime ID、incarnation 和 generation 保持不变，重新附加后实际输出 `LINUX_SERVICE_PTY_OK`；这验证当前 `service install` 和 bundled tmux 的 Linux 运行路径，而非仅有交叉编译产物。
 - 验收结束显式停止 Runtime，停用并删除临时 systemd unit，停止 Gateway，删除本机与远端测试目录。没有覆盖已有服务或会话。该证据是单台 Linux amd64 的 standalone 运行与安装边界，不代表 Linux 上的 PostgreSQL 三节点、其他发行版/架构、真实 Agent 或 Managed 提供方闭环。
+
+### 已完成：Managed 多实例接管与迟到结果栅栏
+
+- 新增两个独立 PostgreSQL 连接池的并发回归。旧 worker 明确提交 Create 动作预约后停在提供方调用中，数据库执行租约自然过期；新 worker 随后推进 execution revision，并在旧调用尚未返回时只调用 `ReconcileCreate`，没有再次派发 Create。
+- 接管查询沿用原 action ID、issuer 和 execution revision，确认唯一资源后原子提交。随后释放的旧调用即使返回另一个成功资源，也因原 worker/执行修订已失效而得到 lease lost；最终 action 与 resource 只保留接管者核验的事实。
+- 专用 PostgreSQL 17 上的 race 用例通过。该测试证明 Dune 数据库提交与重派发边界，不会阻止已经到达外部平台的旧调用产生副作用；真实 Managed 适配器仍须证明平台侧幂等键、关联查询和旧修订隔离语义。
