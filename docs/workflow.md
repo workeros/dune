@@ -98,6 +98,8 @@ DUNE_REMOTE_CONFIG=/absolute/client.yaml \
 
 PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型配置。上述测试超时还受测试内部 context 限制；增加 Go 的 timeout 不会延长内部期限。
 
+真实 Agent 验收要记录客户端版本、实际模型、临时覆盖和独立结果校验。若已配置的默认模型或配置文件只受更新版客户端支持，应升级客户端，或用临时包装命令为本次测试选择该 CLI 明确支持的模型与配置；不要修改用户的全局配置来让一次测试通过。只完成 ACP `initialize` 说明真实协议协商可用，不等于模型 prompt、权限处理或任务执行已验收。
+
 `TestRealAgentPTY` 经 Dune 创建代码并独立运行检查；`TestRealAgentACP` 只测试握手。完整 Web 编码验收还需要从页面提交任务、看到实际结果并独立验证产物。mock ACP 可验证协议与权限状态机，不能替代真实模型任务。
 
 发布构建不自动部署。Linux 运行验收应从当前源码重新构建对应发布包，在远端独立 `/tmp` 目录和端口启动，且让产品请求直接访问远端地址；不要把 SSH 转发或旧发布包当作目标平台证据。若验证 `service install`，使用唯一的临时 unit 名，检查重启前后的 Runtime ID、incarnation 和 generation，并在结束时显式 `runtime stop`、停用及删除 unit 和测试目录。对指定环境的操作应保留已有会话；连接服务重启只替换 fabricd，终止 tmux 会话需显式执行 `runtime stop`。

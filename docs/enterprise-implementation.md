@@ -517,3 +517,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 本机拥有 route 时，任何目录 Renew 错误、无效返回或本地 term 到期都会在原连接关闭前发出 `gateway.route_renewal failed`，保留 target、owner boot、incarnation、generation、epoch 和微秒耗时。取消中的业务 context 不发失败，避免正常连接退出、排空或 Gateway 关闭污染告警。
 - PostgreSQL Host 的配置准入续租遇到 Store 错误、调用 deadline、本地 lease 拒绝或自然到期时，在取消 App 前发出 `host.admission_renewal failed|expired`。事件用固定 suboperation 区分失败阶段，只保留 boot ID，实际续租失败另带耗时；它不记录 SQL 错误、数据库地址或配置指纹。原保守行为不变，未知续租仍立即关闭本实例且不重放写入。
 - Gateway 单元回归注入带私密正文的目录错误并核对固定字段；正式 PostgreSQL Host 回归在数据库中使本实例预约失效，验证事件已经由异步宿主 sink 接收后 App 才完成关闭。定向 race、Gateway/Host 全包 race、构建和静态检查作为提交验证。
+
+### 已完成验收：真实 Codex PTY 与 Gemini ACP 客户端
+
+- 在提交 `4220932` 上运行显式 opt-in 的真实 Agent 回归。Codex CLI 0.140.0 经 Dune 的正式 Gateway、fabricd、PTY 和 bundled tmux 启动，在测试专用目录中创建 `arithmetic.py`，自行执行 `python3 check.py` 并得到 `DUNE_REAL_AGENT_CHECK_OK`；测试随后通过独立 Dune Exec 再次执行同一检查。Agent 进程正常退出，测试停止 Runtime、fabricd 与 Gateway，并删除临时工作目录。
+- 本机默认 Codex 配置使用新版本桌面端字段和 `gpt-5.6-terra`，旧 CLI 首先分别因 `features.context_management` 类型和模型版本拒绝启动。验收只在临时包装进程中加入 `-c features.context_management=false -m gpt-5.5`，没有修改用户配置、默认模型或仓库。该结果证明本提交的真实 PTY 执行链路；默认 CLI 配置仍须升级或由使用者选择其当前 CLI 支持的配置。
+- Gemini CLI 0.34.0 的真实 `--acp` 进程经同一 Dune 进程链完成 ACP `initialize`，返回会话、prompt、媒体与 MCP 能力后正常清理。此项只验证真实客户端协议协商，没有提交模型 prompt，也不宣称 Gemini 账号推理、离线权限恢复或 Managed provider 生命周期通过。
+- `TestRealAgentPTY` 与 `TestRealAgentACP` 最终分别通过，前者实际完成受限编码任务和独立校验，后者完成真实 initialize/协商。Claude Code 2.0.44 因本机凭据失效在任务执行前拒绝，未计入通过证据。以上验收使用当前机器已有账号状态，不替代 Linux、集群或某个企业身份/Managed 平台的真实闭环。
