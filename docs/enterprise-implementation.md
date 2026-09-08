@@ -357,3 +357,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - `internal/managed.Worker` 按数据库时钟读取至多 32 条租约到期的 Managed create 阶段工作，跳过本实例未配置的 Fabric，再以进程随机身份领取其中一条。领取事务重复验证 create 动作尚未完成；旧扫描不能给已经进入 Bootstrap 的 Operation 增加执行修订。单个 worker 串行访问提供方，多实例由现有 SQL 租约竞争，不引入第二套协调器。
 - worker 在有界 provider context 外保留数据库 context，调用超时后仍能原子写入 timed_out；调用持续时每三分之一租约周期续约。续约失败会取消可信适配器调用，旧执行者仍受结果提交条件限制，外部系统隔离继续由适配器承担。确定完成的 create 阶段只交还临时执行租约，保留 Runner 业务互斥供 Bootstrap；unknown/timed_out 保留当前租约作为持久最短核对间隔，到期后仍只查询原动作。
 - 验证：SQLite race 回归覆盖自动领取、成功阶段不再扫描、provider deadline 独立落库、到期前不核对、到期后 Reconcile、长调用跨初始租约续约、竞争领取拒绝、未配置 Fabric 不变；metadata 的 SQLite/PostgreSQL 子用例覆盖数据库筛选和锁内阶段复核。当前 worker 还未装配进公开宿主，未实现 Bootstrap、首次连接判定、续期、销毁或真实提供方验收。
+
+### 已完成：Managed 资源绑定的一次性注册材料
+
+- Bootstrap 动作预约与资源绑定 enrollment 哈希在同一 SQL 事务提交。grant 固定原创建 Operation、Runner、Fabric、resource_ref 与 binding revision，明文令牌仅在首次明确提交后交给可信适配器；回执丢失、重启或重复调用只能取得原动作并核对，不能恢复或生成第二份令牌。令牌有效期采用数据库时钟，当前上限十分钟。
+- 现有 fabricd enrollment 入口识别 Managed grant，但消费时不创建第二个 Runner。事务锁定 principal、Runner、Operation 和 grant，复核创建资源、Bootstrap 动作、访问门、当前绑定及有效期，再向原 Managed Runner 写入唯一机器身份并删除 grant；响应提交未知时不返回凭据。访问检查以 `runner.create/managed` 处理该令牌，保留 Attached 原语义。
+- 验证：SQLite/PostgreSQL race 回归覆盖动作与 grant 关系、哈希存储、不同摘要冲突、访问子操作、并发单次消费、过期回滚、机器凭据与原 Runner 绑定，以及预约提交回执丢失后不重发明文；原生 PostgreSQL dump/restore 保留未消费 grant。尚未实现适配器 Bootstrap 方法、阶段 worker、首次在线确认、grant 换发或真实环境注入验收。

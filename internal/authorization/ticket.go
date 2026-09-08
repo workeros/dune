@@ -36,7 +36,7 @@ type Repository interface {
 	Candidates(context.Context, string, string, int) ([]Resource, error)
 	ReadCursor(context.Context, string, string, string, string) (string, error)
 	SaveCursor(context.Context, string, string, string, string) (string, error)
-	EnrollmentUser(context.Context, string) (identity.User, error)
+	EnrollmentIdentity(context.Context, string) (identity.User, string, error)
 	MachineCredential(context.Context, string) (string, error)
 	CreateRunnerAccess(context.Context, string, string, string, string, runner.Binding, int64) (ConnectionAccess, error)
 	ConsumeAccess(context.Context, string, string, int64) (ConnectionAccess, error)

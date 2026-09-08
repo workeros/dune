@@ -24,6 +24,15 @@ type ProviderAction struct {
 	Outcome                      string
 }
 
+// BootstrapGrant is returned only when the action reservation and its
+// resource-bound enrollment committed successfully. Token is a short-lived
+// secret and is never returned by recovery reads.
+type BootstrapGrant struct {
+	Action    ProviderAction
+	Token     string
+	ExpiresAt time.Time
+}
+
 // Resource is the confirmed association in a configured Fabric namespace.
 // ConfirmedAt is the first accepted observation and never a polling timestamp.
 // AccessClosed is durable; provider deletion failure must not reopen access.

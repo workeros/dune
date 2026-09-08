@@ -74,46 +74,53 @@ func (s *Store) BeginProviderAction(ctx context.Context, expected lifecycle.Oper
 		if !ownsOperation(current, expected, now) {
 			return lifecycle.ErrLeaseLost
 		}
-		previous, err := scanAction(tx.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM dune_provider_actions WHERE operation_id=$1 AND kind=$2", current.ID, request.Kind))
-		if err == nil {
-			if previous.ActionRequest != request {
-				return lifecycle.ErrIntentConflict
-			}
-			action = previous
-			return nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if !current.Exclusive || current.Outcome != "" {
-			return lifecycle.ErrBusy
-		}
-		if err := s.requireNoPendingAction(ctx, tx, current.ID); err != nil {
-			return err
-		}
-		ref, err := s.actionTarget(ctx, tx, current, request, now)
-		if err != nil {
-			return err
-		}
-		action = lifecycle.ProviderAction{ActionRequest: request, ID: wire.ID(), OperationID: current.ID, ResourceRef: ref, Worker: current.Worker, ExecutionRevision: current.Revision, StartedAt: time.UnixMilli(now).UTC()}
-		result, err := tx.ExecContext(ctx, `INSERT INTO dune_provider_actions(id,operation_id,kind,request_digest,resource_ref,renew_until,worker,execution_revision,started_at) SELECT $1,id,$2,$3,$4,$5,$6,$7,$8 FROM dune_operations WHERE id=$9 AND worker=$6 AND execution_revision=$7 AND lease_until>`+s.databaseClock(), action.ID, request.Kind, request.Digest, ref, optionalMillis(request.RenewUntil), current.Worker, current.Revision, now, current.ID)
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return lifecycle.ErrLeaseLost
-		}
-		dispatch = true
-		return nil
+		var beginErr error
+		action, dispatch, beginErr = s.beginProviderAction(ctx, tx, current, request, now)
+		return beginErr
 	})
 	if err != nil {
 		return lifecycle.ProviderAction{}, false, err
 	}
 	return action, dispatch, nil
+}
+
+// beginProviderAction runs after Runner and Operation are locked and after the
+// caller has verified the current execution lease. Composite lifecycle steps
+// use it to commit the action and its one-time input in one transaction.
+func (s *Store) beginProviderAction(ctx context.Context, tx *sql.Tx, current lifecycle.Operation, request lifecycle.ActionRequest, now int64) (lifecycle.ProviderAction, bool, error) {
+	previous, err := scanAction(tx.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM dune_provider_actions WHERE operation_id=$1 AND kind=$2", current.ID, request.Kind))
+	if err == nil {
+		if previous.ActionRequest != request {
+			return lifecycle.ProviderAction{}, false, lifecycle.ErrIntentConflict
+		}
+		return previous, false, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return lifecycle.ProviderAction{}, false, err
+	}
+	if !current.Exclusive || current.Outcome != "" {
+		return lifecycle.ProviderAction{}, false, lifecycle.ErrBusy
+	}
+	if err := s.requireNoPendingAction(ctx, tx, current.ID); err != nil {
+		return lifecycle.ProviderAction{}, false, err
+	}
+	ref, err := s.actionTarget(ctx, tx, current, request, now)
+	if err != nil {
+		return lifecycle.ProviderAction{}, false, err
+	}
+	action := lifecycle.ProviderAction{ActionRequest: request, ID: wire.ID(), OperationID: current.ID, ResourceRef: ref, Worker: current.Worker, ExecutionRevision: current.Revision, StartedAt: time.UnixMilli(now).UTC()}
+	result, err := tx.ExecContext(ctx, `INSERT INTO dune_provider_actions(id,operation_id,kind,request_digest,resource_ref,renew_until,worker,execution_revision,started_at) SELECT $1,id,$2,$3,$4,$5,$6,$7,$8 FROM dune_operations WHERE id=$9 AND worker=$6 AND execution_revision=$7 AND lease_until>`+s.databaseClock(), action.ID, request.Kind, request.Digest, ref, optionalMillis(request.RenewUntil), current.Worker, current.Revision, now, current.ID)
+	if err != nil {
+		return lifecycle.ProviderAction{}, false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return lifecycle.ProviderAction{}, false, err
+	}
+	if n != 1 {
+		return lifecycle.ProviderAction{}, false, lifecycle.ErrLeaseLost
+	}
+	return action, true, nil
 }
 
 func (s *Store) requireNoPendingAction(ctx context.Context, tx *sql.Tx, operationID string) error {

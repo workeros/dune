@@ -87,3 +87,5 @@ Managed 模板来自启动配置，不在数据库中编辑。新建时先针对
 创建执行器只在首次动作预约得到明确提交且执行权复核通过后调用一次适配器 `Create`。后续进入同一动作时，包括 timeout、unknown、进程重启、租约接管和结果提交回执丢失，只能调用 `Reconcile` 查询原动作关联；已完成动作不再访问提供方。适配器返回错误时附带结果会被忽略：deadline 记为 timed_out，其他错误记为 unknown；已核验的部分引用应以 unknown 事实正常返回。查询未找到不能自行触发再次创建。
 
 Managed 创建 worker 按数据库时钟扫描仍处于 create 阶段且执行租约已到期的 Operation；扫描结果在 Runner 与 Operation 锁内再次检查，避免把已经进入 Bootstrap 的旧快照重新领取。集群副本竞争同一 SQL 租约，调用期间定期续约，提供方 context 到期与保存结果使用不同 context，因此本次调用超时仍能持久记录 timed_out。终态动作立即交还执行租约；unknown/timed_out 保留本次租约作为最短核对间隔，租约到期后只核对原动作。交还执行租约不释放 Runner 业务互斥，也不清除 unknown。
+
+Managed Bootstrap 的提供方动作和一次性 enrollment 哈希由一个事务提交。令牌限定原创建 Operation、已确认的 Fabric/resource_ref、Runner 与 binding revision，明文只在首次明确提交后返回；提交结果未知或重复进入只返回原动作供核对，不重新生成令牌。fabricd 消费时重新锁定并检查 principal、Runner、Operation、动作、资源引用、有效期和访问门，再把机器身份绑定到已有 Managed Runner；并发消费只有一份机器凭据能返回。普通 Attached enrollment 仍创建新 Runner，两种令牌在访问检查中使用各自的 `attached`/`managed` 子操作。

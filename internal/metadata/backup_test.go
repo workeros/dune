@@ -159,6 +159,32 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bootstrapManaged, err := s.CreateManaged(ctx, externalUser, tokenHash(externalCookie), wire.ID(), managedSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapClaim, err := s.ClaimOperation(ctx, bootstrapManaged.Operation.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAction, dispatch, err := s.BeginProviderAction(ctx, bootstrapClaim, lifecycle.ActionRequest{Kind: "create", Digest: bootstrapClaim.Digest})
+	if err != nil || !dispatch {
+		t.Fatal("backup bootstrap create setup", err)
+	}
+	if err := s.RecordProviderAction(ctx, bootstrapClaim, createdAction.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "restore-bootstrap-resource", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.YieldOperationLease(ctx, bootstrapClaim); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapClaim, err = s.ClaimOperation(ctx, bootstrapManaged.Operation.ID, wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapGrant, dispatch, err := s.BeginManagedBootstrap(ctx, bootstrapClaim, tokenHash("restore bootstrap inputs"), 10*time.Minute)
+	if err != nil || !dispatch || bootstrapGrant.Token == "" {
+		t.Fatal("backup bootstrap grant setup", err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -219,6 +245,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if got, err := s.ManagedResource(ctx, managedClaim.RunnerID); err != nil || got != savedResource {
 		t.Fatal("restored resource confirmation changed", err)
+	}
+	if user, kind, err := s.EnrollmentIdentity(ctx, bootstrapGrant.Token); err != nil || user.ID != externalUser.ID || user.Namespace != externalUser.Namespace || user.Subject != externalUser.Subject || kind != "managed" {
+		t.Fatal("restored managed bootstrap enrollment changed", user, kind, err)
 	}
 	// A native restore preserves historical ownership bytes. Rotate recovery
 	// before allowing service startup; old terms cannot become live again.

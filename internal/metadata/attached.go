@@ -87,10 +87,16 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		var owner string
 		hash := tokenHash(token)
-		if err := tx.QueryRowContext(ctx, `SELECT principal_id FROM dune_enrollments WHERE hash=$1`, hash).Scan(&owner); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return identity.ErrUnauthorized
-			}
+		managed := false
+		err := tx.QueryRowContext(ctx, `SELECT principal_id FROM dune_enrollments WHERE hash=$1`, hash).Scan(&owner)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRowContext(ctx, `SELECT o.principal_id FROM dune_managed_enrollments e JOIN dune_operations o ON o.id=e.operation_id WHERE e.hash=$1`, hash).Scan(&owner)
+			managed = err == nil
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return identity.ErrUnauthorized
+		}
+		if err != nil {
 			return err
 		}
 		// Lock the principal before consuming enrollment, consistently with issue
@@ -98,6 +104,9 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 		// have completed while this transaction waited.
 		if err := s.lockPrincipal(ctx, tx, owner); err != nil {
 			return err
+		}
+		if managed {
+			return s.consumeManagedEnrollment(ctx, tx, hash, owner, &machine, credential)
 		}
 		var expires int64
 		if err := tx.QueryRowContext(ctx, `SELECT name,expires_at FROM dune_enrollments WHERE hash=$1`, hash).Scan(&machine.Name, &expires); err != nil {
@@ -122,13 +131,78 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_machines(id,runner_id,credential_hash,os,arch) VALUES($1,$2,$3,$4,$5)`, machine.ID, machine.RunnerID, tokenHash(credential), osName, arch); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE hash=$1`, hash)
+		_, err = tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE hash=$1`, hash)
 		return err
 	})
 	if err != nil {
 		return Machine{}, "", err
 	}
 	return machine, credential, nil
+}
+
+func (s *Store) consumeManagedEnrollment(ctx context.Context, tx *sql.Tx, hash, owner string, machine *Machine, credential string) error {
+	var actionID, operationID, runnerID, expectedFabric, expectedRef string
+	var expectedRevision, expires int64
+	query := `SELECT action_id,operation_id,runner_id,fabric_id,binding_revision,resource_ref,expires_at FROM dune_managed_enrollments WHERE hash=$1`
+	if s.postgres {
+		query += ` FOR UPDATE`
+	}
+	if err := tx.QueryRowContext(ctx, query, hash).Scan(&actionID, &operationID, &runnerID, &expectedFabric, &expectedRevision, &expectedRef, &expires); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return identity.ErrUnauthorized
+		}
+		return err
+	}
+	fabricID, revision, err := s.lockOperationRunner(ctx, tx, runnerID)
+	if err != nil {
+		return err
+	}
+	var kind, runnerOwner string
+	if err := tx.QueryRowContext(ctx, `SELECT name,kind,owner_id,created_at FROM dune_runners WHERE id=$1`, runnerID).Scan(&machine.Name, &kind, &runnerOwner, &machine.CreatedAt); err != nil {
+		return err
+	}
+	opQuery := "SELECT " + operationColumns + " FROM dune_operations WHERE id=$1"
+	if s.postgres {
+		opQuery += ` FOR UPDATE`
+	}
+	op, err := scanOperation(tx.QueryRowContext(ctx, opQuery, operationID))
+	if err != nil {
+		return err
+	}
+	now, err := s.databaseNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	resource, err := scanManagedResource(tx.QueryRowContext(ctx, "SELECT "+resourceColumns+" FROM dune_managed_resources WHERE runner_id=$1", runnerID))
+	if err != nil {
+		return err
+	}
+	bootstrap, err := scanAction(tx.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM dune_provider_actions WHERE id=$1 AND operation_id=$2 AND kind='bootstrap'", actionID, operationID))
+	if err != nil {
+		return err
+	}
+	if expires <= now || kind != "managed" || runnerOwner != owner || fabricID != expectedFabric || revision != expectedRevision ||
+		op.PrincipalID != owner || op.RunnerID != runnerID || op.FabricID != expectedFabric || op.BindingRevision != expectedRevision || op.Action != "create" || op.Finished || !op.Exclusive ||
+		resource.FabricID != expectedFabric || resource.Ref != expectedRef || resource.Gone || resource.AccessClosed || (!resource.ExpiresAt.IsZero() && resource.ExpiresAt.UnixMilli() <= now) ||
+		bootstrap.ResourceRef != expectedRef || bootstrap.Outcome == "failed" {
+		return identity.ErrUnauthorized
+	}
+	machine.RunnerID = runnerID
+	if _, err := tx.ExecContext(ctx, `INSERT INTO dune_machines(id,runner_id,credential_hash,os,arch) VALUES($1,$2,$3,$4,$5)`, machine.ID, runnerID, tokenHash(credential), machine.OS, machine.Arch); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM dune_managed_enrollments WHERE hash=$1 AND action_id=$2 AND operation_id=$3 AND runner_id=$4 AND expires_at>`+s.databaseClock(), hash, actionID, operationID, runnerID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return identity.ErrUnauthorized
+	}
+	return nil
 }
 
 func (s *Store) Machines(ctx context.Context, userID string) ([]Machine, error) {
@@ -186,15 +260,31 @@ func (s *Store) Revoke(ctx context.Context, userID, machineID string) error {
 	})
 }
 
-func (s *Store) EnrollmentUser(ctx context.Context, token string) (identity.User, error) {
+func (s *Store) EnrollmentIdentity(ctx context.Context, token string) (identity.User, string, error) {
 	var user identity.User
 	if len(token) != 64 {
-		return user, identity.ErrUnauthorized
+		return user, "", identity.ErrUnauthorized
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email,e.identity_namespace,e.identity_subject FROM dune_enrollments e JOIN dune_principals p ON p.id=e.principal_id WHERE e.hash=$1 AND e.expires_at>$2 AND p.enabled=TRUE`, tokenHash(token), time.Now().Unix()).Scan(&user.ID, &user.Email, &user.Namespace, &user.Subject)
+	var kind string
+	clock := s.databaseClock()
+	hash := tokenHash(token)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id,p.email,e.identity_namespace,e.identity_subject FROM dune_enrollments e JOIN dune_principals p ON p.id=e.principal_id WHERE e.hash=$1 AND e.expires_at>(`+clock+`/1000) AND p.enabled=TRUE`, hash).Scan(&user.ID, &user.Email, &user.Namespace, &user.Subject)
+	if err == nil {
+		return user, "attached", nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return user, "", err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT p.id,p.email,o.identity_namespace,o.identity_subject FROM dune_managed_enrollments e JOIN dune_operations o ON o.id=e.operation_id JOIN dune_principals p ON p.id=o.principal_id WHERE e.hash=$1 AND e.expires_at>`+clock+` AND p.enabled=TRUE`, hash).Scan(&user.ID, &user.Email, &user.Namespace, &user.Subject)
+	kind = "managed"
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
+	return user, kind, err
+}
+
+func (s *Store) EnrollmentUser(ctx context.Context, token string) (identity.User, error) {
+	user, _, err := s.EnrollmentIdentity(ctx, token)
 	return user, err
 }
 func (s *Store) RevokeAuthorized(ctx context.Context, user identity.User, hash string, expected authorization.Resource) error {
