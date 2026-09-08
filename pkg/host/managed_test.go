@@ -137,8 +137,19 @@ func TestManagedHostPublishesAPIAndRunsRecoveryWorker(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("host did not run the Managed recovery worker")
 	}
-	status := managedRequest(t, app, http.MethodGet, "/tools/api/managed/operations/"+created.Operation.ID, "", cookie)
-	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"action":"create"`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"stage":"creating"`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"provider_outcome":"unknown"`)) || bytes.Contains(status.Body.Bytes(), []byte(`request_key`)) || bytes.Contains(status.Body.Bytes(), []byte(`action_key`)) {
+	var status *httptest.ResponseRecorder
+	statusDeadline := time.Now().Add(3 * time.Second)
+	for {
+		status = managedRequest(t, app, http.MethodGet, "/tools/api/managed/operations/"+created.Operation.ID, "", cookie)
+		if status.Code == http.StatusOK && bytes.Contains(status.Body.Bytes(), []byte(`"provider_outcome":"unknown"`)) {
+			break
+		}
+		if status.Code != http.StatusOK || time.Now().After(statusDeadline) {
+			t.Fatal("operation status did not reach the persisted provider result", status.Code, status.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !bytes.Contains(status.Body.Bytes(), []byte(`"action":"create"`)) || !bytes.Contains(status.Body.Bytes(), []byte(`"stage":"creating"`)) || bytes.Contains(status.Body.Bytes(), []byte(`request_key`)) || bytes.Contains(status.Body.Bytes(), []byte(`action_key`)) {
 		t.Fatal("operation status was unavailable", status.Code, status.Body.String())
 	}
 	review := managedRequest(t, app, http.MethodPost, "/tools/api/managed/operations/"+created.Operation.ID+"/reviews", `{"request_key":"host-review-1","mode":"reconcile","reason":"operator checked provider activity"}`, cookie)
@@ -198,6 +209,12 @@ func TestManagedHostRejectsIncompleteConfigurationAndReleasesStore(t *testing.T)
 	if app, err := host.Open(context.Background(), missingReview); err == nil {
 		app.Close()
 		t.Fatal("host accepted a provider without candidate verification")
+	}
+	invalidRetention := managedHostOptions(filepath.Join(t.TempDir(), "metadata-retention"), provider)
+	invalidRetention.Managed.Worker.HistoryRetention = 23 * time.Hour
+	if app, err := host.Open(context.Background(), invalidRetention); err == nil {
+		app.Close()
+		t.Fatal("host accepted a recovery window shorter than one day")
 	}
 	valid := managedHostOptions(dir, provider)
 	valid.Managed.Worker.BootstrapVersion = ""

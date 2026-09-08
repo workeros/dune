@@ -15,7 +15,7 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 )
 
-const operationColumns = "id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished,outcome,worker,execution_revision,lease_until,exclusive"
+const operationColumns = "id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished_at,finished,outcome,worker,execution_revision,lease_until,exclusive"
 
 func validOperationIntent(i lifecycle.Intent) bool {
 	for _, field := range []struct {
@@ -51,9 +51,10 @@ func validOperationIntent(i lifecycle.Intent) bool {
 
 func scanOperation(row interface{ Scan(...any) error }) (lifecycle.Operation, error) {
 	var op lifecycle.Operation
-	var created, until int64
-	err := row.Scan(&op.ID, &op.RequestKey, &op.Digest, &op.PrincipalID, &op.Namespace, &op.Subject, &op.RunnerID, &op.FabricID, &op.BindingRevision, &op.Action, &created, &op.Finished, &op.Outcome, &op.Worker, &op.Revision, &until, &op.Exclusive)
+	var created, finished, until int64
+	err := row.Scan(&op.ID, &op.RequestKey, &op.Digest, &op.PrincipalID, &op.Namespace, &op.Subject, &op.RunnerID, &op.FabricID, &op.BindingRevision, &op.Action, &created, &finished, &op.Finished, &op.Outcome, &op.Worker, &op.Revision, &until, &op.Exclusive)
 	op.CreatedAt = time.UnixMilli(created).UTC()
+	op.FinishedAt = optionalTime(finished)
 	if until != 0 {
 		op.Until = time.UnixMilli(until).UTC()
 	}
@@ -540,7 +541,7 @@ func (s *Store) RecordOperationUncertainty(ctx context.Context, expected lifecyc
 }
 
 func (s *Store) updateOperationOutcome(ctx context.Context, tx *sql.Tx, expected lifecycle.Operation, outcome string, finished bool) error {
-	result, err := tx.ExecContext(ctx, "UPDATE dune_operations SET outcome=$2,finished=$3,exclusive=CASE WHEN $3 THEN FALSE ELSE exclusive END,worker=CASE WHEN $3 THEN '' ELSE worker END,lease_until=CASE WHEN $3 THEN 0 ELSE lease_until END WHERE id=$1 AND worker=$4 AND execution_revision=$5 AND lease_until>"+s.databaseClock(), expected.ID, outcome, finished, expected.Worker, expected.Revision)
+	result, err := tx.ExecContext(ctx, "UPDATE dune_operations SET outcome=$2,finished=$3,finished_at=CASE WHEN $3 THEN "+s.databaseClock()+" ELSE 0 END,exclusive=CASE WHEN $3 THEN FALSE ELSE exclusive END,worker=CASE WHEN $3 THEN '' ELSE worker END,lease_until=CASE WHEN $3 THEN 0 ELSE lease_until END WHERE id=$1 AND worker=$4 AND execution_revision=$5 AND lease_until>"+s.databaseClock(), expected.ID, outcome, finished, expected.Worker, expected.Revision)
 	if err != nil {
 		return err
 	}

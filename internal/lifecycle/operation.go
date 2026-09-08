@@ -25,10 +25,11 @@ type Intent struct {
 // never implies that an earlier provider call or its side effects have stopped.
 type Operation struct {
 	Intent
-	CreatedAt time.Time
-	Finished  bool
-	Exclusive bool
-	Outcome   string
+	CreatedAt  time.Time
+	FinishedAt time.Time
+	Finished   bool
+	Exclusive  bool
+	Outcome    string
 	Lease
 }
 

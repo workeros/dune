@@ -134,7 +134,7 @@ func (s *Store) ConfirmMachineOnline(ctx context.Context, binding api.Binding) e
 		if op.Finished {
 			return nil
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE dune_operations SET finished=TRUE,outcome='succeeded',exclusive=FALSE,worker='',lease_until=0 WHERE id=$1 AND finished=FALSE AND outcome='' AND exclusive=FALSE`, op.ID)
+		result, err := tx.ExecContext(ctx, `UPDATE dune_operations SET finished=TRUE,finished_at=`+s.databaseClock()+`,outcome='succeeded',exclusive=FALSE,worker='',lease_until=0 WHERE id=$1 AND finished=FALSE AND outcome='' AND exclusive=FALSE`, op.ID)
 		if err != nil {
 			return err
 		}

@@ -22,7 +22,7 @@ func pendingCreation(t *testing.T, fixture serviceFixture) lifecycle.Creation {
 }
 
 func testWorkerConfig() WorkerConfig {
-	return WorkerConfig{PollInterval: 10 * time.Millisecond, LeaseTTL: time.Second, CallTimeout: time.Second}
+	return WorkerConfig{PollInterval: 10 * time.Millisecond, LeaseTTL: time.Second, CallTimeout: time.Second, HistoryRetention: 30 * 24 * time.Hour}
 }
 
 func TestWorkerClaimsCreateAndYieldsItsExecutionLease(t *testing.T) {

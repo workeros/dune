@@ -38,6 +38,7 @@ type ManagedWorkerOptions struct {
 	RenewalPolicyVersion                string
 	BootstrapVersion                    string
 	DestroyAccessCloseTimeout           time.Duration
+	HistoryRetention                    time.Duration
 }
 
 func DefaultManagedWorkerOptions() ManagedWorkerOptions {
@@ -46,6 +47,7 @@ func DefaultManagedWorkerOptions() ManagedWorkerOptions {
 		EnrollmentLifetime: 10 * time.Minute, RenewalEnabled: true, ExtendBy: time.Hour,
 		RenewBefore: 10 * time.Minute, FirstConnectionGrace: 5 * time.Minute,
 		RenewalPolicyVersion: "personal-v1", DestroyAccessCloseTimeout: time.Minute,
+		HistoryRetention: 30 * 24 * time.Hour,
 	}
 }
 
@@ -132,13 +134,15 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 		Enabled: workerOptions.RenewalEnabled, ExtendBy: workerOptions.ExtendBy,
 		RenewBefore: workerOptions.RenewBefore, FirstConnectionGrace: workerOptions.FirstConnectionGrace,
 	}
-	if workerOptions.DestroyAccessCloseTimeout < 0 || workerOptions.DestroyAccessCloseTimeout > 10*time.Minute || workerOptions.EnrollmentLifetime < time.Second || workerOptions.EnrollmentLifetime > 10*time.Minute {
-		return nil, fmt.Errorf("Managed enrollment and destroy wait require bounded durations")
+	if workerOptions.DestroyAccessCloseTimeout < 0 || workerOptions.DestroyAccessCloseTimeout > 10*time.Minute || workerOptions.EnrollmentLifetime < time.Second || workerOptions.EnrollmentLifetime > 10*time.Minute ||
+		workerOptions.HistoryRetention < 24*time.Hour || workerOptions.HistoryRetention > 366*24*time.Hour {
+		return nil, fmt.Errorf("Managed enrollment, destroy wait and history retention require bounded durations")
 	}
 	worker := managedmodule.WorkerConfig{
 		PollInterval: workerOptions.PollInterval, LeaseTTL: workerOptions.LeaseTTL, CallTimeout: workerOptions.CallTimeout,
 		Bootstrap: managedmodule.BootstrapConfig{PublicURL: urls.PublicURL, GatewayURL: urls.GatewayURL, Version: workerOptions.BootstrapVersion, EnrollmentLifetime: workerOptions.EnrollmentLifetime},
 		Renewal:   renewal, RenewalPolicyVersion: workerOptions.RenewalPolicyVersion,
+		HistoryRetention: workerOptions.HistoryRetention,
 	}
 	// NewWorker performs the final provider-name and duration validation after
 	// the shared Store exists. This nonsecret snapshot is also cluster identity.
@@ -147,13 +151,15 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 		Providers                                       []string
 		PollInterval, LeaseTTL, CallTimeout             time.Duration
 		EnrollmentLifetime, DestroyCloseTimeout         time.Duration
+		HistoryRetention                                time.Duration
 		Renewal                                         lifecycle.RenewalConfig
 	}{
 		Catalog: catalog.Fingerprint(), Providers: keys, BootstrapVersion: workerOptions.BootstrapVersion,
 		RenewalPolicyVersion: workerOptions.RenewalPolicyVersion, PollInterval: workerOptions.PollInterval,
 		LeaseTTL: workerOptions.LeaseTTL, CallTimeout: workerOptions.CallTimeout,
 		EnrollmentLifetime: workerOptions.EnrollmentLifetime, DestroyCloseTimeout: workerOptions.DestroyAccessCloseTimeout,
-		Renewal: renewal,
+		HistoryRetention: workerOptions.HistoryRetention,
+		Renewal:          renewal,
 	}
 	encoded, err := json.Marshal(description)
 	if err != nil {

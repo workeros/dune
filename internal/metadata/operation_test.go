@@ -194,7 +194,7 @@ func TestOperationClaimsAndBusinessMutex(t *testing.T) {
 				t.Fatal(err)
 			}
 			done, err := other.Operation(ctx, intent.ID)
-			if err != nil || !done.Finished || done.Outcome != "failed" || done.Worker != "" || !done.Until.IsZero() {
+			if err != nil || !done.Finished || done.FinishedAt.IsZero() || done.FinishedAt.Before(done.CreatedAt) || done.Outcome != "failed" || done.Worker != "" || !done.Until.IsZero() {
 				t.Fatal("terminal result incomplete", done, err)
 			}
 			replay, err := other.BeginOperation(ctx, intent)

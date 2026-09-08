@@ -197,7 +197,7 @@ func TestManagedDestroyWithoutMachineNeedsNoAccessWait(t *testing.T) {
 				t.Fatal("unbound resource waited for nonexistent access", destroyed, err)
 			}
 			creation, err := s.Operation(ctx, created.Operation.ID)
-			if err != nil || !creation.Finished || creation.Outcome != "failed" || creation.Exclusive {
+			if err != nil || !creation.Finished || creation.FinishedAt.IsZero() || creation.Outcome != "failed" || creation.Exclusive {
 				t.Fatal("destroy left waiting_connection create unfinished", creation, err)
 			}
 		})
@@ -253,7 +253,7 @@ func TestManagedDestroyOfConfirmedGoneResourceIsAlreadyComplete(t *testing.T) {
 				t.Fatal(err)
 			}
 			destroyed, err := s.CreateManagedDestroy(ctx, user, sessionHash, wire.ID(), selected, resource, wire.ID(), time.Minute)
-			if err != nil || !destroyed.Finished || destroyed.Outcome != "succeeded" || destroyed.Exclusive || destroyed.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
+			if err != nil || !destroyed.Finished || destroyed.FinishedAt.IsZero() || destroyed.Outcome != "succeeded" || destroyed.Exclusive || destroyed.AccessCloseOutcome != lifecycle.AccessCloseConfirmed {
 				t.Fatal("confirmed deletion did not converge cleanup", destroyed, err)
 			}
 		})

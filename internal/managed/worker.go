@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/aiomni/dune/internal/lifecycle"
@@ -14,6 +15,8 @@ import (
 
 const managedCreateBatch = 32
 
+const managedHistoryCleanupInterval = time.Hour
+
 type WorkerConfig struct {
 	PollInterval time.Duration
 	LeaseTTL     time.Duration
@@ -23,6 +26,9 @@ type WorkerConfig struct {
 	// RenewalPolicyVersion changes whenever policy meaning or configuration
 	// changes, so stopped schedules are reconsidered without rewriting history.
 	RenewalPolicyVersion string
+	// HistoryRetention bounds the recovery and idempotency window for terminal
+	// lifecycle records. Cleanup uses the shared database clock.
+	HistoryRetention time.Duration
 	// InstanceID and CloseTarget enable durable access-close fanout. They must
 	// be configured together by a host and are unrelated to provider execution.
 	InstanceID  string
@@ -30,12 +36,15 @@ type WorkerConfig struct {
 }
 
 func DefaultWorkerConfig() WorkerConfig {
-	return WorkerConfig{PollInterval: time.Second, LeaseTTL: 30 * time.Second, CallTimeout: 20 * time.Second, Renewal: lifecycle.DefaultRenewalConfig(), RenewalPolicyVersion: "personal-v1"}
+	return WorkerConfig{PollInterval: time.Second, LeaseTTL: 30 * time.Second, CallTimeout: 20 * time.Second, Renewal: lifecycle.DefaultRenewalConfig(), RenewalPolicyVersion: "personal-v1", HistoryRetention: 30 * 24 * time.Hour}
 }
 
 func (c WorkerConfig) validate() error {
 	if c.PollInterval <= 0 || c.PollInterval > time.Minute || c.LeaseTTL < time.Second || c.LeaseTTL > time.Minute || c.CallTimeout <= 0 || c.CallTimeout > 10*time.Minute {
 		return fmt.Errorf("managed worker requires bounded polling, lease and provider call durations")
+	}
+	if c.HistoryRetention < 24*time.Hour || c.HistoryRetention > 366*24*time.Hour {
+		return fmt.Errorf("managed worker history retention must be between 24 hours and 366 days")
 	}
 	if (c.InstanceID == "") != (c.CloseTarget == nil) || (c.InstanceID != "" && !wire.ValidID(c.InstanceID)) {
 		return fmt.Errorf("managed worker access closer requires an instance ID and target closer")
@@ -71,6 +80,8 @@ type Worker struct {
 	destroyProviders   map[string]struct{}
 	config             WorkerConfig
 	instanceID         string
+	cleanupMu          sync.Mutex
+	nextCleanup        time.Time
 }
 
 func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig) (*Worker, error) {
@@ -145,10 +156,11 @@ func configuredFabrics(providers map[string]struct{}) []string {
 	return ids
 }
 
-// RunOnce claims and advances at most one eligible lifecycle stage. Authorized
-// manual checks and cleanup run before maintenance and new creates. The bool
-// reports whether this worker obtained a claim. Unsupported Fabric namespaces
-// remain untouched so another correctly configured deployment can recover them.
+// RunOnce claims and advances at most one eligible lifecycle stage. Access
+// closure, mutations, manual checks and maintenance run before low-priority
+// history cleanup. The bool reports whether this worker did work. Unsupported
+// Fabric namespaces remain untouched so another configured deployment can
+// recover them.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	if w.config.CloseTarget != nil {
 		closures, err := w.store.PendingManagedAccessClosures(ctx, w.config.InstanceID, managedCreateBatch)
@@ -289,7 +301,29 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		}
 		return true, w.execute(ctx, claimed, "create", w.create.executeCreate)
 	}
+	if w.historyCleanupDue(time.Now()) {
+		cleanup, err := w.store.PruneManagedHistory(ctx, w.config.HistoryRetention, managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		if cleanup.Operations > 0 || cleanup.Runners > 0 {
+			return true, nil
+		}
+		w.deferHistoryCleanup(time.Now().Add(managedHistoryCleanupInterval))
+	}
 	return false, nil
+}
+
+func (w *Worker) historyCleanupDue(now time.Time) bool {
+	w.cleanupMu.Lock()
+	defer w.cleanupMu.Unlock()
+	return w.nextCleanup.IsZero() || !now.Before(w.nextCleanup)
+}
+
+func (w *Worker) deferHistoryCleanup(until time.Time) {
+	w.cleanupMu.Lock()
+	w.nextCleanup = until
+	w.cleanupMu.Unlock()
 }
 
 func (w *Worker) executeInspection(ctx context.Context, claimed lifecycle.RenewalSchedule) error {

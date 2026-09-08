@@ -459,3 +459,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 新增两个独立 PostgreSQL 连接池的并发回归。旧 worker 明确提交 Create 动作预约后停在提供方调用中，数据库执行租约自然过期；新 worker 随后推进 execution revision，并在旧调用尚未返回时只调用 `ReconcileCreate`，没有再次派发 Create。
 - 接管查询沿用原 action ID、issuer 和 execution revision，确认唯一资源后原子提交。随后释放的旧调用即使返回另一个成功资源，也因原 worker/执行修订已失效而得到 lease lost；最终 action 与 resource 只保留接管者核验的事实。
 - 专用 PostgreSQL 17 上的 race 用例通过。该测试证明 Dune 数据库提交与重派发边界，不会阻止已经到达外部平台的旧调用产生副作用；真实 Managed 适配器仍须证明平台侧幂等键、关联查询和旧修订隔离语义。
+
+### 已完成：Managed 终态历史的保守清理
+
+- Operation 进入明确 succeeded/failed 时保存数据库完成时间；默认恢复与幂等窗口为 30 天，宿主可在 24 小时至 366 天内配置，并把该选择纳入 PostgreSQL 配置准入指纹。worker 只在销毁、核对、巡检、续期、Bootstrap 和创建都没有可推进工作时执行清理。
+- 每个事务最多删除 32 条 Operation。超过窗口的终态 Renew 可独立删除；完整 Runner 只在资源已 Gone 且访问关闭得到 confirmed，或 Create 明确失败且没有资源时归档，并要求机器、enrollment、未完成/近期记录都不存在。unknown/timed_out、残留引用、未确认关闭及近期请求键继续保留。
+- PostgreSQL 使用行锁和 `SKIP LOCKED` 支持多个 worker 竞争同一批历史；删除包含关联的 action、人工核对、续期、销毁关闭和创建快照，避免留下孤立业务记录。普通用户没有清理入口，超过窗口的旧键不再构成重试证据，必须由调用方形成新的显式操作。
+- 验证覆盖 SQLite/PostgreSQL 的窗口与保留条件、累计批次预算、关联记录删除、跨连接池竞争和配置边界。受影响包的 race 回归通过；专用 PostgreSQL 17 的较宽回归通过（metadata 26.525 秒、Managed 20.824 秒、Host 3.805 秒），冻结源码的全量回归通过（正式多进程 tests 350.159 秒），随后累计预算加固又在同一 PostgreSQL 上连续三次通过定向 race，`make build` 与 `make check-go` 通过。

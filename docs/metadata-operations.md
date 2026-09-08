@@ -92,7 +92,7 @@ Managed Bootstrap 的提供方动作和一次性 enrollment 哈希由一个事�
 
 Bootstrap executor 固定规范化的公开 enrollment 地址、完整 Gateway WS(S) 地址、安装版本和令牌有效期，并用它们生成非敏感动作摘要。首次明确提交同时得到动作和明文 grant 后才调用 `Bootstrap`；此后只用原动作调用 `ReconcileBootstrap`，即使当前启动配置已变化也不改写旧动作。若原 grant 已被 fabricd 消费，已有机器与同一 Runner/Fabric/binding revision 的绑定是本地可信完成证据，可直接结束原 Bootstrap 动作而无需查询提供方。适配器错误只记录 timeout/unknown，不采信伴随错误返回的字段。
 
-Managed worker 在同一持久循环中先处理销毁，再处理用户已受理的人工核对，然后依次处理到期巡检、已有续期 Operation、冻结续期计划、Bootstrap 与 create，每次只执行一个提供方调用。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
+Managed worker 在同一持久循环中先处理销毁，再处理用户已受理的人工核对，然后依次处理到期巡检、已有续期 Operation、冻结续期计划、Bootstrap 与 create，每次只执行一个提供方调用，最后才处理历史清理。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
 
 Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍停留在等待连接。机器凭据的 Gateway 握手先确认 fabricd 输入 grant；集群模式再发布当前 owner 路由，然后通过有界可信回调提交首次在线事实。元数据事务重新锁定 Runner 和原创建 Operation，核对机器绑定、binding revision、Create/Bootstrap 终态、resource_ref、访问门及数据库时钟有效期，才将创建标成 succeeded。PostgreSQL 集群还要求回调携带当前恢复代次和 epoch，并与刚发布、未过期的完整路由绑定相同；SQLite 或没有集群记录的 PostgreSQL 要求路由字段为空。回调完成前本机路由不对业务流可见，失败时握手和已发布 owner 都会撤销。提交回执未知不会在同一握手内重试；已提交的结果由后续重连幂等核对。Attached 机器不进入 Managed 生命周期事务。
 
@@ -115,3 +115,7 @@ Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.d
 浏览器 API 只有配置完整时才注册。模板列表和详情逐项执行访问检查；创建返回 durable acceptance，销毁返回 access-close acceptance。Operation 状态只允许原浏览器主体读取，Runner 状态要求当前 Runner 访问权；响应保留 action、stage、provider outcome、已知 resource_ref/expiry 和销毁关闭事实，不返回 principal、请求键、worker、执行修订或 provider action key。工作台按字符串边界检查模板的 `int64` 并把原十进制词法直接写入 JSON，避免 JavaScript 浮点转换；unknown 明示为只核对原动作，页面关闭不会停止 worker。
 
 人工核对请求执行新的 `runner.resolve/managed` 访问检查，并在事务中复核当前浏览器身份、Runner/Fabric/binding revision、未决 Operation 与原 Provider action。请求保存操作者、理由、候选引用和幂等摘要；同一 action 同时只允许一个未完成核对。`reconcile` 只调用对应动作的 `Reconcile*`；`candidate` 仅用于未决 Create，并调用 `CandidateProvider.VerifyCandidate` 核验候选与原 action 的关联。已知部分资源引用不能被另一个候选覆盖。核验结果仍通过原 action 的资源及阶段事务规则提交，失败或 unknown 不清业务互斥；核对审计随后以条件更新完成，进程若在两次事务间退出，下个 worker 从已完成 action 收敛审计，不再次查询。没有直接编辑绑定、强制成功或重新派发 Create/Bootstrap/Renew/Destroy 的接口。
+
+每个 Operation 在进入 succeeded/failed 时用数据库时钟写入不可变的完成时间。Managed worker 默认以 30 天作为恢复及幂等窗口，可通过 `ManagedWorkerOptions.HistoryRetention` 设置 24 小时至 366 天；该值属于集群配置指纹。高优先级生命周期工作为空时，worker 每个事务最多清理 32 条终态记录：先删除超过窗口且没有近期或不确定 action/review 的 Renew 历史；随后只归档资源已经 Gone、访问关闭得到确认的 Runner，或明确 Create 失败且从未确认资源的 Runner。整个 Runner 还必须没有机器、enrollment、未完成/近期 Operation、近期 action/review 或不确定 review。残留 resource_ref、unknown/timed_out、销毁关闭 timed_out 和有效绑定都保留。
+
+清理事务使用数据库时间和 PostgreSQL `SKIP LOCKED`，多个 worker 可以竞争而不会重复计算删除；有删除时继续按批推进，无可清理记录后本机最多每小时检查一次。这里的归档是从当前事务库删除完整终态对象，没有普通用户清理 API，也没有把审计复制到外部归档。超过窗口后原请求键不再提供恢复证据；调用方必须发起新的显式操作和请求键，不能把查不到旧记录解释成原外部动作从未发生。

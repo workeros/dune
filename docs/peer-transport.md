@@ -24,7 +24,7 @@ SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能�
 
 同一 PostgreSQL schema 保存实例启动身份、非敏感配置摘要、恢复代次与十五秒期限，五秒续约。注册串行比较尚未过期的实例；同一配置可增加副本，冲突配置拒绝。已初始化集群的数据库还要求匹配恢复代次。恢复代次读取与离线旋转使用数据库行锁，不能在旧代次检查完成后越过同时发生的旋转继续提交。
 
-摘要包含协议版本、挂载路径、身份源 namespace、会话期限、注册开关、默认/自定义访问模式、Managed 公开目录与 worker 行为，以及宿主声明的 `ConfigurationVersion`。每实例的公开 origin、peer 广告地址可以不同；它们不代表另一套业务配置。自定义身份、权限或 Managed 提供方模块在 PostgreSQL 模式必须提供 `host.Options.ConfigurationVersion`，CLI 对应 `--configuration-version oidc-policy-v1`。宿主应在 OIDC client ID、企业 SDK/策略、模板或其他不兼容的模块设置变化时更换这个非敏感版本；Dune 不解析企业实现内部的闭包和私有配置，也不把密码、client secret、证书私钥加入摘要。凭据的兼容轮换可保留版本。
+摘要包含协议版本、挂载路径、身份源 namespace、会话期限、注册开关、默认/自定义访问模式、Managed 公开目录与 worker 行为（包括历史保留期），以及宿主声明的 `ConfigurationVersion`。每实例的公开 origin、peer 广告地址可以不同；它们不代表另一套业务配置。自定义身份、权限或 Managed 提供方模块在 PostgreSQL 模式必须提供 `host.Options.ConfigurationVersion`，CLI 对应 `--configuration-version oidc-policy-v1`。宿主应在 OIDC client ID、企业 SDK/策略、模板或其他不兼容的模块设置变化时更换这个非敏感版本；Dune 不解析企业实现内部的闭包和私有配置，也不把密码、client secret、证书私钥加入摘要。凭据的兼容轮换可保留版本。
 
 宿主从数据库调用开始时刻折算保守的单调本地期限，续约不延长已经发给 fabricd 的原 grant。`gateway.AdmissionLease` 只表达额外的输入期限，core 不读取配置或 SQL；连接准入、应用 hook、发送和反向连接输入 grant 都受期限约束，定时器未调度时仍逐次检查。配置准入过期、续约失败或回执未知会关闭本次 App，不重放续约、不让旧 boot 复活，也不回滚此前已受理的工作。
 

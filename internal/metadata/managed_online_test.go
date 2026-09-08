@@ -133,7 +133,7 @@ func TestManagedCreateFinishesOnlyAfterFirstUsableConnection(t *testing.T) {
 				t.Fatal("lost confirmation acknowledgement was hidden or replayed", commits.Load(), err)
 			}
 			op, err := s.Operation(ctx, claimed.ID)
-			if err != nil || !op.Finished || op.Outcome != "succeeded" || op.Exclusive || op.Worker != "" || !op.Until.IsZero() {
+			if err != nil || !op.Finished || op.FinishedAt.IsZero() || op.FinishedAt.Before(op.CreatedAt) || op.Outcome != "succeeded" || op.Exclusive || op.Worker != "" || !op.Until.IsZero() {
 				t.Fatal("usable connection did not finish create", op, err)
 			}
 			if err := s.ConfirmMachineOnline(ctx, binding); err != nil {

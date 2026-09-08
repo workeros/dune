@@ -132,7 +132,11 @@ func (s *Store) CreateManagedDestroy(ctx context.Context, user identity.User, se
 		if finished {
 			outcome, exclusive = "succeeded", false
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished,outcome,exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'destroy',$10,$11,$12,$13)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, now, finished, outcome, exclusive); err != nil {
+		finishedAt := int64(0)
+		if finished {
+			finishedAt = now
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished_at,finished,outcome,exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'destroy',$10,$11,$12,$13,$14)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, now, finishedAt, finished, outcome, exclusive); err != nil {
 			return err
 		}
 		closeOutcome := lifecycle.AccessCloseConfirmed
@@ -167,10 +171,10 @@ func (s *Store) CreateManagedDestroy(ctx context.Context, user identity.User, se
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_machines WHERE runner_id=$1`, intent.RunnerID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE dune_operations SET finished=TRUE,outcome='failed',worker='',lease_until=0 WHERE runner_id=$1 AND action='create' AND finished=FALSE AND exclusive=FALSE`, intent.RunnerID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE dune_operations SET finished=TRUE,finished_at=`+s.databaseClock()+`,outcome='failed',worker='',lease_until=0 WHERE runner_id=$1 AND action='create' AND finished=FALSE AND exclusive=FALSE`, intent.RunnerID); err != nil {
 			return err
 		}
-		operation := lifecycle.Operation{Intent: intent, CreatedAt: time.UnixMilli(now).UTC(), Finished: finished, Outcome: outcome, Exclusive: exclusive}
+		operation := lifecycle.Operation{Intent: intent, CreatedAt: time.UnixMilli(now).UTC(), FinishedAt: optionalTime(finishedAt), Finished: finished, Outcome: outcome, Exclusive: exclusive}
 		result = lifecycle.ManagedDestruction{Operation: operation, ResourceRef: resource.Ref, MachineID: machineID, AccessClosedAt: time.UnixMilli(now).UTC(), CloseDeadline: time.UnixMilli(deadline).UTC(), AccessCloseOutcome: closeOutcome}
 		return nil
 	})
