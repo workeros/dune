@@ -120,7 +120,7 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 
 生命周期 SQL 协调使用 `make test-race TEST_PKGS=./internal/metadata TEST_FLAGS='-run Operation -count=1 -timeout=180s'`，启用上述 PostgreSQL 配置后验证跨连接池领取、重开恢复、业务互斥、数据库租约到期、暂停后的条件写入、旧 worker 拒绝和等待连接时的维护串行化。`TestCommitAcknowledgementLossIsNotReplayed` 另覆盖意图、领取及完成的回执丢失；原生备份测试保存实际 unknown 操作行。协调夹具使用已有 Runner 元数据，没有模拟或调用 Managed 提供方，不能用这些结果替代外部副作用与完整阶段恢复验收。
 
-Managed 创建意图使用 `go test -race ./internal/lifecycle ./internal/metadata -run 'CreateSpec|ManagedCreation|ManagedAndAttached' -count=1 -timeout=90s`，启用专用 PostgreSQL。覆盖受控参数的规范化和精度、同一请求键并发去重、完整事务回滚、原登录主体与会话复核、Attached/Managed 共享数量上限，以及回执丢失后按原键核对。原生 PostgreSQL 备份测试另包含创建快照。这里验证内部创建事务；尚不证明模板权限服务、提供方、worker 或 Managed 页面已经装配。
+Managed 模板与创建入口使用 `go test -race ./pkg/fabric ./internal/managed ./internal/metadata -run 'CreateRequest|Template|ManagedCreation|ManagedAndAttached' -count=1 -timeout=120s`，启用专用 PostgreSQL。覆盖不可变模板目录、精确类型/范围/大小、非法 Unicode、逐模板访问过滤、策略故障关闭、创建双重检查、事务内原会话复核、同一请求键并发去重、完整回滚、Attached/Managed 共享数量上限，以及回执丢失后按原键核对。原生 PostgreSQL 备份测试另包含创建快照。这里验证公开模板契约及内部创建服务；尚未装配宿主/Web、提供方或 worker，不能据此宣称 Managed 环境已经创建。
 
 提供方动作记录使用 `go test -race ./internal/metadata -run 'ProviderAction|OperationWriteRechecks|BackupRestore' -count=1 -timeout=120s`，启用专用 PostgreSQL 和原生备份工具。验证首次派发预约、未知提交不授予派发、接管者只核对、旧 worker/绑定拒绝、动作与资源原子提交、同一 Fabric 内资源唯一性、续期绝对期限，以及引导结束后的互斥释放。原生恢复保留未决动作键、已知资源和首次确认时间。动作结果使用可信适配器事实夹具；它不证明真实提供方的去重、旧修订拒绝、引导或销毁已运行。
 

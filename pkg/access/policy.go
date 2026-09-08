@@ -44,15 +44,20 @@ type RuntimeIdentity struct {
 // Resource contains only bounded routing/selection attributes. Paths are not
 // sandbox boundaries; permission to execute a shell permits its system calls.
 type Resource struct {
-	Path        string
-	Destination string
-	Directory   string
-	UploadID    string
-	ConfigID    string
-	Port        int
-	Adapter     string
-	ManagedACP  bool
-	Observe     bool
+	// Managed selection identifiers come from configured templates, not raw
+	// provider options or user parameter values. They do not imply a binding.
+	FabricID        string
+	TemplateID      string
+	TemplateVersion string
+	Path            string
+	Destination     string
+	Directory       string
+	UploadID        string
+	ConfigID        string
+	Port            int
+	Adapter         string
+	ManagedACP      bool
+	Observe         bool
 }
 
 // Request deliberately excludes commands, environment, file contents, prompts,

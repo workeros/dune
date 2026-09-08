@@ -15,12 +15,13 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/fabric"
 	public "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 )
 
-func managedSpec() lifecycle.CreateSpec {
-	return lifecycle.CreateSpec{Name: "Development", FabricID: "sandbox", TemplateID: "small", TemplateVersion: "v1", Parameters: map[string]json.RawMessage{"cpu": json.RawMessage(`2`), "label": json.RawMessage(`"test"`)}}
+func managedSpec() fabric.CreateRequest {
+	return fabric.CreateRequest{Name: "Development", FabricID: "sandbox", TemplateID: "small", TemplateVersion: "v1", Parameters: map[string]json.RawMessage{"cpu": json.RawMessage(`2`), "label": json.RawMessage(`"test"`)}}
 }
 
 func managedFixture(t *testing.T, backend string) (*Store, storage.Config, identity.User, string) {
@@ -77,7 +78,7 @@ func TestManagedCreationFreezesOneIntent(t *testing.T) {
 				})
 			}
 			wg.Wait()
-			changes := []func(*lifecycle.CreateSpec){func(s *lifecycle.CreateSpec) { s.Name = "different" }, func(s *lifecycle.CreateSpec) { s.FabricID = "another-account" }, func(s *lifecycle.CreateSpec) { s.TemplateID = "large" }, func(s *lifecycle.CreateSpec) { s.TemplateVersion = "v2" }, func(s *lifecycle.CreateSpec) { s.Parameters["cpu"] = json.RawMessage(`3`) }}
+			changes := []func(*fabric.CreateRequest){func(s *fabric.CreateRequest) { s.Name = "different" }, func(s *fabric.CreateRequest) { s.FabricID = "another-account" }, func(s *fabric.CreateRequest) { s.TemplateID = "large" }, func(s *fabric.CreateRequest) { s.TemplateVersion = "v2" }, func(s *fabric.CreateRequest) { s.Parameters["cpu"] = json.RawMessage(`3`) }}
 			for _, change := range changes {
 				changed := managedSpec()
 				change(&changed)

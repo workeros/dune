@@ -323,11 +323,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 
 ### 已完成：Managed 创建意图与 Runner 原子提交
 
-- 内部 `CreateManaged` 固定名称、Fabric、模板版本及有界公开参数，规范 JSON 保存精确数字与参数摘要；数据层不接收提供方凭据或私有配置。上层仍须完成模板字段白名单、范围和访问检查。
+- 内部 `CreateManaged` 固定名称、Fabric、模板版本及有界公开参数，规范 JSON 保存精确数字与参数摘要；数据层不接收提供方凭据或私有配置。此检查点时，上层尚须完成模板字段白名单、范围和访问检查。
 - 同一事务锁定发起者并复核本次浏览器会话，创建未绑定的 Managed Runner、创建 Operation、业务互斥和不可变参数快照。同一用户/请求键只能对应同一意图，不同已关联登录主体也不能混用；Managed 与 Attached 共用每用户 32 个 Runner 的上限。
 - 重复请求返回原操作和参数，不重置已有 unknown、执行修订或互斥。提交回执丢失返回结果未知，可按原用户与请求键读取持久事实；注销禁止新提交但不删除已受理的后台操作。创建本身不签发机器凭据，也不代表提供方资源或环境已经就绪。
 - 当前完整 schema 直接包含 Managed 类型和创建快照，无历史升级链。原生 PostgreSQL 备份恢复保存并重新读取该快照；SQLite 重开和 PostgreSQL 独立连接池覆盖重复与恢复语义。
-- 验证：临时 PostgreSQL 17 与 SQLite 的 lifecycle/metadata 全量 race 回归通过，覆盖晚期写入失败完整回滚、并发去重、共享数量上限、错误/过期/撤销会话、登录主体隔离及回执丢失；`make build check-go` 和启用该 PostgreSQL 的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过，含正式 CLI、PTY 与集群进程回归。模板服务、提供方、阶段执行和 Web 入口尚未装配，此检查点不代表 S2 Managed 闭环已完成。
+- 验证：临时 PostgreSQL 17 与 SQLite 的 lifecycle/metadata 全量 race 回归通过，覆盖晚期写入失败完整回滚、并发去重、共享数量上限、错误/过期/撤销会话、登录主体隔离及回执丢失；`make build check-go` 和启用该 PostgreSQL 的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过，含正式 CLI、PTY 与集群进程回归。该检查点时模板服务、提供方、阶段执行和 Web 入口尚未装配，因此不代表 S2 Managed 闭环已完成。
 
 ### 已完成：提供方动作预约、结果与资源关联
 
@@ -337,3 +337,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 引导确认完成只转入等待连接，保留未完成 Operation 并释放业务互斥，允许独立续期进入。释放使用带执行修订和数据库租约条件的写入，暂停后不能用此前有效的读取继续提交。
 - SQLite 和 PostgreSQL 的动作、接管、原子回滚、资源冲突、续期/销毁及原生恢复回归通过。PostgreSQL 回归发现到期参数被条件表达式推断为 int4，已显式采用 BIGINT，并重验相关 race；原生恢复保存未决动作键、已知引用及原确认时间。`make build check-go` 和启用临时 PostgreSQL 17 的全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过，含正式 CLI、PTY 与集群进程回归。
 - 本功能仍是内部事务能力。测试的动作结果来自可信事实夹具，不证明真实提供方已调用或具备去重/旧修订拒绝能力；受控重发、模板服务、bootstrap 注册、worker、访问关闭与 Web 入口继续实施。销毁测试仅构造持久访问关闭前提，不将其当作完整流关闭验收。
+
+### 已完成：Managed 模板目录、参数校验与创建服务
+
+- 新增公开 `pkg/fabric` 模板契约。启动配置生成不可变、有版本的目录，限制模板数、总大小、字段数及标识长度；只支持 string、integer、boolean 三种首版公开字段。整数使用精确 int64 边界并拒绝浮点、指数和字符串强制转换，字符串按 UTF-8 字节、枚举和控制字符检查；未配字段、结构值、越界输入及不成对 Unicode surrogate 均拒绝。目录指纹不包含 Secret，可供后续宿主配置准入组合使用。
+- `internal/managed.Service` 先认证浏览器会话，对可用模板逐项执行 `template.list` 检查；普通拒绝隐藏条目和存在性，检查器故障则整体失败。查看与新建分别执行 `template.get`、`runner.create`，只把已配置的 Fabric/模板标识交给检查器，用户参数和私有配置不会进入权限请求。
+- 创建在两个权限决定的最短有效期内校验完整请求，再调用原 SQL 原子事务；事务继续复核同一浏览器 session、身份 namespace/subject 和幂等摘要。成功只保存未绑定 Runner 与持久创建意图，不调用提供方，也不把数据库提交解释为资源已分配。公开请求类型从内部生命周期包移到 `pkg/fabric`，没有保留开发阶段兼容别名。
+- 验证：`pkg/fabric`、授权、Managed 服务及 metadata 的定向 race 回归通过，覆盖配置不可变、顺序无关指纹、禁用版本、拒绝隐藏、策略故障、双重访问检查、请求拷贝、非法参数不落库及伪造早期认证被事务复核拒绝。后续仍需把目录和服务装配进宿主/Web，组合目录指纹到 PostgreSQL 准入，并实现真实 FabricProvider、worker、Bootstrap、续期和销毁闭环。

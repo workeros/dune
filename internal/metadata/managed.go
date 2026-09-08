@@ -13,6 +13,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/fabric"
 )
 
 // CreateManaged atomically records an authorized human creation, its new Runner
@@ -22,7 +23,7 @@ import (
 // is permitted before a confirmed commit. On ErrCommitUnknown, inspect the
 // original actor/request key through ManagedCreation; never resubmit a provider
 // Create merely because this method returned an error.
-func (s *Store) CreateManaged(ctx context.Context, user identity.User, sessionHash, requestKey string, spec lifecycle.CreateSpec) (lifecycle.Creation, error) {
+func (s *Store) CreateManaged(ctx context.Context, user identity.User, sessionHash, requestKey string, spec fabric.CreateRequest) (lifecycle.Creation, error) {
 	encoded, err := spec.Encode()
 	if err != nil {
 		return lifecycle.Creation{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
@@ -62,7 +63,7 @@ func (s *Store) CreateManaged(ctx context.Context, user identity.User, sessionHa
 		if err != nil {
 			return err
 		}
-		var frozen lifecycle.CreateSpec
+		var frozen fabric.CreateRequest
 		if err := json.Unmarshal([]byte(encoded), &frozen); err != nil {
 			return err
 		}
@@ -97,7 +98,7 @@ func readManagedCreation(ctx context.Context, db creationReader, op lifecycle.Op
 	if err != nil {
 		return lifecycle.Creation{}, err
 	}
-	var spec lifecycle.CreateSpec
+	var spec fabric.CreateRequest
 	if err := json.Unmarshal([]byte(encoded), &spec); err != nil {
 		return lifecycle.Creation{}, err
 	}
