@@ -35,7 +35,8 @@ export function eventPath(binding: Binding, runtime: Runtime): string {
 export type AgentConfig = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; adapter: "pty" | "acp"; history_lines?: number };
 
 export type ManagedField = { name: string; label: string; type: "string" | "integer" | "boolean"; required: boolean; minimum?: string; maximum?: string; max_length?: number; choices?: string[] };
-export type ManagedTemplate = { fabric_id: string; id: string; version: string; name: string; disabled: boolean; fields: ManagedField[] };
+export type ManagedUnavailableReason = "maintenance" | "capacity" | "configuration" | "unreachable" | "unknown";
+export type ManagedTemplate = { fabric_id: string; id: string; version: string; name: string; disabled: boolean; fields: ManagedField[]; available: boolean; unavailable_reason?: ManagedUnavailableReason };
 export type ManagedOperation = {
   id: string; runner_id: string; fabric_id: string; binding_revision: number; action: "create" | "renew" | "destroy";
   created_at: string; finished: boolean; outcome?: string; stage?: string; provider_outcome?: string; resource_ref?: string;

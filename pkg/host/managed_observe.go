@@ -14,6 +14,26 @@ type managedProviderObserver struct {
 	recorder *observationRecorder
 }
 
+type observedAvailabilityProvider struct {
+	managedProviderObserver
+	provider fabric.AvailabilityProvider
+	fabricID string
+}
+
+func (p observedAvailabilityProvider) Availability(ctx context.Context) (fabric.Availability, error) {
+	started := time.Now()
+	result, err := p.provider.Availability(ctx)
+	outcome := "invalid"
+	if result.Valid() {
+		outcome = "unavailable"
+		if result.Available {
+			outcome = "available"
+		}
+	}
+	p.record(ctx, started, observe.Event{Name: observe.ManagedProviderCall, Operation: "availability", Suboperation: "read", FabricID: p.fabricID}, outcome, err)
+	return result, err
+}
+
 func (o managedProviderObserver) actionEvent(action fabric.Action, operation, suboperation, resourceRef string) observe.Event {
 	if resourceRef == "" {
 		resourceRef = action.ResourceRef
@@ -162,15 +182,19 @@ func (p observedCandidateProvider) VerifyCandidate(ctx context.Context, call fab
 	return result, err
 }
 
-func observeManagedProviders(providers managedmodule.ProviderSet, recorder *observationRecorder) managedmodule.ProviderSet {
+func observeManagedProviders(availability map[string]fabric.AvailabilityProvider, providers managedmodule.ProviderSet, recorder *observationRecorder) (map[string]fabric.AvailabilityProvider, managedmodule.ProviderSet) {
 	if recorder == nil || recorder.sink == nil {
-		return providers
+		return availability, providers
 	}
 	observer := managedProviderObserver{recorder: recorder}
+	observedAvailability := make(map[string]fabric.AvailabilityProvider, len(availability))
 	result := managedmodule.ProviderSet{
 		Create: make(map[string]fabric.CreateProvider, len(providers.Create)), Bootstrap: make(map[string]fabric.BootstrapProvider, len(providers.Bootstrap)),
 		Inspect: make(map[string]fabric.InspectProvider, len(providers.Inspect)), Renew: make(map[string]fabric.RenewProvider, len(providers.Renew)),
 		Destroy: make(map[string]fabric.DestroyProvider, len(providers.Destroy)), Candidate: make(map[string]fabric.CandidateProvider, len(providers.Candidate)),
+	}
+	for id, provider := range availability {
+		observedAvailability[id] = observedAvailabilityProvider{managedProviderObserver: observer, provider: provider, fabricID: id}
 	}
 	for id, provider := range providers.Create {
 		result.Create[id] = observedCreateProvider{managedProviderObserver: observer, provider: provider}
@@ -190,5 +214,5 @@ func observeManagedProviders(providers managedmodule.ProviderSet, recorder *obse
 	for id, provider := range providers.Candidate {
 		result.Candidate[id] = observedCandidateProvider{managedProviderObserver: observer, provider: provider}
 	}
-	return result
+	return observedAvailability, result
 }

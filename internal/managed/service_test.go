@@ -26,6 +26,32 @@ func (f checkFunc) Check(ctx context.Context, request access.Request) (access.De
 	return f(ctx, request)
 }
 
+type availabilityProvider struct {
+	mu     sync.Mutex
+	status fabric.Availability
+	err    error
+	calls  int
+}
+
+func (p *availabilityProvider) Availability(context.Context) (fabric.Availability, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	return p.status, p.err
+}
+
+func (p *availabilityProvider) set(status fabric.Availability, err error) {
+	p.mu.Lock()
+	p.status, p.err = status, err
+	p.mu.Unlock()
+}
+
+func (p *availabilityProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
 func allowDecision() access.Decision {
 	return access.Decision{Allowed: true, Reason: "ALLOW", ID: wire.ID(), ValidUntil: time.Now().Add(time.Minute)}
 }
@@ -96,10 +122,15 @@ func newServiceFixture(t *testing.T) serviceFixture {
 
 func newService(t *testing.T, fixture serviceFixture, checker access.Checker, sessions authorization.Sessions) *Service {
 	t.Helper()
+	return newServiceWithAvailability(t, fixture, checker, sessions, &availabilityProvider{status: fabric.Availability{Available: true}})
+}
+
+func newServiceWithAvailability(t *testing.T, fixture serviceFixture, checker access.Checker, sessions authorization.Sessions, provider fabric.AvailabilityProvider) *Service {
+	t.Helper()
 	if sessions == nil {
 		sessions = fixture.session
 	}
-	service, err := New(fixture.catalog, sessions, authorization.New(fixture.ctx, sessions, fixture.store, checker), fixture.store, wire.ID())
+	service, err := New(fixture.catalog, map[string]fabric.AvailabilityProvider{"sandbox": provider}, sessions, authorization.New(fixture.ctx, sessions, fixture.store, checker), fixture.store, wire.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +150,8 @@ func TestTemplateDiscoveryFiltersDeniedEntries(t *testing.T) {
 		}
 		return allowDecision(), nil
 	})
-	service := newService(t, fixture, checker, nil)
+	provider := &availabilityProvider{status: fabric.Availability{Available: true}}
+	service := newServiceWithAvailability(t, fixture, checker, nil, provider)
 
 	templates, err := service.Templates(fixture.ctx, fixture.cookie)
 	if err != nil {
@@ -127,6 +159,9 @@ func TestTemplateDiscoveryFiltersDeniedEntries(t *testing.T) {
 	}
 	if len(templates) != 1 || templates[0].ID != "visible" {
 		t.Fatal("discovery disclosed a denied or disabled template", templates)
+	}
+	if !templates[0].Available || templates[0].Reason != "" {
+		t.Fatal("discovery lost provider availability", templates[0])
 	}
 	mu.Lock()
 	gotRequests := append([]access.Request(nil), requests...)
@@ -144,6 +179,49 @@ func TestTemplateDiscoveryFiltersDeniedEntries(t *testing.T) {
 	}
 	if _, err := service.Template(fixture.ctx, fixture.cookie, "sandbox", "disabled", "v1"); !errors.Is(err, fabric.ErrTemplateNotFound) {
 		t.Fatal("disabled template remained available", err)
+	}
+	if calls := provider.callCount(); calls != 1 {
+		t.Fatal("denied or disabled template disclosed provider state", calls)
+	}
+}
+
+func TestProviderAvailabilityGatesOnlyNewManagedIntent(t *testing.T) {
+	fixture := newServiceFixture(t)
+	provider := &availabilityProvider{status: fabric.Availability{Reason: fabric.AvailabilityCapacity}}
+	service := newServiceWithAvailability(t, fixture, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return allowDecision(), nil
+	}), nil, provider)
+
+	templates, err := service.Templates(fixture.ctx, fixture.cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 2 || templates[0].Available || templates[0].Reason != fabric.AvailabilityCapacity || templates[1].Available || templates[1].Reason != fabric.AvailabilityCapacity {
+		t.Fatal("unavailable authorized templates were hidden or mislabeled", templates)
+	}
+	if calls := provider.callCount(); calls != 1 {
+		t.Fatal("template discovery checked one Fabric more than once", calls)
+	}
+	if _, err := service.Create(fixture.ctx, fixture.cookie, "unavailable", createRequest("visible")); !errors.Is(err, fabric.ErrProviderUnavailable) {
+		t.Fatal("creation ignored current provider capacity", err)
+	}
+	if _, err := fixture.store.ManagedCreation(fixture.ctx, fixture.user.ID, "unavailable"); !errors.Is(err, metadata.ErrNotFound) {
+		t.Fatal("unavailable provider left a durable creation intent", err)
+	}
+
+	provider.set(fabric.Availability{Available: true}, nil)
+	if _, err := service.Create(fixture.ctx, fixture.cookie, "recovered", createRequest("visible")); err != nil {
+		t.Fatal("provider recovery required a host restart", err)
+	}
+	provider.set(fabric.Availability{Available: true}, errors.New("private provider error"))
+	status, err := service.Template(fixture.ctx, fixture.cookie, "sandbox", "visible", "v1")
+	if err != nil || status.Available || status.Reason != fabric.AvailabilityUnreachable {
+		t.Fatal("provider error was not normalized", status, err)
+	}
+	provider.set(fabric.Availability{Reason: "private-reason"}, nil)
+	status, err = service.Template(fixture.ctx, fixture.cookie, "sandbox", "visible", "v1")
+	if err != nil || status.Available || status.Reason != fabric.AvailabilityUnknown {
+		t.Fatal("invalid provider reason escaped the fixed vocabulary", status, err)
 	}
 }
 
@@ -251,24 +329,31 @@ func TestNewRequiresCompleteManagedAssembly(t *testing.T) {
 	fixture := newServiceFixture(t)
 	checks := authorization.New(fixture.ctx, fixture.session, fixture.store, access.Owner{})
 	for name, args := range map[string]struct {
-		catalog  *fabric.Catalog
-		sessions authorization.Sessions
-		checks   *authorization.Service
-		store    *metadata.Store
+		catalog      *fabric.Catalog
+		availability map[string]fabric.AvailabilityProvider
+		sessions     authorization.Sessions
+		checks       *authorization.Service
+		store        *metadata.Store
 	}{
-		"catalog":  {nil, fixture.session, checks, fixture.store},
-		"sessions": {fixture.catalog, nil, checks, fixture.store},
-		"checks":   {fixture.catalog, fixture.session, nil, fixture.store},
-		"store":    {fixture.catalog, fixture.session, checks, nil},
+		"catalog":      {nil, map[string]fabric.AvailabilityProvider{"sandbox": &availabilityProvider{}}, fixture.session, checks, fixture.store},
+		"availability": {fixture.catalog, nil, fixture.session, checks, fixture.store},
+		"sessions":     {fixture.catalog, map[string]fabric.AvailabilityProvider{"sandbox": &availabilityProvider{}}, nil, checks, fixture.store},
+		"checks":       {fixture.catalog, map[string]fabric.AvailabilityProvider{"sandbox": &availabilityProvider{}}, fixture.session, nil, fixture.store},
+		"store":        {fixture.catalog, map[string]fabric.AvailabilityProvider{"sandbox": &availabilityProvider{}}, fixture.session, checks, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := New(args.catalog, args.sessions, args.checks, args.store, wire.ID()); err == nil {
+			if _, err := New(args.catalog, args.availability, args.sessions, args.checks, args.store, wire.ID()); err == nil {
 				t.Fatal("incomplete assembly accepted")
 			}
 		})
 	}
-	if _, err := New(fixture.catalog, fixture.session, checks, fixture.store, "bad-instance"); err == nil {
+	availability := map[string]fabric.AvailabilityProvider{"sandbox": &availabilityProvider{}}
+	if _, err := New(fixture.catalog, availability, fixture.session, checks, fixture.store, "bad-instance"); err == nil {
 		t.Fatal("invalid application instance accepted")
+	}
+	availability["sandbox"] = nil
+	if _, err := New(fixture.catalog, availability, fixture.session, checks, fixture.store, wire.ID()); err == nil {
+		t.Fatal("nil availability provider accepted")
 	}
 }
 

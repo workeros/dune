@@ -2,8 +2,49 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrProviderUnavailable = errors.New("managed provider unavailable")
+
+type AvailabilityReason string
+
+const (
+	AvailabilityMaintenance   AvailabilityReason = "maintenance"
+	AvailabilityCapacity      AvailabilityReason = "capacity"
+	AvailabilityConfiguration AvailabilityReason = "configuration"
+	AvailabilityUnreachable   AvailabilityReason = "unreachable"
+	AvailabilityUnknown       AvailabilityReason = "unknown"
+)
+
+// Availability is a public, bounded answer about accepting new resources.
+// Existing resources must remain inspectable, renewable and destroyable while
+// Available is false. Reason is a fixed code rather than an SDK error string.
+type Availability struct {
+	Available bool               `json:"available"`
+	Reason    AvailabilityReason `json:"unavailable_reason,omitempty"`
+}
+
+func (a Availability) Valid() bool {
+	if a.Available {
+		return a.Reason == ""
+	}
+	switch a.Reason {
+	case AvailabilityMaintenance, AvailabilityCapacity, AvailabilityConfiguration, AvailabilityUnreachable, AvailabilityUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// AvailabilityProvider performs a bounded, read-only readiness check for new
+// allocations in one Fabric namespace. It must not enumerate resources or
+// mutate provider state. Errors are shown only as the fixed unreachable reason;
+// returned fields and provider error text are ignored.
+type AvailabilityProvider interface {
+	Availability(context.Context) (Availability, error)
+}
 
 // Action identifies one provider call already reserved in durable storage.
 // ID is the action-specific idempotency key. Issuer and ExecutionRevision let

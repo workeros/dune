@@ -524,3 +524,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 本机默认 Codex 配置使用新版本桌面端字段和 `gpt-5.6-terra`，旧 CLI 首先分别因 `features.context_management` 类型和模型版本拒绝启动。验收只在临时包装进程中加入 `-c features.context_management=false -m gpt-5.5`，没有修改用户配置、默认模型或仓库。该结果证明本提交的真实 PTY 执行链路；默认 CLI 配置仍须升级或由使用者选择其当前 CLI 支持的配置。
 - Gemini CLI 0.34.0 的真实 `--acp` 进程经同一 Dune 进程链完成 ACP `initialize`，返回会话、prompt、媒体与 MCP 能力后正常清理。此项只验证真实客户端协议协商，没有提交模型 prompt，也不宣称 Gemini 账号推理、离线权限恢复或 Managed provider 生命周期通过。
 - `TestRealAgentPTY` 与 `TestRealAgentACP` 最终分别通过，前者实际完成受限编码任务和独立校验，后者完成真实 initialize/协商。Claude Code 2.0.44 因本机凭据失效在任务执行前拒绝，未计入通过证据。以上验收使用当前机器已有账号状态，不替代 Linux、集群或某个企业身份/Managed 平台的真实闭环。
+
+### 已完成组件：Managed Provider 动态可用性门控
+
+- 每个配置的 Fabric 新增独立只读 Availability 能力。模板发现先完成逐模板访问检查，再对同一 Fabric 至多调用一次且最多等待一秒；无权或静态禁用的模板不会触发状态读取。授权用户仍能看到暂不可创建的模板，公开原因只允许 `maintenance`、`capacity`、`configuration`、`unreachable` 和 `unknown`，SDK 错误及私有返回字段不进入响应。
+- 创建在保存 Runner、Operation 或请求幂等记录前重新读取 Availability。不可用时返回固定 503，Provider 不会收到 Create；状态恢复后同一宿主立即接受新请求，无需重启或改变配置指纹。该门控只控制新资源，worker 对既有资源的巡检、续期、核对、销毁和失败恢复不依赖 Availability。
+- 工作台优先选择当前可用模板，在选项中显示固定原因，并对不可用选择禁用参数与提交。结构化观测增加 `availability/read` 调用耗时和归一化结果，仅携带 Fabric。服务和宿主回归覆盖按 Fabric 去重、授权顺序、错误归一化、不落库、动态恢复、API 状态、配置完整性与事件字段；Go race、Web 类型与生产构建作为提交验证。这里的 Provider 是可信动态夹具，不能替代真实平台容量、权限或故障响应验收。

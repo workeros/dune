@@ -191,13 +191,13 @@ func Open(parent context.Context, options Options) (*App, error) {
 	var managedService *managedmodule.Service
 	var managedWorker *managedmodule.Worker
 	if managedConfig != nil {
-		managedService, err = managedmodule.New(managedConfig.catalog, service, authorizer, store, appInstanceID)
+		availability, providers := observeManagedProviders(managedConfig.availability, managedConfig.providers, observer)
+		managedService, err = managedmodule.New(managedConfig.catalog, availability, service, authorizer, store, appInstanceID)
 		if err != nil {
 			return nil, err
 		}
 		workerConfig := managedConfig.worker
 		workerConfig.InstanceID, workerConfig.CloseTarget = appInstanceID, core.Disconnect
-		providers := observeManagedProviders(managedConfig.providers, observer)
 		managedWorker, err = managedmodule.NewWorker(store, providers, workerConfig)
 		if err != nil {
 			return nil, err

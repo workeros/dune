@@ -19,30 +19,58 @@ import (
 )
 
 type Service struct {
-	catalog    *fabric.Catalog
-	sessions   authorization.Sessions
-	access     *authorization.Service
-	store      *metadata.Store
-	instanceID string
+	catalog      *fabric.Catalog
+	availability map[string]fabric.AvailabilityProvider
+	sessions     authorization.Sessions
+	access       *authorization.Service
+	store        *metadata.Store
+	instanceID   string
 }
+
+const providerAvailabilityTimeout = time.Second
 
 // New uses the host's existing sessions, access service and shared SQL store.
 // It starts no workers and does not make Managed available on a public endpoint.
-func New(catalog *fabric.Catalog, sessions authorization.Sessions, checks *authorization.Service, store *metadata.Store, instanceID string) (*Service, error) {
-	if catalog == nil || sessions == nil || checks == nil || store == nil || !wire.ValidID(instanceID) {
+func New(catalog *fabric.Catalog, availability map[string]fabric.AvailabilityProvider, sessions authorization.Sessions, checks *authorization.Service, store *metadata.Store, instanceID string) (*Service, error) {
+	if catalog == nil || len(availability) == 0 || sessions == nil || checks == nil || store == nil || !wire.ValidID(instanceID) {
 		return nil, fmt.Errorf("managed service requires catalog, sessions, access checks and shared metadata")
 	}
-	return &Service{catalog: catalog, sessions: sessions, access: checks, store: store, instanceID: instanceID}, nil
+	providers := make(map[string]fabric.AvailabilityProvider, len(availability))
+	for id, provider := range availability {
+		if provider == nil {
+			return nil, fmt.Errorf("managed service requires provider availability checks")
+		}
+		providers[id] = provider
+	}
+	return &Service{catalog: catalog, availability: providers, sessions: sessions, access: checks, store: store, instanceID: instanceID}, nil
 }
 
-func (s *Service) Templates(ctx context.Context, cookie string) ([]fabric.Template, error) {
+func (s *Service) providerAvailability(ctx context.Context, fabricID string) fabric.Availability {
+	provider, ok := s.availability[fabricID]
+	if !ok {
+		return fabric.Availability{Reason: fabric.AvailabilityConfiguration}
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, providerAvailabilityTimeout)
+	defer cancel()
+	status, err := provider.Availability(checkCtx)
+	if err != nil {
+		return fabric.Availability{Reason: fabric.AvailabilityUnreachable}
+	}
+	if !status.Valid() {
+		return fabric.Availability{Reason: fabric.AvailabilityUnknown}
+	}
+	return status
+}
+
+func (s *Service) Templates(ctx context.Context, cookie string) ([]fabric.TemplateStatus, error) {
 	user, err := s.sessions.Authenticate(ctx, cookie)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out := []fabric.Template{}
+	out := []fabric.TemplateStatus{}
+	availability := make(map[string]fabric.Availability)
 	for _, t := range s.catalog.Available() {
 		_, err := s.access.TemplateDecision(ctx, user, t, "template.list")
 		if errors.Is(err, access.ErrUnavailable) {
@@ -54,7 +82,12 @@ func (s *Service) Templates(ctx context.Context, cookie string) ([]fabric.Templa
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, t)
+		status, ok := availability[t.FabricID]
+		if !ok {
+			status = s.providerAvailability(ctx, t.FabricID)
+			availability[t.FabricID] = status
+		}
+		out = append(out, fabric.TemplateStatus{Template: t, Availability: status})
 	}
 	return out, nil
 }
@@ -66,22 +99,22 @@ func hideDenied(err error) error {
 	return err
 }
 
-func (s *Service) template(ctx context.Context, user identity.User, fabricID, id, version string) (fabric.Template, access.Decision, error) {
+func (s *Service) template(ctx context.Context, user identity.User, fabricID, id, version string) (fabric.TemplateStatus, access.Decision, error) {
 	t, err := s.catalog.Template(fabricID, id, version)
 	if err != nil || t.Disabled {
-		return fabric.Template{}, access.Decision{}, fabric.ErrTemplateNotFound
+		return fabric.TemplateStatus{}, access.Decision{}, fabric.ErrTemplateNotFound
 	}
 	decision, err := s.access.TemplateDecision(ctx, user, t, "template.get")
 	if err != nil {
-		return fabric.Template{}, access.Decision{}, hideDenied(err)
+		return fabric.TemplateStatus{}, access.Decision{}, hideDenied(err)
 	}
-	return t, decision, nil
+	return fabric.TemplateStatus{Template: t, Availability: s.providerAvailability(ctx, t.FabricID)}, decision, nil
 }
 
-func (s *Service) Template(ctx context.Context, cookie, fabricID, id, version string) (fabric.Template, error) {
+func (s *Service) Template(ctx context.Context, cookie, fabricID, id, version string) (fabric.TemplateStatus, error) {
 	user, err := s.sessions.Authenticate(ctx, cookie)
 	if err != nil {
-		return fabric.Template{}, err
+		return fabric.TemplateStatus{}, err
 	}
 	t, _, err := s.template(ctx, user, fabricID, id, version)
 	return t, err
@@ -100,9 +133,12 @@ func (s *Service) Create(ctx context.Context, cookie, requestKey string, request
 	if err != nil {
 		return lifecycle.Creation{}, err
 	}
+	if !template.Available {
+		return lifecycle.Creation{}, fabric.ErrProviderUnavailable
+	}
 	ctx, cancel := context.WithDeadline(ctx, view.ValidUntil)
 	defer cancel()
-	allowed, err := s.access.TemplateDecision(ctx, user, template, "runner.create")
+	allowed, err := s.access.TemplateDecision(ctx, user, template.Template, "runner.create")
 	if err != nil {
 		return lifecycle.Creation{}, err
 	}

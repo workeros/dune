@@ -18,12 +18,13 @@ import (
 // Fabric namespace. Adapter instances retain private SDK configuration and
 // credentials; Dune copies only these interface maps at startup.
 type ManagedProviders struct {
-	Create    map[string]fabric.CreateProvider
-	Bootstrap map[string]fabric.BootstrapProvider
-	Inspect   map[string]fabric.InspectProvider
-	Renew     map[string]fabric.RenewProvider
-	Destroy   map[string]fabric.DestroyProvider
-	Candidate map[string]fabric.CandidateProvider
+	Availability map[string]fabric.AvailabilityProvider
+	Create       map[string]fabric.CreateProvider
+	Bootstrap    map[string]fabric.BootstrapProvider
+	Inspect      map[string]fabric.InspectProvider
+	Renew        map[string]fabric.RenewProvider
+	Destroy      map[string]fabric.DestroyProvider
+	Candidate    map[string]fabric.CandidateProvider
 }
 
 // ManagedWorkerOptions controls durable lifecycle recovery. Start from
@@ -52,9 +53,9 @@ func DefaultManagedWorkerOptions() ManagedWorkerOptions {
 }
 
 // ManagedOptions enables the complete Managed lifecycle. Templates are public
-// user choices. Every Fabric referenced by a template must have all six
-// provider capabilities, and every configured provider namespace must be
-// complete so existing resources can still be inspected and cleaned up.
+// user choices. Every Fabric referenced by a template must have a read-only
+// availability check and every lifecycle capability. Every configured provider
+// namespace must be complete so existing resources remain recoverable.
 type ManagedOptions struct {
 	Templates []fabric.Template
 	Providers ManagedProviders
@@ -63,6 +64,7 @@ type ManagedOptions struct {
 
 type managedAssembly struct {
 	catalog             *fabric.Catalog
+	availability        map[string]fabric.AvailabilityProvider
 	providers           managedmodule.ProviderSet
 	worker              managedmodule.WorkerConfig
 	destroyCloseTimeout time.Duration
@@ -70,24 +72,27 @@ type managedAssembly struct {
 }
 
 func providerKeys(providers ManagedProviders) ([]string, error) {
-	sets := []map[string]bool{{}, {}, {}, {}, {}, {}}
-	for id, provider := range providers.Create {
+	sets := []map[string]bool{{}, {}, {}, {}, {}, {}, {}}
+	for id, provider := range providers.Availability {
 		sets[0][id] = provider != nil
 	}
-	for id, provider := range providers.Bootstrap {
+	for id, provider := range providers.Create {
 		sets[1][id] = provider != nil
 	}
-	for id, provider := range providers.Inspect {
+	for id, provider := range providers.Bootstrap {
 		sets[2][id] = provider != nil
 	}
-	for id, provider := range providers.Renew {
+	for id, provider := range providers.Inspect {
 		sets[3][id] = provider != nil
 	}
-	for id, provider := range providers.Destroy {
+	for id, provider := range providers.Renew {
 		sets[4][id] = provider != nil
 	}
-	for id, provider := range providers.Candidate {
+	for id, provider := range providers.Destroy {
 		sets[5][id] = provider != nil
+	}
+	for id, provider := range providers.Candidate {
+		sets[6][id] = provider != nil
 	}
 	if len(sets[0]) == 0 {
 		return nil, fmt.Errorf("Managed requires at least one complete provider")
@@ -167,7 +172,8 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 	}
 	sum := sha256.Sum256(encoded)
 	return &managedAssembly{
-		catalog: catalog,
+		catalog:      catalog,
+		availability: options.Providers.Availability,
 		providers: managedmodule.ProviderSet{
 			Create: options.Providers.Create, Bootstrap: options.Providers.Bootstrap,
 			Inspect: options.Providers.Inspect, Renew: options.Providers.Renew, Destroy: options.Providers.Destroy, Candidate: options.Providers.Candidate,

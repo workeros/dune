@@ -19,7 +19,7 @@ import { ACPPane } from "@/components/acp";
 import { TerminalPane } from "@/components/terminal";
 import { Brand } from "@/components/brand";
 import { CLILogin, pendingCLIRequest } from "@/components/cli-login";
-import { APIError, request, post, call, errorText, type Page, type User, runnerPath, bindingKey, runtimeKey, type Binding, type Runner, type BoundRunner, type Runtime, type AgentConfig, type StartupInfo, type ManagedField, type ManagedTemplate, type ManagedOperation, type ManagedCreation, type ManagedReview } from "@/lib/api";
+import { APIError, request, post, call, errorText, type Page, type User, runnerPath, bindingKey, runtimeKey, type Binding, type Runner, type BoundRunner, type Runtime, type AgentConfig, type StartupInfo, type ManagedField, type ManagedTemplate, type ManagedUnavailableReason, type ManagedOperation, type ManagedCreation, type ManagedReview } from "@/lib/api";
 
 export function App() {
   const [cliRequest, setCLIRequest] = useState(pendingCLIRequest);
@@ -109,6 +109,16 @@ function managedRequestKey(): string {
   return `web-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
+const managedUnavailableReason: Record<ManagedUnavailableReason, string> = {
+  maintenance: "提供方维护中", capacity: "提供方容量不足", configuration: "提供方配置未就绪",
+  unreachable: "暂时无法连接提供方", unknown: "提供方状态未知",
+};
+
+function managedTemplateLabel(template: ManagedTemplate): string {
+  const reason = template.unavailable_reason ? managedUnavailableReason[template.unavailable_reason] : managedUnavailableReason.unknown;
+  return `${template.name} · ${template.version}${template.available ? "" : ` · ${reason}`}`;
+}
+
 function AddManaged({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (runner: Runner) => Promise<void> }) {
   const [templates, setTemplates] = useState<ManagedTemplate[]>([]), [templateKey, setTemplateKey] = useState(""), [name, setName] = useState(""), [values, setValues] = useState<Record<string, string | boolean>>({}), [error, setError] = useState(""), [busy, setBusy] = useState(false), [loading, setLoading] = useState(false);
   const requestKey = useRef(managedRequestKey());
@@ -119,7 +129,8 @@ function AddManaged({ open, onOpenChange, onCreated }: { open: boolean; onOpenCh
     setLoading(true); setError("");
     request<{ items: ManagedTemplate[] }>("/api/managed/templates").then(({ items }) => {
       if (!alive) return;
-      setTemplates(items); setTemplateKey(items[0] ? JSON.stringify([items[0].fabric_id, items[0].id, items[0].version]) : "");
+      const initial = items.find((template) => template.available) ?? items[0];
+      setTemplates(items); setTemplateKey(initial ? JSON.stringify([initial.fabric_id, initial.id, initial.version]) : "");
     }).catch((e) => { if (alive) setError(errorText(e)); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [open]);
@@ -130,7 +141,7 @@ function AddManaged({ open, onOpenChange, onCreated }: { open: boolean; onOpenCh
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected?.available) return;
     setBusy(true); setError("");
     try {
       const body = managedRequestBody(selected, name, values, requestKey.current);
@@ -138,13 +149,13 @@ function AddManaged({ open, onOpenChange, onCreated }: { open: boolean; onOpenCh
       close(false); await onCreated(created.runner);
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
-  return <Dialog open={open} onOpenChange={close}><DialogContent><DialogTitle className="mb-2 text-xl font-bold">创建托管环境</DialogTitle><DialogDescription className="muted mb-6">选择管理员提供的模板。提交后可以离开页面，创建会在后台继续。</DialogDescription>{loading ? <p role="status">正在读取可用模板…</p> : templates.length ? <form className="grid gap-4" onSubmit={submit}><label>环境名称<Input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} placeholder="例如：项目开发环境" /></label><label>模板<select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>{templates.map((template) => { const key = JSON.stringify([template.fabric_id, template.id, template.version]); return <option key={key} value={key}>{template.name} · {template.version}</option>; })}</select></label>{selected?.fields.map((field) => <ManagedInput key={field.name} field={field} value={values[field.name]} onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))} />)}{error && <div className="error-box" role="alert">{error}</div>}<Button type="submit" disabled={busy}>{busy ? "提交中…" : "创建环境"}</Button></form> : !error && <p className="muted">当前账号没有可用的托管模板。</p>}{error && !templates.length && <div className="error-box" role="alert">{error}</div>}</DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={close}><DialogContent><DialogTitle className="mb-2 text-xl font-bold">创建托管环境</DialogTitle><DialogDescription className="muted mb-6">选择管理员提供的模板。提交后可以离开页面，创建会在后台继续。</DialogDescription>{loading ? <p role="status">正在读取可用模板…</p> : templates.length ? <form className="grid gap-4" onSubmit={submit}><label>环境名称<Input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} placeholder="例如：项目开发环境" disabled={!selected?.available} /></label><label>模板<select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>{templates.map((template) => { const key = JSON.stringify([template.fabric_id, template.id, template.version]); return <option key={key} value={key} disabled={!template.available}>{managedTemplateLabel(template)}</option>; })}</select></label>{selected && !selected.available && <div className="error-box" role="status">{selected.unavailable_reason ? managedUnavailableReason[selected.unavailable_reason] : managedUnavailableReason.unknown}，当前不能创建新环境。</div>}{selected?.fields.map((field) => <ManagedInput key={field.name} field={field} value={values[field.name]} disabled={!selected.available} onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))} />)}{error && <div className="error-box" role="alert">{error}</div>}<Button type="submit" disabled={busy || !selected?.available}>{busy ? "提交中…" : "创建环境"}</Button></form> : !error && <p className="muted">当前账号没有可用的托管模板。</p>}{error && !templates.length && <div className="error-box" role="alert">{error}</div>}</DialogContent></Dialog>;
 }
 
-function ManagedInput({ field, value, onChange }: { field: ManagedField; value: string | boolean | undefined; onChange: (value: string | boolean) => void }) {
-  if (field.type === "boolean") return <label className="flex items-center gap-3"><input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} /><span>{field.label}{field.required ? " *" : ""}</span></label>;
-  if (field.choices?.length) return <label>{field.label}<select required={field.required} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)}><option value="">请选择</option>{field.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></label>;
-  return <label>{field.label}<Input type="text" inputMode={field.type === "integer" ? "numeric" : "text"} required={field.required} maxLength={field.type === "string" ? field.max_length : undefined} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />{field.type === "integer" && <span className="text-xs font-normal text-muted-foreground">范围：{field.minimum} 至 {field.maximum}</span>}</label>;
+function ManagedInput({ field, value, disabled, onChange }: { field: ManagedField; value: string | boolean | undefined; disabled?: boolean; onChange: (value: string | boolean) => void }) {
+  if (field.type === "boolean") return <label className="flex items-center gap-3"><input type="checkbox" checked={value === true} disabled={disabled} onChange={(e) => onChange(e.target.checked)} /><span>{field.label}{field.required ? " *" : ""}</span></label>;
+  if (field.choices?.length) return <label>{field.label}<select required={field.required} disabled={disabled} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)}><option value="">请选择</option>{field.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}</select></label>;
+  return <label>{field.label}<Input type="text" inputMode={field.type === "integer" ? "numeric" : "text"} required={field.required} disabled={disabled} maxLength={field.type === "string" ? field.max_length : undefined} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} />{field.type === "integer" && <span className="text-xs font-normal text-muted-foreground">范围：{field.minimum} 至 {field.maximum}</span>}</label>;
 }
 
 const managedStage: Record<string, string> = { queued: "等待后台处理", creating: "正在创建资源", bootstrapping: "正在配置开发环境", waiting_connection: "等待开发机首次连接", renewing: "正在续期", closing_access: "正在关闭访问", destroying: "正在删除资源", succeeded: "操作已完成", failed: "操作失败" };

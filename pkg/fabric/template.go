@@ -39,6 +39,15 @@ type Template struct {
 	Fields   []Field `json:"fields"`
 }
 
+// TemplateStatus combines immutable public configuration with the provider's
+// current willingness to accept new allocations. Unavailable templates remain
+// visible to authorized users so the workbench can explain why creation is
+// disabled; static Disabled template versions are still omitted entirely.
+type TemplateStatus struct {
+	Template
+	Availability
+}
+
 type templateKey struct{ fabric, id, version string }
 
 // Catalog is an immutable, bounded configuration snapshot. It performs no

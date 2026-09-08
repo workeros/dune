@@ -21,6 +21,8 @@ func writeMetadataError(w http.ResponseWriter, err error) {
 		writeError(w, 503, "ACCESS_UNAVAILABLE", "access checker unavailable")
 	case errors.Is(err, access.ErrDenied):
 		writeError(w, 403, "ACCESS_DENIED", "access denied")
+	case errors.Is(err, fabric.ErrProviderUnavailable):
+		writeError(w, 503, "MANAGED_PROVIDER_UNAVAILABLE", "managed provider is not accepting new resources")
 	case errors.Is(err, metadata.ErrCommitUnknown):
 		writeError(w, 503, "RESULT_UNKNOWN", "提交结果未知，请先核对当前状态，不要自动重试此操作。")
 	case errors.Is(err, identity.ErrRegistrationDisabled):

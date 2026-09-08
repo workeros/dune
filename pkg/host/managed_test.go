@@ -25,12 +25,17 @@ type completeProvider struct {
 }
 
 type completeLifecycleProvider interface {
+	fabric.AvailabilityProvider
 	fabric.CreateProvider
 	fabric.BootstrapProvider
 	fabric.InspectProvider
 	fabric.RenewProvider
 	fabric.DestroyProvider
 	fabric.CandidateProvider
+}
+
+func (*completeProvider) Availability(context.Context) (fabric.Availability, error) {
+	return fabric.Availability{Available: true}, nil
 }
 
 func (p *completeProvider) Create(_ context.Context, call fabric.CreateCall) (fabric.Observation, error) {
@@ -84,7 +89,8 @@ func managedHostOptions(dir string, provider completeLifecycleProvider) host.Opt
 	worker.EnrollmentLifetime = time.Minute
 	worker.BootstrapVersion = "test-v1"
 	providers := host.ManagedProviders{
-		Create: map[string]fabric.CreateProvider{"sandbox": provider}, Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": provider},
+		Availability: map[string]fabric.AvailabilityProvider{"sandbox": provider},
+		Create:       map[string]fabric.CreateProvider{"sandbox": provider}, Bootstrap: map[string]fabric.BootstrapProvider{"sandbox": provider},
 		Inspect: map[string]fabric.InspectProvider{"sandbox": provider}, Renew: map[string]fabric.RenewProvider{"sandbox": provider},
 		Destroy:   map[string]fabric.DestroyProvider{"sandbox": provider},
 		Candidate: map[string]fabric.CandidateProvider{"sandbox": provider},
@@ -95,6 +101,24 @@ func managedHostOptions(dir string, provider completeLifecycleProvider) host.Opt
 			Providers: providers, Worker: worker,
 		},
 	}
+}
+
+type changingAvailabilityProvider struct {
+	*completeProvider
+	availabilityMu sync.Mutex
+	availability   fabric.Availability
+}
+
+func (p *changingAvailabilityProvider) Availability(context.Context) (fabric.Availability, error) {
+	p.availabilityMu.Lock()
+	defer p.availabilityMu.Unlock()
+	return p.availability, nil
+}
+
+func (p *changingAvailabilityProvider) setAvailability(status fabric.Availability) {
+	p.availabilityMu.Lock()
+	p.availability = status
+	p.availabilityMu.Unlock()
 }
 
 type drainingCompleteProvider struct {
@@ -161,7 +185,7 @@ func TestManagedHostPublishesAPIAndRunsRecoveryWorker(t *testing.T) {
 	}
 	cookie := registration.Result().Cookies()[0]
 	templates := managedRequest(t, app, http.MethodGet, "/tools/api/managed/templates", "", cookie)
-	if templates.Code != http.StatusOK || !bytes.Contains(templates.Body.Bytes(), []byte(`"fabric_id":"sandbox"`)) || !bytes.Contains(templates.Body.Bytes(), []byte(`"id":"small"`)) {
+	if templates.Code != http.StatusOK || !bytes.Contains(templates.Body.Bytes(), []byte(`"fabric_id":"sandbox"`)) || !bytes.Contains(templates.Body.Bytes(), []byte(`"id":"small"`)) || !bytes.Contains(templates.Body.Bytes(), []byte(`"available":true`)) {
 		t.Fatal("authorized templates were not exposed", templates.Code, templates.Body.String())
 	}
 	creation := managedRequest(t, app, http.MethodPost, "/tools/api/managed/runners", `{"request_key":"host-create-1","request":{"name":"Development","fabric_id":"sandbox","template_id":"small","template_version":"v1","parameters":{"cpu":2}}}`, cookie)
@@ -240,6 +264,49 @@ func TestManagedHostPublishesAPIAndRunsRecoveryWorker(t *testing.T) {
 	}
 }
 
+func TestManagedHostRejectsCreationWhileProviderIsUnavailable(t *testing.T) {
+	provider := &changingAvailabilityProvider{
+		completeProvider: &completeProvider{called: make(chan struct{})},
+		availability:     fabric.Availability{Reason: fabric.AvailabilityCapacity},
+	}
+	app, err := host.Open(context.Background(), managedHostOptions(filepath.Join(t.TempDir(), "metadata"), provider))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	registration := managedRequest(t, app, http.MethodPost, "/tools/api/auth/register", `{"email":"managed-capacity@example.test","password":"managed-capacity-password"}`, nil)
+	if registration.Code != http.StatusOK || len(registration.Result().Cookies()) != 1 {
+		t.Fatal("registration failed", registration.Code, registration.Body.String())
+	}
+	cookie := registration.Result().Cookies()[0]
+	templates := managedRequest(t, app, http.MethodGet, "/tools/api/managed/templates", "", cookie)
+	if templates.Code != http.StatusOK || !bytes.Contains(templates.Body.Bytes(), []byte(`"available":false`)) || !bytes.Contains(templates.Body.Bytes(), []byte(`"unavailable_reason":"capacity"`)) {
+		t.Fatal("dynamic provider status was unavailable", templates.Code, templates.Body.String())
+	}
+	requestBody := `{"request_key":"host-capacity-1","request":{"name":"Development","fabric_id":"sandbox","template_id":"small","template_version":"v1","parameters":{"cpu":2}}}`
+	creation := managedRequest(t, app, http.MethodPost, "/tools/api/managed/runners", requestBody, cookie)
+	if creation.Code != http.StatusServiceUnavailable || !bytes.Contains(creation.Body.Bytes(), []byte(`"code":"MANAGED_PROVIDER_UNAVAILABLE"`)) {
+		t.Fatal("unavailable provider accepted creation", creation.Code, creation.Body.String())
+	}
+	provider.mu.Lock()
+	createCalls := len(provider.creates)
+	provider.mu.Unlock()
+	if createCalls != 0 {
+		t.Fatal("availability rejection reached the provider", createCalls)
+	}
+
+	provider.setAvailability(fabric.Availability{Available: true})
+	creation = managedRequest(t, app, http.MethodPost, "/tools/api/managed/runners", requestBody, cookie)
+	if creation.Code != http.StatusAccepted {
+		t.Fatal("provider recovery required a host restart", creation.Code, creation.Body.String())
+	}
+	select {
+	case <-provider.called:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovered provider did not receive the accepted creation")
+	}
+}
+
 func TestManagedProviderCallsEmitBoundedObservations(t *testing.T) {
 	provider := &observedCompleteProvider{completeProvider: &completeProvider{}}
 	events := make(chan observe.Event, 32)
@@ -270,11 +337,22 @@ func TestManagedProviderCallsEmitBoundedObservations(t *testing.T) {
 	}
 
 	deadline := time.After(3 * time.Second)
+	availabilityObserved := false
 	for {
 		select {
 		case event := <-events:
 			if event.Name != observe.ManagedProviderCall {
 				continue
+			}
+			if event.Operation == "availability" {
+				if event.Outcome != "available" || event.Suboperation != "read" || event.FabricID != "sandbox" || event.DurationMicros < 1 || event.OperationID != "" || event.ResourceRef != "" {
+					t.Fatal("Managed availability event exposed invalid fields", event)
+				}
+				availabilityObserved = true
+				continue
+			}
+			if !availabilityObserved {
+				t.Fatal("provider call preceded its availability check", event)
 			}
 			if event.Outcome != "unknown" || event.Operation != "create" || event.Suboperation != "dispatch" || event.OperationID != created.Operation.ID || event.ActionID == "" || event.RunnerID != created.Operation.RunnerID || event.FabricID != "sandbox" || event.Revision < 1 || event.DurationMicros < 1 {
 				t.Fatal("Managed provider event lost authoritative call identity", event)
@@ -407,6 +485,12 @@ func TestManagedHostRejectsIncompleteConfigurationAndReleasesStore(t *testing.T)
 	provider := &completeProvider{}
 	dir := filepath.Join(t.TempDir(), "metadata")
 	options := managedHostOptions(dir, provider)
+	delete(options.Managed.Providers.Availability, "sandbox")
+	if app, err := host.Open(context.Background(), options); err == nil {
+		app.Close()
+		t.Fatal("host accepted a provider without availability checks")
+	}
+	options = managedHostOptions(dir, provider)
 	delete(options.Managed.Providers.Destroy, "sandbox")
 	if app, err := host.Open(context.Background(), options); err == nil {
 		app.Close()

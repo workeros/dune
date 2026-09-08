@@ -13,7 +13,7 @@ import (
 	"github.com/aiomni/dune/pkg/fabric"
 )
 
-var ErrProviderUnavailable = errors.New("managed provider unavailable")
+var ErrProviderUnavailable = fabric.ErrProviderUnavailable
 var ErrProviderContract = errors.New("managed provider returned invalid facts")
 
 // Executor performs provider I/O outside SQL transactions. The provider map is

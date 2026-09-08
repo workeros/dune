@@ -150,7 +150,7 @@ Managed 销毁执行使用 `go test -race ./pkg/gateway ./internal/managed ./int
 
 Managed 人工核对使用 `go test -race ./internal/managed ./internal/metadata ./pkg/host -run 'ManagedReview|Manual|ManagedHost' -count=1 -timeout=180s`。SQLite/PostgreSQL 元数据回归检查当前浏览器与绑定复核、幂等请求、同一 action 单个待办、跨池单次领取、Operation 与核对租约同步、普通恢复先完成时的审计收敛和原生备份恢复；执行器检查只读 Reconcile、候选引用适配器核验、原动作身份、引用冲突和错误保守性。宿主回归检查前缀 API、跨用户隐藏及响应字段边界。这里验证的是 Dune 的受控核对路径；真实平台仍须证明候选关联查询和动作历史保留语义。
 
-Managed 宿主与工作台装配使用 `go test -race ./internal/managed ./internal/webapp ./pkg/host -run 'Managed|Status' -count=1 -timeout=180s`，再运行 `make web-check web-build`。回归覆盖完整提供方集合、启动失败释放 SQLite、后台 worker 实际领取、启动能力、模板/创建/Operation/Runner 状态 API、跨主体隐藏和内部动作键不出现在响应；前端类型与生产构建检查动态模板表单、精确 `int64` JSON、持久状态和 Managed/Attached 分流。提供方仍是可信夹具，且当前没有浏览器自动化，因此这些检查不证明真实云资源闭环或最终视觉交互。
+Managed 宿主与工作台装配使用 `go test -race ./pkg/fabric ./internal/managed ./internal/webapp ./pkg/host -run 'Availability|Managed|Status' -count=1 -timeout=180s`，再运行 `make web-check web-build`。回归覆盖包含只读 Availability 的完整提供方集合、启动失败释放 SQLite、后台 worker 实际领取、启动能力、模板/创建/Operation/Runner 状态 API、跨主体隐藏和内部动作键不出现在响应。可用性用例确认访问检查后才探测、同一 Fabric 一次探测、固定原因归一化、不可用时不保存创建，以及运行中恢复后无需重启；前端类型与生产构建检查动态模板状态、精确 `int64` JSON、持久状态和 Managed/Attached 分流。提供方仍是可信夹具，且当前没有浏览器自动化，因此这些检查不证明真实云资源闭环或最终视觉交互。
 
 Managed 运维快照使用 `go test -race ./internal/metadata ./pkg/host -run 'ManagedStatusSnapshot|ManagedProviderCalls' -count=1 -timeout=120s`，并为 PostgreSQL 配置专用测试库。回归建立正常绑定、部分 unknown 资源、timed-out Operation 和访问已关闭资源，检查数据库时钟、策略版本漂移、续期积压、到期提前量、残留去重及无 Managed 配置的零状态；宿主用例确认 provider 事件之后只能从已持久事实观察 unknown。快照不执行 provider 探测，不能作为真实平台可用性测试。
 

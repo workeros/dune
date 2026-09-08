@@ -53,8 +53,8 @@ type Options struct {
 // Hosts may omit it; startup discovery and every route then report Managed as
 // unavailable without weakening Attached behavior.
 type ManagedService interface {
-	Templates(context.Context, string) ([]fabric.Template, error)
-	Template(context.Context, string, string, string, string) (fabric.Template, error)
+	Templates(context.Context, string) ([]fabric.TemplateStatus, error)
+	Template(context.Context, string, string, string, string) (fabric.TemplateStatus, error)
 	Create(context.Context, string, string, fabric.CreateRequest) (lifecycle.Creation, error)
 	Destroy(context.Context, string, string, string, time.Duration) (lifecycle.ManagedDestruction, error)
 	Status(context.Context, string, string) (lifecycle.ManagedStatus, error)
