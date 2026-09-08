@@ -97,3 +97,21 @@ func externalWorkbench(t *testing.T, ctx context.Context, address string, option
 	}
 	return stop
 }
+
+// The enterprise composition sample must remain usable from a module that has
+// no access to Dune internal packages.
+func TestEnterpriseHostSampleBuildsExternally(t *testing.T) {
+	repo, err := filepath.Abs("..")
+	must(t, err)
+	dir := t.TempDir()
+	source, err := os.ReadFile(filepath.Join(repo, "samples/enterprise/enterprise.go"))
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(dir, "enterprise.go"), source, 0600))
+	module := fmt.Sprintf("module external.example/enterprisehost\n\ngo 1.27.0\n\nrequire github.com/aiomni/dune v0.0.0\nreplace github.com/aiomni/dune => %q\n", repo)
+	must(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(module), 0600))
+	command := exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "-timeout=120s", ".")
+	command.Dir = dir
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("external enterprise host build: %v\n%s", err, output)
+	}
+}

@@ -53,7 +53,7 @@ dune logout
 
 CLI 会话最长八小时，也不超过确认它的浏览器会话期限；浏览器退出、用户停用或身份关联会撤销相关 CLI 会话及已建立访问。`logout` 只撤销这份 CLI 会话，不退出浏览器。每次执行交换一个三十秒内单次使用的目标凭据；不把用户会话交给 fabricd。登录确认或交换结果未知时不会自动重放，应重新发起登录或明确核对结果。
 
-`--login` 与显式 `--config` 互斥，放在命令前；执行使用 `--runner` 选择逻辑环境，也可用 `machines` 和 `--target MACHINE_ID` 直接选择机器，两种选择不可同时传入。可用命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。列表返回 `items` 和可选 `next_cursor`；用 `--limit 1..100` 和 `--cursor` 翻页，空页带游标时可继续查询。默认发现和访问采用 owner 策略，Go 宿主可注入企业检查器；集群自动路由仍在实施。
+`--login` 与显式 `--config` 互斥，放在命令前；执行使用 `--runner` 选择逻辑环境，也可用 `machines` 和 `--target MACHINE_ID` 直接选择机器，两种选择不可同时传入。可用命令沿用下述 Runtime、Files、Git、Ports 等接口。机器注册及连接服务仍使用原机器配置。列表返回 `items` 和可选 `next_cursor`；用 `--limit 1..100` 和 `--cursor` 翻页，空页带游标时可继续查询。默认发现和访问采用 owner 策略，Go 宿主可注入企业检查器；集群模式按 PostgreSQL 目录自动路由到当前 owner。
 
 Runner 是稳定的产品身份；其绑定快照包含 Runner、Fabric、机器及单调修订。CLI 每次命令只解析一次，交换凭据时核对完整快照，绑定变化后拒绝旧请求并要求重新选择。SDK 的 `Client.Runners` / `Client.Runner` 查询 `pkg/runner.Runner`，`Client.DialRunner(ctx, session, *selected.Binding)` 仅连接该快照，不自动解析替代环境。新注册的 Runner 与机器 ID 不同，已有机器的原 ID、凭据和 Runtime 不改变。
 
@@ -84,9 +84,9 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 公开的 `pkg/gateway` 和 `pkg/fabricd` 可分别嵌入服务端和执行环境，无需产品数据库；参考 [Gateway 示例](samples/gateway/main.go)和 [fabricd 示例](samples/fabricd/main.go)。应用负责连接认证、HTTP 挂载及监听；core 持有连接和流，关闭规则见对应 Go API 注释。
 
-自有接入模块可通过 `access.Grant.Policy` 装配逐操作检查器，保留可信用户与绑定，按短期决定检查执行和持续输入。完整映射、授权期限及宿主装配状态见[执行流访问检查](docs/access-checks.md)。当前默认工作台仍使用 owner 授权，企业 HTTP/发现入口正在统一接入。
+自有接入模块可通过 `access.Grant.Policy` 装配逐操作检查器，保留可信用户与绑定，按短期决定检查执行和持续输入。完整映射、授权期限及宿主装配状态见[执行流访问检查](docs/access-checks.md)。默认工作台使用 owner 授权；宿主注入的企业检查器统一覆盖 HTTP、发现、短期连接凭据、执行请求和持续输入。
 
-`pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)。
+`pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)；身份、访问、Managed、续期和数据库鉴权同时替换的公开组合见[企业宿主示例](samples/enterprise/enterprise.go)。
 
 `App.Shutdown(ctx)` 先停止新请求、新流和新的 Managed worker 迭代，等待已受理工作后关闭；排空边界前已领取的生命周期迭代可在同一 deadline 内完成，超时则取消当前提供方调用并保留持久动作供恢复。没有 deadline 时默认等待五秒，远端 PTY 保留。要优雅退出，应先调用 Shutdown，再取消传给 Open 的生命周期 context；父 context 取消和 Close 仍立即停止。官方 `dune web` 的 SIGINT/SIGTERM 已按此处理，`--drain-timeout` 默认 `5s`、`0` 表示立即关闭。部署前缀下的 `health/ready` 在排空时返回 503，`health/live` 在已有工作仍可服务时返回 200。
 

@@ -1,6 +1,6 @@
 # 企业扩展方案实施记录
 
-实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。本文按时间记录实施过程；下文历史 schema 编号及迁移验收不代表当前支持，旧数据兼容已按开发阶段要求移除，当前存储行为以[元数据存储与恢复](metadata-operations.md)为准。S0a、S0b、S0c 已通过本地验收；S1–S3 尚未交付。
+实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。本文按时间记录实施过程；下文历史 schema 编号及迁移验收不代表当前支持，旧数据兼容已按开发阶段要求移除，当前存储行为以[元数据存储与恢复](metadata-operations.md)为准。S0a、S0b、S0c、S1 与 S3 的公开实现及本文所列验收已经完成；S2 的 Dune 生命周期框架已经完成，但尚无真实 Managed 平台适配器及其创建、查询、引导、反向 WS、续期、销毁和故障恢复验收，因此 S2 仍未达到方案完成条件。企业私有身份/权限实现、三台独立 Linux 主机、PostgreSQL HA 等目标部署证据仍由具体采用方验证，不把仓库测试适配器或同机多进程结果写成这些部署的验收。
 
 ## S0a：连接与传输
 
@@ -86,7 +86,7 @@
 
 S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器及人类 CLI 登录、短期访问凭据、稳定 Runner/绑定和全部操作的访问检查。真实身份源及后续 Managed/集群仍需对应实现和实际环境证据。
 
-## S1：身份与 Attached（实施中）
+## S1：身份与 Attached（已完成）
 
 ### 已完成：Dune 用户停用与会话授权版本
 
@@ -208,7 +208,7 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 这是内部协调组件；新 Runner 创建与权限复核、销毁访问限制、阶段结果与资源引用仍须由后续生命周期专用事务一起提交。尚无公共 Operation API、提供方动作键、恢复 worker 或真实 Managed 调用，不将该组件视为 S2 闭环或 S3 执行路由完成。
 - 验证：启用 PostgreSQL 17 的 metadata 全包回归、操作/回执丢失/转库/原生恢复定向 race、host/Web/migrate 回归、前缀工作台及跨宿主真实 PTY 定向回归、`make build` 和 `make check-go` 通过。最后拆分业务互斥与完成状态后重验了相关 SQL/race；本次未运行不相关的完整 Agent 任务或宣称真实提供方已验收。
 
-## S3：集群连接归属（实施中）
+## S3：集群连接归属（已完成）
 
 ### 已完成：执行端逐消息校验原连接
 
@@ -537,3 +537,8 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 每次巡检先从数据库时钟和原 Create 范围构造输入，只暴露 principal、namespace、账号 enabled、Runner/Fabric、创建/首次确认时间与受控生命周期事实。策略在 SQL 事务外用独立有界 context 执行；提交事务重新构造并精确比较输入、资源绑定和领取修订，期间账号或生命周期变化会拒绝旧决定及巡检事实。
 - 公共验证器要求续期目标晚于已确认期限，并禁止对未确认、已过期、Gone、Bootstrap 失败、销毁或变更中的资源发起续期。策略错误和非法结果分别保存 `POLICY_ERROR`、`POLICY_INVALID`，不保存错误正文，30 秒后重新巡检。已授权状态 API 返回最后策略版本、原因、观测/复查时间和冻结目标，工作台显示原因与计划时间。
 - 回归覆盖默认行为、公开决定边界、自定义目标、SQL 事务外读取、deadline、错误归一化和回调期间账号变化栅栏。它验证 Dune 的策略替换与持久提交边界；真实企业规则、目录读取和某个平台 Renew 仍须随目标适配器完成验收。
+
+### 已完成：独立企业宿主组合示例
+
+- `samples/enterprise` 只依赖公开 Go 包，把应用自有 IdentityProvider、AccessChecker、完整 Managed Provider、RenewalPolicy 和 PostgreSQL `BeforeConnect` 组合到同一个 `host.App`，并把现有工作台挂载到应用自有 HTTP handler。示例保留 Dune App 供调用方执行排空、状态读取和可信管理操作，不接管宿主 listener。
+- 示例要求显式配置版本并关闭本地注册，不提供宽松身份/授权 stub，也不模拟云资源；私有配置与凭据仍保存在调用方适配器中。独立临时 Go module 编译回归保证示例无法借用仓库 `internal` 包。该证据完成公开组合边界，不能替代真实企业 SDK 或 Managed 平台验收。
