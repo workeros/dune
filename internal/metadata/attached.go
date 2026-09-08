@@ -182,7 +182,7 @@ func (s *Store) consumeManagedEnrollment(ctx context.Context, tx *sql.Tx, hash, 
 		return err
 	}
 	if expires <= now || kind != "managed" || runnerOwner != owner || fabricID != expectedFabric || revision != expectedRevision ||
-		op.PrincipalID != owner || op.RunnerID != runnerID || op.FabricID != expectedFabric || op.BindingRevision != expectedRevision || op.Action != "create" || op.Finished || !op.Exclusive ||
+		op.PrincipalID != owner || op.RunnerID != runnerID || op.FabricID != expectedFabric || op.BindingRevision != expectedRevision || op.Action != "create" || op.Finished ||
 		resource.FabricID != expectedFabric || resource.Ref != expectedRef || resource.Gone || resource.AccessClosed || (!resource.ExpiresAt.IsZero() && resource.ExpiresAt.UnixMilli() <= now) ||
 		bootstrap.ResourceRef != expectedRef || bootstrap.Outcome == "failed" {
 		return identity.ErrUnauthorized

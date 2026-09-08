@@ -363,3 +363,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - Bootstrap 动作预约与资源绑定 enrollment 哈希在同一 SQL 事务提交。grant 固定原创建 Operation、Runner、Fabric、resource_ref 与 binding revision，明文令牌仅在首次明确提交后交给可信适配器；回执丢失、重启或重复调用只能取得原动作并核对，不能恢复或生成第二份令牌。令牌有效期采用数据库时钟，当前上限十分钟。
 - 现有 fabricd enrollment 入口识别 Managed grant，但消费时不创建第二个 Runner。事务锁定 principal、Runner、Operation 和 grant，复核创建资源、Bootstrap 动作、访问门、当前绑定及有效期，再向原 Managed Runner 写入唯一机器身份并删除 grant；响应提交未知时不返回凭据。访问检查以 `runner.create/managed` 处理该令牌，保留 Attached 原语义。
 - 验证：SQLite/PostgreSQL race 回归覆盖动作与 grant 关系、哈希存储、不同摘要冲突、访问子操作、并发单次消费、过期回滚、机器凭据与原 Runner 绑定，以及预约提交回执丢失后不重发明文；原生 PostgreSQL dump/restore 保留未消费 grant。尚未实现适配器 Bootstrap 方法、阶段 worker、首次在线确认、grant 换发或真实环境注入验收。
+
+### 已完成：Managed Bootstrap 适配器执行边界
+
+- `pkg/fabric.BootstrapProvider` 接收原动作身份、已确认 resource_ref、一次性 enrollment、规范化的公开/Gateway 地址和安装版本；私有适配器配置仍不进入调用或数据库。Bootstrap 必须使用动作 ID 去重或隔离，`ReconcileBootstrap` 只能查询原动作，不能重新注入、安装或启动。
+- 内部 Bootstrap executor 把地址、版本和有效期编码为非敏感动作摘要。只有动作与 grant 首次明确提交且执行权再次检查通过后调用一次 Bootstrap；unknown、timeout、重启、接管和配置变化都使用原动作查询。适配器错误忽略伴随字段并保守落库，已消费 grant 形成的当前 Managed Runner 机器绑定可作为可信成功证据，无需依赖提供方查询。
+- 验证：race 回归覆盖规范化配置快照、一次性明文 grant、终态幂等、unknown 接管、配置变化时保持原 issuer/revision、本地绑定收敛、provider deadline 与数据库写入 context 分离，以及缺失/非法配置不预约。当前仍是测试适配器；持久 worker 尚未领取 Bootstrap 阶段，也未验证真实安装、fabricd 反向连接、首次在线、续期或销毁。

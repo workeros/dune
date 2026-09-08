@@ -37,6 +37,24 @@ type ReconcileCall struct {
 	KnownResourceRef string
 }
 
+// BootstrapCall carries one resource-bound enrollment to the original action.
+// Endpoint and GatewayURL are normalized public addresses. EnrollmentToken is
+// the only secret and is available only to the first confirmed dispatcher.
+type BootstrapCall struct {
+	Action              Action
+	EnrollmentToken     string
+	EnrollmentExpiresAt time.Time
+	Endpoint            string
+	GatewayURL          string
+	Version             string
+}
+
+// BootstrapReconcileCall inspects the original action without new enrollment
+// material. It never grants permission to inject, install or start again.
+type BootstrapReconcileCall struct {
+	Action Action
+}
+
 type Outcome string
 
 const (
@@ -67,4 +85,13 @@ type Observation struct {
 type CreateProvider interface {
 	Create(context.Context, CreateCall) (Observation, error)
 	ReconcileCreate(context.Context, ReconcileCall) (Observation, error)
+}
+
+// BootstrapProvider installs or starts fabricd for an already confirmed
+// resource. Bootstrap must honor context and use Action.ID for provider-side
+// deduplication or fencing. ReconcileBootstrap only observes that same action;
+// a missing lookup is unknown unless the adapter has affirmative terminal proof.
+type BootstrapProvider interface {
+	Bootstrap(context.Context, BootstrapCall) (Observation, error)
+	ReconcileBootstrap(context.Context, BootstrapReconcileCall) (Observation, error)
 }
