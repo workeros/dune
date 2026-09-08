@@ -129,6 +129,43 @@ func TestManagedCreationFreezesOneIntent(t *testing.T) {
 	}
 }
 
+func TestRecoverableManagedCreateAdvancesOnlyCurrentStage(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			s, _, user, hash := managedFixture(t, backend)
+			created, err := s.CreateManaged(ctx, user, hash, wire.ID(), managedSpec())
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidates, err := s.RecoverableManagedCreates(ctx, 32)
+			if err != nil || len(candidates) != 1 || candidates[0].ID != created.Operation.ID {
+				t.Fatal("queued create was not recoverable", candidates, err)
+			}
+			claimed, err := s.ClaimRecoverableManagedCreate(ctx, created.Operation.ID, wire.ID(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			action, dispatch, err := s.BeginProviderAction(ctx, claimed, lifecycle.ActionRequest{Kind: "create", Digest: claimed.Digest})
+			if err != nil || !dispatch {
+				t.Fatal("create action was not reserved", dispatch, err)
+			}
+			if err := s.RecordProviderAction(ctx, claimed, action.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: "stage-resource"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.YieldOperationLease(ctx, claimed); err != nil {
+				t.Fatal(err)
+			}
+			if candidates, err := s.RecoverableManagedCreates(ctx, 32); err != nil || len(candidates) != 0 {
+				t.Fatal("completed create stage remained recoverable", candidates, err)
+			}
+			if _, err := s.ClaimRecoverableManagedCreate(ctx, created.Operation.ID, wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) {
+				t.Fatal("stale scan reclaimed the next workflow stage", err)
+			}
+		})
+	}
+}
+
 func TestManagedCreationRollbackAndSessionGate(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {

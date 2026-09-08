@@ -86,6 +86,10 @@ func providerObservation(observation fabric.Observation, err error) (lifecycle.A
 // checked immediately before dispatch and again on result commit; its absolute
 // database-clock time is deliberately not compared to the worker's local clock.
 func (e *Executor) ExecuteCreate(ctx context.Context, claimed lifecycle.Operation) error {
+	return e.executeCreate(ctx, ctx, claimed)
+}
+
+func (e *Executor) executeCreate(ctx, providerCtx context.Context, claimed lifecycle.Operation) error {
 	creation, err := e.store.ManagedCreation(ctx, claimed.PrincipalID, claimed.RequestKey)
 	if err != nil {
 		return err
@@ -116,7 +120,7 @@ func (e *Executor) ExecuteCreate(ctx context.Context, claimed lifecycle.Operatio
 		if err := e.store.CheckProviderAction(ctx, claimed, action.ID); err != nil {
 			return err
 		}
-		observed, err = provider.Create(ctx, fabric.CreateCall{Action: providerAction(claimed, action), Request: creation.Spec})
+		observed, err = provider.Create(providerCtx, fabric.CreateCall{Action: providerAction(claimed, action), Request: creation.Spec})
 	} else {
 		knownResourceRef := ""
 		resource, resourceErr := e.store.ManagedResource(ctx, claimed.RunnerID)
@@ -128,7 +132,7 @@ func (e *Executor) ExecuteCreate(ctx context.Context, claimed lifecycle.Operatio
 		} else if !errors.Is(resourceErr, metadata.ErrNotFound) {
 			return resourceErr
 		}
-		observed, err = provider.ReconcileCreate(ctx, fabric.ReconcileCall{Action: providerAction(claimed, action), KnownResourceRef: knownResourceRef})
+		observed, err = provider.ReconcileCreate(providerCtx, fabric.ReconcileCall{Action: providerAction(claimed, action), KnownResourceRef: knownResourceRef})
 	}
 	result, resultErr := providerObservation(observed, err)
 	if resultErr != nil {

@@ -161,6 +161,38 @@ func (s *Store) Operation(ctx context.Context, id string) (lifecycle.Operation, 
 	return scanOperation(s.db.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM dune_operations WHERE id=$1", id))
 }
 
+// RecoverableManagedCreates returns trusted create-stage work whose execution
+// lease has expired according to the database clock. It excludes operations
+// that have already advanced past create, even though those workflows remain
+// unfinished while bootstrap or the first connection is pending.
+func (s *Store) RecoverableManagedCreates(ctx context.Context, limit int) ([]lifecycle.Operation, error) {
+	if limit < 1 || limit > 32 {
+		return nil, ErrInvalidArgument
+	}
+	columns := "o." + strings.ReplaceAll(operationColumns, ",", ",o.")
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+`
+		FROM dune_operations o
+		JOIN dune_runners r ON r.id=o.runner_id
+		LEFT JOIN dune_provider_actions a ON a.operation_id=o.id AND a.kind='create'
+		WHERE r.kind='managed' AND o.action='create' AND o.finished=FALSE
+			AND o.exclusive=TRUE AND o.lease_until<=`+s.databaseClock()+`
+			AND (a.id IS NULL OR a.completed_at=0)
+		ORDER BY o.created_at,o.id LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	operations := make([]lifecycle.Operation, 0, limit)
+	for rows.Next() {
+		op, err := scanOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, op)
+	}
+	return operations, rows.Err()
+}
+
 func validWorker(worker string) bool {
 	if len(worker) != 32 {
 		return false
@@ -173,6 +205,33 @@ func validLeaseDuration(ttl time.Duration) bool { return ttl >= time.Second && t
 // ClaimOperation only takes the right to follow up on the original operation.
 // It must not be used as permission to repeat an unresolved external mutation.
 func (s *Store) ClaimOperation(ctx context.Context, id, worker string, ttl time.Duration) (lifecycle.Operation, error) {
+	return s.claimOperation(ctx, id, worker, ttl, nil)
+}
+
+// ClaimRecoverableManagedCreate conditionally claims the create stage observed
+// by RecoverableManagedCreates. The condition is repeated under row locks so a
+// stale scan cannot reclaim a workflow that has already advanced to bootstrap.
+func (s *Store) ClaimRecoverableManagedCreate(ctx context.Context, id, worker string, ttl time.Duration) (lifecycle.Operation, error) {
+	return s.claimOperation(ctx, id, worker, ttl, func(tx *sql.Tx, op lifecycle.Operation) error {
+		if op.Action != "create" || !op.Exclusive {
+			return lifecycle.ErrBusy
+		}
+		var completed int64
+		err := tx.QueryRowContext(ctx, `SELECT completed_at FROM dune_provider_actions WHERE operation_id=$1 AND kind='create'`, op.ID).Scan(&completed)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if completed != 0 {
+			return lifecycle.ErrBusy
+		}
+		return nil
+	})
+}
+
+func (s *Store) claimOperation(ctx context.Context, id, worker string, ttl time.Duration, eligible func(*sql.Tx, lifecycle.Operation) error) (lifecycle.Operation, error) {
 	if !validWorker(worker) || !validLeaseDuration(ttl) {
 		return lifecycle.Operation{}, ErrInvalidArgument
 	}
@@ -180,6 +239,11 @@ func (s *Store) ClaimOperation(ctx context.Context, id, worker string, ttl time.
 	err := s.withOperation(ctx, id, func(tx *sql.Tx, op lifecycle.Operation, now int64) error {
 		if op.Finished || op.Until.UnixMilli() > now {
 			return lifecycle.ErrBusy
+		}
+		if eligible != nil {
+			if err := eligible(tx, op); err != nil {
+				return err
+			}
 		}
 		var until int64
 		err := tx.QueryRowContext(ctx, "UPDATE dune_operations SET worker=$2,execution_revision=execution_revision+1,lease_until="+s.databaseClock()+"+$3 WHERE id=$1 AND execution_revision<9223372036854775807 RETURNING execution_revision,lease_until,exclusive", id, worker, ttl.Milliseconds()).Scan(&op.Revision, &until, &op.Exclusive)
@@ -262,6 +326,32 @@ func (s *Store) RenewOperationLease(ctx context.Context, expected lifecycle.Oper
 		return lifecycle.Operation{}, err
 	}
 	return result, nil
+}
+
+// YieldOperationLease makes unfinished work immediately claimable without
+// releasing its business mutex or changing an uncertain outcome. A finished
+// operation is already unclaimed and is treated as successfully yielded.
+func (s *Store) YieldOperationLease(ctx context.Context, expected lifecycle.Operation) error {
+	return s.withOperation(ctx, expected.ID, func(tx *sql.Tx, current lifecycle.Operation, now int64) error {
+		if current.Finished {
+			return nil
+		}
+		if !ownsOperation(current, expected, now) {
+			return lifecycle.ErrLeaseLost
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE dune_operations SET worker='',lease_until=0 WHERE id=$1 AND worker=$2 AND execution_revision=$3 AND lease_until>`+s.databaseClock(), expected.ID, expected.Worker, expected.Revision)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return lifecycle.ErrLeaseLost
+		}
+		return nil
+	})
 }
 
 // FinishOperation requires authoritative terminal evidence from the lifecycle

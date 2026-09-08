@@ -343,11 +343,17 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 新增公开 `pkg/fabric` 模板契约。启动配置生成不可变、有版本的目录，限制模板数、总大小、字段数及标识长度；只支持 string、integer、boolean 三种首版公开字段。整数使用精确 int64 边界并拒绝浮点、指数和字符串强制转换，字符串按 UTF-8 字节、枚举和控制字符检查；未配字段、结构值、越界输入及不成对 Unicode surrogate 均拒绝。目录指纹不包含 Secret，可供后续宿主配置准入组合使用。
 - `internal/managed.Service` 先认证浏览器会话，对可用模板逐项执行 `template.list` 检查；普通拒绝隐藏条目和存在性，检查器故障则整体失败。查看与新建分别执行 `template.get`、`runner.create`，只把已配置的 Fabric/模板标识交给检查器，用户参数和私有配置不会进入权限请求。
 - 创建在两个权限决定的最短有效期内校验完整请求，再调用原 SQL 原子事务；事务继续复核同一浏览器 session、身份 namespace/subject 和幂等摘要。成功只保存未绑定 Runner 与持久创建意图，不调用提供方，也不把数据库提交解释为资源已分配。公开请求类型从内部生命周期包移到 `pkg/fabric`，没有保留开发阶段兼容别名。
-- 验证：`pkg/fabric`、授权、Managed 服务及 metadata 的定向 race 回归通过，覆盖配置不可变、顺序无关指纹、禁用版本、拒绝隐藏、策略故障、双重访问检查、请求拷贝、非法参数不落库及伪造早期认证被事务复核拒绝。后续仍需把目录和服务装配进宿主/Web，组合目录指纹到 PostgreSQL 准入，并实现真实 FabricProvider、worker、Bootstrap、续期和销毁闭环。
+- 验证：`pkg/fabric`、授权、Managed 服务及 metadata 的定向 race 回归通过，覆盖配置不可变、顺序无关指纹、禁用版本、拒绝隐藏、策略故障、双重访问检查、请求拷贝、非法参数不落库及伪造早期认证被事务复核拒绝。后续仍需把目录和服务装配进宿主/Web，组合目录指纹到 PostgreSQL 准入，并实现真实提供方适配、Bootstrap、续期和销毁闭环。
 
 ### 已完成：Managed 创建动作的适配器执行边界
 
 - `pkg/fabric.CreateProvider` 定义首个窄接口：`Create` 接收已验证的不可变模板快照，以及动作 ID、Operation/Runner/Fabric、请求摘要、原始 worker/执行修订和绑定修订；私有选项与凭据保留在适配器实例。`ReconcileCreate` 只能查询同一原始动作关联，并取得 Dune 已持久确认的可选资源引用，不授予重发变更的权限。接口只覆盖当前已实现的创建阶段，避免在真实适配闭环前臆造 Bootstrap、续期和销毁形状。
 - 内部 Executor 复制 Fabric 到适配器的启动配置，读取原创建快照并复核 claimed Operation，提交动作预约后再次检查数据库执行权。只有首次预约的明确提交调用一次 `Create`；重复进入、unknown、timeout、重启或接管均调用 `Reconcile`，终态直接返回。调用前后的 SQL 条件检查使用数据库时钟；不会把数据库绝对租约与本机时钟比较，worker 须为 SDK 调用提供有界 context。
 - 适配器错误不会被解释为失败或成功：deadline 映射为 timed_out，其他错误映射为 unknown，并忽略同时返回的未确认字段。适配器可以用无错误的 unknown 返回已核验部分引用；succeeded 必须包含资源引用，非法状态、控制字符、无引用有效期或 create 报告资源已删除均作为契约错误拒绝。
-- 验证：Executor race 回归覆盖配置快照、Create 恰好一次调用、稳定动作与执行身份、provider 不能修改持久请求、confirmed resource 原子保存、unknown 后仅 Reconcile、timeout/错误保守记录、终态幂等、缺失适配器不预约和非法事实拒绝。当前适配器仍为测试夹具，不构成真实提供方、持久扫描 worker、Bootstrap、反向 WS、续期或销毁闭环。
+- 验证：Executor race 回归覆盖配置快照、Create 恰好一次调用、稳定动作与执行身份、provider 不能修改持久请求、confirmed resource 原子保存、unknown 后仅 Reconcile、timeout/错误保守记录、终态幂等、缺失适配器不预约和非法事实拒绝。当前适配器仍为测试夹具，不构成真实提供方、Bootstrap、反向 WS、续期或销毁闭环。
+
+### 已完成：Managed 创建操作的持久恢复循环
+
+- `internal/managed.Worker` 按数据库时钟读取至多 32 条租约到期的 Managed create 阶段工作，跳过本实例未配置的 Fabric，再以进程随机身份领取其中一条。领取事务重复验证 create 动作尚未完成；旧扫描不能给已经进入 Bootstrap 的 Operation 增加执行修订。单个 worker 串行访问提供方，多实例由现有 SQL 租约竞争，不引入第二套协调器。
+- worker 在有界 provider context 外保留数据库 context，调用超时后仍能原子写入 timed_out；调用持续时每三分之一租约周期续约。续约失败会取消可信适配器调用，旧执行者仍受结果提交条件限制，外部系统隔离继续由适配器承担。确定完成的 create 阶段只交还临时执行租约，保留 Runner 业务互斥供 Bootstrap；unknown/timed_out 保留当前租约作为持久最短核对间隔，到期后仍只查询原动作。
+- 验证：SQLite race 回归覆盖自动领取、成功阶段不再扫描、provider deadline 独立落库、到期前不核对、到期后 Reconcile、长调用跨初始租约续约、竞争领取拒绝、未配置 Fabric 不变；metadata 的 SQLite/PostgreSQL 子用例覆盖数据库筛选和锁内阶段复核。当前 worker 还未装配进公开宿主，未实现 Bootstrap、首次连接判定、续期、销毁或真实提供方验收。
