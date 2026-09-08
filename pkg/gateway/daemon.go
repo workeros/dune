@@ -8,6 +8,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/observe"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
 )
@@ -120,15 +121,23 @@ func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, contr
 	old := g.routes[target]
 	g.routes[target] = r
 	g.mu.Unlock()
+	routeOutcome := "online"
 	if old != nil {
+		routeOutcome = "replaced"
 		old.s.Close()
 	}
+	g.emit(observe.Event{Name: observe.GatewayRoute, Outcome: routeOutcome, Target: target, OwnerID: g.bootID, Incarnation: binding.Incarnation, Generation: binding.Generation, Epoch: r.b.RouteEpoch})
 	defer func() {
+		removed := false
 		g.mu.Lock()
 		if g.routes[target] == r {
 			delete(g.routes, target)
+			removed = true
 		}
 		g.mu.Unlock()
+		if removed {
+			g.emit(observe.Event{Name: observe.GatewayRoute, Outcome: "offline", Target: target, OwnerID: g.bootID, Incarnation: binding.Incarnation, Generation: binding.Generation, Epoch: r.b.RouteEpoch})
+		}
 	}()
 	go r.input.Watch(ctx, func() { session.Close() })
 	log.Printf("fabricd registered incarnation=%s generation=%d", binding.Incarnation, binding.Generation)

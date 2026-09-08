@@ -1,5 +1,7 @@
 package gateway
 
+import "github.com/aiomni/dune/pkg/observe"
+
 // Status describes this core's intake and current work, without target IDs.
 // Connections include idle control sessions; Streams counts accepted requests
 // until their forwarding and application callbacks have finished. OnlineRoutes
@@ -47,16 +49,19 @@ func (g *Gateway) beginDrainLocked() {
 
 func (g *Gateway) acquireStream(target string) bool {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	_, targetBlocked := g.blocked[target]
 	if g.closed || g.draining || targetBlocked {
+		g.mu.Unlock()
 		return false
 	}
 	select {
 	case g.streams <- struct{}{}:
 		g.targetStreams[target]++
+		g.mu.Unlock()
 		return true
 	default:
+		g.mu.Unlock()
+		g.emit(observe.Event{Name: observe.GatewayBackpressure, Outcome: "gateway_stream_limit", Target: target})
 		return false
 	}
 }

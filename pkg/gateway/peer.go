@@ -11,6 +11,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/observe"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
 )
@@ -53,6 +54,11 @@ func cloneRoute(route Route) Route {
 
 func (g *Gateway) connectPeer(parent context.Context, target string) (*route, error) {
 	started := time.Now()
+	event := observe.Event{Name: observe.GatewayPeerDial, Outcome: "failed", Target: target, Route: "peer"}
+	defer func() {
+		event.DurationMicros = elapsedMicros(started)
+		g.emit(event)
+	}()
 	lookup, cancelLookup := context.WithTimeout(parent, directoryTimeout)
 	lease, err := g.directory.Resolve(lookup, target)
 	lookupErr := lookup.Err()
@@ -72,6 +78,7 @@ func (g *Gateway) connectPeer(parent context.Context, target string) (*route, er
 	if lease.Binding.Target != target || lease.Binding.Version != api.Version || lease.Binding.Incarnation == "" || lease.Binding.Generation == 0 || lease.Binding.RouteRecovery != "" || lease.Binding.RouteEpoch != 0 {
 		return nil, ErrRouteStale
 	}
+	event.OwnerID, event.Incarnation, event.Generation, event.Epoch = lease.OwnerBootID, lease.Binding.Incarnation, lease.Binding.Generation, lease.Epoch
 	// A delayed directory response cannot grant a fresh dialing window. Once the
 	// original term is confirmed by its owner, that connection's owner/input
 	// deadlines govern its lifetime; this entry does not renew someone else's term.
@@ -146,6 +153,7 @@ func (g *Gateway) connectPeer(parent context.Context, target string) (*route, er
 		}
 	}()
 	keep = true
+	event.Outcome = "connected"
 	return &route{ctx: life, s: session, b: binding, peer: &lease.Route}, nil
 }
 

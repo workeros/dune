@@ -2,15 +2,34 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/observe"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
 func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, binding BindingContext, handler ConnectionHandler) {
+	started := time.Now()
+	var err error
+	route := "local"
+	if r.peer != nil {
+		route = "peer"
+	}
+	event := observe.Event{Name: observe.GatewayStream, Outcome: "rejected", Target: binding.Target, Role: binding.Role, Route: route, Incarnation: r.b.Incarnation, Generation: r.b.Generation, Epoch: r.b.RouteEpoch}
+	defer func() {
+		if event.Outcome == "accepted" {
+			event.Outcome = "completed"
+			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
+				event.Outcome = "interrupted"
+			}
+		}
+		event.DurationMicros = elapsedMicros(started)
+		g.emit(event)
+	}()
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(context.Canceled)
 	// Locally handled streams also belong to the selected reverse connection.
@@ -30,6 +49,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 		c.Fail("STALE_BINDING", fmt.Errorf("invalid target or binding"))
 		return
 	}
+	event.RequestID, event.Operation = m.RequestId, m.Operation
 	if m.RouteRecovery != r.b.RouteRecovery || m.RouteEpoch != r.b.RouteEpoch {
 		c.Fail("ROUTE_STALE", fmt.Errorf("request belongs to another ownership term"))
 		return
@@ -65,6 +85,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 		c.Fail("ACCESS_DENIED", err)
 		return
 	}
+	event.Outcome = "accepted"
 	if !forward {
 		for {
 			var message *pb.Message
@@ -110,6 +131,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	defer stopFabric()
 	m.AccessContext = flow.accessContext
 	if err = r.send(d, m); err != nil {
+		event.Outcome = "result_unknown"
 		c.Fail("RESULT_UNKNOWN", err)
 		return
 	}

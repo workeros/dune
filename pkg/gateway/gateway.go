@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/observe"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
 	"net"
@@ -29,6 +30,8 @@ type Gateway struct {
 	ownerAddress, recovery, bootID string
 	dialPeer                       PeerDialer
 	mu                             sync.Mutex
+	observeMu                      sync.RWMutex
+	observer                       func(observe.Event)
 	closed, draining               bool
 	drained                        chan struct{}
 	routes                         map[string]*route
@@ -149,6 +152,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	select {
 	case g.slots <- struct{}{}:
 	default:
+		g.emit(observe.Event{Name: observe.GatewayBackpressure, Outcome: "session_limit", Target: binding.Target, Role: binding.Role})
 		return fmt.Errorf("session limit")
 	}
 	defer func() { <-g.slots }()
@@ -222,6 +226,8 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	timer.Stop()
 	defer st.Close()
 	if h.Role == "daemon" {
+		closed := g.observeConnection(binding.Target, h.Role, m.Incarnation, m.ConnectionGeneration)
+		defer closed()
 		return g.serveDaemon(ctx, s, st, m, binding)
 	}
 	if h.Role != RoleSDK && h.Role != RolePeer {
@@ -258,6 +264,8 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	if st.Send(&pb.Message{Kind: "welcome", Payload: api.Payload(r.b)}) != nil {
 		return nil
 	}
+	closed := g.observeConnection(binding.Target, h.Role, r.b.Incarnation, r.b.Generation)
+	defer closed()
 	go func() { _, _ = st.Recv(); s.Close() }()
 	sem := make(chan struct{}, wire.MaxStreams)
 	for {
@@ -268,6 +276,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 		select {
 		case sem <- struct{}{}:
 		default:
+			g.emit(observe.Event{Name: observe.GatewayBackpressure, Outcome: "connection_stream_limit", Target: binding.Target, Role: h.Role})
 			raw.Close()
 			continue
 		}
@@ -276,9 +285,11 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 			raw.Close()
 			continue
 		}
+		streamBinding := binding
+		streamBinding.Role = h.Role
 		go func() {
 			defer func() { <-sem; g.releaseStream(binding.Target) }()
-			g.forward(ctx, wire.Wrap(raw), r, binding, handler)
+			g.forward(ctx, wire.Wrap(raw), r, streamBinding, handler)
 		}()
 	}
 }

@@ -492,3 +492,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 新增无产品实现依赖的公开 `pkg/observe` 事件与 Sink 契约，企业宿主通过 `host.Options.Observer` 注入采集器。宿主使用 256 项有界队列异步、串行投递，每次 sink 调用最多给出 100 ms context；慢 sink 不阻塞访问检查或业务请求，溢出和关闭时未投递事件计入 `App.ObservationStatus`。Sink 由调用方持有，Dune 不把尽力而为事件宣称为可靠审计存储。
 - 产品 API、连接凭据消费、首条执行请求、持续输入和授权中点复核统一从最终 `access.Evaluate` 结果发出 `access.check`。事件区分 allowed、denied 和 unavailable，记录微秒耗时、Dune principal/namespace、权威 Runner/machine/Fabric、operation/suboperation、请求与决定 ID；类型没有任意属性、subject、错误正文、命令、文件、终端、prompt 或凭据字段。
 - 回归覆盖允许与归一化拒绝的最终决定、Attached API 的实际允许/拒绝事件、字段裁剪、健康 sink 零丢弃，以及阻塞 sink 下队列上限、累计丢弃和有界关闭。本检查点只完成访问审计与通用投递基础；连接 owner/跨实例流、Managed 提供方耗时、unknown/续期风险和残留资源观测继续使用同一事件契约补齐。
+
+### 已完成组件：Gateway 连接、路由与流观测
+
+- 协议 core 增加线程安全的 `Gateway.SetObserver`，不引入宿主、身份、Runner 或 SQL 依赖。完整宿主把它接入同一个异步有界 dispatcher；独立 core 嵌入者的直接回调须立即返回。回调 panic 被隔离，不能改变连接和流结果。
+- 连接事件按握手确认的 daemon/SDK/peer 角色记录 opened/closed 和存续时长。路由在输入确认及目录 Publish 后才记录 online，替换记录 replaced，只有当前绑定离线才记录 offline；事件包含 target、owner boot、incarnation、generation 与 route epoch，不包含内部地址。peer dial 记录目录确认 owner 后的 connected/failed 与耗时。
+- 每条已接收业务流在全部应用清理回调完成后记录终态和微秒耗时，`route=local|peer` 可计算跨实例比例；拒绝、传输中断和首个可能已发送请求的断链分别是 rejected、interrupted、result_unknown。会话、单连接流和全局流上限分别发出固定 backpressure outcome，不附带错误正文或协议载荷。
+- 回归用真实 Yamux 协议链验证 daemon/SDK 连接、本机 route、转发流和离线事件，并用一跳 peer fixture 核对 owner/epoch 与 `route=peer`；容量夹具验证拒绝，panic 采集器不影响 core。Gateway/Host 全包 race、构建和静态检查作为本功能提交前验证。Managed 提供方耗时、unknown/续期积压、到期风险与残留资源仍待接入同一事件出口。

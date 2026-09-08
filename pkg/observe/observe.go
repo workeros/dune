@@ -9,8 +9,13 @@ import (
 )
 
 const (
-	AccessCheck = "access.check"
-	Dropped     = "observe.dropped"
+	AccessCheck         = "access.check"
+	GatewayBackpressure = "gateway.backpressure"
+	GatewayConnection   = "gateway.connection"
+	GatewayPeerDial     = "gateway.peer_dial"
+	GatewayRoute        = "gateway.route"
+	GatewayStream       = "gateway.stream"
+	Dropped             = "observe.dropped"
 )
 
 // Event contains only bounded operational facts and controlled identifiers.
@@ -39,7 +44,12 @@ type Event struct {
 	ResourceRef   string `json:"resource_ref,omitempty"`
 	PolicyVersion string `json:"policy_version,omitempty"`
 	Route         string `json:"route,omitempty"`
+	Role          string `json:"role,omitempty"`
+	OwnerID       string `json:"owner_id,omitempty"`
+	Incarnation   string `json:"incarnation,omitempty"`
 	Revision      int64  `json:"revision,omitempty"`
+	Generation    uint64 `json:"generation,omitempty"`
+	Epoch         uint64 `json:"epoch,omitempty"`
 	Count         uint64 `json:"count,omitempty"`
 }
 
