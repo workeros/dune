@@ -286,10 +286,36 @@ func TestManagedProviderCallsEmitBoundedObservations(t *testing.T) {
 			if err != nil || bytes.Contains(encoded, []byte("ignored-provider-resource")) || bytes.Contains(encoded, []byte("private provider failure")) {
 				t.Fatal("Managed provider event exposed adapter output", string(encoded), err)
 			}
+			statusDeadline := time.Now().Add(3 * time.Second)
+			for {
+				status, err := app.ManagedStatusSnapshot(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if status.Enabled && !status.CheckedAt.IsZero() && status.Runners == 1 && status.UnknownOperations == 1 {
+					break
+				}
+				if time.Now().After(statusDeadline) {
+					t.Fatal("host status did not expose persisted uncertainty", status)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 			return
 		case <-deadline:
 			t.Fatal("host did not emit the Managed provider call")
 		}
+	}
+}
+
+func TestManagedStatusSnapshotReportsDisabledConfiguration(t *testing.T) {
+	app, err := host.Open(context.Background(), host.Options{DataDir: filepath.Join(t.TempDir(), "metadata"), PublicURL: "http://dune.example.test/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	status, err := app.ManagedStatusSnapshot(context.Background())
+	if err != nil || status.Enabled || !status.CheckedAt.IsZero() || status.Runners != 0 {
+		t.Fatal("plain host reported Managed lifecycle state", status, err)
 	}
 }
 

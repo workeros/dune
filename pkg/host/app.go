@@ -78,28 +78,29 @@ type Options struct {
 // HTTP middleware must preserve Hijacker and ResponseController support (directly
 // or through Unwrap) for upgrades and cancellation of blocked request I/O.
 type App struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	web          *webapp.Server
-	core         *gateway.Gateway
-	publicPath   string
-	store        *metadata.Store
-	peer         *peer.Transport
-	peerHandler  http.Handler
-	admission    *gateway.AdmissionLease
-	observer     *observationRecorder
-	mu           sync.Mutex
-	closed       bool
-	draining     bool
-	requests     int
-	requestsDone chan struct{}
-	managedDrain chan struct{}
-	managedDone  chan struct{}
-	servers      map[*http.Server]struct{}
-	active       sync.WaitGroup
-	once         sync.Once
-	done         chan struct{}
-	err          error
+	ctx           context.Context
+	cancel        context.CancelFunc
+	web           *webapp.Server
+	core          *gateway.Gateway
+	publicPath    string
+	store         *metadata.Store
+	peer          *peer.Transport
+	peerHandler   http.Handler
+	admission     *gateway.AdmissionLease
+	observer      *observationRecorder
+	managedStatus *managedStatusConfig
+	mu            sync.Mutex
+	closed        bool
+	draining      bool
+	requests      int
+	requestsDone  chan struct{}
+	managedDrain  chan struct{}
+	managedDone   chan struct{}
+	servers       map[*http.Server]struct{}
+	active        sync.WaitGroup
+	once          sync.Once
+	done          chan struct{}
+	err           error
 }
 
 // Open assembles an application without opening a listener. Cancelling parent
@@ -236,7 +237,11 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), managedDrain: make(chan struct{}), managedDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	var managedStatus *managedStatusConfig
+	if managedConfig != nil {
+		managedStatus = &managedStatusConfig{policyVersion: managedConfig.worker.RenewalPolicyVersion, expiryRiskWindow: managedConfig.worker.Renewal.RenewBefore}
+	}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), managedDrain: make(chan struct{}), managedDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, observer: observer, managedStatus: managedStatus, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
 	if admission != nil {
 		app.active.Add(1)

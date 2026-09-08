@@ -505,3 +505,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 完整宿主在不修改调用方 provider map 和适配器实例的前提下，包装 Create、Bootstrap、Inspect、Renew、Destroy 与候选核验六类能力。每次实际调用返回后发出 `managed.provider_call`，记录 dispatch/reconcile/read/verify 模式、微秒耗时、Fabric、Runner、原 action/operation ID 和 execution revision；普通错误归为 unknown，deadline 归为 timed_out，未知枚举归为 invalid。
 - `resource_ref` 只取调用前已进入 Dune 持久状态的动作或资源。Create 返回的未校验引用、人工候选引用、错误正文、Bootstrap enrollment、模板参数、SDK 凭据和私有 provider 配置不会进入固定事件结构。事件位于结果字段校验和 SQL 提交之前，因此 provider 报告 succeeded 不表示 Dune 已接受该事实；权威结论继续读取持久 Operation/action/resource。
 - 宿主创建回归通过真实 API 接受 Operation，并由后台 worker 调用一个返回错误及伪资源的 provider，确认事件使用原动作身份、结果为 unknown 且没有泄露 provider 输出。受影响 Host 回归、构建和静态检查作为提交验证。unknown/续期积压、到期风险及残留资源的聚合快照仍待补齐。
+
+### 已完成组件：Managed 生命周期运维快照
+
+- 新增可信宿主方法 `App.ManagedStatusSnapshot`，用一个 statement 的数据库时钟视图返回全局计数：Managed Runner、已知及仍可访问资源、unknown/timed-out Operation、当前策略下的续期积压、`RenewBefore` 范围内的到期风险和残留资源。没有 Managed 配置时明确返回 `enabled=false` 的零状态；该方法没有普通用户 HTTP 路由，调用者负责运维身份与权限。
+- backlog 包含没有维护决定、策略版本已变化、检查时间已到或已有冻结续期决定的可访问资源。residual 包含访问已关闭但尚未确认 Gone 的资源，以及没有 machine 且相关 Operation/action 为 unknown、timed_out 或 failed 的资源；同一资源只计一次。快照不返回 principal、Runner ID、resource_ref、错误正文或适配器配置，也不访问 provider，读取成功不代表外部平台健康。
+- SQLite 和专用 PostgreSQL 17 的同一状态夹具均通过，覆盖策略漂移、到期提前量、unknown/timed-out 分离、残留去重和参数边界；宿主端回归还确认 provider 事件先于 SQL 时会轮询到最终持久事实。受影响包 race、构建和静态检查作为本功能提交前验证。至此 §9 要求的 Managed unknown、续期积压、到期风险和残留资源已有可轮询聚合出口；真实 provider 的监控接线仍随具体企业适配器验收。

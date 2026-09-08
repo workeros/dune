@@ -21,4 +21,6 @@
 
 `managed.provider_call` 在适配器返回后、Dune 校验全部结果字段及提交 SQL 之前发出。它的 outcome 表示原始 provider 枚举或调用错误的保守归一化，不代表动作已经持久提交；例如 provider 报告 `succeeded` 后仍可能因字段契约或执行租约失效而被拒绝。普通错误统一为 `unknown`，deadline 为 `timed_out`，未知枚举为 `invalid`。确认后的权威状态仍以 Managed Operation、action 和 resource 记录为准。
 
-`health/ready` 的 Gateway 数量和 `App.Readiness()` 适合读取当前本机快照；结构化事件适合计算连接/流变化、跨实例比例、耗时和容量拒绝。两者都不探测外部身份、权限、数据库或 Managed 提供方健康。
+`health/ready` 的 Gateway 数量和 `App.Readiness()` 适合读取当前本机快照；结构化事件适合计算连接/流变化、跨实例比例、耗时和容量拒绝。可信运维宿主还可调用 `App.ManagedStatusSnapshot(ctx)`：它用一个数据库时钟快照返回 Managed Runner、已知/可访问资源、unknown/timed-out Operation、当前策略下的续期积压、配置提前量内的到期风险和残留资源数量，不返回具体主体或引用。没有当前维护决定、策略版本变化、检查已到期或已有冻结续期决定都计入 backlog；访问已关闭但未 Gone 的资源，以及没有 machine 且生命周期 unknown/timed-out/failed 的资源计入 residual。调用方须自行鉴权，此方法没有普通用户 HTTP 路由。
+
+就绪、事件和 Managed 快照都不主动探测外部身份、权限、数据库高可用或 Managed provider 健康。一次快照成功只证明该次共享数据库读取完成；provider 状态仍由后续 Inspect/Reconcile 和持久结果确认。

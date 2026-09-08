@@ -118,4 +118,6 @@ Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.d
 
 每个 Operation 在进入 succeeded/failed 时用数据库时钟写入不可变的完成时间。Managed worker 默认以 30 天作为恢复及幂等窗口，可通过 `ManagedWorkerOptions.HistoryRetention` 设置 24 小时至 366 天；该值属于集群配置指纹。高优先级生命周期工作为空时，worker 每个事务最多清理 32 条终态记录：先删除超过窗口且没有近期或不确定 action/review 的 Renew 历史；随后只归档资源已经 Gone、访问关闭得到确认的 Runner，或明确 Create 失败且从未确认资源的 Runner。整个 Runner 还必须没有机器、enrollment、未完成/近期 Operation、近期 action/review 或不确定 review。残留 resource_ref、unknown/timed_out、销毁关闭 timed_out 和有效绑定都保留。
 
+可信宿主通过 `App.ManagedStatusSnapshot` 读取共享状态的全局计数，不开放普通用户 HTTP 管理入口。查询在一个 SQL statement 中固定数据库时间：分别统计 unknown/timed-out Operation、当前策略版本下没有决定或已经到期的续期工作、配置 `RenewBefore` 范围内仍可访问的到期资源，以及访问已关闭但未确认 Gone、或无 machine 且生命周期不确定/失败的残留资源。结果不含 principal、Runner ID、resource_ref 或 provider 错误，也不调用外部平台；查询成功不能解释为 provider 健康。
+
 清理事务使用数据库时间和 PostgreSQL `SKIP LOCKED`，多个 worker 可以竞争而不会重复计算删除；有删除时继续按批推进，无可清理记录后本机最多每小时检查一次。这里的归档是从当前事务库删除完整终态对象，没有普通用户清理 API，也没有把审计复制到外部归档。超过窗口后原请求键不再提供恢复证据；调用方必须发起新的显式操作和请求键，不能把查不到旧记录解释成原外部动作从未发生。
