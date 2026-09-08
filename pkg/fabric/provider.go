@@ -19,6 +19,7 @@ type Action struct {
 	Issuer            string
 	BindingRevision   int64
 	ExecutionRevision int64
+	RenewUntil        time.Time
 }
 
 // CreateCall contains the exact validated template snapshot accepted by Dune.
@@ -53,6 +54,19 @@ type BootstrapCall struct {
 // material. It never grants permission to inject, install or start again.
 type BootstrapReconcileCall struct {
 	Action Action
+}
+
+// RenewCall grants one mutation toward the absolute target stored in Action.
+// The provider must treat Action.ID as the stable idempotency key.
+type RenewCall struct {
+	Action Action
+}
+
+// RenewReconcileCall only observes the original renewal. KnownExpiresAt is the
+// latest provider fact Dune accepted and does not authorize another mutation.
+type RenewReconcileCall struct {
+	Action         Action
+	KnownExpiresAt time.Time
 }
 
 // InspectCall identifies one already associated resource. Inspect is read-only;
@@ -124,4 +138,11 @@ type BootstrapProvider interface {
 // recorded as unknown (or timed out) and all returned fields are ignored.
 type InspectProvider interface {
 	Inspect(context.Context, InspectCall) (Inspection, error)
+}
+
+// RenewProvider extends one already associated resource. ReconcileRenew must
+// only query the original action correlation and must never repeat Renew.
+type RenewProvider interface {
+	Renew(context.Context, RenewCall) (Observation, error)
+	ReconcileRenew(context.Context, RenewReconcileCall) (Observation, error)
 }

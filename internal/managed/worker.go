@@ -40,6 +40,7 @@ type ProviderSet struct {
 	Create    map[string]fabric.CreateProvider
 	Bootstrap map[string]fabric.BootstrapProvider
 	Inspect   map[string]fabric.InspectProvider
+	Renew     map[string]fabric.RenewProvider
 }
 
 // Worker recovers accepted create and Bootstrap stages independently of browser
@@ -51,9 +52,11 @@ type Worker struct {
 	create             *Executor
 	bootstrap          *BootstrapExecutor
 	maintenance        *MaintenanceExecutor
+	renewal            *RenewalExecutor
 	createProviders    map[string]struct{}
 	bootstrapProviders map[string]struct{}
 	inspectProviders   map[string]struct{}
+	renewProviders     map[string]struct{}
 	config             WorkerConfig
 	instanceID         string
 }
@@ -61,6 +64,9 @@ type Worker struct {
 func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig) (*Worker, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
+	}
+	if len(providers.Renew) > 0 && !validProviderName(config.RenewalPolicyVersion) {
+		return nil, fmt.Errorf("managed renewal worker requires a policy version")
 	}
 	create, err := NewExecutor(store, providers.Create)
 	if err != nil {
@@ -92,9 +98,17 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 			inspectConfigured[id] = struct{}{}
 		}
 	}
+	renewal, err := NewRenewalExecutor(store, providers.Renew)
+	if err != nil {
+		return nil, err
+	}
+	renewConfigured := make(map[string]struct{}, len(renewal.providers))
+	for id := range renewal.providers {
+		renewConfigured[id] = struct{}{}
+	}
 	return &Worker{
-		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance,
-		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured,
+		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal,
+		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured, renewProviders: renewConfigured,
 		config: config, instanceID: wire.ID(),
 	}, nil
 }
@@ -127,6 +141,39 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 				return false, err
 			}
 			return true, w.executeInspection(ctx, claimed)
+		}
+	}
+	if len(w.renewProviders) > 0 {
+		candidates, err := w.store.RecoverableManagedRenewalsFor(ctx, configuredFabrics(w.renewProviders), managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, candidate := range candidates {
+			claimed, err := w.store.ClaimRecoverableManagedRenewal(ctx, candidate.ID, w.instanceID, w.config.LeaseTTL)
+			if errors.Is(err, lifecycle.ErrBusy) || errors.Is(err, lifecycle.ErrLeaseLost) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			return true, w.execute(ctx, claimed, "renew", w.renewal.Execute)
+		}
+		schedules, err := w.store.RecoverableManagedRenewalSchedulesFor(ctx, configuredFabrics(w.renewProviders), w.config.RenewalPolicyVersion, managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, schedule := range schedules {
+			claimed, consumed, err := w.store.ClaimScheduledManagedRenewal(ctx, schedule, w.config.RenewalPolicyVersion, w.instanceID, w.config.LeaseTTL)
+			if errors.Is(err, lifecycle.ErrBusy) || errors.Is(err, lifecycle.ErrLeaseLost) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			if !consumed || claimed.ID == "" {
+				return consumed, nil
+			}
+			return true, w.execute(ctx, claimed, "renew", w.renewal.Execute)
 		}
 	}
 	if w.bootstrap != nil {
@@ -211,6 +258,13 @@ func (w *Worker) execute(ctx context.Context, claimed lifecycle.Operation, kind 
 				return err
 			}
 			action, err := w.store.ProviderAction(ctx, claimed.ID, kind)
+			if errors.Is(err, metadata.ErrNotFound) {
+				operation, operationErr := w.store.Operation(ctx, claimed.ID)
+				if operationErr == nil && operation.Finished {
+					return nil
+				}
+				return errors.Join(err, operationErr)
+			}
 			if err != nil {
 				return err
 			}

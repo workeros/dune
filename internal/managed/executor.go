@@ -45,6 +45,7 @@ func providerAction(op lifecycle.Operation, action lifecycle.ProviderAction) fab
 		FabricID: op.FabricID, RequestDigest: action.Digest,
 		ResourceRef: action.ResourceRef, Issuer: action.Worker,
 		BindingRevision: op.BindingRevision, ExecutionRevision: action.ExecutionRevision,
+		RenewUntil: action.RenewUntil,
 	}
 }
 

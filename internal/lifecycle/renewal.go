@@ -88,6 +88,13 @@ type RenewalSchedule struct {
 	Lease
 }
 
+// ManagedRenewal is the immutable input copied from a policy schedule into an
+// independent mutation Operation. Until never slides during retry or takeover.
+type ManagedRenewal struct {
+	OperationID, RunnerID, PolicyVersion string
+	Until                                time.Time
+}
+
 // DecideRenewal is pure: it neither consults browser sessions nor performs
 // provider I/O. The scheduler still owns durable claims, stable action keys,
 // jitter/backoff, provider limits and confirmation of the resulting expiry.

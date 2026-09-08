@@ -250,6 +250,13 @@ func (s *Store) RecordProviderAction(ctx context.Context, expected lifecycle.Ope
 		if err := s.updateOperationOutcome(ctx, tx, expected, outcome, finished); err != nil {
 			return err
 		}
+		if action.Kind == "renew" {
+			// A terminal mutation always returns the resource to provider inspection.
+			// The next policy decision must use newly observed facts.
+			if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_maintenance SET reason='',next_check_at=`+s.databaseClock()+`,renew_until=0 WHERE runner_id=$1`, current.RunnerID); err != nil {
+				return err
+			}
+		}
 		if !finished && action.Kind == "bootstrap" {
 			// External work has ended; observing the first connection must not prevent
 			// a separate renewal Operation from acquiring the Runner business lock.
