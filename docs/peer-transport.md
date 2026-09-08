@@ -88,6 +88,8 @@ CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任�
 
 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s` 启动三个独立官方 CLI 服务进程和真实 fabricd，A 签发安装材料、B 消费并持有机器连接，A/C 的 Web 和人类 CLI 经 peer 访问 B，另一入口退出用户后验证既有访问失效。测试证书写入专用临时目录，结束后连同进程、schema 一起清理；该回归是三进程正常运行链路，不是网络分区、时钟扰动或 Linux 集群故障验收。
 
+`go test -race ./tests -run TestPostgresClusterTwoUserIsolationAndCapabilities -count=1 -timeout=120s` 在三个正式节点上把两条真实 fabricd 隧道分别固定到 B 和 C，两名用户从 A 进入。默认 owner 策略下，每人只发现并取得自己的目标；一次性票据不能在握手中换成另一目标，失败后也不能重放。随后两条 mTLS peer 路径分别执行 File、Git、PTY 和原始 ACP。该用例验证 Dune 的目标与用户上下文隔离，不提供同一 OS 用户内的 Shell 文件隔离。
+
 配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、独立关闭计时器和有界输入。正式 CLI 的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。
 
 ## 已验证的网络故障范围

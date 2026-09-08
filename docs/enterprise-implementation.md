@@ -440,3 +440,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 数据库时间回拨一分钟后，Renew 保留此前写入的较晚 expiry，返回给进程的有效时长仍不超过十五秒，第二个 owner 继续得到 busy。时间前跳一分钟后，旧 owner 的续约立即 stale，Resolve 不再发布旧 route；接管者必须推进 epoch，旧 epoch 的 Publish、Renew 和 Release 均不能改变新记录。
 - 时间恢复正常会保留前跳期间写入的未来 expiry，第三个 owner 仍被拒绝；这一边界选择暂时不可接管，也不缩短已经返回的期限。Gateway 已有单调本地 deadline 和迟到响应回归继续保证数据库绝对时间不会直接成为进程内权限。
 - 专用 PostgreSQL 17 下新增用例的 race 检查通过。它精确验证目录 SQL 的时钟边界，没有修改宿主或 PostgreSQL 进程时钟，也不等同于跨主机 NTP、Linux 或与网络分区/进程暂停同时发生的组合演练；配置准入和 Managed deadline 仍由各自数据库时间回归覆盖，未据此扩张本次验收范围。
+
+### 已完成：三节点的双用户与双机器能力隔离
+
+- 新增三个正式 Web/peer 进程、两个本地身份账号和两条真实 fabricd 隧道的 PostgreSQL 回归。机器分别连接 B 与 C，所有用户请求固定进入 A；目录确认两个不同 owner 后才开始业务验证。
+- 默认 owner 策略下，每个用户的权威发现结果只包含本人的一个目标，也不能为另一人的机器签发访问。把一张合法票据用于另一 target 时，入口握手失败且该一次性票据随后不可重放；重新签发给原目标后才能建立对应连接，因此客户端字段不能改投用户或隧道。
+- 两个用户都从同一入口经各自 mTLS peer 路径完成 File 写读、Git 初始化与状态、PTY 输入输出和原始 ACP JSON 消息，验证能力分派保留原用户、目标和执行 binding。测试结束停止两份 fabricd 并清理 tmux；它验证 Dune 产品隔离，不宣称同一 OS 用户内获准 Shell 的文件系统隔离。
+- 专用 PostgreSQL 17 下该正式进程用例的 race 运行通过；与既有正常 CLI、分区和进程暂停合并后的四项正式进程回归也通过。当前仍不是跨主机 Linux、真实 Agent 或 Managed 提供方验收。
