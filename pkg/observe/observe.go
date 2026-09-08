@@ -15,6 +15,7 @@ const (
 	GatewayPeerDial     = "gateway.peer_dial"
 	GatewayRoute        = "gateway.route"
 	GatewayStream       = "gateway.stream"
+	ManagedProviderCall = "managed.provider_call"
 	Dropped             = "observe.dropped"
 )
 

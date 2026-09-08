@@ -36,6 +36,8 @@ SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能�
 
 配置 `host.Options.Observer` 后，宿主还会发出连接 opened/closed、路由 online/replaced/offline、peer 拨号 connected/failed、业务流终态及固定容量拒绝事件。流事件用 `route=local|peer` 区分本机与一跳转发，携带绑定代次和请求 ID 但不携带 peer 地址、访问上下文或协议载荷，可用于计算跨实例比例、耗时和背压。协议 core 的独立嵌入者也可用 `Gateway.SetObserver` 接收同一事件；该回调直接位于 core 路径，必须立即返回，完整宿主默认通过异步有界队列隔离 sink。详见[结构化观测](observability.md)。
 
+完整宿主还在每次 Managed provider 返回后发出调用类型、dispatch/reconcile 模式、耗时和受控动作身份。事件不记录错误正文、Create 的未校验返回引用、候选引用、Bootstrap enrollment 或适配器私有配置；provider outcome 在字段校验与数据库提交之前采集，因此只用于调用诊断，不能替代持久 Operation/action 状态。
+
 例如公开 URL 为 `https://dune.example.com/tools/dune/` 时，就绪路径为 `/tools/dune/health/ready`。允许接新工作时返回 200；排空、关闭、准入失效或本机 peer 证书到期返回 503。`health/live` 在排空但尚可服务时仍返回 200，关闭或本机准入失效返回 503。挂载到外部服务器时，关闭后的探针仍可返回状态；App 自己拥有的监听器关闭后不可继续探测。
 
 `App.Shutdown(ctx)` 不可逆地停止新的 HTTP/管理员工作、公开/peer 连接、已有连接上的新流和新的 Managed worker 迭代。已有流可以继续收发，并保留访问检查、输入期限、配置与连接归属续约；正常排空后才关闭连接并释放 owner。排空边界前已由 worker 领取的一轮可以完成，但完成后不会领取下一个阶段或排队操作。空闲 daemon/SDK/peer 控制连接不阻塞排空，持续终端和事件订阅属于未完成工作。已接受的 HTTP 请求可以完成当前处理；其中尚未建立的新 Gateway 工作仍受停止准入约束，不自动重试或转移到别处。

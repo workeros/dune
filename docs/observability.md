@@ -14,8 +14,11 @@
 | `gateway.peer_dial` | `connected`、`failed`；记录目录解析后的一跳 owner 连接结果 |
 | `gateway.stream` | `completed`、`rejected`、`interrupted`、`result_unknown`；`route` 区分 `local` 与 `peer` |
 | `gateway.backpressure` | `session_limit`、`connection_stream_limit`、`gateway_stream_limit`；记录固定容量拒绝 |
+| `managed.provider_call` | Create/Bootstrap/Renew/Destroy 的 `dispatch` 或 `reconcile`、Inspect 的 `read`、候选核验的 `verify`；结果为 provider 返回的 `succeeded`、`failed`、`unknown`、`confirmed`，或 Dune 归一化的 `timed_out`、`invalid` |
 | `observe.dropped` | `dropped`；`count` 是最近一批未投递事件数 |
 
-事件类型只提供固定字段，不接受任意属性。访问事件可包含 Dune principal/namespace、权威 Runner/machine/Fabric、operation/suboperation、请求和决定 ID；协议事件可包含 target、角色、owner boot、incarnation、generation、route epoch 与请求 ID。它们不包含外部 subject、内部地址、错误正文、命令、环境变量、文件/Git 内容、终端字节、Agent prompt、凭据、Bootstrap token 或提供方私有配置。受控 `resource_ref` 和生命周期 action/operation ID 字段预留给 Managed 观测。
+事件类型只提供固定字段，不接受任意属性。访问事件可包含 Dune principal/namespace、权威 Runner/machine/Fabric、operation/suboperation、请求和决定 ID；协议事件可包含 target、角色、owner boot、incarnation、generation、route epoch 与请求 ID。Managed 调用事件包含动作类型、调用模式、耗时、Fabric、Runner、action/operation ID 和 execution revision，Inspect 的 `revision` 表示 binding revision；`resource_ref` 只来自调用前已经持久化的动作或资源，Create 返回值和人工提交的候选引用不会写入事件。它们不包含外部 subject、内部地址、错误正文、命令、环境变量、文件/Git 内容、终端字节、Agent prompt、凭据、Bootstrap token、enrollment 或提供方私有配置。
+
+`managed.provider_call` 在适配器返回后、Dune 校验全部结果字段及提交 SQL 之前发出。它的 outcome 表示原始 provider 枚举或调用错误的保守归一化，不代表动作已经持久提交；例如 provider 报告 `succeeded` 后仍可能因字段契约或执行租约失效而被拒绝。普通错误统一为 `unknown`，deadline 为 `timed_out`，未知枚举为 `invalid`。确认后的权威状态仍以 Managed Operation、action 和 resource 记录为准。
 
 `health/ready` 的 Gateway 数量和 `App.Readiness()` 适合读取当前本机快照；结构化事件适合计算连接/流变化、跨实例比例、耗时和容量拒绝。两者都不探测外部身份、权限、数据库或 Managed 提供方健康。

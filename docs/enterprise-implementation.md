@@ -499,3 +499,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 连接事件按握手确认的 daemon/SDK/peer 角色记录 opened/closed 和存续时长。路由在输入确认及目录 Publish 后才记录 online，替换记录 replaced，只有当前绑定离线才记录 offline；事件包含 target、owner boot、incarnation、generation 与 route epoch，不包含内部地址。peer dial 记录目录确认 owner 后的 connected/failed 与耗时。
 - 每条已接收业务流在全部应用清理回调完成后记录终态和微秒耗时，`route=local|peer` 可计算跨实例比例；拒绝、传输中断和首个可能已发送请求的断链分别是 rejected、interrupted、result_unknown。会话、单连接流和全局流上限分别发出固定 backpressure outcome，不附带错误正文或协议载荷。
 - 回归用真实 Yamux 协议链验证 daemon/SDK 连接、本机 route、转发流和离线事件，并用一跳 peer fixture 核对 owner/epoch 与 `route=peer`；容量夹具验证拒绝，panic 采集器不影响 core。Gateway/Host 全包 race、构建和静态检查作为本功能提交前验证。Managed 提供方耗时、unknown/续期积压、到期风险与残留资源仍待接入同一事件出口。
+
+### 已完成组件：Managed provider 调用观测
+
+- 完整宿主在不修改调用方 provider map 和适配器实例的前提下，包装 Create、Bootstrap、Inspect、Renew、Destroy 与候选核验六类能力。每次实际调用返回后发出 `managed.provider_call`，记录 dispatch/reconcile/read/verify 模式、微秒耗时、Fabric、Runner、原 action/operation ID 和 execution revision；普通错误归为 unknown，deadline 归为 timed_out，未知枚举归为 invalid。
+- `resource_ref` 只取调用前已进入 Dune 持久状态的动作或资源。Create 返回的未校验引用、人工候选引用、错误正文、Bootstrap enrollment、模板参数、SDK 凭据和私有 provider 配置不会进入固定事件结构。事件位于结果字段校验和 SQL 提交之前，因此 provider 报告 succeeded 不表示 Dune 已接受该事实；权威结论继续读取持久 Operation/action/resource。
+- 宿主创建回归通过真实 API 接受 Operation，并由后台 worker 调用一个返回错误及伪资源的 provider，确认事件使用原动作身份、结果为 unknown 且没有泄露 provider 输出。受影响 Host 回归、构建和静态检查作为提交验证。unknown/续期积压、到期风险及残留资源的聚合快照仍待补齐。

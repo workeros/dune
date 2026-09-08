@@ -90,7 +90,7 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 `App.Shutdown(ctx)` 先停止新请求、新流和新的 Managed worker 迭代，等待已受理工作后关闭；排空边界前已领取的生命周期迭代可在同一 deadline 内完成，超时则取消当前提供方调用并保留持久动作供恢复。没有 deadline 时默认等待五秒，远端 PTY 保留。要优雅退出，应先调用 Shutdown，再取消传给 Open 的生命周期 context；父 context 取消和 Close 仍立即停止。官方 `dune web` 的 SIGINT/SIGTERM 已按此处理，`--drain-timeout` 默认 `5s`、`0` 表示立即关闭。部署前缀下的 `health/ready` 在排空时返回 503，`health/live` 在已有工作仍可服务时返回 200。
 
-企业宿主可设置 `Options.Observer` 接收 `pkg/observe.Event`。事件经 256 项有界队列异步串行投递，覆盖最终访问检查、连接/路由生命周期、本地与跨实例流耗时及容量拒绝；固定字段不含外部 subject、内部地址、错误正文、命令、文件、终端、prompt 或凭据。慢 sink 不阻塞业务，`App.ObservationStatus()` 可读取累计丢弃数；sink 必须响应每次调用的有界 context。该出口不提供执行前可靠审计提交语义，完整契约见[结构化观测](docs/observability.md)。
+企业宿主可设置 `Options.Observer` 接收 `pkg/observe.Event`。事件经 256 项有界队列异步串行投递，覆盖最终访问检查、连接/路由生命周期、本地与跨实例流、容量拒绝及 Managed provider 调用耗时；固定字段不含外部 subject、内部地址、错误正文、命令、文件、终端、prompt、候选引用或凭据。慢 sink 不阻塞业务，`App.ObservationStatus()` 可读取累计丢弃数；sink 必须响应每次调用的有界 context。该出口不提供执行前可靠审计提交语义，完整契约见[结构化观测](docs/observability.md)。
 
 Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；官方 `dune web --cluster-config FILE` 使用同一装配；PostgreSQL 配置一致性由有界准入租约校验；就绪探针和限时排空的使用方式见[就绪与退出](docs/peer-transport.md#就绪与退出)。
 

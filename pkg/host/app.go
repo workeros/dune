@@ -196,7 +196,8 @@ func Open(parent context.Context, options Options) (*App, error) {
 		}
 		workerConfig := managedConfig.worker
 		workerConfig.InstanceID, workerConfig.CloseTarget = appInstanceID, core.Disconnect
-		managedWorker, err = managedmodule.NewWorker(store, managedConfig.providers, workerConfig)
+		providers := observeManagedProviders(managedConfig.providers, observer)
+		managedWorker, err = managedmodule.NewWorker(store, providers, workerConfig)
 		if err != nil {
 			return nil, err
 		}
