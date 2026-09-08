@@ -2,9 +2,11 @@
 
 > 关联规范：[设计规范](../spec.md) · [传输协议](../runner-tunnel-protocol.md)
 
-本目录记录已有源码调研及其对 Dune 的启发，不是第二份规范。各文档的固定版本、许可证和证据链接沿用原调研基线；本次只修订 Dune 的职责映射，不声称重新验证来源项目的新版本或许可证。
+本目录记录源码调研及其对 Dune 的启发，不是第二份规范。各文档按自己的调研日期、固定版本、许可证和证据链接阅读；修订 Dune 职责映射不代表重新验证来源项目的新版本或许可证。
 
 ## 阅读边界
+
+以下职责划分主要描述底层目标设计。Dune 当前还包含个人工作台、身份/SQL 元数据模块及开发机状态持久化；具体已实现行为以代码为准，不用底层边界否定上层功能。新增调研应分别说明目标设计、当前实现和待验证建议。
 
 Dune 交付底层协议、SDK、Gateway 和 daemon。统一调用路径为 `SDK -> Gateway -> daemon -> 能力实现/插件`；Gateway 可独立部署，也可与其他组件合并部署。转发文件、终端或 ACP 数据不意味着保存这些内容。
 
@@ -25,6 +27,7 @@ Dune 交付底层协议、SDK、Gateway 和 daemon。统一调用路径为 `SDK 
 | BotMux | PTY 后端、输入权、短断线恢复 | 多 Agent 终端产品 | [BotMux](reference-project-analysis-botmux.md) |
 | Cloudflare Sandbox SDK | SDK/执行服务分层、能力调用、副作用重试 | 云资源生命周期、平台 tunnel | [Cloudflare Sandbox](reference-project-analysis-cloudflare-sandbox.md) |
 | Daytona | Files/Exec/Process/PTY/Git 接口 | 开发环境分配、Snapshot/Volume、preview | [Daytona](reference-project-analysis-daytona.md) |
+| DeepSeek Harness | ACP 互操作、能力接口、取消与结算、远程执行 provider 差距 | Agent loop、插件组合、会话事件与子 Agent | [DeepSeek Harness](reference-project-analysis-deepseek-harness.md) |
 | E2B | 来宾 daemon、能力 readiness、代理路由 | 微虚机调度、模板、pause/resume | [E2B](reference-project-analysis-e2b.md) |
 | Modal Sandboxes | 进程 handle、结构化能力约束 | 资源请求、GPU、Volume、Snapshot | [Modal](reference-project-analysis-modal-sandboxes.md) |
 | OpenChamber | 远程连接、凭证分层、PTY 同步 | 设备配对与远程开发 UI | [OpenChamber](reference-project-analysis-openchamber.md) |
