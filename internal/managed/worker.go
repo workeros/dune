@@ -43,10 +43,10 @@ type ProviderSet struct {
 	Renew     map[string]fabric.RenewProvider
 }
 
-// Worker recovers accepted create and Bootstrap stages independently of browser
-// sessions. One worker executes one provider call at a time. PostgreSQL replicas
-// compete through operation leases, while the durable action journal decides
-// whether a claimant may dispatch or may only reconcile.
+// Worker recovers accepted lifecycle stages independently of browser sessions.
+// One worker executes one provider call at a time. PostgreSQL replicas compete
+// through operation leases, while the durable action journal decides whether a
+// claimant may dispatch or may only reconcile.
 type Worker struct {
 	store              *metadata.Store
 	create             *Executor

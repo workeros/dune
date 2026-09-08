@@ -172,3 +172,36 @@ func TestScheduledManagedRenewalExpiresWithoutProviderAction(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduledManagedRenewalWaitsForExistingMutation(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			s, _, user, sessionHash := managedFixture(t, backend)
+			created, schedule := scheduledManagedRenewal(t, s, user, sessionHash)
+			intent := created.Operation.Intent
+			intent.ID = wire.ID()
+			intent.RequestKey = wire.ID()
+			intent.Digest = tokenHash("competing destroy")
+			intent.Action = "destroy"
+			competing, err := s.BeginOperation(ctx, intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !competing.Exclusive {
+				t.Fatal("competing mutation did not hold the Runner mutex")
+			}
+
+			if op, consumed, err := s.ClaimScheduledManagedRenewal(ctx, schedule, "personal-v1", wire.ID(), time.Minute); !errors.Is(err, lifecycle.ErrBusy) || consumed || op.ID != "" {
+				t.Fatal("renewal bypassed an existing mutation", op, consumed, err)
+			}
+			persisted, err := s.ManagedRenewalSchedule(ctx, created.Runner.ID)
+			if err != nil || !persisted.RenewUntil.Equal(schedule.RenewUntil) || persisted.Reason != schedule.Reason {
+				t.Fatal("blocked renewal changed its frozen policy decision", persisted, err)
+			}
+			if _, err := s.ManagedRenewal(ctx, competing.ID); !errors.Is(err, ErrNotFound) {
+				t.Fatal("competing operation was confused with an automatic renewal", err)
+			}
+		})
+	}
+}

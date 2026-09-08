@@ -92,10 +92,14 @@ Managed Bootstrap 的提供方动作和一次性 enrollment 哈希由一个事�
 
 Bootstrap executor 固定规范化的公开 enrollment 地址、完整 Gateway WS(S) 地址、安装版本和令牌有效期，并用它们生成非敏感动作摘要。首次明确提交同时得到动作和明文 grant 后才调用 `Bootstrap`；此后只用原动作调用 `ReconcileBootstrap`，即使当前启动配置已变化也不改写旧动作。若原 grant 已被 fabricd 消费，已有机器与同一 Runner/Fabric/binding revision 的绑定是本地可信完成证据，可直接结束原 Bootstrap 动作而无需查询提供方。适配器错误只记录 timeout/unknown，不采信伴随错误返回的字段。
 
-Managed worker 在同一持久循环中依次处理到期巡检、Bootstrap 与 create，每次只执行一个提供方调用。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
+Managed worker 在同一持久循环中依次处理到期巡检、已有续期 Operation、冻结续期计划、Bootstrap 与 create，每次只执行一个提供方调用。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
 
 Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍停留在等待连接。机器凭据的 Gateway 握手先确认 fabricd 输入 grant；集群模式再发布当前 owner 路由，然后通过有界可信回调提交首次在线事实。元数据事务重新锁定 Runner 和原创建 Operation，核对机器绑定、binding revision、Create/Bootstrap 终态、resource_ref、访问门及数据库时钟有效期，才将创建标成 succeeded。PostgreSQL 集群还要求回调携带当前恢复代次和 epoch，并与刚发布、未过期的完整路由绑定相同；SQLite 或没有集群记录的 PostgreSQL 要求路由字段为空。回调完成前本机路由不对业务流可见，失败时握手和已发布 owner 都会撤销。提交回执未知不会在同一握手内重试；已提交的结果由后续重连幂等核对。Attached 机器不进入 Managed 生命周期事务。
 
 资源一经确认便进入独立巡检计划，不等待首次连接。公开 `fabric.InspectProvider` 只能按固定 Runner、Fabric、resource_ref 与 binding revision 读取事实，不携带动作键，也不授予创建、续期或删除权限。适配器错误和 deadline 分别保存为 unknown/timed_out，并丢弃伴随字段；只有无错误、引用一致的 confirmed 结果可以更新到期时间或确认 Gone。确认 Gone 在同一事务关闭访问并删除 Managed enrollment 与机器身份，网络错误或本地到期时间不会触发该变化。
 
-巡检候选、领取和续租都使用数据库时钟。每个资源的策略版本、最后事实、观测时间、下次检查时间与固定 `renew_until` 决定持久化在同一行；多副本通过独立执行修订和短租约竞争，锁内再次核对资源引用、绑定和访问状态。个人策略基于首次资源确认时间和持久 create/Bootstrap 状态计算；首次在线会重新激活因未连接而停止的计划，曾经可用后不会重套首次连接宽限期。当前 `renew_until` 只是后续续期 Operation 的冻结输入，不构成提供方调用或续期成功；续期动作执行、宿主装配和状态 API 仍须由后续检查点完成。
+巡检候选、领取和续租都使用数据库时钟。每个资源的策略版本、最后事实、观测时间、下次检查时间与固定 `renew_until` 决定持久化在同一行；多副本通过独立执行修订和短租约竞争，锁内再次核对资源引用、绑定和访问状态。个人策略基于首次资源确认时间和持久 create/Bootstrap 状态计算；首次在线会重新激活因未连接而停止的计划，曾经可用后不会重套首次连接宽限期。
+
+冻结的 `renew_until` 由独立事务消费成自动 Renew Operation，同时保存原策略版本、绝对目标、稳定请求摘要和 Runner 业务互斥。事务在 principal → Runner 锁顺序下复核策略、观测、资源引用、绑定和数据库时钟；目标已过期会返回巡检，已有创建、续期或销毁操作则保持原计划不变。提交回执未知不返回执行权，恢复扫描只领取已持久化且租约到期的原 Operation。
+
+公开 `fabric.RenewProvider` 将首次 `Renew` 与只读 `ReconcileRenew` 分开。只有动作预约明确提交并再次复核执行权后才允许首次调用；动作携带原 issuer、execution revision、resource_ref 和冻结绝对目标。超时、unknown、进程重启和租约接管均只核对原动作，错误返回的伴随字段会丢弃。成功必须确认同一资源的到期时间不早于目标，才原子更新资源、完成 Operation 并立即安排下一次巡检；明确失败同样结束本次 Operation 并回到巡检。资源在派发前已经过期或访问关闭时，Operation 直接失败且不生成 Provider 动作。SQL 租约不能隔离外部迟到调用，适配器仍须按动作 ID 去重，并在可用时使用原 issuer/revision 做提供方侧 fencing。

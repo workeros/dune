@@ -211,6 +211,54 @@ func TestRenewalExecutorRejectsMissingProviderAndInvalidFacts(t *testing.T) {
 	}
 }
 
+func TestRenewalExecutorDoesNotDispatchAfterResourceExpiry(t *testing.T) {
+	fixture := newServiceFixture(t)
+	created := readyResourceForInspection(t, fixture)
+	claim, err := fixture.store.ClaimManagedInspection(fixture.ctx, created.RunnerID, "personal-v1", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(500 * time.Millisecond).Truncate(time.Millisecond)
+	schedule, err := fixture.store.RecordManagedInspection(fixture.ctx, claim, "personal-v1", lifecycle.DefaultRenewalConfig(), lifecycle.ResourceInspection{
+		Status: lifecycle.InspectionConfirmed, ResourceRef: claim.ResourceRef, ExpiresAt: expires,
+	})
+	if err != nil || schedule.RenewUntil.IsZero() {
+		t.Fatal("renewal was not scheduled", schedule, err)
+	}
+	operation, consumed, err := fixture.store.ClaimScheduledManagedRenewal(fixture.ctx, schedule, "personal-v1", wire.ID(), time.Minute)
+	if err != nil || !consumed || operation.ID == "" {
+		t.Fatal("renewal operation was not claimed", operation, consumed, err)
+	}
+	if wait := time.Until(expires.Add(100 * time.Millisecond)); wait > 0 {
+		time.Sleep(wait)
+	}
+	provider := &renewProvider{renewResult: fabric.Observation{Outcome: fabric.OutcomeSucceeded, ResourceRef: claim.ResourceRef, ExpiresAt: schedule.RenewUntil}}
+	executor, err := NewRenewalExecutor(fixture.store, map[string]fabric.RenewProvider{"sandbox": provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(fixture.ctx, fixture.ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	calls := len(provider.renewCalls) + len(provider.reconcileCalls)
+	provider.mu.Unlock()
+	if calls != 0 {
+		t.Fatal("expired resource reached the renewal provider", calls)
+	}
+	if _, err := fixture.store.ProviderAction(fixture.ctx, operation.ID, "renew"); !errors.Is(err, metadata.ErrNotFound) {
+		t.Fatal("expired resource gained a provider action", err)
+	}
+	finished, err := fixture.store.Operation(fixture.ctx, operation.ID)
+	if err != nil || !finished.Finished || finished.Outcome != "failed" || finished.Exclusive {
+		t.Fatal("expired renewal did not release its business lock", finished, err)
+	}
+	persisted, err := fixture.store.ManagedRenewalSchedule(fixture.ctx, operation.RunnerID)
+	if err != nil || persisted.Reason != "" || persisted.NextCheckAt.IsZero() || !persisted.RenewUntil.IsZero() {
+		t.Fatal("expired renewal did not request fresh inspection", persisted, err)
+	}
+}
+
 func TestWorkerConsumesAndExecutesScheduledRenewal(t *testing.T) {
 	fixture := newServiceFixture(t)
 	created := readyResourceForInspection(t, fixture)

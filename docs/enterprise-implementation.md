@@ -390,3 +390,10 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 巡检从资源首次确认开始，不依赖浏览器或首次 fabricd 连接。策略读取持久 create/Bootstrap 状态与首次确认时间：首次连接宽限不会因 worker 重启而重置，首次在线会重新激活尚未冻结续期目标的停止计划，曾可用后不再套用宽限期。提供方明确 Gone 会在同一事务标记资源、关闭访问并删除 enrollment/机器身份；网络失败和本地时间越过到期值都不会这样处理。
 - worker 在 Bootstrap/create 之前处理到期巡检，每次仍只调用一个 provider；不具备 Inspect 能力的 Fabric 不会被领取。原生 PostgreSQL 备份包含实际巡检决定和执行状态。当前 `renew_until` 只冻结策略输入，尚未创建或调用 Renew 动作；宿主配置、Web 状态、销毁/人工核对及首个真实提供方闭环仍待完成。
 - 验证：SQLite 的 lifecycle/fabric/Managed/metadata 全包 race 通过；专用 PostgreSQL 17 下的巡检、首次在线、确认删除及原生备份定向 race 通过，metadata 用时 13.745 秒。冻结源码后的 PostgreSQL 全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过，跨进程包用时 343.297 秒；`make build`、`make check-go` 和差异检查通过。测试仍使用可信适配器夹具，没有调用真实 Managed 提供方、Agent 或远端环境。
+
+### 已完成：冻结续期计划的安全执行与恢复
+
+- 到期巡检形成的绝对目标由事务一次性消费成独立 Renew Operation，复制原创建者身份、Runner/Fabric/binding revision 和策略版本，并以完整冻结输入生成稳定请求摘要。消费采用 principal → Runner 锁顺序，与用户操作串行；锁内重新核对观测、策略、资源和数据库时钟。目标已经过去则重新进入巡检，其他互斥 Operation 存在时保留原计划，提交回执未知不返回执行权。
+- `pkg/fabric.RenewProvider` 明确分离首次变更与恢复查询。首次动作预约明确提交并完成执行权复核后才调用 `Renew`；timeout、unknown、进程恢复和租约接管只调用 `ReconcileRenew`，沿用原动作 ID、issuer、execution revision、resource_ref 与绝对目标。适配器错误伴随的字段不采信，成功结果必须确认同一资源且新期限不早于目标。
+- worker 在巡检之后优先恢复已有 Renew Operation，再消费新的冻结计划，随后才处理 Bootstrap/create。动作终态原子更新资源与 Operation 并让计划立即重新巡检；unknown/timed_out 保留业务互斥和当前执行租约作为最短核对间隔。资源在首次派发前已到期、Gone 或关闭访问时直接将 Operation 标为 failed，不创建提供方动作。
+- SQLite/PostgreSQL 回归覆盖跨池并发单次消费、策略/Fabric 过滤、冻结输入、互斥操作、过期计划、动作前资源到期、回执丢失、租约接管只核对、调用错误、非法事实、确认期限及 worker 推进。原生 PostgreSQL 备份夹具保存实际自动续期 Operation。测试仍使用可信适配器；真实平台的动作去重、旧执行者 fencing、SDK 超时行为、宿主配置/Web 状态、销毁与人工核对尚待实现，因此 S2 尚未闭环。

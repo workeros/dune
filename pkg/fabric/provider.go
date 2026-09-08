@@ -140,8 +140,11 @@ type InspectProvider interface {
 	Inspect(context.Context, InspectCall) (Inspection, error)
 }
 
-// RenewProvider extends one already associated resource. ReconcileRenew must
-// only query the original action correlation and must never repeat Renew.
+// RenewProvider extends one already associated resource. Renew must honor the
+// context and use Action.ID for provider-side deduplication or fencing.
+// ReconcileRenew must only query the original action correlation and must never
+// repeat Renew. Error handling matches CreateProvider: returned fields are
+// ignored, and absence is unknown without affirmative terminal evidence.
 type RenewProvider interface {
 	Renew(context.Context, RenewCall) (Observation, error)
 	ReconcileRenew(context.Context, RenewReconcileCall) (Observation, error)

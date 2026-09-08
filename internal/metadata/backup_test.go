@@ -193,6 +193,28 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil || !dispatch || bootstrapGrant.Token == "" {
 		t.Fatal("backup bootstrap grant setup", err)
 	}
+	renewedManaged, renewalClaim := confirmedManagedCreate(t, s, externalUser, tokenHash(externalCookie))
+	renewalGrant, dispatch, err := s.BeginManagedBootstrap(ctx, renewalClaim, tokenHash("restore renewal bootstrap inputs"), 10*time.Minute)
+	if err != nil || !dispatch {
+		t.Fatal("backup renewal Bootstrap setup", dispatch, err)
+	}
+	if err := s.RecordProviderAction(ctx, renewalClaim, renewalGrant.Action.ID, lifecycle.ActionObservation{Outcome: "succeeded", ResourceRef: renewalGrant.Action.ResourceRef}); err != nil {
+		t.Fatal(err)
+	}
+	inspectionClaim, err := s.ClaimManagedInspection(ctx, renewedManaged.Runner.ID, "personal-v1", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewalSchedule, err := s.RecordManagedInspection(ctx, inspectionClaim, "personal-v1", lifecycle.DefaultRenewalConfig(), lifecycle.ResourceInspection{
+		Status: lifecycle.InspectionConfirmed, ResourceRef: inspectionClaim.ResourceRef, ExpiresAt: time.Now().Add(5 * time.Minute),
+	})
+	if err != nil || renewalSchedule.RenewUntil.IsZero() {
+		t.Fatal("backup renewal schedule setup", renewalSchedule, err)
+	}
+	renewalOperation, consumed, err := s.ClaimScheduledManagedRenewal(ctx, renewalSchedule, "personal-v1", wire.ID(), time.Minute)
+	if err != nil || !consumed || renewalOperation.ID == "" || renewalOperation.RunnerID != renewedManaged.Runner.ID {
+		t.Fatal("backup renewal operation setup", renewalOperation, consumed, err)
+	}
 	before := snapshotRecords(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
