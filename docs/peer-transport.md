@@ -1,6 +1,6 @@
 # Peer 传输接入
 
-`pkg/transport/peer` 提供目录模式 Gateway 的双向 TLS 1.3 / WebSocket 接入，继续使用已有 Yamux 和长度前缀 protobuf。`host.Options.Cluster` 已提供同一 PostgreSQL 后端的宿主装配和独立 peer 监听入口；配置一致性准入、就绪检查与限时排空已接入；多进程故障矩阵仍在验收，不把当前接口等同于已部署的 HA 服务。
+`pkg/transport/peer` 提供目录模式 Gateway 的双向 TLS 1.3 / WebSocket 接入，继续使用已有 Yamux 和长度前缀 protobuf。`host.Options.Cluster` 已提供同一 PostgreSQL 后端的宿主装配和独立 peer 监听入口；配置一致性准入、就绪检查与限时排空已接入；已增加三进程链路停滞回归，完整故障矩阵仍在验收，不把当前接口等同于已部署的 HA 服务。
 
 ## 身份与边界
 
@@ -87,3 +87,15 @@ CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任�
 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s` 启动三个独立官方 CLI 服务进程和真实 fabricd，A 签发安装材料、B 消费并持有机器连接，A/C 的 Web 和人类 CLI 经 peer 访问 B，另一入口退出用户后验证既有访问失效。测试证书写入专用临时目录，结束后连同进程、schema 一起清理；该回归是三进程正常运行链路，不是网络分区、时钟扰动或 Linux 集群故障验收。
 
 配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、schema 11 升级及 rollback、独立关闭计时器和有界输入。正式 CLI 的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。
+
+## 已验证的网络故障范围
+
+三个正式 CLI 节点共用专用 PostgreSQL，机器固定进入 B，用户固定进入 A；C 用于新的用户入口或明确切换后的机器入口。本机 TCP 代理可以暂停双向字节转发并在恢复后释放滞留数据，TLS 与应用协议保持完整。
+
+| 故障 | 实际核对的结果 |
+| --- | --- |
+| B 的 peer 链路停滞，已受理 Exec 的响应丢失 | 副作用已经发生，调用返回 `RESULT_UNKNOWN`，入口没有自行重拨；显式重接后副作用仍只有一次，原 owner 与 PTY 不变 |
+| A 的 PostgreSQL 链路停滞 | A 在准入续约失败后退出，旧连接不能继续请求；用户显式进入 C 后访问同一 B 和原 PTY，A 恢复后可以作为新入口启动 |
+| B 的 PostgreSQL 链路停滞 | B 退出；将新的机器连接路由到 C 后，目录发布新 owner/epoch，fabricd incarnation 保持、connection generation 推进，原 PTY 可重新使用；恢复 B 后目录仍指向 C |
+
+这些回归使用同机进程和 TCP 转发代理，没有改变系统时钟或注入内核丢包；不代表跨主机网络、Linux 部署、原始/托管 ACP 的所有故障路径或 Managed 外部调用接管已经验收。原进程暂停与输入过期另有独立正式进程回归，不能把分开的证据视为所有组合均已验证。

@@ -316,3 +316,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 官方 `dune web` 使用 `--drain-timeout`（默认 `5s`、零立即关闭、负值拒绝）处理 SIGINT/SIGTERM。启动期间仍响应取消；开始服务后先排空，再结束生命周期。父 context、准入故障、监听器失败或显式 Close 保持立即关闭。排空期间继续配置/owner 续租，关闭后配置预约仍自然到期；远端 tmux 保留，不重放或转移未确认请求。
 - 协议回归分别从入口和 owner 开始排空，验证原 peer 流双向收发、旧 SDK 上的新请求拒绝、没有重拨和清理回调等待。宿主回归覆盖 HTTP 部分请求正常完成/超时取消、完整 JSON 响应、独立/外部服务器、管理员准入、并发关闭及前缀探针。正式 SQLite CLI 与真实 fabricd/PTY 验证 SIGTERM 后的旧流、新请求拒绝、两秒预算退出、原 engine/Runtime 重接和空闲隧道即时退出。
 - 验证：最终冻结源码启用 PostgreSQL 17 与备份工具的 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 全量通过，跨进程包 320.734 秒；Gateway/host/peer/Web 全包 race 通过，正式 CLI 排空定向 race 通过，`make build check-go` 通过。首次定向编译遗漏 CLI 的 time 导入，补齐后通过全部后续检查。当前不包含 Managed worker 的停止领取/接管，也没有把正常集群回归等同于三节点分区、时钟跳变或 Linux 部署验收；真实 Agent/远端开关未启用。
+
+### 已完成验收：三进程 peer 与 PostgreSQL 链路停滞
+
+- 新增专用字节转发夹具，在真实 PostgreSQL、mTLS、WebSocket 和 Yamux 链路上暂存双向流量，保持连接直至应用自身超时/关闭；恢复释放滞留字节。它不修改 SQL、协议载荷或验证策略，原数据库 TLS 主机名保留。测试限制在专用回环 PostgreSQL 上，实例配置、测试证书和日志均位于私有临时目录。
+- 三个正式 CLI 节点运行相同配置，机器先固定进入 B，用户先固定进入 A。已受理 Exec 完成一次文件追加后，peer 返回流量被阻塞；客户端明确收到 RESULT_UNKNOWN，入口没有自动重拨。显式新连接恢复原 PTY，实际文件仍只有一次追加，机器 owner 和执行绑定不变。
+- 分别阻塞入口 A 和 owner B 的 SQL 链路，观察准入失效导致实际进程退出。入口失效后 C 的新用户连接仍能访问原 B；owner 失效后明确修改机器入口，仅让新连接去 C，原 fabricd 进程保持，目录 epoch、owner boot 与连接 generation 正确推进，原 Runtime/PTY 保留。恢复旧节点不会在启动时替换 C 的有效归属，原未知写入也没有重放。
+- 验证：专用 PostgreSQL 17 下新测试定向 race 通过（跨进程包 31.646 秒）；修正夹具监听地址以保留回环数据库地址族后，冻结源码执行正常三进程、网络停滞及真实进程暂停组合 race，75.890 秒通过。`make check-go` 通过。首次编译因 Binding 含 slice 不能直接比较而失败，改用完整值比较后通过。此次只新增测试与验收说明，沿用上一功能点已完成的 PostgreSQL 全量证据，没有重跑不受影响的全量构建或声明真实 Agent 通过。
+- 这一步验证同机三进程在指定链路停滞下的行为；跨主机内核丢包、主机/数据库时钟扰动、Linux 部署、ACP 故障组合及 Managed worker/提供方调用仍需对应证据。后续继续 S2 的实际资源生命周期与未完成的 S3 验收，不将本次通过视为完整方案交付。
