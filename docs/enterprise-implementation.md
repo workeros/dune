@@ -447,3 +447,9 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 默认 owner 策略下，每个用户的权威发现结果只包含本人的一个目标，也不能为另一人的机器签发访问。把一张合法票据用于另一 target 时，入口握手失败且该一次性票据随后不可重放；重新签发给原目标后才能建立对应连接，因此客户端字段不能改投用户或隧道。
 - 两个用户都从同一入口经各自 mTLS peer 路径完成 File 写读、Git 初始化与状态、PTY 输入输出和原始 ACP JSON 消息，验证能力分派保留原用户、目标和执行 binding。测试结束停止两份 fabricd 并清理 tmux；它验证 Dune 产品隔离，不宣称同一 OS 用户内获准 Shell 的文件系统隔离。
 - 专用 PostgreSQL 17 下该正式进程用例的 race 运行通过；与既有正常 CLI、分区和进程暂停合并后的四项正式进程回归也通过。当前仍不是跨主机 Linux、真实 Agent 或 Managed 提供方验收。
+
+### 已完成：当前发布包的 Linux amd64 运行验收
+
+- 从当前源码重新构建静态 Linux amd64 发布包，在已授权的独立 Linux 主机上解压到专用 `/tmp` 目录并使用独立端口。`TestDirectRemote` 的本机 race 客户端直接访问远端 WS 地址，SSH 只负责部署和清理；实际远端返回 Linux，并通过错误 token 拒绝、Exec、File、106496 字节上传、Git、PTY、原始 ACP 和 TCP 双向/半关闭检查。
+- 随后把同一发布包切换为独立 Gateway 与唯一命名的 systemd user fabricd 服务。创建保留 PTY 后重启该服务，原 Runtime ID、incarnation 和 generation 保持不变，重新附加后实际输出 `LINUX_SERVICE_PTY_OK`；这验证当前 `service install` 和 bundled tmux 的 Linux 运行路径，而非仅有交叉编译产物。
+- 验收结束显式停止 Runtime，停用并删除临时 systemd unit，停止 Gateway，删除本机与远端测试目录。没有覆盖已有服务或会话。该证据是单台 Linux amd64 的 standalone 运行与安装边界，不代表 Linux 上的 PostgreSQL 三节点、其他发行版/架构、真实 Agent 或 Managed 提供方闭环。

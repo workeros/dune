@@ -93,14 +93,14 @@ DUNE_REAL_AGENT=1 go test ./tests -run '^TestRealAgentACP$' -v -count=1 -timeout
 
 # 指定已有客户端配置；该测试会在远端 /tmp 创建并清理测试资源
 DUNE_REMOTE_CONFIG=/absolute/client.yaml \
-  go test ./tests -run '^TestDirectRemote$' -v -count=1 -timeout=180s
+  go test -race ./tests -run '^TestDirectRemote$' -v -count=1 -timeout=180s
 ```
 
 PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型配置。上述测试超时还受测试内部 context 限制；增加 Go 的 timeout 不会延长内部期限。
 
 `TestRealAgentPTY` 经 Dune 创建代码并独立运行检查；`TestRealAgentACP` 只测试握手。完整 Web 编码验收还需要从页面提交任务、看到实际结果并独立验证产物。mock ACP 可验证协议与权限状态机，不能替代真实模型任务。
 
-发布构建不自动部署。对指定环境的操作应使用独立配置和测试目录，保留已有会话；连接服务重启只替换 fabricd，终止 tmux 会话需显式执行 `runtime stop`。
+发布构建不自动部署。Linux 运行验收应从当前源码重新构建对应发布包，在远端独立 `/tmp` 目录和端口启动，且让产品请求直接访问远端地址；不要把 SSH 转发或旧发布包当作目标平台证据。若验证 `service install`，使用唯一的临时 unit 名，检查重启前后的 Runtime ID、incarnation 和 generation，并在结束时显式 `runtime stop`、停用及删除 unit 和测试目录。对指定环境的操作应保留已有会话；连接服务重启只替换 fabricd，终止 tmux 会话需显式执行 `runtime stop`。
 
 ## 完成与续接
 
