@@ -63,6 +63,17 @@ func (a *App) finishRequest() {
 	}
 }
 
+func (a *App) beginDrainLocked() {
+	if a.draining {
+		return
+	}
+	a.draining = true
+	close(a.managedDrain)
+	if a.requests == 0 {
+		close(a.requestsDone)
+	}
+}
+
 // Shutdown stops new HTTP/admin work and Gateway connections/streams, waits for
 // accepted work, flushes owned HTTP servers, then closes the application. Idle
 // tunnel connections do not hold up drain. A context without a deadline receives
@@ -77,19 +88,14 @@ func (a *App) Shutdown(ctx context.Context) error {
 		defer cancel()
 	}
 	a.mu.Lock()
-	if !a.draining {
-		a.draining = true
-		if a.requests == 0 {
-			close(a.requestsDone)
-		}
-	}
+	a.beginDrainLocked()
 	streamsDone := a.core.Drain()
 	servers := make([]*http.Server, 0, len(a.servers))
 	for srv := range a.servers {
 		servers = append(servers, srv)
 	}
 	a.mu.Unlock()
-	for _, done := range []<-chan struct{}{a.requestsDone, streamsDone} {
+	for _, done := range []<-chan struct{}{a.requestsDone, streamsDone, a.managedDone} {
 		select {
 		case <-done:
 		case <-ctx.Done():

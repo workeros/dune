@@ -88,6 +88,8 @@ type App struct {
 	draining     bool
 	requests     int
 	requestsDone chan struct{}
+	managedDrain chan struct{}
+	managedDone  chan struct{}
 	servers      map[*http.Server]struct{}
 	active       sync.WaitGroup
 	once         sync.Once
@@ -223,7 +225,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), managedDrain: make(chan struct{}), managedDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, admission: admission, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
 	if admission != nil {
 		app.active.Add(1)
@@ -232,6 +234,8 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if managedWorker != nil {
 		app.active.Add(1)
 		go app.runManaged(managedWorker)
+	} else {
+		close(app.managedDone)
 	}
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil
@@ -325,6 +329,7 @@ func (a *App) Close() error {
 	a.once.Do(func() {
 		a.mu.Lock()
 		a.closed = true
+		a.beginDrainLocked()
 		servers := make([]*http.Server, 0, len(a.servers))
 		for srv := range a.servers {
 			servers = append(servers, srv)
@@ -351,7 +356,8 @@ func (a *App) Close() error {
 
 func (a *App) runManaged(worker *managedmodule.Worker) {
 	defer a.active.Done()
-	if err := worker.Run(a.ctx); err != nil {
+	defer close(a.managedDone)
+	if err := worker.RunUntil(a.ctx, a.managedDrain); err != nil {
 		a.mu.Lock()
 		a.err = errors.Join(a.err, err)
 		a.mu.Unlock()

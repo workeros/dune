@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -19,6 +21,15 @@ type completeProvider struct {
 	mu      sync.Mutex
 	creates []fabric.CreateCall
 	called  chan struct{}
+}
+
+type completeLifecycleProvider interface {
+	fabric.CreateProvider
+	fabric.BootstrapProvider
+	fabric.InspectProvider
+	fabric.RenewProvider
+	fabric.DestroyProvider
+	fabric.CandidateProvider
 }
 
 func (p *completeProvider) Create(_ context.Context, call fabric.CreateCall) (fabric.Observation, error) {
@@ -63,7 +74,7 @@ func (*completeProvider) VerifyCandidate(context.Context, fabric.CandidateCall) 
 	return fabric.Observation{Outcome: fabric.OutcomeUnknown}, nil
 }
 
-func managedHostOptions(dir string, provider *completeProvider) host.Options {
+func managedHostOptions(dir string, provider completeLifecycleProvider) host.Options {
 	minimum, maximum := int64(1), int64(4)
 	worker := host.DefaultManagedWorkerOptions()
 	worker.PollInterval = 10 * time.Millisecond
@@ -82,6 +93,31 @@ func managedHostOptions(dir string, provider *completeProvider) host.Options {
 			Templates: []fabric.Template{{FabricID: "sandbox", ID: "small", Version: "v1", Name: "Small", Fields: []fabric.Field{{Name: "cpu", Label: "CPU", Type: "integer", Required: true, Minimum: &minimum, Maximum: &maximum}}}},
 			Providers: providers, Worker: worker,
 		},
+	}
+}
+
+type drainingCompleteProvider struct {
+	*completeProvider
+	callMu     sync.Mutex
+	calls      int
+	started    chan struct{}
+	release    chan struct{}
+	cancelled  chan struct{}
+	startOnce  sync.Once
+	cancelOnce sync.Once
+}
+
+func (p *drainingCompleteProvider) Create(ctx context.Context, _ fabric.CreateCall) (fabric.Observation, error) {
+	p.callMu.Lock()
+	p.calls++
+	p.callMu.Unlock()
+	p.startOnce.Do(func() { close(p.started) })
+	select {
+	case <-p.release:
+		return fabric.Observation{Outcome: fabric.OutcomeUnknown}, nil
+	case <-ctx.Done():
+		p.cancelOnce.Do(func() { close(p.cancelled) })
+		return fabric.Observation{}, ctx.Err()
 	}
 }
 
@@ -192,6 +228,90 @@ func TestManagedHostPublishesAPIAndRunsRecoveryWorker(t *testing.T) {
 	provider.mu.Unlock()
 	if len(calls) != 1 || calls[0].Action.RunnerID != created.Operation.RunnerID || calls[0].Request.TemplateID != "small" {
 		t.Fatal("host worker lost configured provider scope", calls)
+	}
+}
+
+func TestManagedWorkerParticipatesInHostShutdown(t *testing.T) {
+	for _, finish := range []bool{true, false} {
+		t.Run(fmt.Sprintf("finish=%v", finish), func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "metadata")
+			provider := &drainingCompleteProvider{
+				completeProvider: &completeProvider{},
+				started:          make(chan struct{}),
+				release:          make(chan struct{}),
+				cancelled:        make(chan struct{}),
+			}
+			options := managedHostOptions(dir, provider)
+			options.Managed.Worker.CallTimeout = 5 * time.Second
+			app, err := host.Open(context.Background(), options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer app.Close()
+			registration := managedRequest(t, app, http.MethodPost, "/tools/api/auth/register", `{"email":"managed-drain@example.test","password":"managed-drain-password"}`, nil)
+			if registration.Code != http.StatusOK || len(registration.Result().Cookies()) != 1 {
+				t.Fatal("registration failed", registration.Code, registration.Body.String())
+			}
+			cookie := registration.Result().Cookies()[0]
+			create := func(key string) {
+				t.Helper()
+				response := managedRequest(t, app, http.MethodPost, "/tools/api/managed/runners", `{"request_key":"`+key+`","request":{"name":"Development","fabric_id":"sandbox","template_id":"small","template_version":"v1","parameters":{"cpu":2}}}`, cookie)
+				if response.Code != http.StatusAccepted {
+					t.Fatal("Managed creation was not accepted", response.Code, response.Body.String())
+				}
+			}
+			create("managed-drain-1")
+			select {
+			case <-provider.started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Managed worker did not start the provider call")
+			}
+			if finish {
+				create("managed-drain-2")
+			}
+			budget := 200 * time.Millisecond
+			if finish {
+				budget = 2 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), budget)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- app.Shutdown(ctx) }()
+			waitReadiness(t, app, func(readiness host.Readiness) bool { return readiness.Draining })
+			if finish {
+				select {
+				case err := <-done:
+					t.Fatal("shutdown interrupted the accepted provider call", err)
+				case <-time.After(30 * time.Millisecond):
+				}
+				close(provider.release)
+			}
+			select {
+			case err := <-done:
+				if finish && err != nil {
+					t.Fatal("completed drain failed", err)
+				}
+				if !finish && !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("deadline did not bound worker drain", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("worker drain did not finish")
+			}
+			if !finish {
+				select {
+				case <-provider.cancelled:
+				case <-time.After(time.Second):
+					t.Fatal("deadline did not cancel the provider call")
+				}
+			}
+			provider.callMu.Lock()
+			calls := provider.calls
+			provider.callMu.Unlock()
+			if calls != 1 {
+				t.Fatal("draining host started another provider call", calls)
+			}
+			await(t, app.Done())
+		})
 	}
 }
 

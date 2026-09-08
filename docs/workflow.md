@@ -128,6 +128,8 @@ Managed 创建执行器使用 `go test -race ./internal/managed -run Executor -c
 
 Managed 创建恢复循环使用 `go test -race ./internal/managed ./internal/metadata -run 'Worker|RecoverableManagedCreate' -count=1 -timeout=120s`，PostgreSQL 子用例需要专用测试库。检查数据库时钟筛选、锁内阶段复核、租约竞争、长调用续约、provider deadline 后仍能落库、unknown 到期前不核对、到期后只 Reconcile、终态交还执行租约，以及不领取未配置 Fabric。这里的 provider 仍是可信夹具，worker 尚未由宿主启动。
 
+宿主排空中的 Managed worker 边界使用 `go test -race ./internal/managed ./pkg/host -run 'Worker(Drain|ClosedDrain)|ManagedWorkerParticipatesInHostShutdown' -count=1 -timeout=120s`。回归检查已关闭 drain 不领取初始操作、已领取提供方调用在预算内完成后不领取下一操作，以及 deadline 取消当前调用并等待 worker 退出。测试使用可取消的可信适配器，不证明外部 SDK 一定遵守 context；实际适配器必须自行验证取消和幂等查询语义。
+
 Managed 资源绑定 enrollment 使用 `go test -race ./internal/metadata -run 'ManagedBootstrap|Enrollment' -count=1 -timeout=120s`，并为 PostgreSQL 配置专用测试库。检查 Bootstrap 动作与令牌哈希原子提交、明文不落库、提交回执丢失不重发、资源/Fabric/修订与数据库时钟有效期复核、访问检查区分 Managed、并发单次消费及绑定已有 Runner。原生 PostgreSQL 备份恢复还保留未消费的绑定 grant。
 
 Managed Bootstrap 执行器使用 `go test -race ./internal/managed ./internal/metadata -run 'BootstrapExecutor|ManagedBootstrap' -count=1 -timeout=120s`。检查公开地址和安装版本摘要、首次调用携带资源绑定 grant、重复及接管只核对原动作、配置变化不改写旧动作、已消费 grant 通过数据库绑定收敛、provider deadline 后仍写入 unknown/timed_out，以及缺失适配器不会预约动作。这里仍使用可信夹具，不代表任何真实提供方或反向 WS 已验收。

@@ -407,13 +407,35 @@ func (w *Worker) execute(ctx context.Context, claimed lifecycle.Operation, kind 
 // the worker so its owner can make the failure visible and restart from durable
 // state; no external mutation is replayed during recovery.
 func (w *Worker) Run(ctx context.Context) error {
+	return w.RunUntil(ctx, nil)
+}
+
+// RunUntil stops starting lifecycle iterations after drain is closed. An
+// iteration already accepted before that boundary may finish while ctx remains
+// valid; cancelling ctx still interrupts it through the normal provider-call
+// and lease paths. A nil drain preserves Run's process-lifetime behavior.
+func (w *Worker) RunUntil(ctx context.Context, drain <-chan struct{}) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
 		select {
+		case <-drain:
+			return nil
+		default:
+		}
+		select {
 		case <-ctx.Done():
 			return nil
+		case <-drain:
+			return nil
 		case <-timer.C:
+		}
+		// A zero-duration initial timer and an already closed drain are both
+		// ready. Give drain another check before accepting an iteration.
+		select {
+		case <-drain:
+			return nil
+		default:
 		}
 		if _, err := w.RunOnce(ctx); err != nil {
 			if ctx.Err() != nil {

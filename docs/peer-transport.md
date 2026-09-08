@@ -36,11 +36,11 @@ SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能�
 
 例如公开 URL 为 `https://dune.example.com/tools/dune/` 时，就绪路径为 `/tools/dune/health/ready`。允许接新工作时返回 200；排空、关闭、准入失效或本机 peer 证书到期返回 503。`health/live` 在排空但尚可服务时仍返回 200，关闭或本机准入失效返回 503。挂载到外部服务器时，关闭后的探针仍可返回状态；App 自己拥有的监听器关闭后不可继续探测。
 
-`App.Shutdown(ctx)` 不可逆地停止新的 HTTP/管理员工作、公开/peer 连接和已有连接上的新流。已有流可以继续收发，并保留访问检查、输入期限、配置与连接归属续约；正常排空后才关闭连接并释放 owner。空闲 daemon/SDK/peer 控制连接不阻塞排空，持续终端和事件订阅属于未完成工作。已接受的 HTTP 请求可以完成当前处理；其中尚未建立的新 Gateway 工作仍受停止准入约束，不自动重试或转移到别处。
+`App.Shutdown(ctx)` 不可逆地停止新的 HTTP/管理员工作、公开/peer 连接、已有连接上的新流和新的 Managed worker 迭代。已有流可以继续收发，并保留访问检查、输入期限、配置与连接归属续约；正常排空后才关闭连接并释放 owner。排空边界前已由 worker 领取的一轮可以完成，但完成后不会领取下一个阶段或排队操作。空闲 daemon/SDK/peer 控制连接不阻塞排空，持续终端和事件订阅属于未完成工作。已接受的 HTTP 请求可以完成当前处理；其中尚未建立的新 Gateway 工作仍受停止准入约束，不自动重试或转移到别处。
 
-Shutdown 使用调用方的 deadline；没有 deadline 时默认五秒。期限或 context 取消后调用 Close，取消剩余工作并等待处理器/流回调退出再释放存储，返回 context 错误。可信回调仍须遵守取消和及时返回约定，因此这是工作排空预算，不是对任意不合作代码的强制终止保证。由 App 拥有的 HTTP 服务器在正常结束时先完成响应刷新；挂载模式不关闭外部服务器，外部宿主自行完成其 HTTP 退出。不要在活跃 Dune 处理器或回调内部等待 Shutdown/Close。
+Shutdown 使用调用方的 deadline；没有 deadline 时默认五秒。期限或 context 取消后调用 Close，取消剩余 HTTP、流和 Managed 提供方调用，等待处理器、流回调与 worker 退出再释放存储，并返回 context 错误。提供方动作仍按原 action identity、unknown/timed_out 和接管规则持久恢复，不因排空而重发。可信回调和提供方适配器须遵守取消和及时返回约定，因此这是工作排空预算，不是对任意不合作代码的强制终止保证。由 App 拥有的 HTTP 服务器在正常结束时先完成响应刷新；挂载模式不关闭外部服务器，外部宿主自行完成其 HTTP 退出。不要在活跃 Dune 处理器、回调或 Managed 提供方调用内部等待 Shutdown/Close。
 
-父 context 取消、准入故障或显式 Close 仍立即停止。自有宿主应先调用 Shutdown，再取消 Open 的生命周期 context。官方 `dune web` 的 SIGINT/SIGTERM 使用 `--drain-timeout`（默认 `5s`，零表示立即关闭，不允许负值）；启动期间仍响应取消。退出不销毁远端 tmux，未确认写入的结果仍可能未知。配置预约保留到原期限，不因排空完成提前释放；尚未装配的 Managed worker 领取/接管不在此排空接口的当前覆盖范围内。
+父 context 取消、准入故障或显式 Close 仍立即停止。自有宿主应先调用 Shutdown，再取消 Open 的生命周期 context。官方 `dune web` 的 SIGINT/SIGTERM 使用 `--drain-timeout`（默认 `5s`，零表示立即关闭，不允许负值）；启动期间仍响应取消。退出不销毁远端 tmux，未确认写入的结果仍可能未知。配置预约保留到原期限，不因排空完成提前释放。就绪状态只表示本机准入和排空状态，不检查 Managed 提供方健康。
 
 协议宿主可独立调用 `Gateway.Drain()`；返回通道在所有已接受业务流及应用清理回调结束后关闭，随后调用 Close 释放空闲连接。core 只管理连接和流，不理解 HTTP、SQL 或业务生命周期。
 

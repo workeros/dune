@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -303,5 +304,103 @@ func TestWorkerRunPollsForLaterWorkAndStops(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("worker did not stop with its owner context")
+	}
+}
+
+type drainProvider struct {
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *drainProvider) Create(ctx context.Context, _ fabric.CreateCall) (fabric.Observation, error) {
+	p.mu.Lock()
+	p.calls++
+	p.mu.Unlock()
+	p.once.Do(func() { close(p.started) })
+	select {
+	case <-p.release:
+		return fabric.Observation{Outcome: fabric.OutcomeUnknown}, nil
+	case <-ctx.Done():
+		return fabric.Observation{}, ctx.Err()
+	}
+}
+
+func (*drainProvider) ReconcileCreate(context.Context, fabric.ReconcileCall) (fabric.Observation, error) {
+	return fabric.Observation{}, errors.New("unexpected reconciliation")
+}
+
+func TestWorkerDrainFinishesAcceptedCallWithoutClaimingNext(t *testing.T) {
+	fixture := newServiceFixture(t)
+	first, second := pendingCreation(t, fixture), pendingCreation(t, fixture)
+	provider := &drainProvider{started: make(chan struct{}), release: make(chan struct{})}
+	config := testWorkerConfig()
+	config.CallTimeout = 5 * time.Second
+	worker, err := NewWorker(fixture.store, ProviderSet{Create: map[string]fabric.CreateProvider{"sandbox": provider}}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- worker.RunUntil(fixture.ctx, drain) }()
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start the accepted provider call")
+	}
+	close(drain)
+	select {
+	case err := <-done:
+		t.Fatal("drain interrupted the accepted call", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(provider.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("worker did not finish after its accepted call")
+	}
+	provider.mu.Lock()
+	calls := provider.calls
+	provider.mu.Unlock()
+	if calls != 1 {
+		t.Fatal("draining worker started another provider call", calls)
+	}
+	firstOperation, err := fixture.store.Operation(fixture.ctx, first.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondOperation, err := fixture.store.Operation(fixture.ctx, second.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstOperation.Revision+secondOperation.Revision != 1 {
+		t.Fatal("drain claimed work after the accepted iteration", firstOperation.Revision, secondOperation.Revision)
+	}
+}
+
+func TestWorkerClosedDrainDoesNotStartInitialIteration(t *testing.T) {
+	fixture := newServiceFixture(t)
+	created := pendingCreation(t, fixture)
+	provider := &drainProvider{started: make(chan struct{}), release: make(chan struct{})}
+	worker, err := NewWorker(fixture.store, ProviderSet{Create: map[string]fabric.CreateProvider{"sandbox": provider}}, testWorkerConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain := make(chan struct{})
+	close(drain)
+	for range 100 {
+		if err := worker.RunUntil(fixture.ctx, drain); err != nil {
+			t.Fatal(err)
+		}
+	}
+	operation, err := fixture.store.Operation(fixture.ctx, created.Operation.ID)
+	if err != nil || operation.Revision != 0 {
+		t.Fatal("closed drain admitted an initial iteration", operation.Revision, err)
 	}
 }

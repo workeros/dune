@@ -88,7 +88,7 @@ SDK 入口 `pkg/sdk`，请求与结果类型 `pkg/api`。调用方提供 Gateway
 
 `pkg/host.Open(ctx, options)` 装配本地账号、Attached、Gateway 和默认工作台，官方 `dune web` 也使用此入口。返回的 `App` 可作为 `http.Handler` 挂载到已有服务，保留完整部署前缀；或调用 `App.Serve(listener)`，将 listener 的所有权交给 Dune。`Close` 取消请求与订阅、等待处理退出并释放存储，`Done` 表示释放完成；挂载模式下不关闭宿主的 HTTP 服务。HTTP 中间件须保留 Hijacker 与 ResponseController（可通过 Unwrap）能力。参考[独立工作台宿主](samples/workbench/main.go)。
 
-`App.Shutdown(ctx)` 先停止新请求和新流，等待已受理工作后关闭；没有 deadline 时默认等待五秒，超时取消剩余工作，远端 PTY 保留。要优雅退出，应先调用 Shutdown，再取消传给 Open 的生命周期 context；父 context 取消和 Close 仍立即停止。官方 `dune web` 的 SIGINT/SIGTERM 已按此处理，`--drain-timeout` 默认 `5s`、`0` 表示立即关闭。部署前缀下的 `health/ready` 在排空时返回 503，`health/live` 在已有工作仍可服务时返回 200。
+`App.Shutdown(ctx)` 先停止新请求、新流和新的 Managed worker 迭代，等待已受理工作后关闭；排空边界前已领取的生命周期迭代可在同一 deadline 内完成，超时则取消当前提供方调用并保留持久动作供恢复。没有 deadline 时默认等待五秒，远端 PTY 保留。要优雅退出，应先调用 Shutdown，再取消传给 Open 的生命周期 context；父 context 取消和 Close 仍立即停止。官方 `dune web` 的 SIGINT/SIGTERM 已按此处理，`--drain-timeout` 默认 `5s`、`0` 表示立即关闭。部署前缀下的 `health/ready` 在排空时返回 503，`health/live` 在已有工作仍可服务时返回 200。
 
 Go 宿主可通过 `Options.Cluster` 在同一 PostgreSQL 后端装配连接目录和跨实例用户访问，使用独立 `App.ServePeer(listener)` 提供双向 TLS 入口。配置方式和当前交付边界见 [peer 传输接入](docs/peer-transport.md)；官方 `dune web --cluster-config FILE` 使用同一装配；PostgreSQL 配置一致性由有界准入租约校验；就绪探针和限时排空的使用方式见[就绪与退出](docs/peer-transport.md#就绪与退出)。
 
