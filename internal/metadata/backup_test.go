@@ -155,6 +155,14 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	maintenanceClaim, err := s.ClaimManagedInspection(ctx, managedClaim.RunnerID, "personal-v1", wire.ID(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedMaintenance, err := s.RecordManagedInspection(ctx, maintenanceClaim, "personal-v1", lifecycle.DefaultRenewalConfig(), lifecycle.ResourceInspection{Status: lifecycle.InspectionUnknown})
+	if err != nil {
+		t.Fatal(err)
+	}
 	managed, err = s.ManagedCreation(ctx, externalUser.ID, managed.Operation.RequestKey)
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +253,9 @@ func TestPostgresBackupRestore(t *testing.T) {
 	}
 	if got, err := s.ManagedResource(ctx, managedClaim.RunnerID); err != nil || got != savedResource {
 		t.Fatal("restored resource confirmation changed", err)
+	}
+	if got, err := s.ManagedRenewalSchedule(ctx, managedClaim.RunnerID); err != nil || got != savedMaintenance {
+		t.Fatal("restored renewal schedule changed", err)
 	}
 	if user, kind, err := s.EnrollmentIdentity(ctx, bootstrapGrant.Token); err != nil || user.ID != externalUser.ID || user.Namespace != externalUser.Namespace || user.Subject != externalUser.Subject || kind != "managed" {
 		t.Fatal("restored managed bootstrap enrollment changed", user, kind, err)

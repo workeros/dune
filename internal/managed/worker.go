@@ -19,10 +19,14 @@ type WorkerConfig struct {
 	LeaseTTL     time.Duration
 	CallTimeout  time.Duration
 	Bootstrap    BootstrapConfig
+	Renewal      lifecycle.RenewalConfig
+	// RenewalPolicyVersion changes whenever policy meaning or configuration
+	// changes, so stopped schedules are reconsidered without rewriting history.
+	RenewalPolicyVersion string
 }
 
 func DefaultWorkerConfig() WorkerConfig {
-	return WorkerConfig{PollInterval: time.Second, LeaseTTL: 30 * time.Second, CallTimeout: 20 * time.Second}
+	return WorkerConfig{PollInterval: time.Second, LeaseTTL: 30 * time.Second, CallTimeout: 20 * time.Second, Renewal: lifecycle.DefaultRenewalConfig(), RenewalPolicyVersion: "personal-v1"}
 }
 
 func (c WorkerConfig) validate() error {
@@ -35,6 +39,7 @@ func (c WorkerConfig) validate() error {
 type ProviderSet struct {
 	Create    map[string]fabric.CreateProvider
 	Bootstrap map[string]fabric.BootstrapProvider
+	Inspect   map[string]fabric.InspectProvider
 }
 
 // Worker recovers accepted create and Bootstrap stages independently of browser
@@ -45,8 +50,10 @@ type Worker struct {
 	store              *metadata.Store
 	create             *Executor
 	bootstrap          *BootstrapExecutor
+	maintenance        *MaintenanceExecutor
 	createProviders    map[string]struct{}
 	bootstrapProviders map[string]struct{}
+	inspectProviders   map[string]struct{}
 	config             WorkerConfig
 	instanceID         string
 }
@@ -74,9 +81,20 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 			bootstrapConfigured[id] = struct{}{}
 		}
 	}
+	var maintenance *MaintenanceExecutor
+	inspectConfigured := make(map[string]struct{}, len(providers.Inspect))
+	if len(providers.Inspect) > 0 {
+		maintenance, err = NewMaintenanceExecutor(store, providers.Inspect, config.Renewal, config.RenewalPolicyVersion)
+		if err != nil {
+			return nil, err
+		}
+		for id := range maintenance.providers {
+			inspectConfigured[id] = struct{}{}
+		}
+	}
 	return &Worker{
-		store: store, create: create, bootstrap: bootstrap,
-		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured,
+		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance,
+		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured,
 		config: config, instanceID: wire.ID(),
 	}, nil
 }
@@ -89,12 +107,28 @@ func configuredFabrics(providers map[string]struct{}) []string {
 	return ids
 }
 
-// RunOnce claims and advances at most one eligible lifecycle stage. Bootstrap
-// is checked first so confirmed resources move toward accepting a connection
-// before more creates are started. The bool reports whether this worker obtained
-// a claim. Unsupported Fabric namespaces
-// remain untouched so another correctly configured deployment can recover them.
+// RunOnce claims and advances at most one eligible lifecycle stage. Inspection
+// is checked first so expiry and confirmed deletion facts are not starved by new
+// creates. The bool reports whether this worker obtained a claim. Unsupported
+// Fabric namespaces remain untouched so another correctly configured deployment
+// can recover them.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
+	if w.maintenance != nil {
+		candidates, err := w.store.RecoverableManagedInspectionsFor(ctx, configuredFabrics(w.inspectProviders), w.config.RenewalPolicyVersion, managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, candidate := range candidates {
+			claimed, err := w.store.ClaimManagedInspection(ctx, candidate.RunnerID, w.config.RenewalPolicyVersion, w.instanceID, w.config.LeaseTTL)
+			if errors.Is(err, lifecycle.ErrBusy) || errors.Is(err, lifecycle.ErrLeaseLost) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			return true, w.executeInspection(ctx, claimed)
+		}
+	}
 	if w.bootstrap != nil {
 		candidates, err := w.store.RecoverableManagedBootstrapsFor(ctx, configuredFabrics(w.bootstrapProviders), managedCreateBatch)
 		if err != nil {
@@ -132,6 +166,34 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		return true, w.execute(ctx, claimed, "create", w.create.executeCreate)
 	}
 	return false, nil
+}
+
+func (w *Worker) executeInspection(ctx context.Context, claimed lifecycle.RenewalSchedule) error {
+	callCtx, cancel := context.WithTimeout(ctx, w.config.CallTimeout)
+	defer cancel()
+	completed := make(chan error, 1)
+	go func() { completed <- w.maintenance.Execute(ctx, callCtx, claimed) }()
+	ticker := time.NewTicker(w.config.LeaseTTL / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-completed:
+			return err
+		case <-ticker.C:
+			if _, err := w.store.RenewManagedInspectionLease(ctx, claimed, w.config.LeaseTTL); err != nil {
+				cancel()
+				executionErr := <-completed
+				if executionErr == nil {
+					return nil
+				}
+				return errors.Join(err, executionErr)
+			}
+		case <-ctx.Done():
+			cancel()
+			<-completed
+			return ctx.Err()
+		}
+	}
 }
 
 func (w *Worker) execute(ctx context.Context, claimed lifecycle.Operation, kind string, execute func(context.Context, context.Context, lifecycle.Operation) error) error {

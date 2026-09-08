@@ -145,6 +145,11 @@ func (s *Store) ConfirmMachineOnline(ctx context.Context, binding api.Binding) e
 		if n != 1 {
 			return identity.ErrUnauthorized
 		}
+		// A stopped first-connection schedule becomes eligible after this durable
+		// fact changes. Preserve a renewal decision that was already frozen.
+		if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_maintenance SET reason=CASE WHEN renew_until=0 THEN '' ELSE reason END,next_check_at=CASE WHEN renew_until=0 THEN `+s.databaseClock()+` ELSE next_check_at END WHERE runner_id=$1`, runnerID); err != nil {
+			return err
+		}
 		return nil
 	})
 }

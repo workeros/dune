@@ -382,3 +382,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 - 元数据事务按 Runner → 创建 Operation 顺序加锁，重新核对当前机器、Fabric、binding revision、Create 与 Bootstrap 的明确成功、同一 resource_ref、访问未关闭和数据库时钟下的资源期限。只有仍在 waiting_connection 的创建被标成 succeeded，并清理残留 worker 租约；重复连接只核对原结果。Attached 机器沿用原连接行为，不创建 Managed 状态。
 - PostgreSQL 集群确认要求回调的恢复代次、epoch 和完整 fabricd 绑定与刚发布且未过期的 route 完全一致。SQLite 及没有集群记录的 PostgreSQL 接受 Gateway 的本机可信观察，但要求 route 字段为空。提交回执丢失返回 unknown 并拒绝本次握手，不在连接路径重试写入；后续新握手可幂等确认已提交的 succeeded。
 - 验证：Gateway、访问/授权和 metadata 全包竞态检查在专用 PostgreSQL 17 下通过；最终冻结源码的全量 PostgreSQL 回归通过，跨进程包耗时 349.471 秒，构建与静态检查通过。新增测试覆盖 Publish/可见性顺序、回调错误与一秒超时、绑定隔离、Bootstrap 未完成、资源过期、错误/释放 route、提交回执丢失和重复连接。这里仍使用受控生命周期事实和协议客户端，没有接入真实 Managed 提供方或把 worker 装配进宿主；续期、销毁、状态 API 与人工核对继续实施。
+
+### 已完成：Managed 资源巡检与持久续期决策
+
+- `pkg/fabric.InspectProvider` 是只读能力：调用只携带当前 Runner、Fabric、resource_ref 和 binding revision，不含动作键或任何变更授权。无错误的 confirmed 事实必须绑定原资源，并明确给出绝对到期时间或 Gone；provider 错误与 deadline 保守映射为 unknown/timed_out，伴随返回字段全部忽略。该接口没有把后续 Renew/Destroy 形状提前混入查询能力。
+- 每个已确认资源持久保存策略版本、最后事实、观测时间、下次检查、固定续期目标和独立 worker 租约。候选和领取采用数据库时钟及配置 Fabric 过滤，事务按 Runner → maintenance 行锁重复核对资源、binding revision、访问门和租约；调用期间续租，旧 worker 不能提交。策略判断与事实更新原子保存，unknown 不覆盖上次确认的到期时间，策略版本变化可重新评估停止计划。
+- 巡检从资源首次确认开始，不依赖浏览器或首次 fabricd 连接。策略读取持久 create/Bootstrap 状态与首次确认时间：首次连接宽限不会因 worker 重启而重置，首次在线会重新激活尚未冻结续期目标的停止计划，曾可用后不再套用宽限期。提供方明确 Gone 会在同一事务标记资源、关闭访问并删除 enrollment/机器身份；网络失败和本地时间越过到期值都不会这样处理。
+- worker 在 Bootstrap/create 之前处理到期巡检，每次仍只调用一个 provider；不具备 Inspect 能力的 Fabric 不会被领取。原生 PostgreSQL 备份包含实际巡检决定和执行状态。当前 `renew_until` 只冻结策略输入，尚未创建或调用 Renew 动作；宿主配置、Web 状态、销毁/人工核对及首个真实提供方闭环仍待完成。
+- 验证：SQLite 的 lifecycle/fabric/Managed/metadata 全包 race 通过；专用 PostgreSQL 17 下的巡检、首次在线、确认删除及原生备份定向 race 通过，metadata 用时 13.745 秒。冻结源码后的 PostgreSQL 全量 `make test TEST_FLAGS='-p=1 -count=1 -timeout=480s'` 通过，跨进程包用时 343.297 秒；`make build`、`make check-go` 和差异检查通过。测试仍使用可信适配器夹具，没有调用真实 Managed 提供方、Agent 或远端环境。

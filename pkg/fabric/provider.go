@@ -55,6 +55,30 @@ type BootstrapReconcileCall struct {
 	Action Action
 }
 
+// InspectCall identifies one already associated resource. Inspect is read-only;
+// it carries no action key and grants no permission to create, renew or destroy.
+type InspectCall struct {
+	RunnerID, FabricID, ResourceRef string
+	BindingRevision                 int64
+}
+
+type InspectionStatus string
+
+const (
+	InspectionConfirmed InspectionStatus = "confirmed"
+	InspectionUnknown   InspectionStatus = "unknown"
+)
+
+// Inspection reports current facts for the exact resource. A confirmed live
+// resource includes its absolute expiry. Gone is affirmative deletion evidence.
+// Unknown carries no fields and never authorizes mutation.
+type Inspection struct {
+	Status      InspectionStatus
+	ResourceRef string
+	ExpiresAt   time.Time
+	Gone        bool
+}
+
 type Outcome string
 
 const (
@@ -94,4 +118,10 @@ type CreateProvider interface {
 type BootstrapProvider interface {
 	Bootstrap(context.Context, BootstrapCall) (Observation, error)
 	ReconcileBootstrap(context.Context, BootstrapReconcileCall) (Observation, error)
+}
+
+// InspectProvider performs bounded, read-only resource queries. Errors are
+// recorded as unknown (or timed out) and all returned fields are ignored.
+type InspectProvider interface {
+	Inspect(context.Context, InspectCall) (Inspection, error)
 }

@@ -182,19 +182,27 @@ func (s *Store) RecoverableManagedCreatesFor(ctx context.Context, fabricIDs []st
 }
 
 func managedFabricFilter(fabricIDs []string) (string, []any, error) {
+	return managedFabricFilterAt(fabricIDs, 2)
+}
+
+func managedFabricFilterAt(fabricIDs []string, first int) (string, []any, error) {
+	return managedFabricFilterColumn(fabricIDs, first, "o.fabric_id")
+}
+
+func managedFabricFilterColumn(fabricIDs []string, first int, column string) (string, []any, error) {
 	placeholders := make([]string, len(fabricIDs))
 	args := make([]any, len(fabricIDs))
 	for i, id := range fabricIDs {
 		if id == "" || id == "attached" || len(id) > 128 || !utf8.ValidString(id) || strings.TrimSpace(id) != id || strings.ContainsFunc(id, unicode.IsControl) {
 			return "", nil, ErrInvalidArgument
 		}
-		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		placeholders[i] = fmt.Sprintf("$%d", i+first)
 		args[i] = id
 	}
 	if len(placeholders) == 0 {
 		return "", nil, nil
 	}
-	return " AND o.fabric_id IN (" + strings.Join(placeholders, ",") + ")", args, nil
+	return " AND " + column + " IN (" + strings.Join(placeholders, ",") + ")", args, nil
 }
 
 func (s *Store) recoverableManagedCreates(ctx context.Context, fabricIDs []string, limit int) ([]lifecycle.Operation, error) {
