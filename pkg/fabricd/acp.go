@@ -147,8 +147,9 @@ func (a *acpController) receive(data []byte) {
 		Params json.RawMessage `json:"params"`
 		Result json.RawMessage `json:"result"`
 		Error  *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
+			Code    int             `json:"code"`
+			Message string          `json:"message"`
+			Data    json.RawMessage `json:"data"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(data, &m) != nil {
@@ -177,7 +178,7 @@ func (a *acpController) receive(data []byte) {
 		if ch != nil {
 			reply := acpReply{Result: m.Result}
 			if m.Error != nil {
-				reply.Err = fmt.Errorf("ACP %d: %s", m.Error.Code, m.Error.Message)
+				reply.Err = formatACPError(m.Error.Code, m.Error.Message, m.Error.Data)
 			}
 			select {
 			case ch <- reply:
@@ -222,6 +223,30 @@ func (a *acpController) receive(data []byte) {
 	// No file-system/terminal capabilities are advertised. Agents that have
 	// their own tools can use them; unsupported client methods fail explicitly.
 	_ = a.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32601, "message": "Dune does not advertise this client capability"}})
+}
+
+func formatACPError(code int, message string, data json.RawMessage) error {
+	detail := ""
+	if len(data) > 0 && string(data) != "null" {
+		var structured struct {
+			Details string `json:"details"`
+		}
+		if json.Unmarshal(data, &structured) == nil {
+			detail = strings.TrimSpace(structured.Details)
+		}
+		if detail == "" {
+			var text string
+			if json.Unmarshal(data, &text) == nil {
+				detail = strings.TrimSpace(text)
+			} else {
+				detail = strings.TrimSpace(string(data))
+			}
+		}
+	}
+	if detail == "" || detail == message {
+		return fmt.Errorf("ACP %d: %s", code, message)
+	}
+	return fmt.Errorf("ACP %d: %s: %s", code, message, detail)
 }
 
 func (a *acpController) emitUpdate(params json.RawMessage) {

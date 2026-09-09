@@ -60,7 +60,7 @@ ACP/Exec 使用短生命周期 guardian，daemon 所有权管道断开时清理�
 
 PTY 支持原始 bytes、resize（1..200 行、1..400 列）、INT/QUIT 输入及 TERM/HUP 显式销毁。一个输入 owner，其他连接为只读 tmux viewer。重新 attach 恢复当前画面，tmux copy-mode 浏览有界历史；`runtime.capture` 仅提供诊断快照，网页不使用快照绘制。
 
-ACP stdout 逐行验证 JSON-RPC 2.0 对象、字符串/数字 ID、request/notification/response envelope；unknown method 原样传递。stderr 单独发送。线协议帧最大 4MiB。开发机按物理内存把 ACP 单行读取上限设为 2MiB、4MiB 或 8MiB，把历史回放队列设为 8MiB、16MiB 或 32MiB；传输帧上限不随机器变化。超过浏览器事件预算的消息文本按 UTF-8 分片，大型工具字段有界省略；超过本机单行上限的事件产生省略通知并继续读取后续 RPC，不因历史中的单条大消息终止 Runtime。单次输入最大 32KiB 且只有一条 JSON 消息。语法或 envelope 无效的 stdout 仍终止 Runtime 并报告 INVALID_ACP，无效输入关闭该订阅并报告 INPUT_FAILED。daemon 不解释 ACP 会话、权限或任务完成。mock 示例中的会话/权限逻辑属于示例 Agent，不属于 daemon。
+ACP stdout 逐行验证 JSON-RPC 2.0 对象、字符串/数字 ID、request/notification/response envelope；unknown method 原样传递。Agent 错误会保留 `error.data.details`，与整条 ACP 消息共用下述统一上限。stderr 单独发送。线协议帧最大 4MiB。开发机按物理内存把 ACP 单行读取上限设为 2MiB、4MiB 或 8MiB，把历史回放队列设为 8MiB、16MiB 或 32MiB；传输帧上限不随机器变化。超过浏览器事件预算的消息文本按 UTF-8 分片，大型工具字段有界省略；超过本机单行上限的事件产生省略通知并继续读取后续 RPC，不因历史中的单条大消息终止 Runtime。单次输入最大 32KiB 且只有一条 JSON 消息。语法或 envelope 无效的 stdout 仍终止 Runtime 并报告 INVALID_ACP，无效输入关闭该订阅并报告 INPUT_FAILED。daemon 不解释 ACP 会话、权限或任务完成。mock 示例中的会话/权限逻辑属于示例 Agent，不属于 daemon。
 
 ## 资源与背压
 

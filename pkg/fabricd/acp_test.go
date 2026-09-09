@@ -266,7 +266,7 @@ func TestACPCapabilityCombinationsAndLoad(t *testing.T) {
 					case "session/load":
 						a.receive([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"old","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"secret-transcript-marker"}}}}`))
 						if m.Params["sessionId"] == "fail" {
-							b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32000, "message": "load failed"}})
+							b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32000, "message": "load failed", "data": map[string]string{"details": "thread already has an active writer"}}})
 							a.receive(b)
 							continue
 						}
@@ -323,8 +323,8 @@ func TestACPCapabilityCombinationsAndLoad(t *testing.T) {
 					t.Fatal(err)
 				}
 				wait()
-				if a.snapshot().SessionID != "" || a.snapshot().Error == "" {
-					t.Fatal("failed load appeared successful")
+				if got := a.snapshot(); got.SessionID != "" || got.Error != "ACP -32000: load failed: thread already has an active writer" {
+					t.Fatalf("failed load lost error detail: %+v", got)
 				}
 			}
 			a.closed()
