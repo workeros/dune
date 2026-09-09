@@ -51,7 +51,7 @@ type harness struct {
 	client    *sdk.Client
 	ctx       context.Context
 	cancel    context.CancelFunc
-	cmd       *exec.Cmd
+	cmds      map[string]*exec.Cmd
 	log       *os.File
 }
 
@@ -67,26 +67,17 @@ func start(t *testing.T) *harness {
 	c, e := config.Load(path)
 	must(t, e)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	h := &harness{t: t, dir: dir, path: path, c: c, ctx: ctx, cancel: cancel}
+	h := &harness{t: t, dir: dir, path: path, c: c, ctx: ctx, cancel: cancel, cmds: make(map[string]*exec.Cmd)}
 	h.log, e = os.Create(filepath.Join(dir, "service.log"))
 	must(t, e)
-	h.cmd = exec.Command(binary, "--config", path)
-	h.cmd.Stdout = h.log
-	h.cmd.Stderr = h.log
-	must(t, h.cmd.Start())
+	h.startProcess("gateway")
+	h.startProcess("fabricd")
 	t.Cleanup(func() {
 		if h.client != nil {
 			h.client.Close()
 		}
-		h.cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { h.cmd.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(8 * time.Second):
-			h.cmd.Process.Kill()
-			<-done
-		}
+		h.stopProcess("fabricd", syscall.SIGTERM)
+		h.stopProcess("gateway", syscall.SIGTERM)
 		if server, err := tmux.Open(c.SessionDir); err == nil {
 			_ = server.Close()
 		}
@@ -104,6 +95,43 @@ func start(t *testing.T) *harness {
 	h.reconnect()
 	return h
 }
+
+func (h *harness) startProcess(name string) {
+	h.t.Helper()
+	cmd := exec.Command(binary, "--config", h.path, name)
+	cmd.Stdout = h.log
+	cmd.Stderr = h.log
+	must(h.t, cmd.Start())
+	h.cmds[name] = cmd
+}
+
+func (h *harness) stopProcess(name string, signal os.Signal) {
+	h.t.Helper()
+	cmd := h.cmds[name]
+	if cmd == nil {
+		return
+	}
+	_ = cmd.Process.Signal(signal)
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(8 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+	}
+	delete(h.cmds, name)
+}
+
+func (h *harness) restartProcess(name string) {
+	h.t.Helper()
+	h.stopProcess(name, syscall.SIGKILL)
+	h.startProcess(name)
+}
+
 func (h *harness) reconnect() {
 	h.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -419,20 +447,8 @@ func TestRestart(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	killChild := func(name string) {
-		b, e := exec.Command("ps", "-axo", "pid=,ppid=,command=").Output()
-		must(t, e)
-		for _, line := range strings.Split(string(b), "\n") {
-			var pid, ppid int
-			if _, e := fmt.Sscanf(line, "%d %d", &pid, &ppid); e == nil && ppid == h.cmd.Process.Pid && strings.HasSuffix(line, " "+name) {
-				must(t, syscall.Kill(pid, syscall.SIGKILL))
-				return
-			}
-		}
-		t.Fatal("child not found", name)
-	}
 	old := h.client.Binding
-	killChild("gateway")
+	h.restartProcess("gateway")
 	for e == nil {
 		_, e = s.Recv()
 	}
@@ -446,7 +462,7 @@ func TestRestart(t *testing.T) {
 	sum := sha256.Sum256(nil)
 	u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Path: filepath.Join(h.dir, "upload"), SHA256: hex.EncodeToString(sum[:])})
 	must(t, e)
-	killChild("fabricd")
+	h.restartProcess("fabricd")
 	h.client.Close()
 	time.Sleep(400 * time.Millisecond)
 	h.reconnect()

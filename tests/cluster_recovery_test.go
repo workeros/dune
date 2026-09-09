@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestPostgresClusterRecoveryCLI(t *testing.T) {
+func TestPostgresClusterRecoveryCommand(t *testing.T) {
 	ctx := context.Background()
 	database := postgresWorkbenchConfig(t)
 	store, err := metadata.Open(ctx, database)
@@ -69,7 +69,7 @@ func TestPostgresClusterRecoveryCLI(t *testing.T) {
 		t.Fatal("stale recovery changed current generation")
 	}
 	if _, err := store.ConnectionDirectory(ctx, original); !errors.Is(err, gateway.ErrRouteStale) {
-		t.Fatal("old service identity survived CLI rotation", err)
+		t.Fatal("old service identity survived recovery rotation", err)
 	}
 }
 

@@ -5,6 +5,7 @@ package lifecycle
 import (
 	"time"
 
+	"github.com/aiomni/dune/pkg/fabric"
 	"github.com/aiomni/dune/pkg/renewal"
 )
 
@@ -24,10 +25,12 @@ const (
 // include the current absolute expiry; confirmed deletion is expressed only by
 // Gone. Unknown and timed-out reads carry no resource assertions.
 type ResourceInspection struct {
-	Status      string
-	ResourceRef string
-	ExpiresAt   time.Time
-	Gone        bool
+	Status       string
+	ResourceRef  string
+	ExpiresAt    time.Time
+	Gone         bool
+	State        string
+	Capabilities *fabric.ResourceCapabilities
 }
 
 // RenewalSchedule is one durable maintenance decision and its temporary
@@ -36,6 +39,8 @@ type ResourceInspection struct {
 type RenewalSchedule struct {
 	RunnerID, FabricID, ResourceRef string
 	BindingRevision                 int64
+	ProviderBindingID               string
+	ProviderBindingRevision         int64
 	PolicyVersion, Reason, Facts    string
 	ObservedAt, NextCheckAt         time.Time
 	RenewUntil                      time.Time

@@ -53,7 +53,7 @@ dune metadata cluster-recovery --database-config /absolute/private/database.yaml
 
 首次企业登录按 issuer + subject 新建独立用户，不根据邮箱接管本地账号、机器或 Runner。关联既有 Dune 用户使用下述明确授权的身份关联流程，不通过改邮箱或直接改 SQL 绕过此边界。Dune 用户停用会同时阻止企业新登录并撤销已有会话；上游停用自动同步尚未实现，不能将回调成功或短期会话视为持续上游授权证明。
 
-会话保存本次登录验证的 namespace 与 subject；CLI 子会话、短期连接凭据和 Attached 安装材料保留同一引用。持续访问复核原主体，不查询关联列表来替换身份。备份恢复保留原到期时间、授权版本和父子会话关系；备份之后的撤销需由部署方核对并重新执行。
+会话保存本次登录验证的 namespace 与 subject；短期连接凭据和 Attached 安装材料保留同一引用。持续访问复核原主体，不查询关联列表来替换身份。开发部署不兼容旧 CLI schema，升级时直接重建元数据；备份之后的撤销需由部署方核对并重新执行。
 
 ## 显式关联既有账号
 

@@ -20,7 +20,6 @@ var ErrNotFound = errors.New("machine not found")
 
 type Sessions interface {
 	Authenticate(context.Context, string) (identity.User, error)
-	AuthenticateCLI(context.Context, string) (identity.User, error)
 	Namespace() string
 }
 
@@ -73,14 +72,8 @@ func (g *ClientGrant) Close()           { g.release() }
 func (l *Service) Client(ctx context.Context, session, target string) (*ClientGrant, error) {
 	return l.client(ctx, session, target, l.sessions.Authenticate, nil)
 }
-func (l *Service) ClientCLI(ctx context.Context, session, target string) (*ClientGrant, error) {
-	return l.client(ctx, session, target, l.sessions.AuthenticateCLI, nil)
-}
 func (l *Service) ClientRunner(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
 	return l.client(ctx, session, binding.MachineID, l.sessions.Authenticate, &binding)
-}
-func (l *Service) ClientRunnerCLI(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
-	return l.client(ctx, session, binding.MachineID, l.sessions.AuthenticateCLI, &binding)
 }
 func (l *Service) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error), binding *runner.Binding) (*ClientGrant, error) {
 	if err := l.ctx.Err(); err != nil {

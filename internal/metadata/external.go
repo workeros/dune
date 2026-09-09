@@ -46,7 +46,7 @@ func (s *Store) ConsumeLogin(ctx context.Context, stateHash, browserHash, namesp
 }
 
 func (s *Store) ExternalLogin(ctx context.Context, namespace string, subject public.Subject, newID, hash string, expires int64, limit int) (identity.User, error) {
-	user := identity.User{Namespace: namespace, Subject: subject.ID, Kind: "browser"}
+	user := identity.User{Namespace: namespace, Subject: subject.ID}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		if err := s.lockExternalIdentity(ctx, tx, namespace, subject.ID); err != nil {
 			return err

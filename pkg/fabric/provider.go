@@ -8,6 +8,46 @@ import (
 
 var ErrProviderUnavailable = errors.New("managed provider unavailable")
 
+// ProviderBindingRef is the immutable provider configuration selected when a
+// Managed create request is accepted.
+type ProviderBindingRef struct {
+	ID       string
+	Revision int64
+}
+
+func (r ProviderBindingRef) Valid() bool {
+	return boundedIdentifier(r.ID, 128) && r.Revision > 0
+}
+
+// ProviderBinding exposes one exact provider configuration without its raw
+// credentials. Resolver implementations may refresh credentials for the same
+// authentication subject while retaining this ID and revision.
+type ProviderBinding struct {
+	ProviderBindingRef
+	FabricID     string
+	Availability AvailabilityProvider
+	Create       CreateProvider
+	Bootstrap    BootstrapProvider
+	Inspect      InspectProvider
+	Renew        RenewProvider
+	Destroy      DestroyProvider
+	Candidate    CandidateProvider
+	PauseResume  PauseResumeProvider
+}
+
+func (b ProviderBinding) Valid() bool {
+	return b.ProviderBindingRef.Valid() && b.FabricID != "" &&
+		b.Availability != nil && b.Create != nil && b.Bootstrap != nil &&
+		b.Inspect != nil && b.Renew != nil && b.Destroy != nil && b.Candidate != nil
+}
+
+// ProviderResolver selects the current binding in the authenticated tenant
+// scope and restores an exact binding for durable lifecycle work.
+type ProviderResolver interface {
+	Current(context.Context, string, string) (ProviderBinding, error)
+	Exact(context.Context, string, int64) (ProviderBinding, error)
+}
+
 type AvailabilityReason string
 
 const (
@@ -51,16 +91,18 @@ type AvailabilityProvider interface {
 // an adapter use provider-side fencing when its platform supports it. A caller
 // must never replace these values with a later worker's execution identity.
 type Action struct {
-	ID                string
-	OperationID       string
-	RunnerID          string
-	FabricID          string
-	RequestDigest     string
-	ResourceRef       string
-	Issuer            string
-	BindingRevision   int64
-	ExecutionRevision int64
-	RenewUntil        time.Time
+	ID                      string
+	OperationID             string
+	RunnerID                string
+	FabricID                string
+	RequestDigest           string
+	ResourceRef             string
+	Issuer                  string
+	BindingRevision         int64
+	ProviderBindingID       string
+	ProviderBindingRevision int64
+	ExecutionRevision       int64
+	RenewUntil              time.Time
 }
 
 // CreateCall contains the exact validated template snapshot accepted by Dune.
@@ -135,6 +177,26 @@ type CandidateCall struct {
 type InspectCall struct {
 	RunnerID, FabricID, ResourceRef string
 	BindingRevision                 int64
+	ProviderBindingID               string
+	ProviderBindingRevision         int64
+}
+
+// ResourceState is the small provider-independent lifecycle state exposed by
+// Managed. In-flight work belongs to the durable Operation rather than here.
+type ResourceState string
+
+const (
+	ResourceReady   ResourceState = "ready"
+	ResourcePaused  ResourceState = "paused"
+	ResourceUnknown ResourceState = "unknown"
+)
+
+// ResourceCapabilities records facts for one allocated resource. A nil
+// pointer on Inspection or Observation means that the provider has not
+// confirmed the capabilities yet.
+type ResourceCapabilities struct {
+	PauseResume  bool `json:"pause_resume"`
+	DiskSnapshot bool `json:"disk_snapshot"`
 }
 
 type InspectionStatus string
@@ -148,10 +210,12 @@ const (
 // resource includes its absolute expiry. Gone is affirmative deletion evidence.
 // Unknown carries no fields and never authorizes mutation.
 type Inspection struct {
-	Status      InspectionStatus
-	ResourceRef string
-	ExpiresAt   time.Time
-	Gone        bool
+	Status       InspectionStatus
+	ResourceRef  string
+	ExpiresAt    time.Time
+	Gone         bool
+	State        ResourceState
+	Capabilities *ResourceCapabilities
 }
 
 type Outcome string
@@ -166,10 +230,27 @@ const (
 // be present for a failed or unknown create when the provider exposed a partial
 // allocation. ExpiresAt is a confirmed absolute time, not a requested TTL.
 type Observation struct {
-	Outcome     Outcome
-	ResourceRef string
-	ExpiresAt   time.Time
-	Gone        bool
+	Outcome      Outcome
+	ResourceRef  string
+	ExpiresAt    time.Time
+	Gone         bool
+	State        ResourceState
+	Capabilities *ResourceCapabilities
+}
+
+type PauseResumeCall struct {
+	RunnerID, FabricID, ResourceRef string
+	BindingRevision                 int64
+	ProviderBindingID               string
+	ProviderBindingRevision         int64
+}
+
+// PauseResumeProvider applies one resource lifecycle mutation. Dune records
+// the call before dispatch and uses Inspect for all recovery; callers must not
+// replay a call whose result is unknown.
+type PauseResumeProvider interface {
+	Pause(context.Context, PauseResumeCall) error
+	Resume(context.Context, PauseResumeCall) error
 }
 
 // CreateProvider is the smallest provider surface used by the first Managed

@@ -59,18 +59,6 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof := wire.ID() + wire.ID()
-	cli, err := s.BeginCLI(ctx, tokenHash(proof), "https://restore.test/", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ConfirmCLI(ctx, cli.ID, "https://restore.test/", "", cli.Code, cookie, user.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	cliSession, err := s.ConsumeCLI(ctx, cli.ID, "https://restore.test/", "", proof)
-	if err != nil {
-		t.Fatal(err)
-	}
 	cursor, err := s.SaveCursor(ctx, user.ID, "", "runner.list", machine.RunnerID)
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +261,7 @@ func TestPostgresBackupRestore(t *testing.T) {
 	if err != nil || len(closures) != 1 || closures[0].MachineID != destroyMachine.ID {
 		t.Fatal("backup destroy closure setup", closures, err)
 	}
-	if err := s.ConfirmManagedDestroyAccessClosed(ctx, closures[0]); err != nil {
+	if err := s.ConfirmManagedAccessClosed(ctx, closures[0]); err != nil {
 		t.Fatal(err)
 	}
 	destroyExecution, err := s.ClaimRecoverableManagedDestroy(ctx, savedDestroy.ID, wire.ID(), time.Minute)
@@ -394,9 +382,6 @@ func TestPostgresBackupRestore(t *testing.T) {
 		t.Fatal("restored external access lost subject", err)
 	}
 	local = identity.NewLocal(s, true)
-	if got, err := local.AuthenticateCLI(ctx, cliSession.Token); err != nil || got.ID != user.ID {
-		t.Fatal("restored CLI session invalid", err)
-	}
 	if got, err := local.Authenticate(ctx, cookie); err != nil || got.ID != user.ID {
 		t.Fatal("restored session invalid", err)
 	}

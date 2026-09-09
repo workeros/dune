@@ -126,7 +126,7 @@ func (s *Store) PruneManagedHistory(ctx context.Context, retainFor time.Duration
 			if _, err := tx.ExecContext(ctx, `DELETE FROM dune_provider_actions WHERE operation_id IN (SELECT id FROM dune_operations WHERE runner_id=$1)`, id); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM dune_managed_destroy_closures WHERE operation_id IN (SELECT operation_id FROM dune_managed_destroys WHERE runner_id=$1)`, id); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM dune_managed_access_closures WHERE operation_id IN (SELECT id FROM dune_operations WHERE runner_id=$1)`, id); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM dune_managed_destroys WHERE runner_id=$1`, id); err != nil {

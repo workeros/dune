@@ -131,6 +131,38 @@ func (s *Store) ConfirmMachineOnline(ctx context.Context, binding api.Binding) e
 		if err := s.confirmManagedOnlineRoute(ctx, tx, binding, now); err != nil {
 			return err
 		}
+		resume, resumeErr := scanOperation(tx.QueryRowContext(ctx, "SELECT "+operationColumns+" FROM dune_operations WHERE runner_id=$1 AND action='resume' AND finished=FALSE ORDER BY created_at DESC,id DESC LIMIT 1", runnerID))
+		if resumeErr == nil {
+			if resume.RunnerID != runnerID || resume.FabricID != resource.FabricID || resume.ProviderBindingID != resource.ProviderBindingID || resume.ProviderBindingRevision != resource.ProviderBindingRevision || resume.Exclusive || resume.Outcome != "" || !resource.AccessSuspended || resource.State != "ready" {
+				return identity.ErrUnauthorized
+			}
+			action, err := scanAction(tx.QueryRowContext(ctx, "SELECT "+actionColumns+" FROM dune_provider_actions WHERE operation_id=$1 AND kind='resume'", resume.ID))
+			if err != nil || action.Outcome != "succeeded" || action.CompletedAt.IsZero() || action.ResourceRef != resource.Ref {
+				return identity.ErrUnauthorized
+			}
+			result, err := tx.ExecContext(ctx, `UPDATE dune_operations SET finished=TRUE,finished_at=`+s.databaseClock()+`,outcome='succeeded',worker='',lease_until=0 WHERE id=$1 AND finished=FALSE AND outcome='' AND exclusive=FALSE`, resume.ID)
+			if err != nil {
+				return err
+			}
+			if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+				if err != nil {
+					return err
+				}
+				return identity.ErrUnauthorized
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE dune_managed_resources SET access_suspended=FALSE WHERE runner_id=$1 AND access_suspended=TRUE`, runnerID)
+			if err != nil {
+				return err
+			}
+			// A renewal accepted while Paused can reveal its new expiry only
+			// after this reconnect. Reacquire the business lock for observation;
+			// the original provider mutation remains non-repeatable.
+			_, err = tx.ExecContext(ctx, `UPDATE dune_operations SET exclusive=TRUE,worker='',lease_until=0 WHERE runner_id=$1 AND action='renew' AND finished=FALSE AND exclusive=FALSE AND EXISTS(SELECT 1 FROM dune_provider_actions a WHERE a.operation_id=dune_operations.id AND a.kind='renew' AND a.completed_at=0)`, runnerID)
+			return err
+		}
+		if !errors.Is(resumeErr, ErrNotFound) {
+			return resumeErr
+		}
 		if op.Finished {
 			return nil
 		}

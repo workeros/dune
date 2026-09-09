@@ -29,7 +29,7 @@ func (s *Store) createAccess(ctx context.Context, hash, sessionHash, principal, 
 			return err
 		}
 		now := time.Now().Unix()
-		sessionQuery := `SELECT s.auth_version,s.identity_subject FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.expires_at>$4 AND p.enabled=TRUE AND p.auth_version=s.auth_version` + liveSessionParent("$4")
+		sessionQuery := `SELECT s.auth_version,s.identity_subject FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id WHERE s.hash=$1 AND s.principal_id=$2 AND s.identity_namespace=$3 AND s.expires_at>$4 AND p.enabled=TRUE AND p.auth_version=s.auth_version`
 		if s.postgres {
 			// Lock parents before touching tickets, consistently with cascading
 			// logout/revocation. Otherwise cleanup followed by FK insertion can
@@ -42,15 +42,20 @@ func (s *Store) createAccess(ctx context.Context, hash, sessionHash, principal, 
 			}
 			return err
 		}
-		bindingQuery := `SELECT r.id,r.fabric_id,r.binding_revision,r.owner_id FROM dune_machines m JOIN dune_runners r ON r.id=m.runner_id WHERE m.id=$1`
+		bindingQuery := `SELECT r.id,r.fabric_id,r.binding_revision,r.owner_id,r.kind,COALESCE(resource.access_closed,FALSE),COALESCE(resource.access_suspended,FALSE) FROM dune_machines m JOIN dune_runners r ON r.id=m.runner_id LEFT JOIN dune_managed_resources resource ON resource.runner_id=r.id WHERE m.id=$1`
 		if s.postgres {
 			bindingQuery += ` FOR SHARE OF r`
 		}
-		if err := tx.QueryRowContext(ctx, bindingQuery, target).Scan(&record.RunnerID, &record.FabricID, &record.BindingRevision, &record.OwnerID); err != nil {
+		var kind string
+		var accessClosed, accessSuspended bool
+		if err := tx.QueryRowContext(ctx, bindingQuery, target).Scan(&record.RunnerID, &record.FabricID, &record.BindingRevision, &record.OwnerID, &kind, &accessClosed, &accessSuspended); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return authorization.ErrNotFound
 			}
 			return err
+		}
+		if kind == "managed" && (accessClosed || accessSuspended) {
+			return identity.ErrUnauthorized
 		}
 		if expected != nil && (expected.RunnerID != record.RunnerID || expected.FabricID != record.FabricID || expected.MachineID != record.Target || expected.Revision != record.BindingRevision) {
 			return runner.ErrBindingChanged
@@ -108,7 +113,7 @@ type accessReader interface {
 
 func checkAccess(ctx context.Context, db accessReader, record authorization.ConnectionAccess, now int64) (bool, error) {
 	var found int
-	err := db.QueryRowContext(ctx, `SELECT 1 FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id JOIN dune_machines m ON m.id=$1 JOIN dune_runners r ON r.id=m.runner_id WHERE s.hash=$2 AND s.principal_id=$3 AND s.identity_namespace=$4 AND s.identity_subject=$11 AND s.expires_at>$5 AND s.auth_version=$6 AND p.enabled=TRUE AND p.auth_version=$6 AND r.owner_id=$10 AND r.id=$7 AND r.fabric_id=$8 AND r.binding_revision=$9`+liveSessionParent("$5"), record.Target, record.SessionHash, record.PrincipalID, record.Namespace, now, record.AuthVersion, record.RunnerID, record.FabricID, record.BindingRevision, record.OwnerID, record.Subject).Scan(&found)
+	err := db.QueryRowContext(ctx, `SELECT 1 FROM dune_sessions s JOIN dune_principals p ON p.id=s.principal_id JOIN dune_machines m ON m.id=$1 JOIN dune_runners r ON r.id=m.runner_id LEFT JOIN dune_managed_resources resource ON resource.runner_id=r.id WHERE s.hash=$2 AND s.principal_id=$3 AND s.identity_namespace=$4 AND s.identity_subject=$11 AND s.expires_at>$5 AND s.auth_version=$6 AND p.enabled=TRUE AND p.auth_version=$6 AND r.owner_id=$10 AND r.id=$7 AND r.fabric_id=$8 AND r.binding_revision=$9 AND (r.kind<>'managed' OR (resource.access_closed=FALSE AND resource.access_suspended=FALSE))`, record.Target, record.SessionHash, record.PrincipalID, record.Namespace, now, record.AuthVersion, record.RunnerID, record.FabricID, record.BindingRevision, record.OwnerID, record.Subject).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aiomni/dune/internal/authorization"
@@ -25,15 +26,19 @@ type Service struct {
 	access       *authorization.Service
 	store        *metadata.Store
 	instanceID   string
+	resolver     fabric.ProviderResolver
 }
 
 const providerAvailabilityTimeout = time.Second
 
 // New uses the host's existing sessions, access service and shared SQL store.
 // It starts no workers and does not make Managed available on a public endpoint.
-func New(catalog *fabric.Catalog, availability map[string]fabric.AvailabilityProvider, sessions authorization.Sessions, checks *authorization.Service, store *metadata.Store, instanceID string) (*Service, error) {
+func New(catalog *fabric.Catalog, availability map[string]fabric.AvailabilityProvider, sessions authorization.Sessions, checks *authorization.Service, store *metadata.Store, instanceID string, resolvers ...fabric.ProviderResolver) (*Service, error) {
 	if catalog == nil || len(availability) == 0 || sessions == nil || checks == nil || store == nil || !wire.ValidID(instanceID) {
 		return nil, fmt.Errorf("managed service requires catalog, sessions, access checks and shared metadata")
+	}
+	if len(resolvers) > 1 {
+		return nil, fmt.Errorf("managed service accepts one provider resolver")
 	}
 	providers := make(map[string]fabric.AvailabilityProvider, len(availability))
 	for id, provider := range availability {
@@ -42,24 +47,36 @@ func New(catalog *fabric.Catalog, availability map[string]fabric.AvailabilityPro
 		}
 		providers[id] = provider
 	}
-	return &Service{catalog: catalog, availability: providers, sessions: sessions, access: checks, store: store, instanceID: instanceID}, nil
+	var resolver fabric.ProviderResolver
+	if len(resolvers) == 1 {
+		resolver = resolvers[0]
+	}
+	return &Service{catalog: catalog, availability: providers, sessions: sessions, access: checks, store: store, instanceID: instanceID, resolver: resolver}, nil
 }
 
-func (s *Service) providerAvailability(ctx context.Context, fabricID string) fabric.Availability {
+func (s *Service) providerAvailability(ctx context.Context, tenantID, fabricID string) (fabric.ProviderBindingRef, fabric.Availability) {
+	ref := fabric.ProviderBindingRef{ID: fabricID, Revision: 1}
 	provider, ok := s.availability[fabricID]
 	if !ok {
-		return fabric.Availability{Reason: fabric.AvailabilityConfiguration}
+		return fabric.ProviderBindingRef{}, fabric.Availability{Reason: fabric.AvailabilityConfiguration}
+	}
+	if s.resolver != nil {
+		binding, err := s.resolver.Current(ctx, tenantID, fabricID)
+		if err != nil || !binding.Valid() || binding.FabricID != fabricID {
+			return fabric.ProviderBindingRef{}, fabric.Availability{Reason: fabric.AvailabilityConfiguration}
+		}
+		ref, provider = binding.ProviderBindingRef, binding.Availability
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, providerAvailabilityTimeout)
 	defer cancel()
 	status, err := provider.Availability(checkCtx)
 	if err != nil {
-		return fabric.Availability{Reason: fabric.AvailabilityUnreachable}
+		return ref, fabric.Availability{Reason: fabric.AvailabilityUnreachable}
 	}
 	if !status.Valid() {
-		return fabric.Availability{Reason: fabric.AvailabilityUnknown}
+		return ref, fabric.Availability{Reason: fabric.AvailabilityUnknown}
 	}
-	return status
+	return ref, status
 }
 
 func (s *Service) Templates(ctx context.Context, cookie string) ([]fabric.TemplateStatus, error) {
@@ -84,7 +101,7 @@ func (s *Service) Templates(ctx context.Context, cookie string) ([]fabric.Templa
 		}
 		status, ok := availability[t.FabricID]
 		if !ok {
-			status = s.providerAvailability(ctx, t.FabricID)
+			_, status = s.providerAvailability(ctx, user.ID, t.FabricID)
 			availability[t.FabricID] = status
 		}
 		out = append(out, fabric.TemplateStatus{Template: t, Availability: status})
@@ -99,16 +116,17 @@ func hideDenied(err error) error {
 	return err
 }
 
-func (s *Service) template(ctx context.Context, user identity.User, fabricID, id, version string) (fabric.TemplateStatus, access.Decision, error) {
+func (s *Service) template(ctx context.Context, user identity.User, fabricID, id, version string) (fabric.TemplateStatus, access.Decision, fabric.ProviderBindingRef, error) {
 	t, err := s.catalog.Template(fabricID, id, version)
 	if err != nil || t.Disabled {
-		return fabric.TemplateStatus{}, access.Decision{}, fabric.ErrTemplateNotFound
+		return fabric.TemplateStatus{}, access.Decision{}, fabric.ProviderBindingRef{}, fabric.ErrTemplateNotFound
 	}
 	decision, err := s.access.TemplateDecision(ctx, user, t, "template.get")
 	if err != nil {
-		return fabric.TemplateStatus{}, access.Decision{}, hideDenied(err)
+		return fabric.TemplateStatus{}, access.Decision{}, fabric.ProviderBindingRef{}, hideDenied(err)
 	}
-	return fabric.TemplateStatus{Template: t, Availability: s.providerAvailability(ctx, t.FabricID)}, decision, nil
+	binding, availability := s.providerAvailability(ctx, user.ID, t.FabricID)
+	return fabric.TemplateStatus{Template: t, Availability: availability}, decision, binding, nil
 }
 
 func (s *Service) Template(ctx context.Context, cookie, fabricID, id, version string) (fabric.TemplateStatus, error) {
@@ -116,7 +134,7 @@ func (s *Service) Template(ctx context.Context, cookie, fabricID, id, version st
 	if err != nil {
 		return fabric.TemplateStatus{}, err
 	}
-	t, _, err := s.template(ctx, user, fabricID, id, version)
+	t, _, _, err := s.template(ctx, user, fabricID, id, version)
 	return t, err
 }
 
@@ -129,7 +147,17 @@ func (s *Service) Create(ctx context.Context, cookie, requestKey string, request
 	if err != nil {
 		return lifecycle.Creation{}, err
 	}
-	template, view, err := s.template(ctx, user, request.FabricID, request.TemplateID, request.TemplateVersion)
+	if previous, previousErr := s.store.ManagedCreation(ctx, user.ID, requestKey); previousErr == nil {
+		requested, encodeErr := request.Encode()
+		accepted, acceptedErr := previous.Spec.Encode()
+		if encodeErr != nil || acceptedErr != nil || requested != accepted || previous.Operation.Namespace != user.Namespace || previous.Operation.Subject != user.Subject {
+			return lifecycle.Creation{}, lifecycle.ErrIntentConflict
+		}
+		return previous, nil
+	} else if !errors.Is(previousErr, metadata.ErrNotFound) {
+		return lifecycle.Creation{}, previousErr
+	}
+	template, view, binding, err := s.template(ctx, user, request.FabricID, request.TemplateID, request.TemplateVersion)
 	if err != nil {
 		return lifecycle.Creation{}, err
 	}
@@ -149,7 +177,7 @@ func (s *Service) Create(ctx context.Context, cookie, requestKey string, request
 		return lifecycle.Creation{}, err
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
-	return s.store.CreateManaged(ctx, user, hash, requestKey, frozen)
+	return s.store.CreateManaged(ctx, user, hash, requestKey, frozen, binding)
 }
 
 // Destroy authenticates the current browser actor and checks the current
@@ -175,6 +203,36 @@ func (s *Service) Destroy(ctx context.Context, cookie, requestKey, runnerID stri
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
 	return s.store.CreateManagedDestroy(ctx, user, hash, requestKey, selected, resource, s.instanceID, closeTimeout)
+}
+
+func (s *Service) Pause(ctx context.Context, cookie, requestKey, runnerID string) (lifecycle.ManagedPauseResume, error) {
+	return s.pauseResume(ctx, cookie, requestKey, runnerID, "pause")
+}
+
+func (s *Service) Resume(ctx context.Context, cookie, requestKey, runnerID string) (lifecycle.ManagedPauseResume, error) {
+	return s.pauseResume(ctx, cookie, requestKey, runnerID, "resume")
+}
+
+func (s *Service) pauseResume(ctx context.Context, cookie, requestKey, runnerID, action string) (lifecycle.ManagedPauseResume, error) {
+	user, err := s.sessions.Authenticate(ctx, cookie)
+	if err != nil {
+		return lifecycle.ManagedPauseResume{}, err
+	}
+	selected, decision, err := s.access.Resource(ctx, user, runnerID, false, "runner."+action)
+	if err != nil {
+		return lifecycle.ManagedPauseResume{}, err
+	}
+	if selected.Runner.Kind != "managed" {
+		return lifecycle.ManagedPauseResume{}, authorization.ErrNotFound
+	}
+	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
+	defer cancel()
+	resource, err := s.store.ManagedResource(ctx, runnerID)
+	if err != nil {
+		return lifecycle.ManagedPauseResume{}, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cookie)))
+	return s.store.CreateManagedPauseResume(ctx, user, hash, requestKey, selected, resource, s.instanceID, action)
 }
 
 // Status returns one authorized lifecycle snapshot for the current browser
@@ -281,6 +339,7 @@ func (s *Service) operationStatus(ctx context.Context, operation lifecycle.Opera
 	status := lifecycle.ManagedStatus{Operation: operation}
 	if resource, err := s.store.ManagedResource(ctx, operation.RunnerID); err == nil {
 		status.ResourceRef, status.ExpiresAt, status.AccessClosed = resource.Ref, resource.ExpiresAt, resource.AccessClosed
+		status.AccessSuspended, status.ResourceState, status.Capabilities = resource.AccessSuspended, resource.State, resource.Capabilities
 	} else if !errors.Is(err, metadata.ErrNotFound) {
 		return lifecycle.ManagedStatus{}, err
 	}
@@ -325,11 +384,27 @@ func (s *Service) operationStatus(ctx context.Context, operation lifecycle.Opera
 		}
 		status.AccessCloseOutcome, status.AccessCloseDeadline = destroyed.AccessCloseOutcome, destroyed.CloseDeadline
 		status.Stage = "destroying"
+		if strings.HasPrefix(operation.RequestKey, "managed-cleanup-") {
+			status.Stage = "cleaning_up"
+		}
 		if destroyed.AccessCloseOutcome == lifecycle.AccessCloseWaiting {
 			status.Stage = "closing_access"
 		}
 		if action, err := s.store.ProviderAction(ctx, operation.ID, "destroy"); err == nil {
 			status.ProviderOutcome = action.Outcome
+		} else if !errors.Is(err, metadata.ErrNotFound) {
+			return lifecycle.ManagedStatus{}, err
+		}
+	case "pause", "resume":
+		status.Stage = "pausing"
+		if operation.Action == "resume" {
+			status.Stage = "resuming"
+		}
+		if action, err := s.store.ProviderAction(ctx, operation.ID, operation.Action); err == nil {
+			status.ProviderOutcome = action.Outcome
+			if operation.Action == "resume" && !action.CompletedAt.IsZero() && action.Outcome == "succeeded" && !operation.Finished {
+				status.Stage, status.ProviderOutcome = "waiting_connection", ""
+			}
 		} else if !errors.Is(err, metadata.ErrNotFound) {
 			return lifecycle.ManagedStatus{}, err
 		}

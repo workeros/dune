@@ -44,7 +44,8 @@ func providerAction(op lifecycle.Operation, action lifecycle.ProviderAction) fab
 		ID: action.ID, OperationID: action.OperationID, RunnerID: op.RunnerID,
 		FabricID: op.FabricID, RequestDigest: action.Digest,
 		ResourceRef: action.ResourceRef, Issuer: action.Worker,
-		BindingRevision: op.BindingRevision, ExecutionRevision: action.ExecutionRevision,
+		BindingRevision: op.BindingRevision, ProviderBindingID: op.ProviderBindingID,
+		ProviderBindingRevision: op.ProviderBindingRevision, ExecutionRevision: action.ExecutionRevision,
 		RenewUntil: action.RenewUntil,
 	}
 }
@@ -75,7 +76,7 @@ func providerObservation(observation fabric.Observation, err error) (lifecycle.A
 	}
 	return lifecycle.ActionObservation{
 		Outcome: string(observation.Outcome), ResourceRef: observation.ResourceRef,
-		ExpiresAt: observation.ExpiresAt, Gone: observation.Gone,
+		ExpiresAt: observation.ExpiresAt, Gone: observation.Gone, State: string(observation.State), Capabilities: observation.Capabilities,
 	}, nil
 }
 

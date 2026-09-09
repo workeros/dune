@@ -1,5 +1,7 @@
 # 企业扩展方案实施记录
 
+> 本文按时间记录交付历程。后文提到的人类 CLI 登录、远程操作和裸命令 supervisor 均是历史状态，当前实现已移除这些入口；Gateway 与 fabricd 保留独立进程命令。
+
 实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。本文按时间记录实施过程；下文历史 schema 编号及迁移验收不代表当前支持，旧数据兼容已按开发阶段要求移除，当前存储行为以[元数据存储与恢复](metadata-operations.md)为准。S0a、S0b、S0c、S1、S2 与 S3 的公开实现及本文所列验收已经完成。企业私有身份/权限实现、三台独立 Linux 主机、PostgreSQL HA 等目标部署证据仍由具体采用方验证，不把仓库测试适配器或同机多进程结果写成这些部署的验收。
 
 ## S0a：连接与传输
@@ -9,7 +11,7 @@
 - `pkg/transport/ws` 提供默认 WS 拨号和 `net.Conn` 适配；`internal/wire` 只保留 Yamux 配置、消息编解码和握手，不再导入 HTTP、TLS 或 WebSocket 实现。
 - `sdk.Connect(ctx, conn, target)` 接收已建立的连接；原 `sdk.Dial` 仍装配默认 WS 拨号。两者取得连接所有权，握手失败或取消会关闭连接；连接建立后由 `Client.Close` 管理生命周期。
 - fabricd 的 `ServeConn` 承担一次反向连接的协议处理，拨号与退避仍由启动入口装配。连接取消不会销毁 tmux 会话，也不重放业务请求。
-- 验证：`DUNE_REAL_AGENT= DUNE_REMOTE_CONFIG= make test` 全部本地回归通过，包括默认 WS 分片、PTY、ACP mock、文件、Git、并发和重连的进程测试；`make check-go` 通过；Gateway、daemon、SDK 的 race 检查通过。SDK 额外覆盖等待握手响应时取消及建立连接后的 context 所有权。
+- 当时验证：关闭所有外部测试开关后，本地回归覆盖默认 WS 分片、PTY、ACP mock、文件、Git、并发和重连；`make check-go` 通过。SDK 额外覆盖等待握手响应时取消及建立连接后的 context 所有权。
 
 ### 已完成：Gateway 接入与请求处理链分离
 
@@ -120,22 +122,16 @@ S0c 本地验收完成。下一检查点为 S1：企业身份适配、浏览器�
 - 两个独立 `host.App` 共享真实 PostgreSQL，Web 在 A 签发凭据并经网络拨号到 B；fabricd 仅连接 B。真实 PTY 创建、输入输出、停用和身份关联后的空闲撤销、重新登录连接原 Runtime 及历史均通过。测试明确向实际 owner 查询就绪状态，不将本地连接目录当作跨实例目录。
 - 验证：启用 PostgreSQL 17 原生备份工具的全量 `make test`、metadata/Web/host race 和 `make check-go`；签发/消费回执丢失不重放、凭据类型与身份源隔离、会话/机器级联清理、绑定变更拒绝及 SQL 转库/备份恢复回归通过。此能力尚无公共人类 CLI 登录入口，也不构成 S3 自动路由、peer 或接管；下一步补 CLI 浏览器确认及用户会话交换。
 
-### 已完成：人类 CLI 浏览器确认与执行
+### 已移除：人类远程操作客户端
 
-- `dune login --site` 使用站点现有本地账号或企业 SSO，浏览器明确展示账号、站点和终端核对码，由用户确认或拒绝。客户端 proof 不进入浏览器 URL；跨 OIDC 回调保留待确认请求。schema 6 持久化十分钟请求，确认身份不可替换，原子单次消费与 CLI 子会话创建支持 SQLite 重开及 PostgreSQL 独立连接池。
-- CLI 凭据独立于机器配置，以 0600 文件保存在私有目录；同文件登录/退出持锁且不覆盖已有凭据。会话最长八小时并受父浏览器会话期限约束，退出浏览器、停用或身份关联会撤销相关 CLI 访问。CLI 自身退出只撤销该子会话，已被浏览器撤销时仍可清理本地文件。
-- 公开 `pkg/login` 完成登录请求、等待确认、机器查询、短期目标凭据交换及默认 SDK 拨号；`--login FILE --target ID` 沿用原执行命令。身份逻辑位于执行协议之外，用户令牌不交给 fabricd。HTTPS 校验及精确站点/目标绑定必需，只有数字 loopback 允许明文；HTTP 模糊失败和重定向不自动重放。
-- SQLite 和真实 PostgreSQL 回归均用正式 CLI 二进制、fabricd 和执行链路完成登录与命令，浏览器退出后 API 和已建立 SDK 连接撤销；PostgreSQL 同时验证独立宿主签发与消费。实际 Dex 2.45.1 经宿主 A start、B callback 返回前缀确认页，终端核对成功后执行并显示 `CLI_DEX_EXEC_OK`，浏览器退出后 CLI 被拒绝，CLI 退出清理私有文件。专用进程和测试 schema 随后清理。
-- 验证：启用真实 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/login/config race、`make check-go`、`make web-check web-build` 通过。覆盖消费回执丢失、并发单次消费、事务回滚、凭据类型隔离、父会话与授权版本、私有文件保护及 schema 6 转库/备份恢复；前端仍有既有主 bundle 体积提示。最后的确认版本检查和 CLI 参数校验另经定向回归重验。
-
-下一检查点为完整操作级 AccessChecker、发现与稳定 Runner/绑定边界。当前仍是默认 owner 访问，S1 尚未整体完成；Managed 和 S3 集群继续按方案实施，Dex 本地演练不代表企业 IdP 或集群部署验收。
+浏览器确认、CLI 子会话、远程执行命令和对应 HTTP/SQL 链路已经移除。用户只从 Web 工作台发现 Runner、签发短期连接票据并操作会话。开发部署不保留旧 schema 兼容，升级时直接重建元数据。
 
 ### 已完成：公开 Runner 查询与固定绑定访问
 
-- `pkg/runner` 提供逻辑 Runner 与绑定快照，包含 Runner、Fabric、机器和单调修订；不进入协议 core。浏览器及人类 CLI 可查询自己的 Runner，`pkg/login` 和正式 CLI `runners` / `--runner` 使用同一模型。新 Attached 注册在原事务内分别生成 Runner ID 与机器 ID，既有 SQL 和 JSON 导入的原 ID 保持不变，机器配置与 Runtime 无需重建。
-- `DialRunner` 接收调用方选定的完整快照，服务端在访问凭据签发事务内复核归属及绑定，PostgreSQL 行锁覆盖修订。快照不匹配返回拒绝，SDK 不重新解析替代环境或自动重放；已建立访问持续检查原绑定。原 `--target` 机器入口保持可用，与 `--runner` 互斥。
+- `pkg/runner` 提供逻辑 Runner 与绑定快照，包含 Runner、Fabric、机器和单调修订；不进入协议 core。浏览器查询自己的 Runner，并在访问凭据签发事务内复核选定快照、归属及绑定。新 Attached 注册在原事务内分别生成 Runner ID 与机器 ID，既有 SQL 和 JSON 导入的原 ID 保持不变，机器配置与 Runtime 无需重建。
+- 快照不匹配返回拒绝，Web 不重新解析替代环境或自动重放；已建立访问持续检查原绑定。
 - SQLite/PostgreSQL 验证发现和查询的 owner 隔离、Runner 与机器 ID 分离、错误 Fabric/修订拒绝、同一 Runner 更换机器后旧授权失效、关闭重开及显式选择新快照。替换环境由测试直接构造数据库事实，没有新增可绕过生命周期的绑定编辑入口，也不代表 Managed 已实现。旧 JSON 的数据形状独立固定，新增 Runner 字段不会放宽导入校验。
-- 验证：启用真实 PostgreSQL 17 和原生备份工具的全量 `make test`、metadata/Web/host/login race 和 `make check-go` 通过；正式 CLI 与独立 Gateway 经真实 fabricd 执行并返回 `CLI_RUNNER_EXEC_OK`，父浏览器退出撤销相应 SDK 连接。最后的旧 JSON 字段拒绝及保留原 Runner/机器身份另经定向迁移回归验证。
+- 验证：启用真实 PostgreSQL 和原生备份工具的全量 `make test`、metadata/Web/host race 与 `make check-go`；浏览器退出撤销相应连接。旧 JSON 字段拒绝及保留原 Runner/机器身份另经定向迁移回归验证。
 
 下一步将企业 AccessChecker 接入完整操作映射及有界发现，并把工作台产品入口统一到 Runner。当前公开 Runner 发现仍采用默认 owner 策略；Managed 绑定变更、生命周期及 S3 集群仍未交付，S1 未整体完成。
 
@@ -450,7 +446,7 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 
 ### 已完成：当前发布包的 Linux amd64 运行验收
 
-- 从当前源码重新构建静态 Linux amd64 发布包，在已授权的独立 Linux 主机上解压到专用 `/tmp` 目录并使用独立端口。`TestDirectRemote` 的本机 race 客户端直接访问远端 WS 地址，SSH 只负责部署和清理；实际远端返回 Linux，并通过错误 token 拒绝、Exec、File、106496 字节上传、Git、PTY、原始 ACP 和 TCP 双向/半关闭检查。
+- 历史验收曾从源码构建静态 Linux amd64 发布包，并用现已移除的远程客户端回归直接访问远端 WS 地址；当时覆盖错误 token、Exec、File、上传、Git、PTY、原始 ACP 和 TCP 双向/半关闭。该记录不表示当前仍提供人类远程操作入口。
 - 随后把同一发布包切换为独立 Gateway 与唯一命名的 systemd user fabricd 服务。创建保留 PTY 后重启该服务，原 Runtime ID、incarnation 和 generation 保持不变，重新附加后实际输出 `LINUX_SERVICE_PTY_OK`；这验证当前 `service install` 和 bundled tmux 的 Linux 运行路径，而非仅有交叉编译产物。
 - 验收结束显式停止 Runtime，停用并删除临时 systemd unit，停止 Gateway，删除本机与远端测试目录。没有覆盖已有服务或会话。该证据是单台 Linux amd64 的 standalone 运行与安装边界，不代表 Linux 上的 PostgreSQL 三节点、其他发行版/架构、真实 Agent 或 Managed 提供方闭环。
 

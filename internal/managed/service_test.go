@@ -33,6 +33,66 @@ type availabilityProvider struct {
 	calls  int
 }
 
+type resolverLifecycleProvider struct{ availability fabric.Availability }
+
+func (p *resolverLifecycleProvider) Availability(context.Context) (fabric.Availability, error) {
+	return p.availability, nil
+}
+func (*resolverLifecycleProvider) Create(context.Context, fabric.CreateCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) ReconcileCreate(context.Context, fabric.ReconcileCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) Bootstrap(context.Context, fabric.BootstrapCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) ReconcileBootstrap(context.Context, fabric.BootstrapReconcileCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) Inspect(context.Context, fabric.InspectCall) (fabric.Inspection, error) {
+	return fabric.Inspection{}, nil
+}
+func (*resolverLifecycleProvider) Renew(context.Context, fabric.RenewCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) ReconcileRenew(context.Context, fabric.RenewReconcileCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) Destroy(context.Context, fabric.DestroyCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) ReconcileDestroy(context.Context, fabric.DestroyReconcileCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+func (*resolverLifecycleProvider) VerifyCandidate(context.Context, fabric.CandidateCall) (fabric.Observation, error) {
+	return fabric.Observation{}, nil
+}
+
+type changingResolver struct {
+	mu      sync.Mutex
+	current fabric.ProviderBinding
+	calls   []string
+}
+
+func (r *changingResolver) Current(_ context.Context, tenantID, fabricID string) (fabric.ProviderBinding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, tenantID+"/"+fabricID)
+	return r.current, nil
+}
+
+func (r *changingResolver) Exact(context.Context, string, int64) (fabric.ProviderBinding, error) {
+	return fabric.ProviderBinding{}, fabric.ErrProviderUnavailable
+}
+
+func bindingForService(id string, revision int64, provider *resolverLifecycleProvider) fabric.ProviderBinding {
+	return fabric.ProviderBinding{
+		ProviderBindingRef: fabric.ProviderBindingRef{ID: id, Revision: revision}, FabricID: "sandbox",
+		Availability: provider, Create: provider, Bootstrap: provider, Inspect: provider, Renew: provider, Destroy: provider, Candidate: provider,
+	}
+}
+
 func (p *availabilityProvider) Availability(context.Context) (fabric.Availability, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -225,6 +285,41 @@ func TestProviderAvailabilityGatesOnlyNewManagedIntent(t *testing.T) {
 	}
 }
 
+func TestCreateRetryKeepsAcceptedProviderBindingWithoutResolvingCurrent(t *testing.T) {
+	fixture := newServiceFixture(t)
+	first := &resolverLifecycleProvider{availability: fabric.Availability{Available: true}}
+	second := &resolverLifecycleProvider{availability: fabric.Availability{Reason: fabric.AvailabilityMaintenance}}
+	resolver := &changingResolver{current: bindingForService("tenant-binding", 1, first)}
+	checks := authorization.New(fixture.ctx, fixture.session, fixture.store, checkFunc(func(context.Context, access.Request) (access.Decision, error) {
+		return allowDecision(), nil
+	}))
+	service, err := New(fixture.catalog, map[string]fabric.AvailabilityProvider{"sandbox": first}, fixture.session, checks, fixture.store, wire.ID(), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest("visible")
+	created, err := service.Create(fixture.ctx, fixture.cookie, "binding-retry", request)
+	if err != nil || created.Operation.ProviderBindingID != "tenant-binding" || created.Operation.ProviderBindingRevision != 1 {
+		t.Fatal("create did not freeze current provider binding", created.Operation, err)
+	}
+	resolver.mu.Lock()
+	resolver.current = bindingForService("tenant-binding", 2, second)
+	resolver.mu.Unlock()
+	replayed, err := service.Create(fixture.ctx, fixture.cookie, "binding-retry", request)
+	if err != nil || !reflect.DeepEqual(replayed, created) {
+		t.Fatal("idempotent retry consulted or replaced the accepted binding", replayed, err)
+	}
+	resolver.mu.Lock()
+	calls := append([]string(nil), resolver.calls...)
+	resolver.mu.Unlock()
+	if len(calls) != 1 || calls[0] != fixture.user.ID+"/sandbox" {
+		t.Fatal("resolver was not tenant scoped or was called during retry", calls)
+	}
+	if _, err := service.Create(fixture.ctx, fixture.cookie, "binding-new", request); !errors.Is(err, fabric.ErrProviderUnavailable) {
+		t.Fatal("new create ignored the current binding availability", err)
+	}
+}
+
 func TestCreateChecksConfiguredTemplateAndPersistsOnlyValidatedIntent(t *testing.T) {
 	fixture := newServiceFixture(t)
 	var mu sync.Mutex
@@ -319,9 +414,6 @@ type fixedSessions struct{ user identity.User }
 
 func (s fixedSessions) Authenticate(context.Context, string) (identity.User, error) {
 	return s.user, nil
-}
-func (s fixedSessions) AuthenticateCLI(context.Context, string) (identity.User, error) {
-	return identity.User{}, identity.ErrUnauthorized
 }
 func (s fixedSessions) Namespace() string { return s.user.Namespace }
 

@@ -122,15 +122,6 @@ func TestAuthenticatedSubjectIsFixed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			proof := wire.ID() + wire.ID()
-			const site = "https://subject.test/"
-			request, err := s.BeginCLI(ctx, tokenHash(proof), site, provider.Namespace())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := s.ConfirmCLI(ctx, request.ID, site, provider.Namespace(), request.Code, cookies["alpha"], owner.ID, true); err != nil {
-				t.Fatal(err)
-			}
 			// The issuer shuts down; SQLite reopens or another PostgreSQL pool consumes.
 			if backend == "sqlite" {
 				if err := s.Close(); err != nil {
@@ -157,20 +148,6 @@ func TestAuthenticatedSubjectIsFixed(t *testing.T) {
 			if _, _, err := receiver.Authorize(grant.Token()); err != nil {
 				t.Fatal("durable ticket lost subject", err)
 			}
-			cli, err := other.ConsumeCLI(ctx, request.ID, site, provider.Namespace(), proof)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got, err := external.AuthenticateCLI(ctx, cli.Token); err != nil || got.Subject != "alpha" {
-				t.Fatal("CLI lost original subject", got, err)
-			}
-			cliGrant, err := receiver.ClientCLI(ctx, cli.Token, machine.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, _, err := receiver.Authorize(cliGrant.Token()); err != nil {
-				t.Fatal(err)
-			}
 			// Corrupted/mismatched snapshots must not borrow a sibling identity.
 			record, err := other.CreateAccess(ctx, tokenHash("check-subject"), tokenHash(cookies["alpha"]), owner.ID, provider.Namespace(), machine.ID, time.Now().Add(time.Minute).Unix())
 			if err != nil {
@@ -180,14 +157,11 @@ func TestAuthenticatedSubjectIsFixed(t *testing.T) {
 			if valid, err := other.CheckAccess(ctx, record, time.Now().Unix()); err != nil || valid {
 				t.Fatal("access followed another subject", err)
 			}
-			if _, err := other.db.Exec(`UPDATE dune_sessions SET identity_subject='beta' WHERE hash=$1`, tokenHash(cli.Token)); err != nil {
+			if _, err := other.db.Exec(`UPDATE dune_sessions SET identity_subject='beta' WHERE hash=$1`, tokenHash(cookies["alpha"])); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := external.AuthenticateCLI(ctx, cli.Token); !errors.Is(err, identity.ErrUnauthorized) {
-				t.Fatal("CLI parent identity mismatch accepted", err)
-			}
-			if cliGrant.Valid() {
-				t.Fatal("existing CLI access followed another subject")
+			if grant.Valid() {
+				t.Fatal("existing browser access followed another subject")
 			}
 			if err := receiver.Revoke(ctx, cookies["beta"], machine.ID); !errors.Is(err, authorization.ErrNotFound) {
 				t.Fatal("unbind inherited linked identity", err)

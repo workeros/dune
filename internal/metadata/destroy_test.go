@@ -294,13 +294,13 @@ func TestManagedDestroyRecoveryWaitsForAccessClosure(t *testing.T) {
 			}
 			wrong := closures[0]
 			wrong.MachineID = wire.ID()
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, wrong); !errors.Is(err, lifecycle.ErrBusy) {
+			if err := s.ConfirmManagedAccessClosed(ctx, wrong); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("wrong machine confirmed closure", err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, closures[0]); err != nil {
+			if err := s.ConfirmManagedAccessClosed(ctx, closures[0]); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, closures[0]); err != nil {
+			if err := s.ConfirmManagedAccessClosed(ctx, closures[0]); err != nil {
 				t.Fatal("closure confirmation was not idempotent", err)
 			}
 			if otherInstance != "" {
@@ -312,7 +312,7 @@ func TestManagedDestroyRecoveryWaitsForAccessClosure(t *testing.T) {
 				if err != nil || len(remaining) != 1 || remaining[0].OperationID != destroyed.ID {
 					t.Fatal("second live instance was not included", remaining, err)
 				}
-				if err := s.ConfirmManagedDestroyAccessClosed(ctx, remaining[0]); err != nil {
+				if err := s.ConfirmManagedAccessClosed(ctx, remaining[0]); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -362,7 +362,7 @@ func TestManagedDestroyDeadlineRecordsTimeoutBeforeDispatch(t *testing.T) {
 			if err != nil || current.AccessCloseOutcome != lifecycle.AccessCloseTimedOut || !current.CloseDeadline.Equal(current.AccessClosedAt) {
 				t.Fatal("elapsed wait was not recorded as timed out", current, err)
 			}
-			if err := s.ConfirmManagedDestroyAccessClosed(ctx, lifecycle.AccessClosure{OperationID: destroyed.ID, InstanceID: instanceID, MachineID: destroyed.MachineID, BindingRevision: destroyed.BindingRevision}); !errors.Is(err, lifecycle.ErrBusy) {
+			if err := s.ConfirmManagedAccessClosed(ctx, lifecycle.AccessClosure{OperationID: destroyed.ID, InstanceID: instanceID, MachineID: destroyed.MachineID, BindingRevision: destroyed.BindingRevision}); !errors.Is(err, lifecycle.ErrBusy) {
 				t.Fatal("late acknowledgement rewrote timeout", err)
 			}
 			if _, dispatch, err := s.BeginProviderAction(ctx, claimed, lifecycle.ActionRequest{Kind: "destroy", Digest: claimed.Digest}); err != nil || !dispatch {

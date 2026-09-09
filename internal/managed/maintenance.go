@@ -78,7 +78,7 @@ func inspectionResult(providerCtx context.Context, inspection fabric.Inspection,
 		return lifecycle.ResourceInspection{Status: status}, nil
 	}
 	if inspection.Status == fabric.InspectionUnknown {
-		if inspection.ResourceRef != "" || !inspection.ExpiresAt.IsZero() || inspection.Gone {
+		if inspection.ResourceRef != "" || !inspection.ExpiresAt.IsZero() || inspection.Gone || inspection.State != "" || inspection.Capabilities != nil {
 			return lifecycle.ResourceInspection{}, ErrProviderContract
 		}
 		return lifecycle.ResourceInspection{Status: lifecycle.InspectionUnknown}, nil
@@ -87,7 +87,14 @@ func inspectionResult(providerCtx context.Context, inspection fabric.Inspection,
 		(inspection.Gone && !inspection.ExpiresAt.IsZero()) || (!inspection.Gone && (inspection.ExpiresAt.IsZero() || inspection.ExpiresAt.UnixMilli() <= 0)) {
 		return lifecycle.ResourceInspection{}, ErrProviderContract
 	}
-	return lifecycle.ResourceInspection{Status: lifecycle.InspectionConfirmed, ResourceRef: inspection.ResourceRef, ExpiresAt: inspection.ExpiresAt, Gone: inspection.Gone}, nil
+	if !inspection.Gone && inspection.State != "" && inspection.State != fabric.ResourceReady && inspection.State != fabric.ResourcePaused && inspection.State != fabric.ResourceUnknown {
+		return lifecycle.ResourceInspection{}, ErrProviderContract
+	}
+	state := string(inspection.State)
+	if state == "" && !inspection.Gone {
+		state = string(fabric.ResourceUnknown)
+	}
+	return lifecycle.ResourceInspection{Status: lifecycle.InspectionConfirmed, ResourceRef: inspection.ResourceRef, ExpiresAt: inspection.ExpiresAt, Gone: inspection.Gone, State: state, Capabilities: inspection.Capabilities}, nil
 }
 
 // Execute inspects one claimed resource and evaluates its policy outside SQL
@@ -99,6 +106,7 @@ func (e *MaintenanceExecutor) Execute(ctx context.Context, providerCtx context.C
 	}
 	inspection, err := provider.Inspect(providerCtx, fabric.InspectCall{
 		RunnerID: claimed.RunnerID, FabricID: claimed.FabricID, ResourceRef: claimed.ResourceRef, BindingRevision: claimed.BindingRevision,
+		ProviderBindingID: claimed.ProviderBindingID, ProviderBindingRevision: claimed.ProviderBindingRevision,
 	})
 	result, resultErr := inspectionResult(providerCtx, inspection, err)
 	if resultErr != nil {

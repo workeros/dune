@@ -23,13 +23,20 @@ import (
 // is permitted before a confirmed commit. On ErrCommitUnknown, inspect the
 // original actor/request key through ManagedCreation; never resubmit a provider
 // Create merely because this method returned an error.
-func (s *Store) CreateManaged(ctx context.Context, user identity.User, sessionHash, requestKey string, spec fabric.CreateRequest) (lifecycle.Creation, error) {
+func (s *Store) CreateManaged(ctx context.Context, user identity.User, sessionHash, requestKey string, spec fabric.CreateRequest, bindings ...fabric.ProviderBindingRef) (lifecycle.Creation, error) {
 	encoded, err := spec.Encode()
 	if err != nil {
 		return lifecycle.Creation{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	sum := sha256.Sum256([]byte(encoded))
-	intent := lifecycle.Intent{ID: wire.ID(), RunnerID: wire.ID(), PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, RequestKey: requestKey, Digest: hex.EncodeToString(sum[:]), FabricID: spec.FabricID, BindingRevision: 1, Action: "create"}
+	binding := fabric.ProviderBindingRef{ID: spec.FabricID, Revision: 1}
+	if len(bindings) > 1 {
+		return lifecycle.Creation{}, ErrInvalidArgument
+	}
+	if len(bindings) == 1 {
+		binding = bindings[0]
+	}
+	intent := lifecycle.Intent{ID: wire.ID(), RunnerID: wire.ID(), PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, RequestKey: requestKey, Digest: hex.EncodeToString(sum[:]), FabricID: spec.FabricID, BindingRevision: 1, ProviderBindingID: binding.ID, ProviderBindingRevision: binding.Revision, Action: "create"}
 	if sessionHash == "" || !validOperationIntent(intent) {
 		return lifecycle.Creation{}, ErrInvalidArgument
 	}
@@ -70,7 +77,7 @@ func (s *Store) CreateManaged(ctx context.Context, user identity.User, sessionHa
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'managed',$4,1,$5)`, intent.RunnerID, user.ID, frozen.Name, frozen.FabricID, now/1000); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,'create',$9)`, intent.ID, requestKey, intent.Digest, user.ID, user.Namespace, user.Subject, intent.RunnerID, frozen.FabricID, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,'create',$11)`, intent.ID, requestKey, intent.Digest, user.ID, user.Namespace, user.Subject, intent.RunnerID, frozen.FabricID, intent.ProviderBindingID, intent.ProviderBindingRevision, now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_creations(runner_id,operation_id,specification) VALUES($1,$2,$3)`, intent.RunnerID, intent.ID, encoded); err != nil {

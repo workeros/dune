@@ -1,5 +1,7 @@
 # Dune 单机 MVP 实现范围
 
+> 此文档记录早期 CLI-first MVP，已被当前 Web 产品边界取代。人类远程操作 CLI 与裸 `dune` supervisor 已移除；当前启动与能力以 [README](../README.md) 和代码为准。
+
 日期：2026-09-05。
 
 适用范围：本文保留单机 MVP 的阶段约束。后续 [个人 Web 方案](personal-web-plan.md) 已扩展 UI、托管会话和 PTY 历史；本阶段的排除项不构成这些功能的禁止规则。
@@ -287,18 +289,7 @@ supervisor 的内部目录可在编码时按职责安排，不另建资源编排
 | M3 开发能力 | 完整上传、完整 Git 清单、Ports | 真实文件、仓库和 TCP 操作及错误路径 |
 | M4 完整验收 | 全能力 e2e、samples、运行说明、真实 Agent 任务 | 第 8 节全部验收项有结果记录 |
 
-已交付的用户操作路径如下，参数与环境准备见仓库 README：
-
-```sh
-dune --config ~/.config/dune/config.yaml
-# 在另一个终端启动交互。
-dune profile start samples/agent-pty.yaml
-dune runtime list
-dune runtime attach <runtime-id>
-dune runtime stop <runtime-id>
-```
-
-ACP 使用相应 Profile 和支持 ACP 的调用方交互；普通 TTY 不自动成为 ACP 业务客户端。
+本阶段曾交付 CLI 用户操作路径；该路径及对应 samples 已移除。当前由 Web 工作台创建、选择、附加和停止 Runtime，参数与环境准备见仓库 README。
 
 ## 8. 验收矩阵
 

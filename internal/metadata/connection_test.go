@@ -200,47 +200,26 @@ func TestCommitAcknowledgementLossIsNotReplayed(t *testing.T) {
 	if _, err := s.ConsumeAccess(ctx, "ticket-hash", "", time.Now().Unix()); !errors.Is(err, identity.ErrUnauthorized) {
 		t.Fatal("uncertain consumption allowed replay", err)
 	}
-	cookie, proof := wire.ID()+wire.ID(), wire.ID()+wire.ID()
-	if err := s.CreateSession(ctx, a.ID, tokenHash(cookie), time.Now().Add(time.Hour).Unix(), 32); err != nil {
-		t.Fatal(err)
-	}
-	cli, err := s.BeginCLI(ctx, tokenHash(proof), "https://cli.test/", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ConfirmCLI(ctx, cli.ID, "https://cli.test/", "", cli.Code, cookie, a.ID, true); err != nil {
-		t.Fatal(err)
-	}
-	if session, err := interrupted.ConsumeCLI(ctx, cli.ID, "https://cli.test/", "", proof); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 5 || session.Token != "" {
-		t.Fatal("CLI commit loss returned or replayed a credential", err)
-	}
-	if _, err := s.ConsumeCLI(ctx, cli.ID, "https://cli.test/", "", proof); !errors.Is(err, identity.ErrUnauthorized) {
-		t.Fatal("uncertain CLI consumption allowed replay", err)
-	}
-	intent := lifecycle.Intent{ID: wire.ID(), RequestKey: wire.ID(), Digest: strings.Repeat("a", 64), PrincipalID: a.ID, RunnerID: machine.RunnerID, FabricID: "attached", BindingRevision: 1, Action: "renew"}
-	if op, err := interrupted.BeginOperation(ctx, intent); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 6 || op.ID != "" {
+	intent := lifecycle.Intent{ID: wire.ID(), RequestKey: wire.ID(), Digest: strings.Repeat("a", 64), PrincipalID: a.ID, RunnerID: machine.RunnerID, FabricID: "attached", BindingRevision: 1, ProviderBindingID: "attached", ProviderBindingRevision: 1, Action: "renew"}
+	if op, err := interrupted.BeginOperation(ctx, intent); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 5 || op.ID != "" {
 		t.Fatal("operation intent loss was replayed or returned as success", err)
 	}
 	if op, err := s.Operation(ctx, intent.ID); err != nil || op.Intent != intent {
 		t.Fatal("cannot reconcile committed intent", err)
 	}
 	worker := wire.ID()
-	if op, err := interrupted.ClaimOperation(ctx, intent.ID, worker, time.Minute); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 7 || op.ID != "" {
+	if op, err := interrupted.ClaimOperation(ctx, intent.ID, worker, time.Minute); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 6 || op.ID != "" {
 		t.Fatal("claim loss was replayed or returned as success", err)
 	}
 	claimed, err := s.Operation(ctx, intent.ID)
 	if err != nil || claimed.Worker != worker || claimed.Revision != 1 {
 		t.Fatal("cannot reconcile committed claim", err)
 	}
-	if err := interrupted.FinishOperation(ctx, claimed, "failed"); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 8 {
+	if err := interrupted.FinishOperation(ctx, claimed, "failed"); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 7 {
 		t.Fatal("terminal result loss was replayed", err)
 	}
 	if op, err := s.Operation(ctx, intent.ID); err != nil || !op.Finished || op.Outcome != "failed" {
 		t.Fatal("cannot reconcile terminal result", err)
-	}
-	var children int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE parent_hash=$1`, tokenHash(cookie)).Scan(&children); err != nil || children != 1 {
-		t.Fatal("CLI commit did not persist exactly one child", err)
 	}
 }
 

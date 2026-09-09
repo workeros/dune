@@ -15,7 +15,14 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 )
 
-const operationColumns = "id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished_at,finished,outcome,worker,execution_revision,lease_until,exclusive"
+const operationColumns = "id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at,finished_at,finished,outcome,worker,execution_revision,lease_until,exclusive"
+
+func normalizeProviderBinding(i lifecycle.Intent) lifecycle.Intent {
+	if i.ProviderBindingID == "" && i.ProviderBindingRevision == 0 {
+		i.ProviderBindingID, i.ProviderBindingRevision = i.FabricID, 1
+	}
+	return i
+}
 
 func validOperationIntent(i lifecycle.Intent) bool {
 	for _, field := range []struct {
@@ -23,6 +30,7 @@ func validOperationIntent(i lifecycle.Intent) bool {
 		max int
 	}{
 		{i.ID, 128}, {i.RequestKey, 128}, {i.PrincipalID, 128}, {i.RunnerID, 128}, {i.FabricID, 128},
+		{i.ProviderBindingID, 128},
 	} {
 		if field.s == "" || !utf8.ValidString(field.s) || len(field.s) > field.max || strings.ContainsFunc(field.s, unicode.IsControl) {
 			return false
@@ -36,7 +44,7 @@ func validOperationIntent(i lifecycle.Intent) bool {
 			return false
 		}
 	}
-	if (i.Namespace == "") != (i.Subject == "") || i.BindingRevision <= 0 {
+	if (i.Namespace == "") != (i.Subject == "") || i.BindingRevision <= 0 || i.ProviderBindingRevision <= 0 {
 		return false
 	}
 	if len(i.Digest) != 64 {
@@ -46,13 +54,13 @@ func validOperationIntent(i lifecycle.Intent) bool {
 	if err != nil || len(digest) != 32 || i.Digest != strings.ToLower(i.Digest) {
 		return false
 	}
-	return i.Action == "create" || i.Action == "renew" || i.Action == "destroy"
+	return i.Action == "create" || i.Action == "renew" || i.Action == "destroy" || i.Action == "pause" || i.Action == "resume"
 }
 
 func scanOperation(row interface{ Scan(...any) error }) (lifecycle.Operation, error) {
 	var op lifecycle.Operation
 	var created, finished, until int64
-	err := row.Scan(&op.ID, &op.RequestKey, &op.Digest, &op.PrincipalID, &op.Namespace, &op.Subject, &op.RunnerID, &op.FabricID, &op.BindingRevision, &op.Action, &created, &finished, &op.Finished, &op.Outcome, &op.Worker, &op.Revision, &until, &op.Exclusive)
+	err := row.Scan(&op.ID, &op.RequestKey, &op.Digest, &op.PrincipalID, &op.Namespace, &op.Subject, &op.RunnerID, &op.FabricID, &op.BindingRevision, &op.ProviderBindingID, &op.ProviderBindingRevision, &op.Action, &created, &finished, &op.Finished, &op.Outcome, &op.Worker, &op.Revision, &until, &op.Exclusive)
 	op.CreatedAt = time.UnixMilli(created).UTC()
 	op.FinishedAt = optionalTime(finished)
 	if until != 0 {
@@ -97,6 +105,7 @@ func (s *Store) lockOperationRunner(ctx context.Context, tx *sql.Tx, id string) 
 // Runner creation and destroy access restrictions must join this transaction in
 // their lifecycle-specific entry point; this primitive alone does neither.
 func (s *Store) BeginOperation(ctx context.Context, intent lifecycle.Intent) (lifecycle.Operation, error) {
+	intent = normalizeProviderBinding(intent)
 	if !validOperationIntent(intent) {
 		return lifecycle.Operation{}, ErrInvalidArgument
 	}
@@ -147,7 +156,7 @@ func (s *Store) BeginOperation(ctx context.Context, intent lifecycle.Intent) (li
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, intent.Action, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, intent.ProviderBindingID, intent.ProviderBindingRevision, intent.Action, now)
 		result = lifecycle.Operation{Intent: intent, CreatedAt: time.UnixMilli(now).UTC(), Exclusive: true}
 		return err
 	})
@@ -169,7 +178,7 @@ func (s *Store) Operation(ctx context.Context, id string) (lifecycle.Operation, 
 func (s *Store) ManagedRunnerOperation(ctx context.Context, runnerID string) (lifecycle.Operation, error) {
 	return scanOperation(s.db.QueryRowContext(ctx, `SELECT `+operationColumns+` FROM dune_operations
 		WHERE runner_id=$1
-		ORDER BY CASE WHEN exclusive=TRUE THEN 0 WHEN action='destroy' THEN 1 WHEN action='create' THEN 2 ELSE 3 END,created_at DESC,id DESC LIMIT 1`, runnerID))
+		ORDER BY CASE WHEN finished=FALSE THEN 0 WHEN action='destroy' THEN 1 WHEN action='create' THEN 2 ELSE 3 END,created_at DESC,id DESC LIMIT 1`, runnerID))
 }
 
 // RecoverableManagedCreates returns trusted create-stage work whose execution

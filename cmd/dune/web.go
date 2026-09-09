@@ -50,7 +50,7 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 	if err != nil {
 		return err
 	}
-	// The CLI hosts Web and Gateway together. Use the local listener, while
+	// The Web process hosts its browser API and Gateway together. Use the local listener, while
 	// retaining the advertised TLS identity and pinned certificate verification.
 	local, err := deployment.Gateway(c.Gateway)
 	if err != nil {

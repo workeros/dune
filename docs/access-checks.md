@@ -14,7 +14,7 @@ binding, handler, err := (access.Grant{
 
 这里的 `scope`、`checker` 和有效性函数由可信宿主提供。`access.Owner{}` 是默认个人 owner 检查器；企业实现替换它，不采用任意一个允许就放行的组合。`Grant.Valid` 独立复核会话、机器及绑定，企业 allow 不能越过它。单独使用 `Grant` 且不设置 Policy 仍表示宿主明确选择的连接级授权，适用于原有独立协议宿主。
 
-默认工作台通过 `host.Options.AccessChecker` 装配同一个检查器，覆盖浏览器、人类 CLI 的发现、Attached 管理、连接交换和执行流。留空选择 `access.Owner{}`；设置企业检查器后由它明确决定共享访问，仍独立核验当前用户会话、身份源、机器和固定绑定。检查器须在共享数据库的每个宿主上采用一致策略；身份提供方不替代此决定。
+默认工作台通过 `host.Options.AccessChecker` 装配同一个检查器，覆盖浏览器的发现、Attached 管理、连接交换和执行流。留空选择 `access.Owner{}`；设置企业检查器后由它明确决定共享访问，仍独立核验当前用户会话、身份源、机器和固定绑定。检查器须在共享数据库的每个宿主上采用一致策略；身份提供方不替代此决定。
 
 ```go
 app, err := host.Open(ctx, host.Options{
@@ -28,7 +28,7 @@ app, err := host.Open(ctx, host.Options{
 
 `companyAccessChecker` 是宿主实现的 `access.Checker`，可调用企业私有 SDK；官方二进制仍采用默认 owner 规则，不内置企业依赖或共享管理 UI。`pkg/access` 也继续支持上面的独立协议宿主用法。工作台使用逻辑 Runner 和固定绑定；Managed 生命周期和集群自动路由属于后续检查点。
 
-`Scope.PrincipalID` 是稳定 Dune 用户 ID；`Namespace`、`Subject` 是本次登录由提供方验证的外部身份引用（OIDC issuer/sub），本地密码登录时两者为空。企业检查器可用该引用查询自己的权限系统；不要将 Dune ID 当成上游 subject，也不要按邮箱或当前关联列表猜测本次身份。同一 principal 关联的不同 subject 可以取得不同企业决定。引用随浏览器会话持久化，CLI 复制已确认父会话的引用，短期凭据在签发事务中捕获并在消费及持续流复核时保持不变，不传递上游 token、原始声明或登录时的 group 快照，也不向浏览器用户 JSON 暴露该引用。
+`Scope.PrincipalID` 是稳定 Dune 用户 ID；`Namespace`、`Subject` 是本次登录由提供方验证的外部身份引用（OIDC issuer/sub），本地密码登录时两者为空。企业检查器可用该引用查询自己的权限系统；不要将 Dune ID 当成上游 subject，也不要按邮箱或当前关联列表猜测本次身份。同一 principal 关联的不同 subject 可以取得不同企业决定。引用随浏览器会话持久化，短期凭据在签发事务中捕获并在消费及持续流复核时保持不变，不传递上游 token、原始声明或登录时的 group 快照，也不向浏览器用户 JSON 暴露该引用。
 
 Attached 安装材料另保存签发者的身份引用，消费时以原引用检查 `runner.create`，不能切换到宿主当前配置的其他身份源。它仍是独立的十分钟单次能力，浏览器退出不会删除已签发材料；到期、用户停用或显式身份关联使其失效，消费时的企业拒绝也会阻止接入。
 
@@ -36,19 +36,17 @@ Attached 安装材料另保存签发者的身份引用，消费时以原引用�
 
 | 产品操作 | 检查 operation / suboperation |
 | --- | --- |
-| Web/CLI 机器列表 | `machine.list/attached`，逐候选检查 |
-| Web/CLI Runner 列表和详情 | `runner.list/attached`、`runner.get/attached` |
+| Web 机器列表 | `machine.list/attached`，逐候选检查 |
+| Web Runner 列表和详情 | `runner.list/attached`、`runner.get/attached` |
 | 访问凭据签发与消费 | `runner.connect/attached`，两处都复核 |
 | Attached 接入材料签发与消费 | `runner.create/attached`，两处都复核 |
 | Attached 解绑 | `runner.unbind/attached` |
 
 用户、owner、Runner/Fabric/机器和绑定修订均由当前认证与 SQL 元数据构造；当前只有 Attached。机器身份接入单独校验机器凭据，不把它当作人类登录。所有执行 API 经 Gateway 的同一流处理器再检查实际子操作。绑定位于检查与写入之间发生变化时，事务拒绝旧快照；写入时还复核原浏览器会话，停用后再启用也不恢复旧会话的写入资格。
 
-`GET api/machines`、`api/runners` 及对应 `api/cli/` 列表返回 `{"items": [...], "next_cursor": "..."}`；没有下一页时省略 `next_cursor`。支持 `limit`（默认 32，最大 100）和不透明 `cursor`，单页最多扫描 128 个候选，总期限五秒。默认 owner 模式先按用户筛选候选；企业模式交给所选检查器逐项决定。拒绝项不出现在响应中，也不返回其 ID 或全局总数。达到扫描上限时可能返回空页和下一游标，调用方应继续翻页，不能将空页误认成列表结束。
+`GET api/machines` 和 `api/runners` 返回 `{"items": [...], "next_cursor": "..."}`；没有下一页时省略 `next_cursor`。支持 `limit`（默认 32，最大 100）和不透明 `cursor`，单页最多扫描 128 个候选，总期限五秒。默认 owner 模式先按用户筛选候选；企业模式交给所选检查器逐项决定。拒绝项不出现在响应中，也不返回其 ID 或全局总数。达到扫描上限时可能返回空页和下一游标，调用方应继续翻页，不能将空页误认成列表结束。
 
 游标只表示位置，不授予访问，绑定用户、身份源和列表用途。它在 SQL 中保存十分钟，每用户最多 64 个有效位置，相同位置复用已有游标；支持 SQLite 重开和 PostgreSQL 跨实例。每页重新授权，不能利用旧游标恢复旧权限。过期或不匹配返回 400，客户端可回到第一页；检查器故障返回 `503 ACCESS_UNAVAILABLE`，不能伪装成成功的空列表。明确拒绝的资源详情返回 404，避免泄露存在性。
-
-正式 CLI 使用 `runners|machines --limit N --cursor CURSOR`，公开 Go 客户端为 `Runners(ctx, session, runner.Query)` 和 `Machines(ctx, session, runner.Query)`，返回相应 Page。它们不自动遍历全库或重新选择环境。
 
 ## 浏览器 Runner 入口
 
@@ -105,4 +103,4 @@ Runner 和旧机器路径的事件订阅还必须携带用户选定的 `incarnat
 
 `go test -race ./pkg/access -count=1 -timeout=60s` 使用独立 Gateway 和真实临时 fabricd/PTY，验证拒绝写入与上传提交、只读订阅的三种输入隔离、固定身份、内容裁剪、输入决定复用、空闲撤销、阻塞/迟到检查器和最终决定观测。测试使用构建产物 `bin/tmux`（也可通过 `DUNE_TMUX` 指定），在自身私有目录清理进程和 tmux 会话，不调用真实 Agent 服务。
 
-`TestEnterpriseSharedExecutionAndRevocation` 使用 SQLite 和两个共享 PostgreSQL 的宿主，验证另一个账号的机器只能经企业决定访问，真实 Web PTY/CLI 执行、文件写入拒绝、空闲策略撤销和父会话撤销。`TestAuthorizedDiscoveryAndWrites` 覆盖扫描上限、游标隔离/重开/跨池、拒绝或故障无 owner 回退、固定归属和写入竞争；SQL 转库及 PostgreSQL 原生备份保留归属和游标字段。测试检查器是有意控制允许与拒绝的测试适配器，不代表某个企业权限 SDK 的部署验收。
+`TestEnterpriseSharedExecutionAndRevocation` 使用 SQLite 和两个共享 PostgreSQL 的宿主，验证另一个账号的机器只能经企业决定从 Web 访问，覆盖真实 PTY、文件写入拒绝、空闲策略撤销和浏览器会话撤销。`TestAuthorizedDiscoveryAndWrites` 覆盖扫描上限、游标隔离/重开/跨池、拒绝或故障无 owner 回退、固定归属和写入竞争；PostgreSQL 原生备份保留归属和游标字段。测试检查器是有意控制允许与拒绝的测试适配器，不代表某个企业权限 SDK 的部署验收。

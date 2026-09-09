@@ -10,15 +10,16 @@ import (
 	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/lifecycle"
+	"github.com/aiomni/dune/pkg/fabric"
 	"github.com/aiomni/dune/pkg/renewal"
 )
 
-const maintenanceColumns = "runner_id,fabric_id,resource_ref,binding_revision,policy_version,reason,facts,observed_at,next_check_at,renew_until,worker,execution_revision,lease_until"
+const maintenanceColumns = "runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,binding_revision,policy_version,reason,facts,observed_at,next_check_at,renew_until,worker,execution_revision,lease_until"
 
 func scanRenewalSchedule(row interface{ Scan(...any) error }) (lifecycle.RenewalSchedule, error) {
 	var schedule lifecycle.RenewalSchedule
 	var observed, next, renew, until int64
-	err := row.Scan(&schedule.RunnerID, &schedule.FabricID, &schedule.ResourceRef, &schedule.BindingRevision,
+	err := row.Scan(&schedule.RunnerID, &schedule.FabricID, &schedule.ProviderBindingID, &schedule.ProviderBindingRevision, &schedule.ResourceRef, &schedule.BindingRevision,
 		&schedule.PolicyVersion, &schedule.Reason, &schedule.Facts, &observed, &next, &renew,
 		&schedule.Worker, &schedule.Revision, &until)
 	schedule.ObservedAt, schedule.NextCheckAt, schedule.RenewUntil, schedule.Until = optionalTime(observed), optionalTime(next), optionalTime(renew), optionalTime(until)
@@ -37,15 +38,16 @@ func validInspection(inspection lifecycle.ResourceInspection) bool {
 		return false
 	}
 	if inspection.Status != lifecycle.InspectionConfirmed {
-		return inspection.ResourceRef == "" && inspection.ExpiresAt.IsZero() && !inspection.Gone
+		return inspection.ResourceRef == "" && inspection.ExpiresAt.IsZero() && !inspection.Gone && inspection.State == "" && inspection.Capabilities == nil
 	}
 	if inspection.ResourceRef == "" || len(inspection.ResourceRef) > 1024 || !utf8.ValidString(inspection.ResourceRef) || strings.ContainsFunc(inspection.ResourceRef, unicode.IsControl) {
 		return false
 	}
 	if inspection.Gone {
-		return inspection.ExpiresAt.IsZero()
+		return inspection.ExpiresAt.IsZero() && inspection.State == "" && inspection.Capabilities == nil
 	}
-	return !inspection.ExpiresAt.IsZero() && inspection.ExpiresAt.UnixMilli() > 0
+	return !inspection.ExpiresAt.IsZero() && inspection.ExpiresAt.UnixMilli() > 0 &&
+		(inspection.State == "" || inspection.State == string(fabric.ResourceReady) || inspection.State == string(fabric.ResourcePaused) || inspection.State == string(fabric.ResourceUnknown))
 }
 
 func renewalScheduleDue(schedule lifecycle.RenewalSchedule, policyVersion string, now int64) bool {
@@ -117,7 +119,7 @@ func (s *Store) ClaimManagedInspection(ctx context.Context, runnerID, policyVers
 		if kind != "managed" || resource.FabricID != fabricID || resource.Ref == "" || resource.Gone || resource.AccessClosed {
 			return lifecycle.ErrBusy
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_maintenance(runner_id,fabric_id,resource_ref,binding_revision) VALUES($1,$2,$3,$4) ON CONFLICT(runner_id) DO NOTHING`, runnerID, fabricID, resource.Ref, bindingRevision); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_maintenance(runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,binding_revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(runner_id) DO NOTHING`, runnerID, fabricID, resource.ProviderBindingID, resource.ProviderBindingRevision, resource.Ref, bindingRevision); err != nil {
 			return err
 		}
 		query := "SELECT " + maintenanceColumns + " FROM dune_managed_maintenance WHERE runner_id=$1"
@@ -132,7 +134,7 @@ func (s *Store) ClaimManagedInspection(ctx context.Context, runnerID, policyVers
 		if err != nil {
 			return err
 		}
-		if schedule.FabricID != fabricID || schedule.ResourceRef != resource.Ref || schedule.BindingRevision != bindingRevision || !renewalScheduleDue(schedule, policyVersion, now) {
+		if schedule.FabricID != fabricID || schedule.ProviderBindingID != resource.ProviderBindingID || schedule.ProviderBindingRevision != resource.ProviderBindingRevision || schedule.ResourceRef != resource.Ref || schedule.BindingRevision != bindingRevision || !renewalScheduleDue(schedule, policyVersion, now) {
 			return lifecycle.ErrBusy
 		}
 		var until int64
@@ -155,7 +157,8 @@ func (s *Store) ClaimManagedInspection(ctx context.Context, runnerID, policyVers
 
 func ownsRenewalSchedule(current, expected lifecycle.RenewalSchedule, now int64) bool {
 	return current.RunnerID == expected.RunnerID && current.FabricID == expected.FabricID && current.ResourceRef == expected.ResourceRef &&
-		current.BindingRevision == expected.BindingRevision && current.Worker == expected.Worker && current.Revision == expected.Revision && current.Until.UnixMilli() > now
+		current.BindingRevision == expected.BindingRevision && current.ProviderBindingID == expected.ProviderBindingID && current.ProviderBindingRevision == expected.ProviderBindingRevision &&
+		current.Worker == expected.Worker && current.Revision == expected.Revision && current.Until.UnixMilli() > now
 }
 
 func (s *Store) renewalScheduleTx(ctx context.Context, tx *sql.Tx, runnerID string) (lifecycle.RenewalSchedule, error) {
@@ -245,7 +248,7 @@ func (s *Store) managedRenewalPolicyInputTx(ctx context.Context, tx *sql.Tx, exp
 	if err != nil {
 		return renewal.Input{}, 0, err
 	}
-	if resource.FabricID != expected.FabricID || resource.Ref != expected.ResourceRef || resource.Gone || resource.AccessClosed {
+	if resource.FabricID != expected.FabricID || resource.ProviderBindingID != expected.ProviderBindingID || resource.ProviderBindingRevision != expected.ProviderBindingRevision || resource.Ref != expected.ResourceRef || resource.Gone || resource.AccessClosed {
 		return renewal.Input{}, 0, lifecycle.ErrIntentConflict
 	}
 	if inspection.Status == lifecycle.InspectionConfirmed {
@@ -341,7 +344,14 @@ func (s *Store) RecordManagedRenewalDecision(ctx context.Context, expected lifec
 					return err
 				}
 			} else {
-				if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=$2 WHERE runner_id=$1 AND gone=FALSE AND access_closed=FALSE`, input.RunnerID, inspection.ExpiresAt.UnixMilli()); err != nil {
+				if inspection.State == "" {
+					inspection.State = string(fabric.ResourceUnknown)
+				}
+				capabilities, err := encodedCapabilities(inspection.Capabilities)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=$2,state=$3,capabilities=CASE WHEN $4='' THEN capabilities ELSE $4 END WHERE runner_id=$1 AND gone=FALSE AND access_closed=FALSE`, input.RunnerID, inspection.ExpiresAt.UnixMilli(), inspection.State, capabilities); err != nil {
 					return err
 				}
 			}

@@ -175,6 +175,26 @@ type observedCandidateProvider struct {
 	provider fabric.CandidateProvider
 }
 
+type observedPauseResumeProvider struct {
+	managedProviderObserver
+	provider fabric.PauseResumeProvider
+	fabricID string
+}
+
+func (p observedPauseResumeProvider) Pause(ctx context.Context, call fabric.PauseResumeCall) error {
+	started := time.Now()
+	err := p.provider.Pause(ctx, call)
+	p.record(ctx, started, observe.Event{Name: observe.ManagedProviderCall, Operation: "pause", Suboperation: "dispatch", RunnerID: call.RunnerID, FabricID: call.FabricID, ResourceRef: call.ResourceRef, Revision: call.BindingRevision}, "submitted", err)
+	return err
+}
+
+func (p observedPauseResumeProvider) Resume(ctx context.Context, call fabric.PauseResumeCall) error {
+	started := time.Now()
+	err := p.provider.Resume(ctx, call)
+	p.record(ctx, started, observe.Event{Name: observe.ManagedProviderCall, Operation: "resume", Suboperation: "dispatch", RunnerID: call.RunnerID, FabricID: call.FabricID, ResourceRef: call.ResourceRef, Revision: call.BindingRevision}, "submitted", err)
+	return err
+}
+
 func (p observedCandidateProvider) VerifyCandidate(ctx context.Context, call fabric.CandidateCall) (fabric.Observation, error) {
 	started := time.Now()
 	result, err := p.provider.VerifyCandidate(ctx, call)
@@ -192,6 +212,7 @@ func observeManagedProviders(availability map[string]fabric.AvailabilityProvider
 		Create: make(map[string]fabric.CreateProvider, len(providers.Create)), Bootstrap: make(map[string]fabric.BootstrapProvider, len(providers.Bootstrap)),
 		Inspect: make(map[string]fabric.InspectProvider, len(providers.Inspect)), Renew: make(map[string]fabric.RenewProvider, len(providers.Renew)),
 		Destroy: make(map[string]fabric.DestroyProvider, len(providers.Destroy)), Candidate: make(map[string]fabric.CandidateProvider, len(providers.Candidate)),
+		PauseResume: make(map[string]fabric.PauseResumeProvider, len(providers.PauseResume)),
 	}
 	for id, provider := range availability {
 		observedAvailability[id] = observedAvailabilityProvider{managedProviderObserver: observer, provider: provider, fabricID: id}
@@ -213,6 +234,9 @@ func observeManagedProviders(availability map[string]fabric.AvailabilityProvider
 	}
 	for id, provider := range providers.Candidate {
 		result.Candidate[id] = observedCandidateProvider{managedProviderObserver: observer, provider: provider}
+	}
+	for id, provider := range providers.PauseResume {
+		result.PauseResume[id] = observedPauseResumeProvider{managedProviderObserver: observer, provider: provider, fabricID: id}
 	}
 	return observedAvailability, result
 }

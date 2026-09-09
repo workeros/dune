@@ -22,7 +22,7 @@ import (
 	"github.com/aiomni/dune/pkg/storage"
 )
 
-func TestWebCLIShutdownPreservesPTY(t *testing.T) {
+func TestWebShutdownPreservesPTY(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	dir := t.TempDir()
@@ -94,7 +94,7 @@ func TestWebCLIShutdownPreservesPTY(t *testing.T) {
 				}
 			}
 			if time.Now().After(deadline) || ctx.Err() != nil {
-				t.Fatal("fabric did not reconnect to CLI")
+				t.Fatal("fabric did not reconnect to Web host")
 			}
 			time.Sleep(25 * time.Millisecond)
 		}
@@ -136,7 +136,7 @@ func TestWebCLIShutdownPreservesPTY(t *testing.T) {
 		original.stopped = true
 		must(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("CLI exceeded drain budget")
+		t.Fatal("Web host exceeded drain budget")
 	}
 	stream.Close()
 	client.Close()
@@ -170,6 +170,6 @@ func TestWebCLIShutdownPreservesPTY(t *testing.T) {
 			t.Fatal("idle tunnel delayed shutdown")
 		}
 	case <-time.After(4 * time.Second):
-		t.Fatal("idle CLI did not stop")
+		t.Fatal("idle Web host did not stop")
 	}
 }

@@ -34,9 +34,9 @@ func (s *Store) ManagedRenewal(ctx context.Context, operationID string) (lifecyc
 
 func renewalIntent(schedule lifecycle.RenewalSchedule, principalID, namespace, subject string) (lifecycle.Intent, error) {
 	payload, err := json.Marshal(struct {
-		RunnerID, FabricID, ResourceRef, PolicyVersion string
-		BindingRevision, RenewUntil                    int64
-	}{schedule.RunnerID, schedule.FabricID, schedule.ResourceRef, schedule.PolicyVersion, schedule.BindingRevision, schedule.RenewUntil.UnixMilli()})
+		RunnerID, FabricID, ProviderBindingID, ResourceRef, PolicyVersion string
+		BindingRevision, ProviderBindingRevision, RenewUntil              int64
+	}{schedule.RunnerID, schedule.FabricID, schedule.ProviderBindingID, schedule.ResourceRef, schedule.PolicyVersion, schedule.BindingRevision, schedule.ProviderBindingRevision, schedule.RenewUntil.UnixMilli()})
 	if err != nil {
 		return lifecycle.Intent{}, err
 	}
@@ -46,7 +46,8 @@ func renewalIntent(schedule lifecycle.RenewalSchedule, principalID, namespace, s
 		ID: wire.ID(), RequestKey: "maintenance-renew-" + digest, Digest: digest,
 		PrincipalID: principalID, Namespace: namespace, Subject: subject,
 		RunnerID: schedule.RunnerID, FabricID: schedule.FabricID,
-		BindingRevision: schedule.BindingRevision, Action: "renew",
+		BindingRevision: schedule.BindingRevision, ProviderBindingID: schedule.ProviderBindingID,
+		ProviderBindingRevision: schedule.ProviderBindingRevision, Action: "renew",
 	}, nil
 }
 
@@ -132,7 +133,7 @@ func (s *Store) ClaimScheduledManagedRenewal(ctx context.Context, expected lifec
 			return err
 		}
 		if fabricID != expected.FabricID || bindingRevision != expected.BindingRevision || current.RunnerID != expected.RunnerID ||
-			current.FabricID != expected.FabricID || current.ResourceRef != expected.ResourceRef || current.BindingRevision != expected.BindingRevision ||
+			current.FabricID != expected.FabricID || current.ProviderBindingID != expected.ProviderBindingID || current.ProviderBindingRevision != expected.ProviderBindingRevision || current.ResourceRef != expected.ResourceRef || current.BindingRevision != expected.BindingRevision ||
 			current.PolicyVersion != policyVersion || current.PolicyVersion != expected.PolicyVersion || !current.ObservedAt.Equal(expected.ObservedAt) ||
 			!current.RenewUntil.Equal(expected.RenewUntil) || current.RenewUntil.IsZero() || current.Until.UnixMilli() > now {
 			return lifecycle.ErrBusy
@@ -141,7 +142,7 @@ func (s *Store) ClaimScheduledManagedRenewal(ctx context.Context, expected lifec
 		if err != nil {
 			return err
 		}
-		if resource.FabricID != current.FabricID || resource.Ref != current.ResourceRef || resource.Gone || resource.AccessClosed {
+		if resource.FabricID != current.FabricID || resource.ProviderBindingID != current.ProviderBindingID || resource.ProviderBindingRevision != current.ProviderBindingRevision || resource.Ref != current.ResourceRef || resource.Gone || resource.AccessClosed {
 			return lifecycle.ErrBusy
 		}
 		if current.RenewUntil.UnixMilli() <= now {
@@ -175,8 +176,8 @@ func (s *Store) ClaimScheduledManagedRenewal(ctx context.Context, expected lifec
 			return ErrInvalidArgument
 		}
 		until := now + ttl.Milliseconds()
-		_, err = tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,worker,execution_revision,lease_until)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'renew',$10,$11,1,$12)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, now, worker, until)
+		_, err = tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at,worker,execution_revision,lease_until)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'renew',$12,$13,1,$14)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, intent.ProviderBindingID, intent.ProviderBindingRevision, now, worker, until)
 		if err != nil {
 			return err
 		}

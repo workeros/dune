@@ -192,7 +192,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	var managedWorker *managedmodule.Worker
 	if managedConfig != nil {
 		availability, providers := observeManagedProviders(managedConfig.availability, managedConfig.providers, observer)
-		managedService, err = managedmodule.New(managedConfig.catalog, availability, service, authorizer, store, appInstanceID)
+		managedService, err = managedmodule.New(managedConfig.catalog, availability, service, authorizer, store, appInstanceID, managedConfig.resolver)
 		if err != nil {
 			return nil, err
 		}

@@ -57,6 +57,8 @@ type ManagedService interface {
 	Template(context.Context, string, string, string, string) (fabric.TemplateStatus, error)
 	Create(context.Context, string, string, fabric.CreateRequest) (lifecycle.Creation, error)
 	Destroy(context.Context, string, string, string, time.Duration) (lifecycle.ManagedDestruction, error)
+	Pause(context.Context, string, string, string) (lifecycle.ManagedPauseResume, error)
+	Resume(context.Context, string, string, string) (lifecycle.ManagedPauseResume, error)
 	Status(context.Context, string, string) (lifecycle.ManagedStatus, error)
 	RunnerStatus(context.Context, string, string) (lifecycle.ManagedStatus, error)
 	Review(context.Context, string, string, lifecycle.ReviewRequest) (lifecycle.Review, error)
@@ -110,11 +112,6 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	}
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/me", s.me)
-	s.mux.HandleFunc("POST /api/auth/cli/start", s.cliStart)
-	s.mux.HandleFunc("POST /api/auth/cli/consume", s.cliConsume)
-	s.mux.HandleFunc("GET /api/auth/cli/{request}", s.cliReview)
-	s.mux.HandleFunc("POST /api/auth/cli/{request}", s.cliConfirm)
-	s.mux.HandleFunc("GET /api/cli/machines", s.cliMachines)
 	s.mux.HandleFunc("GET /api/runners", s.runners)
 	s.mux.HandleFunc("GET /api/runners/{runner}", s.runner)
 	if options.Managed != nil {
@@ -122,17 +119,14 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 		s.mux.HandleFunc("GET /api/managed/templates/{fabric}/{template}/{version}", s.managedTemplate)
 		s.mux.HandleFunc("POST /api/managed/runners", s.createManagedRunner)
 		s.mux.HandleFunc("DELETE /api/managed/runners/{runner}", s.destroyManagedRunner)
+		s.mux.HandleFunc("POST /api/managed/runners/{runner}/pause", s.pauseManagedRunner)
+		s.mux.HandleFunc("POST /api/managed/runners/{runner}/resume", s.resumeManagedRunner)
 		s.mux.HandleFunc("GET /api/managed/runners/{runner}", s.managedRunnerStatus)
 		s.mux.HandleFunc("GET /api/managed/operations/{operation}", s.managedOperation)
 		s.mux.HandleFunc("POST /api/managed/operations/{operation}/reviews", s.createManagedReview)
 		s.mux.HandleFunc("GET /api/managed/operations/{operation}/reviews", s.managedOperationReview)
 		s.mux.HandleFunc("GET /api/managed/reviews/{review}", s.managedReview)
 	}
-	s.mux.HandleFunc("GET /api/cli/runners", s.cliRunners)
-	s.mux.HandleFunc("GET /api/cli/runners/{runner}", s.cliRunner)
-	s.mux.HandleFunc("POST /api/cli/runner-access", s.cliRunnerAccess)
-	s.mux.HandleFunc("POST /api/cli/access", s.cliAccess)
-	s.mux.HandleFunc("POST /api/cli/logout", s.cliLogout)
 	s.mux.HandleFunc("GET /downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("binary")
 		switch name {

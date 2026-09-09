@@ -33,7 +33,7 @@ func finishHistoryCreate(t *testing.T, s *Store, created lifecycle.Creation, fin
 
 func addHistoryResource(t *testing.T, s *Store, created lifecycle.Creation, ref string, timestamp int64, gone, closed bool) {
 	t.Helper()
-	if _, err := s.db.Exec(`INSERT INTO dune_managed_resources(runner_id,fabric_id,resource_ref,confirmed_at,expires_at,gone,access_closed) VALUES($1,$2,$3,$4,$5,$6,$7)`, created.Runner.ID, created.Operation.FabricID, ref, timestamp, timestamp+time.Hour.Milliseconds(), gone, closed); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO dune_managed_resources(runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,confirmed_at,expires_at,gone,access_closed) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, created.Runner.ID, created.Operation.FabricID, created.Operation.ProviderBindingID, created.Operation.ProviderBindingRevision, ref, timestamp, timestamp+time.Hour.Milliseconds(), gone, closed); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -46,9 +46,9 @@ func addHistoryOperation(t *testing.T, s *Store, created lifecycle.Creation, act
 	if !finished {
 		createdAt = time.Now().UnixMilli()
 	}
-	if _, err := s.db.Exec(`INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished_at,finished,outcome,exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,FALSE)`,
+	if _, err := s.db.Exec(`INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at,finished_at,finished,outcome,exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,FALSE)`,
 		id, wire.ID(), strings.Repeat("a", 64), created.Operation.PrincipalID, created.Operation.Namespace, created.Operation.Subject,
-		created.Runner.ID, created.Operation.FabricID, created.Operation.BindingRevision, action, createdAt, finishedAt, finished, outcome); err != nil {
+		created.Runner.ID, created.Operation.FabricID, created.Operation.BindingRevision, created.Operation.ProviderBindingID, created.Operation.ProviderBindingRevision, action, createdAt, finishedAt, finished, outcome); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -120,7 +120,7 @@ func TestManagedHistoryCleanupRetainsRecoveryFacts(t *testing.T) {
 			if _, err := s.db.Exec(`INSERT INTO dune_managed_destroys(operation_id,runner_id,resource_ref,machine_id,access_closed_at,close_deadline,access_close_outcome) VALUES($1,$2,'gone-history-resource','',$3,$3,'confirmed')`, destroyID, gone.Runner.ID, old); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.db.Exec(`INSERT INTO dune_managed_destroy_closures(operation_id,instance_id,machine_id,acknowledged_at) VALUES($1,$2,'',$3)`, destroyID, wire.ID(), old); err != nil {
+			if _, err := s.db.Exec(`INSERT INTO dune_managed_access_closures(operation_id,instance_id,machine_id,acknowledged_at) VALUES($1,$2,'',$3)`, destroyID, wire.ID(), old); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.db.Exec(`UPDATE dune_runners SET created_at=1 WHERE id=$1`, gone.Runner.ID); err != nil {

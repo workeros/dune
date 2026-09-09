@@ -50,7 +50,8 @@ func destroyIntent(user identity.User, requestKey string, selected authorization
 		ID: wire.ID(), RequestKey: requestKey, Digest: hex.EncodeToString(sum[:]),
 		PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject,
 		RunnerID: selected.Runner.ID, FabricID: selected.FabricID,
-		BindingRevision: selected.BindingRevision, Action: "destroy",
+		BindingRevision: selected.BindingRevision, ProviderBindingID: resource.ProviderBindingID,
+		ProviderBindingRevision: resource.ProviderBindingRevision, Action: "destroy",
 	}, nil
 }
 
@@ -136,7 +137,7 @@ func (s *Store) CreateManagedDestroy(ctx context.Context, user identity.User, se
 		if finished {
 			finishedAt = now
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,action,created_at,finished_at,finished,outcome,exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'destroy',$10,$11,$12,$13,$14)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, now, finishedAt, finished, outcome, exclusive); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at,finished_at,finished,outcome,exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'destroy',$12,$13,$14,$15,$16)`, intent.ID, intent.RequestKey, intent.Digest, intent.PrincipalID, intent.Namespace, intent.Subject, intent.RunnerID, intent.FabricID, intent.BindingRevision, intent.ProviderBindingID, intent.ProviderBindingRevision, now, finishedAt, finished, outcome, exclusive); err != nil {
 			return err
 		}
 		closeOutcome := lifecycle.AccessCloseConfirmed
@@ -148,11 +149,11 @@ func (s *Store) CreateManagedDestroy(ctx context.Context, user identity.User, se
 			return err
 		}
 		if closeOutcome == lifecycle.AccessCloseWaiting {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_destroy_closures(operation_id,instance_id,machine_id) VALUES($1,$2,$3)`, intent.ID, instanceID, machineID); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_access_closures(operation_id,instance_id,machine_id) VALUES($1,$2,$3)`, intent.ID, instanceID, machineID); err != nil {
 				return err
 			}
 			if s.postgres {
-				if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_destroy_closures(operation_id,instance_id,machine_id)
+				if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_access_closures(operation_id,instance_id,machine_id)
 					SELECT $1,boot_id,$2 FROM dune_instances WHERE expires_at>`+s.databaseClock()+`
 					ON CONFLICT(operation_id,instance_id) DO NOTHING`, intent.ID, machineID); err != nil {
 					return err
@@ -291,20 +292,21 @@ func (s *Store) ClaimRecoverableManagedDestroy(ctx context.Context, id, worker s
 	})
 }
 
-// PendingManagedAccessClosures returns durable close requests addressed to one
-// exact application incarnation. New instances are absent because they could
-// not have accepted access before the destroy transaction closed it.
+// PendingManagedAccessClosures returns durable pause or destroy close requests
+// addressed to one exact application incarnation. New instances are absent
+// because they could not have accepted access before the transaction closed it.
 func (s *Store) PendingManagedAccessClosures(ctx context.Context, instanceID string, limit int) ([]lifecycle.AccessClosure, error) {
 	if !wire.ValidID(instanceID) || limit < 1 || limit > 32 {
 		return nil, ErrInvalidArgument
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT c.operation_id,c.instance_id,c.machine_id,o.binding_revision,c.acknowledged_at
-		FROM dune_managed_destroy_closures c
-		JOIN dune_managed_destroys d ON d.operation_id=c.operation_id
+		FROM dune_managed_access_closures c
+		LEFT JOIN dune_managed_destroys d ON d.operation_id=c.operation_id
 		JOIN dune_operations o ON o.id=c.operation_id
-		WHERE c.instance_id=$1 AND c.acknowledged_at=0 AND d.access_close_outcome=$2
-			AND o.action='destroy' AND o.finished=FALSE AND o.exclusive=TRUE
-		ORDER BY d.access_closed_at,c.operation_id LIMIT $3`, instanceID, lifecycle.AccessCloseWaiting, limit)
+		JOIN dune_managed_resources resource ON resource.runner_id=o.runner_id
+		WHERE c.instance_id=$1 AND c.acknowledged_at=0 AND
+			((o.action='pause' AND resource.access_suspended=TRUE) OR (o.action='destroy' AND d.access_close_outcome=$2 AND o.finished=FALSE AND o.exclusive=TRUE))
+		ORDER BY o.created_at,c.operation_id LIMIT $3`, instanceID, lifecycle.AccessCloseWaiting, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -322,22 +324,20 @@ func (s *Store) PendingManagedAccessClosures(ctx context.Context, instanceID str
 	return closures, rows.Err()
 }
 
-// ConfirmManagedDestroyAccessClosed records one trusted Gateway observation.
-// The overall close result becomes confirmed only after every instance that was
-// live at acceptance has acknowledged the exact old machine binding.
-func (s *Store) ConfirmManagedDestroyAccessClosed(ctx context.Context, expected lifecycle.AccessClosure) error {
+// ConfirmManagedAccessClosed records one trusted Gateway observation. Destroy's
+// overall close result becomes confirmed only after every instance live at
+// acceptance has acknowledged the exact old machine binding.
+func (s *Store) ConfirmManagedAccessClosed(ctx context.Context, expected lifecycle.AccessClosure) error {
 	if !wire.ValidID(expected.OperationID) || !wire.ValidID(expected.InstanceID) || !wire.ValidID(expected.MachineID) || expected.BindingRevision <= 0 || !expected.AcknowledgedAt.IsZero() {
 		return ErrInvalidArgument
 	}
 	return s.withOperation(ctx, expected.OperationID, func(tx *sql.Tx, operation lifecycle.Operation, now int64) error {
-		if operation.Action != "destroy" || operation.BindingRevision != expected.BindingRevision {
+		if (operation.Action != "destroy" && operation.Action != "pause") || operation.BindingRevision != expected.BindingRevision {
 			return lifecycle.ErrBusy
 		}
-		var currentMachine, outcome string
+		var currentMachine string
 		var acknowledged int64
-		if err := tx.QueryRowContext(ctx, `SELECT c.machine_id,c.acknowledged_at,d.access_close_outcome
-			FROM dune_managed_destroy_closures c JOIN dune_managed_destroys d ON d.operation_id=c.operation_id
-			WHERE c.operation_id=$1 AND c.instance_id=$2 AND d.runner_id=$3`, expected.OperationID, expected.InstanceID, operation.RunnerID).Scan(&currentMachine, &acknowledged, &outcome); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT machine_id,acknowledged_at FROM dune_managed_access_closures WHERE operation_id=$1 AND instance_id=$2`, expected.OperationID, expected.InstanceID).Scan(&currentMachine, &acknowledged); err != nil {
 			return err
 		}
 		if currentMachine != expected.MachineID {
@@ -346,10 +346,7 @@ func (s *Store) ConfirmManagedDestroyAccessClosed(ctx context.Context, expected 
 		if acknowledged != 0 {
 			return nil
 		}
-		if operation.Finished || !operation.Exclusive || outcome != lifecycle.AccessCloseWaiting {
-			return lifecycle.ErrBusy
-		}
-		result, err := tx.ExecContext(ctx, `UPDATE dune_managed_destroy_closures SET acknowledged_at=$3 WHERE operation_id=$1 AND instance_id=$2 AND acknowledged_at=0`, expected.OperationID, expected.InstanceID, now)
+		result, err := tx.ExecContext(ctx, `UPDATE dune_managed_access_closures SET acknowledged_at=$3 WHERE operation_id=$1 AND instance_id=$2 AND acknowledged_at=0`, expected.OperationID, expected.InstanceID, now)
 		if err != nil {
 			return err
 		}
@@ -360,8 +357,18 @@ func (s *Store) ConfirmManagedDestroyAccessClosed(ctx context.Context, expected 
 		if n != 1 {
 			return lifecycle.ErrBusy
 		}
+		if operation.Action == "pause" {
+			return nil
+		}
+		var outcome string
+		if err := tx.QueryRowContext(ctx, `SELECT access_close_outcome FROM dune_managed_destroys WHERE operation_id=$1 AND runner_id=$2`, operation.ID, operation.RunnerID).Scan(&outcome); err != nil {
+			return err
+		}
+		if operation.Finished || !operation.Exclusive || outcome != lifecycle.AccessCloseWaiting {
+			return lifecycle.ErrBusy
+		}
 		var pending int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM dune_managed_destroy_closures WHERE operation_id=$1 AND acknowledged_at=0`, expected.OperationID).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM dune_managed_access_closures WHERE operation_id=$1 AND acknowledged_at=0`, expected.OperationID).Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {

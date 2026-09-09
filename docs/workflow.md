@@ -12,7 +12,7 @@ make web-deps          # 初次准备或 package.json / lockfile 变化时安装
 make tools             # 仅需 protobuf 工具时，安装固定版本到 .tools/
 ```
 
-CLI 启动、Web 后端配置与部署参数见 [README](../README.md)。前端开发命令为 `npm --prefix web run dev`，监听 `127.0.0.1:5173` 并代理 `/api` 到 `127.0.0.1:7443`；完整 Web 交互需要 `dune web` 后端。
+服务启动、Web 后端配置与部署参数见 [README](../README.md)。前端开发命令为 `npm --prefix web run dev`，监听 `127.0.0.1:5173` 并代理 `/api` 到 `127.0.0.1:7443`；完整 Web 交互需要 `dune web` 后端。
 
 ## 按改动选择检查
 
@@ -47,7 +47,7 @@ PTY 重连/服务重启选 `TestTmuxSurvivesFabricdAndGateway`；原生画面、
 `tests/` 即使按 `-run` 过滤也会执行 TestMain 的 race 构建；包内 Go 测试的 race 检查仍需 `test-race`。需要明确排除已继承的外部测试开关时：
 
 ```sh
-DUNE_REAL_AGENT= DUNE_REMOTE_CONFIG= DUNE_TEST_POSTGRES= make test
+DUNE_REAL_AGENT= DUNE_TEST_POSTGRES= make test
 ```
 
 ## 外部验收
@@ -60,7 +60,7 @@ go test -race ./internal/metadata -count=1 -timeout=180s
 go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeout=180s
 ```
 
-运行前从私有配置设置 `DUNE_TEST_POSTGRES` 为测试连接 URL。测试创建随机 `dune_test_` 或 `dune_workbench_` schema，结束后删除；密码轮换测试还创建并清理随机测试角色，因此测试账号需要创建 schema 和角色的权限，服务器须实际使用密码认证。不要使用业务数据库。SQLite 的私有目录、独占锁、结构校验、并发与事务失败测试始终在临时目录运行。`TestSchemaInitializationIsAtomic` 验证建库失败完整回滚及不匹配结构不被改写；`TestPostgresConcurrentSchemaInitialization` 验证多个连接池同时创建当前结构。PostgreSQL 工作台测试与 SQLite 复用同一注册、CLI enrollment、fabricd 接入、真实 PTY 和退出撤销流程。
+运行前从私有配置设置 `DUNE_TEST_POSTGRES` 为测试连接 URL。测试创建随机 `dune_test_` 或 `dune_workbench_` schema，结束后删除；密码轮换测试还创建并清理随机测试角色，因此测试账号需要创建 schema 和角色的权限，服务器须实际使用密码认证。不要使用业务数据库。SQLite 的私有目录、独占锁、结构校验、并发与事务失败测试始终在临时目录运行。`TestSchemaInitializationIsAtomic` 验证建库失败完整回滚及不匹配结构不被改写；`TestPostgresConcurrentSchemaInitialization` 验证多个连接池同时创建当前结构。PostgreSQL 工作台测试与 SQLite 复用同一注册、浏览器 enrollment、fabricd 接入、真实 PTY 和退出撤销流程。
 
 `TestPostgresBackupRestore` 还需要与服务器版本匹配的 `pg_dump`、`pg_restore`（从 PATH 查找，或通过 `DUNE_TEST_PG_BIN` 指定目录）。该测试只备份、删除并恢复自己新建的随机 schema，再逐字段核对记录和原会话/机器身份。工具缺失时明确跳过，不能计为备份验收。同结构备份恢复的操作顺序见[元数据存储与恢复](metadata-operations.md)。
 
@@ -68,7 +68,7 @@ go test ./tests -run TestPostgresWorkbenchEnrollmentAndTerminal -count=1 -timeou
 
 协议 peer 回归使用 `go test -race ./pkg/gateway -run Peer -count=1 -timeout=60s`，覆盖双端请求授权、独立角色和启动身份、错误归属、禁止第三跳、上下文界限及断线不重拨。用户上下文另跑 `go test -race ./internal/metadata ./internal/authorization -run Peer -count=1 -timeout=90s`，验证 SQLite 重开、PostgreSQL 跨池单次消费、身份/请求/绑定隔离、有界期限与容量、提交回执丢失。PostgreSQL 子测试仍需专用配置，不把跳过计作通过。
 
-启用专用 PostgreSQL 后运行 `go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s`：三个独立协议 Gateway 使用各自的 peer HTTPS 监听器，经双向 TLS、WebSocket 和 Yamux 连接；客户端固定入口，fabricd 在两个 owner 间顺序迁移。验证目录续租、竞争拒绝、旧 peer 失效、显式重接后真实 PTY 保留及恢复代次隔离。用户上下文使用正式 SQL 签发与消费路径，验证入口允许不能覆盖目标拒绝；故意让入口的有效性回答保持过期状态后，另一 SQL 池退出用户，目标的独立检查仍关闭空闲终端。测试 CA 在内存中临时生成；SDK 与反向连接仍是本地协议夹具，不证明完整 host/CLI 部署或三节点进程/网络故障矩阵。
+启用专用 PostgreSQL 后运行 `go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s`：三个独立协议 Gateway 使用各自的 peer HTTPS 监听器，经双向 TLS、WebSocket 和 Yamux 连接；客户端固定入口，fabricd 在两个 owner 间顺序迁移。验证目录续租、竞争拒绝、旧 peer 失效、显式重接后真实 PTY 保留及恢复代次隔离。用户上下文使用正式 SQL 签发与消费路径，验证入口允许不能覆盖目标拒绝；故意让入口的有效性回答保持过期状态后，另一 SQL 池退出用户，目标的独立检查仍关闭空闲终端。测试 CA 在内存中临时生成；SDK 与反向连接仍是本地协议夹具，不证明完整 Web 宿主部署或三节点进程/网络故障矩阵。
 
 peer 传输本身运行 `go test -race ./pkg/transport/peer -count=1 -timeout=60s`，覆盖错误 CA/主机、独立 Handler 信任检查、明文与转发头、重复身份头、原 owner 协商、证书到期、取消、代理/重定向拒绝及真实 HTTPS CA 轮换。接入配置和独立监听器的职责见 [peer 传输接入](peer-transport.md)。
 
@@ -76,9 +76,7 @@ peer 传输本身运行 `go test -race ./pkg/transport/peer -count=1 -timeout=60
 
 真实浏览器验收可使用独立 [Dex 2.45.1](https://github.com/dexidp/dex/releases/tag/v2.45.1) 和专用账号，按 [Dex 配置](https://dexidp.io/docs/configuration/) 注册精确 Dune 回调地址，将 client secret 保存在 0600 配置文件中。先验证官方 `web --identity-config` 的登录、退出和部署前缀，再用两个共享 PostgreSQL 的独立 `host.App` 分别接收 start/callback，确认跨实例完成；停用 Dune 用户后验证已有 Cookie 和再次上游登录均被拒绝，启用后仅新登录成功。使用 loopback HTTP 的演练不代表 HTTPS 代理、真实企业 IdP 或 S3 执行路由验收；完成后停止专用身份服务、工作台并清理测试 schema。
 
-人类 CLI 回归使用 `go test ./tests -run TestHumanCLILoginAndExecution -count=1 -timeout=180s`，覆盖正式二进制的浏览器确认、私有文件、实际执行和浏览器退出后 API/现有连接撤销；启用 PostgreSQL 时还验证独立签发与消费宿主。`internal/metadata` 的 `TestCLILoginTransactions` 检查单次消费、确认身份不可替换、父会话与版本、并发和持久化；`pkg/login` 检查 HTTP 模糊失败及重定向不重放。真实 Dex 演练另运行 `dune login --site ... --no-browser`，完成浏览器核对与确认、临时 fabricd 上的实际命令，再退出浏览器验证 CLI 失效。手动启动临时 fabricd 时指定构建产物 `DUNE_TMUX=/absolute/repo/bin/tmux`，结束后清理测试进程和凭据。
-
-`TestRunnerBindingSnapshot` 在 SQLite/PostgreSQL 验证逻辑 Runner 与机器 ID 分离、owner 隔离、绑定修订变化后旧访问失效及重开恢复；替换环境在测试中直接构造数据库事实，不代表 Managed 生命周期已经实现。`TestHumanCLILoginAndExecution` 另通过正式 CLI 的 `runners`、`--runner` 和 `DialRunner` 执行真实命令。`TestRunnerDoesNotFollowReplacement` 验证过期快照不会触发 SDK 自动重新解析或重放。
+`TestRunnerBindingSnapshot` 在 SQLite/PostgreSQL 验证逻辑 Runner 与机器 ID 分离、owner 隔离、绑定修订变化后旧访问失效及重开恢复；替换环境在测试中直接构造数据库事实，不代表 Managed 生命周期已经实现。浏览器进程回归验证选定快照不会跟随替代环境或自动重放。
 
 执行流授权运行 `go test -race ./pkg/access -count=1 -timeout=60s`。它使用独立 Gateway 和真实 fabricd/PTY，覆盖文件与上传提交、Git 暂存、端口输入、只读订阅、短期决定复用、空闲撤销和最终决定观测；不调用真实 Agent。宿主观测出口另运行 `go test -race ./pkg/host -run 'Observation|HostEmitsStructuredAccess' -count=1 -timeout=60s`，检查慢 sink 的有界队列、取消和丢弃计数，以及 API 检查事件的字段裁剪。完整语义见[执行流访问检查](access-checks.md)。
 
@@ -91,9 +89,6 @@ DUNE_REAL_AGENT=1 go test ./tests -run '^TestRealAgentPTY$' -v -count=1 -timeout
 # 已配置的 Gemini ACP，仅验证 initialize
 DUNE_REAL_AGENT=1 go test ./tests -run '^TestRealAgentACP$' -v -count=1 -timeout=180s
 
-# 指定已有客户端配置；该测试会在远端 /tmp 创建并清理测试资源
-DUNE_REMOTE_CONFIG=/absolute/client.yaml \
-  go test -race ./tests -run '^TestDirectRemote$' -v -count=1 -timeout=180s
 ```
 
 PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型配置。上述测试超时还受测试内部 context 限制；增加 Go 的 timeout 不会延长内部期限。
@@ -102,7 +97,7 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 
 `TestRealAgentPTY` 经 Dune 创建代码并独立运行检查；`TestRealAgentACP` 只测试握手。完整 Web 编码验收还需要从页面提交任务、看到实际结果并独立验证产物。mock ACP 可验证协议与权限状态机，不能替代真实模型任务。
 
-发布构建不自动部署。Linux 运行验收应从当前源码重新构建对应发布包，在远端独立 `/tmp` 目录和端口启动，且让产品请求直接访问远端地址；不要把 SSH 转发或旧发布包当作目标平台证据。若验证 `service install`，使用唯一的临时 unit 名，检查重启前后的 Runtime ID、incarnation 和 generation，并在结束时显式 `runtime stop`、停用及删除 unit 和测试目录。对指定环境的操作应保留已有会话；连接服务重启只替换 fabricd，终止 tmux 会话需显式执行 `runtime stop`。
+发布构建不自动部署。Linux 运行验收应从当前源码重新构建对应发布包，在远端独立 `/tmp` 目录和端口启动，且让产品请求直接访问远端地址；不要把 SSH 转发或旧发布包当作目标平台证据。若验证 `service install`，使用唯一的临时 unit 名，检查重启前后的 Runtime ID、incarnation 和 generation，并在结束时从 Web 显式停止 Runtime、停用及删除 unit 和测试目录。对指定环境的操作应保留已有会话；连接服务重启只替换 fabricd，终止 tmux 会话需从 Web 显式停止 Runtime。
 
 ## 完成与续接
 
@@ -110,13 +105,13 @@ PTY 测试支持 `DUNE_PTY_AGENT=claude`，Dune 不代办登录或修改模型�
 
 当前目录若没有 Git 元数据，用修改清单和文件快照审阅；无需为执行开发流程创建 Git 仓库。将来接入 CI 时复用 Makefile 入口，外部账号/远端验收保持显式启用。
 
-`TestEnterpriseSharedExecutionAndRevocation` 验证所选企业检查器允许跨 owner 的真实 Web 终端及 CLI 执行，同时拒绝文件写入、关闭策略撤销后的空闲流，保留父会话和身份停用撤销。PostgreSQL 子例使用两个独立宿主签发/消费凭据，并不代表 S3 自动路由。`TestAuthorizedDiscoveryAndWrites` 验证 128 候选扫描上限、分页游标的用户/身份源/用途隔离、SQLite 重开和跨 PostgreSQL 池恢复、绑定及会话写入竞争。浏览器分页改动还需在实际工作台验证空页继续、前后翻页、过期恢复及策略故障反馈。
+`TestEnterpriseSharedExecutionAndRevocation` 验证所选企业检查器允许跨 owner 的真实 Web 终端，同时拒绝文件写入、关闭策略撤销后的空闲流，并保留浏览器会话和身份停用撤销。PostgreSQL 子例使用两个独立宿主签发/消费凭据，并不代表 S3 自动路由。`TestAuthorizedDiscoveryAndWrites` 验证 128 候选扫描上限、分页游标的用户/身份源/用途隔离、SQLite 重开和跨 PostgreSQL 池恢复、绑定及会话写入竞争。浏览器分页改动还需在实际工作台验证空页继续、前后翻页、过期恢复及策略故障反馈。
 
 `TestBrowserRunnerBindingIsFixed` 逐一检查浏览器 Runner 的 call、sessions、events 和解绑入口，覆盖绑定缺失/歧义、错误 Runner/Fabric/修订、会话缺失及修订变化后不拨号替代目标。`TestPrefixedWorkbenchEnrollmentAndTerminal/runner-entry` 和企业共享回归通过同一 Runner 快照路径使用真实 fabricd/PTY；浏览器需额外检查环境选择、绑定变化提示、明确重新进入后保留原会话及历史，不自动重连或重复创建。直接修改测试数据库的绑定修订只模拟已提交事实，不代表 Managed 生命周期验收。
 
 `TestRuntimeSelection` 检查事件订阅的完整执行身份及重复、缺失、溢出参数；前缀工作台与企业共享进程回归在实际 PTY 上拒绝错误 incarnation/generation，并验证随后合法订阅可用。浏览器验收还需确认刷新及自动重连保留选定 Runtime 身份，同 ID 身份变化后必须重新点选。仅在专用测试进程中改变持久 Runtime 身份的夹具用于模拟执行身份变化，不代表生产生命周期支持直接修改该字段。
 
-`TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及 CLI、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
+`TestAuthenticatedSubjectIsFixed` 检查同一 principal、同一 namespace 关联两个 subject 时的权限隔离，以及浏览器会话、连接凭据和安装材料在 SQLite 重开/PostgreSQL 跨池后保留原身份。`TestExternalBrowserLoginCallbacks` 经真实宿主登录回调将已验证 subject 交给企业检查器；`pkg/access` 的真实执行流回归还验证 Bind 后不能替换 subject。这些使用可信测试身份适配器，不替代某个企业 IdP 或权限 SDK 的部署验收。
 
 `go test ./pkg/renewal ./internal/lifecycle` 验证公开策略契约和个人默认续期决定，包括首次连接宽限期、曾可用后离线、引导失败、未知资源/调用、销毁限制、明确过期事实、目标必须延长期限及配置边界。该检查只验证纯策略计算；持久巡检另见下方回归。两者都不证明资源已实际续期，也不替代 Managed 的创建、反向连接和清理验收。
 
@@ -158,23 +153,23 @@ Managed 多实例执行栅栏使用专用 PostgreSQL 运行 `go test -race ./int
 
 Managed 历史保留使用 `go test -race ./internal/metadata ./internal/managed ./pkg/host -run 'ManagedHistory|OperationClaimsAndBusinessMutex|ManagedCreateFinishes|ManagedDestroy|Worker|ManagedHost' -count=1 -timeout=240s`，并为 PostgreSQL 配置专用测试库。回归检查数据库完成时间、24 小时至 366 天配置、32 条删除上限、续期历史清理、完整终态 Runner 归档、跨池 `SKIP LOCKED` 竞争，以及近期请求、unknown/timed_out、残留资源、未确认关闭、机器和 enrollment 的保留。自动清理只在生命周期工作为空时运行；测试直接调整夹具的历史时间，不代表修改生产数据库或系统时钟。
 
-连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock`、`TestPostgresDirectoryCommitLoss` 和 `TestPostgresDirectoryDatabaseClockDisturbance`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查、回执丢失不重放，以及数据库时间前跳/回拨后的期限与 epoch 栅栏。时钟用例只在测试 schema 中用同名函数替换目录 SQL 读取的 `clock_timestamp()`：回拨保留数据库原期限但本地下发仍最多十五秒，前跳使旧续约失败并由新 epoch 接管，恢复正常后未来期限继续阻止第三个 owner。`TestSQLiteRejectsSharedClusterServices` 检查 SQLite 拒绝集群目录和共享准入；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCLI` 执行正式离线读取/旋转命令。这些检查不修改操作系统或 PostgreSQL 进程时钟，也不替代 Gateway 三进程、跨主机 NTP 或数据库 HA 演练。
+连接目录使用真实 PostgreSQL 的 `TestPostgresConnectionDirectory`、`TestPostgresDirectoryRechecksExpiredLeaseAfterLock`、`TestPostgresDirectoryCommitLoss` 和 `TestPostgresDirectoryDatabaseClockDisturbance`，验证跨池竞争、未确认发布隔离、旧 owner/绑定拒绝、恢复代次、锁等待后的过期检查、回执丢失不重放，以及数据库时间前跳/回拨后的期限与 epoch 栅栏。时钟用例只在测试 schema 中用同名函数替换目录 SQL 读取的 `clock_timestamp()`：回拨保留数据库原期限但本地下发仍最多十五秒，前跳使旧续约失败并由新 epoch 接管，恢复正常后未来期限继续阻止第三个 owner。`TestSQLiteRejectsSharedClusterServices` 检查 SQLite 拒绝集群目录和共享准入；原生备份测试恢复实际 route 后旋转代次，确认历史归属不可用。`tests/TestPostgresClusterRecoveryCommand` 执行正式离线读取/旋转命令。这些检查不修改操作系统或 PostgreSQL 进程时钟，也不替代 Gateway 三进程、跨主机 NTP 或数据库 HA 演练。
 
 `pkg/fabricd/TestPostgresOwnedReverseConnections` 将两个独立 SQL 池与两个真实协议 Gateway、fabricd 引擎相连，检查 live owner 竞争拒绝、确认后发布、持续数据库续约、原请求 epoch、owner 释放后接管、旧清理拒绝和原 PTY 重新输入；测试中主动旋转恢复代次作为故障注入，验证已有旧连接关闭，不代表生产恢复可以跳过停站。`pkg/gateway/TestOwnership*` 和 `TestOwnedHandshakeRequiresEpochConfirmation` 检查迟到目录响应、保守本地期限、过期不复活及错误确认不发布；`TestInputGrantCannotCrossOwnershipTerm` 单独验证有效输入 grant 不能跨归属。此范围不涵盖 HTTP peer、负载均衡或三节点网络分区。
 
 `pkg/gateway/TestOwnerExpiryClosesLocallyHandledStream` 检查没有 fabric relay 的本地处理流也随执行归属关闭；当前 route 的检查同时位于新请求及后续输入进入应用处理器之前，不能仅依赖关闭计时器及时获得调度。
 
-宿主集群装配使用 `go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s`，启用专用 PostgreSQL。两个正式 `host.App` 的 peer 经各自独立 mTLS 监听器连接，真实 fabricd 进程固定在 B，Web 与人类 CLI 固定在 A，验证远端在线事实、Runner/Runtime、PTY 和授权撤销。`internal/metadata/TestPostgresOnlineConnections` 检查未发布/过期/旧代次与有界 ID 查询，`pkg/host` 检查非法配置和监听器所有权。此范围不替代多进程集群故障、配置一致性租约或 Linux 部署验收。
+宿主集群装配使用 `go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s`，启用专用 PostgreSQL。两个正式 `host.App` 的 peer 经各自独立 mTLS 监听器连接，真实 fabricd 进程固定在 B，Web 固定进入 A，验证远端在线事实、Runner/Runtime、PTY 和授权撤销。`internal/metadata/TestPostgresOnlineConnections` 检查未发布/过期/旧代次与有界 ID 查询，`pkg/host` 检查非法配置和监听器所有权。此范围不替代多进程集群故障、配置一致性租约或 Linux 部署验收。
 
-官方集群 CLI 使用 `go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s`。它启动三个正式服务进程及独立 fabricd，经私有配置加载测试证书，在共享 PostgreSQL 上验证跨进程安装、在线发现、Web/人类 CLI 定向执行和退出撤销。此正常运行检查不替代三节点故障矩阵；配置读取的私有权限、相对路径和证书错误另由 `internal/config/TestPrivateClusterConfiguration` 覆盖。
+官方集群 Web 进程使用 `go test -race ./tests -run TestPostgresClusterWebProcesses -count=1 -timeout=180s`。它启动三个正式 Web 服务进程及独立 fabricd，经私有配置加载测试证书，在共享 PostgreSQL 上验证跨进程安装、在线发现、浏览器定向执行和退出撤销。此正常运行检查不替代三节点故障矩阵；配置读取的私有权限、相对路径和证书错误另由 `internal/config/TestPrivateClusterConfiguration` 覆盖。
 
 多用户集群能力使用 `go test -race ./tests -run TestPostgresClusterTwoUserIsolationAndCapabilities -count=1 -timeout=120s`。三个正式 Web 节点共用 PostgreSQL，两名本地身份用户各自拥有一条连接到不同 owner 的真实 fabricd 隧道；统一入口只发现本人的机器，不能为另一台机器签发访问，绑定正确机器的一次性票据也不能改投另一目标且错误握手后不可重放。两个用户分别经 mTLS peer 完成 File 读写、Git 状态、PTY 输入和原始 ACP 消息。这是产品目标与能力路由隔离；两个 fabricd 仍运行于同一测试 OS 用户，不把它表述为 Shell 内部的主机文件隔离。
 
-配置准入使用 `go test -race ./pkg/gateway ./internal/metadata ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`，启用专用 PostgreSQL。覆盖并发不兼容配置、跨池续约、锁等待、未知提交与原生恢复；宿主回归观察实际续约、Close 后保留原期限及到期后变更。`TestPostgresAdmissionSurvivesProcessPause` 暂停正式 CLI 宿主超过十五秒，确认恢复后旧进程退出、旧终端输入未执行、替换配置后原 PTY 可继续使用。它证明同机 PostgreSQL 准入与进程暂停边界，不证明数据库时钟跳变、三节点分区或 Linux 部署。
+配置准入使用 `go test -race ./pkg/gateway ./internal/metadata ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`，启用专用 PostgreSQL。覆盖并发不兼容配置、跨池续约、锁等待、未知提交与原生恢复；宿主回归观察实际续约、Close 后保留原期限及到期后变更。`TestPostgresAdmissionSurvivesProcessPause` 暂停正式 Web 宿主超过十五秒，确认恢复后旧进程退出、旧终端输入未执行、替换配置后原 PTY 可继续使用。它证明同机 PostgreSQL 准入与进程暂停边界，不证明数据库时钟跳变、三节点分区或 Linux 部署。
 
-就绪与排空运行 `go test -race ./pkg/gateway ./pkg/host ./pkg/transport/peer ./internal/webapp -count=1 -timeout=90s`，覆盖入口/owner 排空期间原流双向收发、新流拒绝、清理回调等待，HTTP 完整响应/部分请求超时、挂载与自有监听器、并发 Close/Shutdown 及前缀探针。`go test -race ./tests -run TestWebCLIShutdownPreservesPTY -count=1 -timeout=90s` 启动正式 SQLite CLI 和真实 fabricd/PTY，验证 SIGTERM、限时退出、旧连接新请求拒绝、原终端重接与空闲隧道不延迟退出。该测试没有执行 Agent，也不替代 PostgreSQL 三节点分区或 Managed worker 排空验收。
+就绪与排空运行 `go test -race ./pkg/gateway ./pkg/host ./pkg/transport/peer ./internal/webapp -count=1 -timeout=90s`，覆盖入口/owner 排空期间原流双向收发、新流拒绝、清理回调等待，HTTP 完整响应/部分请求超时、挂载与自有监听器、并发 Close/Shutdown 及前缀探针。`go test -race ./tests -run TestWebShutdownPreservesPTY -count=1 -timeout=90s` 启动正式 SQLite Web 进程和真实 fabricd/PTY，验证 SIGTERM、限时退出、旧连接新请求拒绝、原终端重接与空闲隧道不延迟退出。该测试没有执行 Agent，也不替代 PostgreSQL 三节点分区或 Managed worker 排空验收。
 
-`TestPostgresClusterNetworkPartitions` 需要专用、可由本机回环地址访问的 PostgreSQL 测试服务器，和正常三进程回归一样使用正式 CLI、测试 CA、真实 fabricd/PTY。测试只在各节点的 PostgreSQL/peer 字节链路上暂存双向流量，不改 SQL 或协议、不关闭 TLS 校验；恢复后释放滞留字节。它验证已受理 Exec 的响应丢失返回 unknown 且不重放、入口 SQL 失联后退出及另一入口使用原 owner、owner SQL 失联后退出及 fabricd 重连到第三节点时 epoch/连接 generation 推进。恢复后的原 PTY 和一次副作用分别独立核对。组合运行 `go test -race ./tests -run 'TestPostgresClusterCLIProcesses|TestPostgresClusterTwoUserIsolationAndCapabilities|TestPostgresClusterNetworkPartitions|TestPostgresAdmissionSurvivesProcessPause' -count=1 -timeout=300s`；本机代理停滞、单机进程暂停、schema 内数据库时间偏移和正常链路分别给出独立证据，不等同于跨主机内核丢包、操作系统时钟修改、Linux 或 Managed worker 的完整故障组合。
+`TestPostgresClusterNetworkPartitions` 需要专用、可由本机回环地址访问的 PostgreSQL 测试服务器，和正常三进程回归一样使用正式 Web 进程、测试 CA、真实 fabricd/PTY。测试只在各节点的 PostgreSQL/peer 字节链路上暂存双向流量，不改 SQL 或协议、不关闭 TLS 校验；恢复后释放滞留字节。它验证已受理 Exec 的响应丢失返回 unknown 且不重放、入口 SQL 失联后退出及另一入口使用原 owner、owner SQL 失联后退出及 fabricd 重连到第三节点时 epoch/连接 generation 推进。恢复后的原 PTY 和一次副作用分别独立核对。组合运行 `go test -race ./tests -run 'TestPostgresClusterWebProcesses|TestPostgresClusterTwoUserIsolationAndCapabilities|TestPostgresClusterNetworkPartitions|TestPostgresAdmissionSurvivesProcessPause' -count=1 -timeout=300s`；本机代理停滞、单机进程暂停、schema 内数据库时间偏移和正常链路分别给出独立证据，不等同于跨主机内核丢包、操作系统时钟修改、Linux 或 Managed worker 的完整故障组合。
 
 当前 Linux 集群发布验收从目标提交重新交叉构建静态 amd64 二进制，并与固定 bundled tmux 部署到专用远端目录。三个正式 Web/peer 进程应使用独立端口、同一恢复代次与独立 mTLS 证书，两份正式 fabricd 分别连接不同 owner；另一主机上的客户端从第三个入口验证双用户发现隔离及 Exec、File、Git、PTY、原始 ACP。重启一个 owner 时记录原 fabricd PID 与 Runtime 身份，等待 readiness 与目录恢复后重新附加原 PTY，同时检查另一 owner 路径。验收材料必须记录目标提交、内核/架构、数据库位置和清理结果；同机三实例及跨主机 PostgreSQL 不能表述为三台 Linux 主机、Linux 数据库 HA、真实 Agent 或 Managed 提供方验收。
 

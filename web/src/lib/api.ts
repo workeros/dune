@@ -38,10 +38,11 @@ export type ManagedField = { name: string; label: string; type: "string" | "inte
 export type ManagedUnavailableReason = "maintenance" | "capacity" | "configuration" | "unreachable" | "unknown";
 export type ManagedTemplate = { fabric_id: string; id: string; version: string; name: string; disabled: boolean; fields: ManagedField[]; available: boolean; unavailable_reason?: ManagedUnavailableReason };
 export type ManagedOperation = {
-  id: string; runner_id: string; fabric_id: string; binding_revision: number; action: "create" | "renew" | "destroy";
+  id: string; runner_id: string; fabric_id: string; binding_revision: number; action: "create" | "renew" | "destroy" | "pause" | "resume";
   created_at: string; finished: boolean; outcome?: string; stage?: string; provider_outcome?: string; resource_ref?: string;
   expires_at?: string; renewal_policy_version?: string; renewal_reason?: string; renewal_observed_at?: string; renewal_next_check_at?: string; renewal_until?: string;
-  access_closed: boolean; access_close_outcome?: string; access_close_deadline?: string;
+  access_closed: boolean; access_suspended: boolean; resource_state?: "ready" | "paused" | "unknown";
+  capabilities?: { pause_resume: boolean; disk_snapshot: boolean }; access_close_outcome?: string; access_close_deadline?: string;
 };
 export type ManagedCreation = { runner: Runner; operation: ManagedOperation };
 export type ManagedReview = {

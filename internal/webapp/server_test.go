@@ -146,13 +146,28 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 				t.Fatal("runner discovery leaked ownership", out.Code)
 			}
 		}
-		for _, path := range []string{"/api/cli/runners", "/api/cli/runners/" + pair.own} {
-			req := httptest.NewRequest("GET", path, nil)
+		for _, route := range []struct{ method, path string }{
+			{"POST", "/api/auth/cli/start"},
+			{"POST", "/api/auth/cli/consume"},
+			{"GET", "/api/auth/cli/request"},
+			{"POST", "/api/auth/cli/request"},
+			{"GET", "/api/cli/machines"},
+			{"GET", "/api/cli/runners"},
+			{"GET", "/api/cli/runners/" + pair.own},
+			{"POST", "/api/cli/runner-access"},
+			{"POST", "/api/cli/access"},
+			{"POST", "/api/cli/logout"},
+		} {
+			req := httptest.NewRequest(route.method, route.path, nil)
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
+			if route.method == "POST" {
+				req.Header.Set("X-Dune-Request", "1")
+				req.Header.Set("Origin", app.urls.Origin)
+			}
 			out := httptest.NewRecorder()
 			app.ServeHTTP(out, req)
-			if out.Code != 401 {
-				t.Fatal("browser cookie accepted as CLI credential", out.Code)
+			if out.Code != 404 {
+				t.Fatal("removed CLI route is still published", out.Code)
 			}
 		}
 	}

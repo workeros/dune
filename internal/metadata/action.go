@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -11,10 +12,11 @@ import (
 
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/fabric"
 )
 
 const actionColumns = "id,operation_id,kind,request_digest,resource_ref,renew_until,worker,execution_revision,started_at,completed_at,outcome"
-const resourceColumns = "runner_id,fabric_id,resource_ref,confirmed_at,expires_at,gone,access_closed"
+const resourceColumns = "runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,confirmed_at,expires_at,gone,access_closed,access_suspended,state,capabilities"
 
 func optionalMillis(t time.Time) int64 {
 	if t.IsZero() {
@@ -42,12 +44,36 @@ func scanAction(row interface{ Scan(...any) error }) (lifecycle.ProviderAction, 
 func scanManagedResource(row interface{ Scan(...any) error }) (lifecycle.Resource, error) {
 	var r lifecycle.Resource
 	var confirmed, expires int64
-	err := row.Scan(&r.RunnerID, &r.FabricID, &r.Ref, &confirmed, &expires, &r.Gone, &r.AccessClosed)
+	var capabilities string
+	err := row.Scan(&r.RunnerID, &r.FabricID, &r.ProviderBindingID, &r.ProviderBindingRevision, &r.Ref, &confirmed, &expires, &r.Gone, &r.AccessClosed, &r.AccessSuspended, &r.State, &capabilities)
 	r.ConfirmedAt, r.ExpiresAt = optionalTime(confirmed), optionalTime(expires)
+	if err == nil && capabilities != "" {
+		r.Capabilities = &fabric.ResourceCapabilities{}
+		if decodeErr := json.Unmarshal([]byte(capabilities), r.Capabilities); decodeErr != nil {
+			return lifecycle.Resource{}, decodeErr
+		}
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
 	return r, err
+}
+
+func encodedCapabilities(capabilities *fabric.ResourceCapabilities) (string, error) {
+	if capabilities == nil {
+		return "", nil
+	}
+	encoded, err := json.Marshal(capabilities)
+	return string(encoded), err
+}
+
+func normalizedResourceState(state string) string {
+	switch state {
+	case string(fabric.ResourceReady), string(fabric.ResourcePaused), string(fabric.ResourceUnknown):
+		return state
+	default:
+		return string(fabric.ResourceUnknown)
+	}
 }
 
 // ProviderAction and ManagedResource are trusted recovery reads. Their callers
@@ -68,7 +94,7 @@ func (s *Store) ManagedResource(ctx context.Context, runnerID string) (lifecycle
 // The caller must recheck its execution context immediately before provider I/O.
 // This journal cannot fence an external system or prove a late call was cancelled.
 func (s *Store) BeginProviderAction(ctx context.Context, expected lifecycle.Operation, request lifecycle.ActionRequest) (action lifecycle.ProviderAction, dispatch bool, err error) {
-	if !peerHash(request.Digest) || (request.Kind != "create" && request.Kind != "bootstrap" && request.Kind != "renew" && request.Kind != "destroy") || (request.Kind == "renew") != (!request.RenewUntil.IsZero()) || (!request.RenewUntil.IsZero() && request.RenewUntil.UnixMilli() <= 0) {
+	if !peerHash(request.Digest) || (request.Kind != "create" && request.Kind != "bootstrap" && request.Kind != "renew" && request.Kind != "destroy" && request.Kind != "pause" && request.Kind != "resume") || (request.Kind == "renew") != (!request.RenewUntil.IsZero()) || (!request.RenewUntil.IsZero() && request.RenewUntil.UnixMilli() <= 0) {
 		return action, false, ErrInvalidArgument
 	}
 	// Persisted deadlines have millisecond precision, just like execution leases.
@@ -195,6 +221,10 @@ func (s *Store) actionTarget(ctx context.Context, tx *sql.Tx, op lifecycle.Opera
 			if created.Outcome != "succeeded" {
 				return "", lifecycle.ErrBusy
 			}
+		} else if request.Kind == "pause" || request.Kind == "resume" {
+			if op.Action != request.Kind || !resource.AccessSuspended {
+				return "", lifecycle.ErrBusy
+			}
 		} else if op.Action != "renew" || request.RenewUntil.UnixMilli() <= now {
 			return "", ErrInvalidArgument
 		}
@@ -210,6 +240,12 @@ func validObservation(o lifecycle.ActionObservation) bool {
 		return false
 	}
 	if (!o.ExpiresAt.IsZero() && (o.ExpiresAt.UnixMilli() <= 0 || o.ResourceRef == "")) || (o.Gone && o.ResourceRef == "") {
+		return false
+	}
+	if o.State != "" && o.State != string(fabric.ResourceReady) && o.State != string(fabric.ResourcePaused) && o.State != string(fabric.ResourceUnknown) {
+		return false
+	}
+	if o.Capabilities != nil && o.ResourceRef == "" {
 		return false
 	}
 	return true
@@ -250,15 +286,38 @@ func (s *Store) RecordProviderAction(ctx context.Context, expected lifecycle.Ope
 			return err
 		}
 		if !terminal {
-			return s.updateOperationOutcome(ctx, tx, expected, observation.Outcome, false)
+			if err := s.updateOperationOutcome(ctx, tx, expected, observation.Outcome, false); err != nil {
+				return err
+			}
+			if action.Kind == "renew" {
+				resource, err := scanManagedResource(tx.QueryRowContext(ctx, "SELECT "+resourceColumns+" FROM dune_managed_resources WHERE runner_id=$1", current.RunnerID))
+				if err != nil {
+					return err
+				}
+				if resource.State == string(fabric.ResourcePaused) {
+					// TAE accepts a TTL update while paused but exposes the new
+					// expiry only after Resume. Let Resume proceed, then put this
+					// same action back into reconciliation after reconnect.
+					return s.updateOperationMutex(ctx, tx, expected, false)
+				}
+			}
+			return nil
 		}
 		finished := observation.Outcome == "failed" || current.Action != "create"
+		if current.Action == "resume" && observation.Outcome == "succeeded" {
+			finished = false
+		}
 		outcome := observation.Outcome
 		if !finished {
 			outcome = ""
 		}
 		if err := s.updateOperationOutcome(ctx, tx, expected, outcome, finished); err != nil {
 			return err
+		}
+		if action.Kind == "create" && observation.Outcome == "failed" && observation.ResourceRef != "" {
+			if err := s.scheduleFailedCreateCleanup(ctx, tx, current, observation.ResourceRef, now); err != nil {
+				return err
+			}
 		}
 		if action.Kind == "renew" {
 			// A terminal mutation always returns the resource to provider inspection.
@@ -267,7 +326,7 @@ func (s *Store) RecordProviderAction(ctx context.Context, expected lifecycle.Ope
 				return err
 			}
 		}
-		if !finished && action.Kind == "bootstrap" {
+		if !finished && (action.Kind == "bootstrap" || action.Kind == "resume") {
 			// External work has ended; observing the first connection must not prevent
 			// a separate renewal Operation from acquiring the Runner business lock.
 			err = s.updateOperationMutex(ctx, tx, expected, false)
@@ -276,7 +335,32 @@ func (s *Store) RecordProviderAction(ctx context.Context, expected lifecycle.Ope
 	})
 }
 
+// scheduleFailedCreateCleanup turns a rejected, allocated resource into the
+// ordinary destroy workflow in the same commit that rejects Create. This keeps
+// the exact provider binding and prevents bootstrap or access from opening.
+func (s *Store) scheduleFailedCreateCleanup(ctx context.Context, tx *sql.Tx, create lifecycle.Operation, resourceRef string, now int64) error {
+	cleanupID, requestKey := wire.ID(), "managed-cleanup-"+wire.ID()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO dune_operations(id,request_key,request_digest,principal_id,identity_namespace,identity_subject,runner_id,fabric_id,binding_revision,provider_binding_id,provider_binding_revision,action,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'destroy',$12)`, cleanupID, requestKey, create.Digest, create.PrincipalID, create.Namespace, create.Subject, create.RunnerID, create.FabricID, create.BindingRevision, create.ProviderBindingID, create.ProviderBindingRevision, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO dune_managed_destroys(operation_id,runner_id,resource_ref,machine_id,access_closed_at,close_deadline,access_close_outcome)
+		VALUES($1,$2,$3,'',$4,$4,$5)`, cleanupID, create.RunnerID, resourceRef, now, lifecycle.AccessCloseConfirmed); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE dune_managed_resources SET access_closed=TRUE WHERE runner_id=$1`, create.RunnerID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE dune_managed_maintenance SET reason='DESTROYING',next_check_at=0,renew_until=0,worker='',lease_until=0 WHERE runner_id=$1`, create.RunnerID)
+	return err
+}
+
 func (s *Store) recordActionResource(ctx context.Context, tx *sql.Tx, op lifecycle.Operation, action lifecycle.ProviderAction, o lifecycle.ActionObservation, now int64) error {
+	capabilities, err := encodedCapabilities(o.Capabilities)
+	if err != nil {
+		return err
+	}
+	state := normalizedResourceState(o.State)
 	if action.Kind == "create" {
 		if o.Outcome == "succeeded" && (o.ResourceRef == "" || o.Gone) {
 			return ErrInvalidArgument
@@ -306,16 +390,16 @@ func (s *Store) recordActionResource(ctx context.Context, tx *sql.Tx, op lifecyc
 	}
 	resource, err := scanManagedResource(tx.QueryRowContext(ctx, "SELECT "+resourceColumns+" FROM dune_managed_resources WHERE runner_id=$1", op.RunnerID))
 	if errors.Is(err, ErrNotFound) && action.Kind == "create" {
-		_, err = tx.ExecContext(ctx, `INSERT INTO dune_managed_resources(runner_id,fabric_id,resource_ref,confirmed_at,expires_at,gone,access_closed) VALUES($1,$2,$3,$4,$5,$6,$6)`, op.RunnerID, op.FabricID, o.ResourceRef, now, optionalMillis(o.ExpiresAt), o.Gone)
+		_, err = tx.ExecContext(ctx, `INSERT INTO dune_managed_resources(runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,confirmed_at,expires_at,gone,access_closed,state,capabilities) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10)`, op.RunnerID, op.FabricID, op.ProviderBindingID, op.ProviderBindingRevision, o.ResourceRef, now, optionalMillis(o.ExpiresAt), o.Gone, state, capabilities)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	if resource.FabricID != op.FabricID || resource.Ref != o.ResourceRef || (resource.Gone && !o.Gone) {
+	if resource.FabricID != op.FabricID || resource.ProviderBindingID != op.ProviderBindingID || resource.ProviderBindingRevision != op.ProviderBindingRevision || resource.Ref != o.ResourceRef || (resource.Gone && !o.Gone) {
 		return lifecycle.ErrIntentConflict
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=CASE WHEN CAST($2 AS BIGINT)=0 THEN expires_at ELSE $2 END,gone=$3,access_closed=CASE WHEN $3 THEN TRUE ELSE access_closed END WHERE runner_id=$1`, op.RunnerID, optionalMillis(o.ExpiresAt), o.Gone)
+	_, err = tx.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=CASE WHEN CAST($2 AS BIGINT)=0 THEN expires_at ELSE $2 END,gone=$3,access_closed=CASE WHEN $3 THEN TRUE ELSE access_closed END,state=CASE WHEN $4='' THEN state ELSE $4 END,capabilities=CASE WHEN $5='' THEN capabilities ELSE $5 END WHERE runner_id=$1`, op.RunnerID, optionalMillis(o.ExpiresAt), o.Gone, o.State, capabilities)
 	return err
 }
 

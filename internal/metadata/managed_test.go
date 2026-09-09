@@ -273,14 +273,14 @@ func TestManagedCreationRollbackAndSessionGate(t *testing.T) {
 					t.Fatal("wrong identity or session accepted", err)
 				}
 			}
-			for _, query := range []string{`UPDATE dune_sessions SET expires_at=0`, `UPDATE dune_sessions SET kind='cli'`, `UPDATE dune_sessions SET auth_version=auth_version+1`, `UPDATE dune_sessions SET parent_hash=hash`} {
+			for _, query := range []string{`UPDATE dune_sessions SET expires_at=0`, `UPDATE dune_sessions SET auth_version=auth_version+1`} {
 				if _, err := s.db.Exec(query); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := s.CreateManaged(ctx, user, hash, wire.ID(), managedSpec()); !errors.Is(err, identity.ErrUnauthorized) {
 					t.Fatal("invalid browser session accepted", query, err)
 				}
-				if _, err := s.db.Exec(`UPDATE dune_sessions SET expires_at=$1,kind='browser',parent_hash=NULL,auth_version=1`, time.Now().Add(time.Hour).Unix()); err != nil {
+				if _, err := s.db.Exec(`UPDATE dune_sessions SET expires_at=$1,auth_version=1`, time.Now().Add(time.Hour).Unix()); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -58,12 +58,13 @@ func (c WorkerConfig) validate() error {
 }
 
 type ProviderSet struct {
-	Create    map[string]fabric.CreateProvider
-	Bootstrap map[string]fabric.BootstrapProvider
-	Inspect   map[string]fabric.InspectProvider
-	Renew     map[string]fabric.RenewProvider
-	Destroy   map[string]fabric.DestroyProvider
-	Candidate map[string]fabric.CandidateProvider
+	Create      map[string]fabric.CreateProvider
+	Bootstrap   map[string]fabric.BootstrapProvider
+	Inspect     map[string]fabric.InspectProvider
+	Renew       map[string]fabric.RenewProvider
+	Destroy     map[string]fabric.DestroyProvider
+	Candidate   map[string]fabric.CandidateProvider
+	PauseResume map[string]fabric.PauseResumeProvider
 }
 
 // Worker recovers accepted lifecycle stages independently of browser sessions.
@@ -71,22 +72,24 @@ type ProviderSet struct {
 // through operation leases, while the durable action journal decides whether a
 // claimant may dispatch or may only reconcile.
 type Worker struct {
-	store              *metadata.Store
-	create             *Executor
-	bootstrap          *BootstrapExecutor
-	maintenance        *MaintenanceExecutor
-	renewal            *RenewalExecutor
-	destroyal          *DestroyExecutor
-	review             *ReviewExecutor
-	createProviders    map[string]struct{}
-	bootstrapProviders map[string]struct{}
-	inspectProviders   map[string]struct{}
-	renewProviders     map[string]struct{}
-	destroyProviders   map[string]struct{}
-	config             WorkerConfig
-	instanceID         string
-	cleanupMu          sync.Mutex
-	nextCleanup        time.Time
+	store                *metadata.Store
+	create               *Executor
+	bootstrap            *BootstrapExecutor
+	maintenance          *MaintenanceExecutor
+	renewal              *RenewalExecutor
+	destroyal            *DestroyExecutor
+	pauseResume          *PauseResumeExecutor
+	review               *ReviewExecutor
+	createProviders      map[string]struct{}
+	bootstrapProviders   map[string]struct{}
+	inspectProviders     map[string]struct{}
+	renewProviders       map[string]struct{}
+	destroyProviders     map[string]struct{}
+	pauseResumeProviders map[string]struct{}
+	config               WorkerConfig
+	instanceID           string
+	cleanupMu            sync.Mutex
+	nextCleanup          time.Time
 }
 
 func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig) (*Worker, error) {
@@ -146,14 +149,22 @@ func NewWorker(store *metadata.Store, providers ProviderSet, config WorkerConfig
 	for id := range destroyal.providers {
 		destroyConfigured[id] = struct{}{}
 	}
+	pauseResume, err := NewPauseResumeExecutor(store, providers.PauseResume, providers.Inspect)
+	if err != nil {
+		return nil, err
+	}
+	pauseResumeConfigured := make(map[string]struct{}, len(providers.PauseResume))
+	for id := range providers.PauseResume {
+		pauseResumeConfigured[id] = struct{}{}
+	}
 	review, err := NewReviewExecutor(store, providers)
 	if err != nil {
 		return nil, err
 	}
 	return &Worker{
-		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal, destroyal: destroyal, review: review,
+		store: store, create: create, bootstrap: bootstrap, maintenance: maintenance, renewal: renewal, destroyal: destroyal, pauseResume: pauseResume, review: review,
 		createProviders: createConfigured, bootstrapProviders: bootstrapConfigured, inspectProviders: inspectConfigured, renewProviders: renewConfigured, destroyProviders: destroyConfigured,
-		config: config, instanceID: wire.ID(),
+		pauseResumeProviders: pauseResumeConfigured, config: config, instanceID: wire.ID(),
 	}, nil
 }
 
@@ -179,7 +190,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		for _, closure := range closures {
 			select {
 			case <-w.config.CloseTarget(closure.MachineID):
-				if err := w.store.ConfirmManagedDestroyAccessClosed(ctx, closure); err != nil {
+				if err := w.store.ConfirmManagedAccessClosed(ctx, closure); err != nil {
 					if errors.Is(err, lifecycle.ErrBusy) {
 						continue
 					}
@@ -223,6 +234,22 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 				return true, nil
 			}
 			return true, w.review.ExecuteWithLease(ctx, review, operation, w.config.LeaseTTL, w.config.CallTimeout)
+		}
+	}
+	if len(w.pauseResumeProviders) > 0 {
+		candidates, err := w.store.RecoverableManagedPauseResumesFor(ctx, configuredFabrics(w.pauseResumeProviders), managedCreateBatch)
+		if err != nil {
+			return false, err
+		}
+		for _, candidate := range candidates {
+			claimed, err := w.store.ClaimOperation(ctx, candidate.ID, w.instanceID, w.config.LeaseTTL)
+			if errors.Is(err, lifecycle.ErrBusy) || errors.Is(err, lifecycle.ErrLeaseLost) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			return true, w.execute(ctx, claimed, candidate.Action, w.pauseResume.Execute)
 		}
 	}
 	if w.maintenance != nil {

@@ -136,7 +136,7 @@ PTY 跨 daemon 重启的强保证不自动扩展为任意 ACP Agent 的原进程
 | --- | --- | --- |
 | 接入方向 | fabricd 已主动连接 Gateway 并自动重连 | 安装绑定与公开站点接入 |
 | Gateway | 单 daemon 路由、静态 target、共享 token | 多机器路由、账号隔离及机器身份 |
-| 浏览器 | Go SDK / CLI 使用 WS + Yamux；现有入口拒绝带 Origin 的升级请求 | 浏览器可用的认证 API 与交互协议适配 |
+| 浏览器 | Web 宿主内部 Go SDK 使用 WS + Yamux；协议入口拒绝带 Origin 的升级请求 | 浏览器可用的认证 API 与交互协议适配 |
 | PTY 断线 | 订阅断开不停止 Agent，但无订阅时丢弃输出 | 当前画面、50,000 行历史、分页与重连衔接 |
 | PTY daemon 重启 | guardian 清理旧进程；无重新接管机制 | 独立会话宿主、身份校验和重新连接 |
 | ACP | JSON-RPC envelope 校验和透传，不解释会话及授权 | 标准 ACP 客户端、能力协商、list/load、等待授权 |

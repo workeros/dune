@@ -16,7 +16,7 @@ peer 必须使用独立监听入口。模块要求实际 TLS 连接，忽略 `X-
 
 公开 HTTP 服务仍调用 `App.Serve` 或挂载 `App`；另创建普通 TCP listener，交给 `App.ServePeer(listener)`，由 App 加上自己的双向 TLS 策略并接管监听器。完整广告地址必须直接到达该实例的这个端口，peer 不挂载到公开 HTTP 路由。父 context 取消或 `App.Close` 一起关闭这些监听器、升级连接和用户请求；监听器启动失败应由宿主取消整个应用。关闭后仍保留远端 tmux。
 
-机器可以连到不同于用户入口的副本，工作台和人类 CLI 请求按原目录 owner 转发一次。工作台的机器列表、Runner 列表/详情及 CLI 机器列表仅针对用户已获准查看的绑定批量读取在线事实，一页最多一百个 ID、查询最多一秒；未确认、过期和旧恢复代次路由不作为在线连接，存储故障返回服务错误。在线是展示信息，执行仍独立校验固定绑定和归属。
+机器可以连到不同于用户入口的副本，工作台请求按原目录 owner 转发一次。工作台的机器列表和 Runner 列表/详情仅针对用户已获准查看的绑定批量读取在线事实，一页最多一百个 ID、查询最多一秒；未确认、过期和旧恢复代次路由不作为在线连接，存储故障返回服务错误。在线是展示信息，执行仍独立校验固定绑定和归属。
 
 SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能缺少 Cluster 配置启动单机宿主。所有 PostgreSQL 宿主（包括单机模式）现在共用配置准入租约，同时启动的单机/集群模式或不兼容配置不能同时注册。
 
@@ -24,7 +24,7 @@ SQLite 不能启用 Cluster；已经初始化集群目录的 PostgreSQL 不能�
 
 同一 PostgreSQL schema 保存实例启动身份、非敏感配置摘要、恢复代次与十五秒期限，五秒续约。注册串行比较尚未过期的实例；同一配置可增加副本，冲突配置拒绝。已初始化集群的数据库还要求匹配恢复代次。恢复代次读取与离线旋转使用数据库行锁，不能在旧代次检查完成后越过同时发生的旋转继续提交。
 
-摘要包含协议版本、挂载路径、身份源 namespace、会话期限、注册开关、默认/自定义访问模式、Managed 公开目录与 worker 行为（包括历史保留期），以及宿主声明的 `ConfigurationVersion`。每实例的公开 origin、peer 广告地址可以不同；它们不代表另一套业务配置。自定义身份、权限或 Managed 提供方模块在 PostgreSQL 模式必须提供 `host.Options.ConfigurationVersion`，CLI 对应 `--configuration-version oidc-policy-v1`。宿主应在 OIDC client ID、企业 SDK/策略、模板或其他不兼容的模块设置变化时更换这个非敏感版本；Dune 不解析企业实现内部的闭包和私有配置，也不把密码、client secret、证书私钥加入摘要。凭据的兼容轮换可保留版本。
+摘要包含协议版本、挂载路径、身份源 namespace、会话期限、注册开关、默认/自定义访问模式、Managed 公开目录与 worker 行为（包括历史保留期），以及宿主声明的 `ConfigurationVersion`。每实例的公开 origin、peer 广告地址可以不同；它们不代表另一套业务配置。自定义身份、权限或 Managed 提供方模块在 PostgreSQL 模式必须提供 `host.Options.ConfigurationVersion`，官方 Web 进程对应 `--configuration-version oidc-policy-v1`。宿主应在 OIDC client ID、企业 SDK/策略、模板或其他不兼容的模块设置变化时更换这个非敏感版本；Dune 不解析企业实现内部的闭包和私有配置，也不把密码、client secret、证书私钥加入摘要。凭据的兼容轮换可保留版本。
 
 宿主从数据库调用开始时刻折算保守的单调本地期限，续约不延长已经发给 fabricd 的原 grant。`gateway.AdmissionLease` 只表达额外的输入期限，core 不读取配置或 SQL；连接准入、应用 hook、发送和反向连接输入 grant 都受期限约束，定时器未调度时仍逐次检查。配置准入过期、续约失败或回执未知会关闭本次 App，不重放续约、不让旧 boot 复活，也不回滚此前已受理的工作。
 
@@ -52,7 +52,7 @@ Shutdown 使用调用方的 deadline；没有 deadline 时默认五秒。期限�
 
 上层撤销一个机器目标时调用 `Gateway.Disconnect(target)`。该调用在当前 Gateway 生命周期内永久拒绝此目标的新连接和新流，关闭直接 machine、SDK 入口及 peer 会话；返回通道仅在该目标所有已受理流及清理回调退出后关闭。Managed 销毁把当时仍获准运行的应用实例快照成共享 SQL 关闭待办，各实例只用自己的启动身份领取、完成本机 Disconnect 后确认；全部确认才提前结束等待，失联实例仍保留至固定 deadline 并形成 `timed_out`，不会被其他节点代签。
 
-## 官方 CLI 配置
+## 官方 Web 进程配置
 
 `dune web --database-config /private/database.yaml --cluster-config /private/cluster.yaml --url https://dune.example.com/dune/` 启用集群装配。继续通过全局 `--config` 指定本机的公开监听地址与 WS(S) 参数；该参数必须放在 `web` 之前。集群配置必须和 PostgreSQL 配置一起使用。
 
@@ -70,7 +70,7 @@ peer:
 
 配置和私钥文件属于当前用户，权限为 `0600`；证书与 CA 可只读共享。路径相对集群配置文件所在目录解析，也接受绝对路径。所有 PEM 文件须为不超过 64 KiB 的普通文件，不接受符号链接；目录中的秘密不会写入 SQL 或启动输出。叶证书仍须满足前述双用途、主机匹配和集群 CA 约束。
 
-CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任一绑定失败则关闭本次打开的监听器与 App。运行期任一监听服务失败会立即关闭整个 App；收到退出信号则按上述期限先排空，再关闭 App。
+Web 进程在启动服务前取得所有公开、额外 Web 和 peer 监听器；任一绑定失败则关闭本次打开的监听器与 App。运行期任一监听服务失败会立即关闭整个 App；收到退出信号则按上述期限先排空，再关闭 App。
 
 ## 底层 Go 应用装配
 
@@ -88,19 +88,19 @@ CLI 在启动服务前取得所有公开、额外 Web 和 peer 监听器；任�
 
 定向检查为 `go test -race ./pkg/transport/peer -count=1 -timeout=60s`，覆盖真实 TLS 握手、独立 Handler 信任检查、错误 CA/主机/启动身份、角色边界、明文及转发头、重复头、重定向、回调取消、证书到期和跨 CA 轮换。测试使用内存中的临时 CA，不写入生产信任。
 
-启用专用 PostgreSQL 后，`go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s` 使用三个独立 peer HTTPS 监听器、正式用户上下文和真实 tmux，验证目录定向连接、原 owner 更换后的显式重接、独立授权拒绝、空闲撤销和恢复代次隔离。SDK/反向连接仍是本地协议夹具，不将此测试称为完整 host/CLI 部署或三个独立进程的故障矩阵。
+启用专用 PostgreSQL 后，`go test -race ./pkg/fabricd -run TestPostgresOwnedReverseConnections -count=1 -timeout=90s` 使用三个独立 peer HTTPS 监听器、正式用户上下文和真实 tmux，验证目录定向连接、原 owner 更换后的显式重接、独立授权拒绝、空闲撤销和恢复代次隔离。SDK/反向连接仍是本地协议夹具，不将此测试称为完整 Web 宿主部署或三个独立进程的故障矩阵。
 
-`go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s` 使用两个正式 `host.App` 和独立 mTLS peer 监听器，机器由真实 fabricd 进程连接 B，工作台与人类 CLI 固定进入 A。覆盖共享在线事实、Runner 快照、真实 PTY、企业共享访问/拒绝及空闲撤销。它仍是同机双宿主测试，不证明三进程网络分区、配置漂移、真实企业权限 SDK 或 Linux 集群部署。
+`go test -race ./tests -run 'TestPostgresClusterWorkbench|TestPostgresHostClusterConfiguration' -count=1 -timeout=180s` 使用两个正式 `host.App` 和独立 mTLS peer 监听器，机器由真实 fabricd 进程连接 B，工作台固定进入 A。覆盖共享在线事实、Runner 快照、真实 PTY、企业共享访问/拒绝及空闲撤销。它仍是同机双宿主测试，不证明三进程网络分区、配置漂移、真实企业权限 SDK 或 Linux 集群部署。
 
-`go test -race ./tests -run TestPostgresClusterCLIProcesses -count=1 -timeout=180s` 启动三个独立官方 CLI 服务进程和真实 fabricd，A 签发安装材料、B 消费并持有机器连接，A/C 的 Web 和人类 CLI 经 peer 访问 B，另一入口退出用户后验证既有访问失效。测试证书写入专用临时目录，结束后连同进程、schema 一起清理；该回归是三进程正常运行链路，不是网络分区、时钟扰动或 Linux 集群故障验收。
+`go test -race ./tests -run TestPostgresClusterWebProcesses -count=1 -timeout=180s` 启动三个独立官方 Web 服务进程和真实 fabricd，A 签发安装材料、B 消费并持有机器连接，A/C 的 Web 经 peer 访问 B，另一入口退出用户后验证既有访问失效。测试证书写入专用临时目录，结束后连同进程、schema 一起清理；该回归是三进程正常运行链路，不是网络分区、时钟扰动或 Linux 集群故障验收。
 
 `go test -race ./tests -run TestPostgresClusterTwoUserIsolationAndCapabilities -count=1 -timeout=120s` 在三个正式节点上把两条真实 fabricd 隧道分别固定到 B 和 C，两名用户从 A 进入。默认 owner 策略下，每人只发现并取得自己的目标；一次性票据不能在握手中换成另一目标，失败后也不能重放。随后两条 mTLS peer 路径分别执行 File、Git、PTY 和原始 ACP。该用例验证 Dune 的目标与用户上下文隔离，不提供同一 OS 用户内的 Shell 文件隔离。
 
-配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、独立关闭计时器和有界输入。正式 CLI 的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。
+配置准入运行 `go test -race ./internal/metadata ./pkg/gateway ./tests -run 'Admission|InstanceAdmission' -count=1 -timeout=180s`。它覆盖并发冲突、同配置跨池续约、锁等待后的过期复核、回执丢失、独立关闭计时器和有界输入。正式 Web 进程的 PostgreSQL 暂停回归将宿主 SIGSTOP 超过十五秒、写入旧终端后恢复，检查旧宿主退出、文件未创建、新配置重启后原 PTY 可用。该回归没有操纵数据库时钟，也不替代三节点分区或 Linux 集群故障验收。
 
 ## 已验证的网络故障范围
 
-三个正式 CLI 节点共用专用 PostgreSQL，机器固定进入 B，用户固定进入 A；C 用于新的用户入口或明确切换后的机器入口。本机 TCP 代理可以暂停双向字节转发并在恢复后释放滞留数据，TLS 与应用协议保持完整。
+三个正式 Web 节点共用专用 PostgreSQL，机器固定进入 B，用户固定进入 A；C 用于新的用户入口或明确切换后的机器入口。本机 TCP 代理可以暂停双向字节转发并在恢复后释放滞留数据，TLS 与应用协议保持完整。
 
 | 故障 | 实际核对的结果 |
 | --- | --- |

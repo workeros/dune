@@ -1,6 +1,0 @@
-version: 1
-kind: agent
-working_directory: /tmp/dune-demo
-adapter: acp
-start:
-  argv: [gemini, --acp]

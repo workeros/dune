@@ -17,6 +17,8 @@ type Intent struct {
 	PrincipalID, Namespace, Subject string
 	RunnerID, FabricID              string
 	BindingRevision                 int64
+	ProviderBindingID               string
+	ProviderBindingRevision         int64
 	Action                          string
 }
 

@@ -27,7 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestPostgresClusterCLIProcesses(t *testing.T) {
+func TestPostgresClusterWebProcesses(t *testing.T) {
 	database := postgresWorkbenchConfig(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -83,7 +83,7 @@ func TestPostgresClusterCLIProcesses(t *testing.T) {
 			failed = exec.CommandContext(ctx, binary, "--config", localFile, "web", "--cluster-config", clusterFile)
 			output, err = failed.CombinedOutput()
 			if err == nil || !strings.Contains(string(output), "requires a PostgreSQL") {
-				t.Fatal("cluster CLI accepted the default SQLite backend")
+				t.Fatal("cluster Web process accepted the default SQLite backend")
 			}
 		}
 		must(t, peer.Close())
@@ -106,7 +106,7 @@ func TestPostgresClusterCLIProcesses(t *testing.T) {
 			}
 			select {
 			case <-ctx.Done():
-				t.Fatal("cluster CLI did not start")
+				t.Fatal("cluster Web process did not start")
 			case <-time.After(25 * time.Millisecond):
 			}
 		}
@@ -135,7 +135,7 @@ func TestPostgresClusterCLIProcesses(t *testing.T) {
 			must(t, json.NewDecoder(response.Body).Decode(out))
 		}
 	}
-	credentials := map[string]string{"email": "cluster-cli@example.test", "password": "cluster-process-password"}
+	credentials := map[string]string{"email": "cluster-web@example.test", "password": "cluster-process-password"}
 	request(sites[0], "POST", "api/auth/register", credentials, nil)
 	var enrollment struct{ Token string }
 	request(sites[0], "POST", "api/enrollments", map[string]string{"name": "cluster machine"}, &enrollment)
@@ -178,11 +178,7 @@ func TestPostgresClusterCLIProcesses(t *testing.T) {
 			}
 		}
 		request(site, "POST", "api/machines/"+machine.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, nil)
-		revoked := exerciseHumanCLI(t, ctx, site, filepath.Join(dir, fmt.Sprintf("human-%d", entry)), machine.Target, false, func(id, code string) {
-			request(site, "POST", "api/auth/cli/"+id, map[string]any{"code": code, "approve": true}, nil)
-		})
-		// A different entry revokes both the parent and B's existing peer streams.
+		// A different entry revokes the shared browser session.
 		request(sites[1], "POST", "api/auth/logout", struct{}{}, nil)
-		revoked()
 	}
 }

@@ -234,8 +234,12 @@ func TestProviderActionAtomicResourceAssociation(t *testing.T) {
 				t.Fatal("definite failure did not finish operation", err)
 			}
 			resource, err := s.ManagedResource(ctx, second.RunnerID)
-			if err != nil || resource.Ref != "retained-partial-resource" || resource.Gone {
-				t.Fatal("failure implicitly removed known resource", err)
+			if err != nil || resource.Ref != "retained-partial-resource" || resource.Gone || !resource.AccessClosed || resource.AccessSuspended {
+				t.Fatal("failed creation did not retain and isolate its cleanup resource", resource, err)
+			}
+			cleanup, err := s.RecoverableManagedDestroysFor(ctx, []string{"sandbox"}, 32)
+			if err != nil || len(cleanup) != 1 || cleanup[0].RunnerID != second.RunnerID || cleanup[0].ProviderBindingID != second.ProviderBindingID || cleanup[0].ProviderBindingRevision != second.ProviderBindingRevision {
+				t.Fatal("failed creation did not schedule exact-binding cleanup", cleanup, err)
 			}
 			if err := s.RecordProviderAction(ctx, first, a.ID, lifecycle.ActionObservation{Outcome: "unknown", ResourceRef: "replacement"}); !errors.Is(err, lifecycle.ErrIntentConflict) {
 				t.Fatal("completed action was overwritten", err)

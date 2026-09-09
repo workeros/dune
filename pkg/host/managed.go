@@ -25,6 +25,7 @@ type ManagedProviders struct {
 	Renew        map[string]fabric.RenewProvider
 	Destroy      map[string]fabric.DestroyProvider
 	Candidate    map[string]fabric.CandidateProvider
+	PauseResume  map[string]fabric.PauseResumeProvider
 }
 
 // ManagedWorkerOptions controls durable lifecycle recovery. Start from
@@ -59,6 +60,7 @@ func DefaultManagedWorkerOptions() ManagedWorkerOptions {
 type ManagedOptions struct {
 	Templates []fabric.Template
 	Providers ManagedProviders
+	Resolver  fabric.ProviderResolver
 	Worker    ManagedWorkerOptions
 	// RenewalPolicy replaces the personal timing policy. Nil selects the policy
 	// built from Worker renewal settings. Its declared version must change when
@@ -74,6 +76,7 @@ type managedAssembly struct {
 	renewBefore         time.Duration
 	destroyCloseTimeout time.Duration
 	fingerprint         string
+	resolver            fabric.ProviderResolver
 }
 
 func providerKeys(providers ManagedProviders) ([]string, error) {
@@ -115,6 +118,11 @@ func providerKeys(providers ManagedProviders) ([]string, error) {
 		keys = append(keys, id)
 	}
 	sort.Strings(keys)
+	for id, provider := range providers.PauseResume {
+		if provider == nil || !sets[0][id] {
+			return nil, fmt.Errorf("Managed pause/resume provider %q has no complete lifecycle", id)
+		}
+	}
 	return keys, nil
 }
 
@@ -126,9 +134,38 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 	if err != nil {
 		return nil, err
 	}
-	keys, err := providerKeys(options.Providers)
-	if err != nil {
-		return nil, err
+	var keys []string
+	if options.Resolver == nil {
+		keys, err = providerKeys(options.Providers)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		seen := map[string]bool{}
+		for _, template := range options.Templates {
+			seen[template.FabricID] = true
+		}
+		for id := range seen {
+			keys = append(keys, id)
+		}
+		sort.Strings(keys)
+		if len(keys) == 0 {
+			return nil, fmt.Errorf("Managed resolver requires at least one template")
+		}
+		providers := ManagedProviders{
+			Availability: map[string]fabric.AvailabilityProvider{}, Create: map[string]fabric.CreateProvider{}, Bootstrap: map[string]fabric.BootstrapProvider{},
+			Inspect: map[string]fabric.InspectProvider{}, Renew: map[string]fabric.RenewProvider{}, Destroy: map[string]fabric.DestroyProvider{}, Candidate: map[string]fabric.CandidateProvider{},
+			PauseResume: map[string]fabric.PauseResumeProvider{},
+		}
+		for _, id := range keys {
+			proxy := resolvedManagedProvider{resolver: options.Resolver, fabricID: id}
+			providers.Availability[id], providers.Create[id], providers.Bootstrap[id] = proxy, proxy, proxy
+			providers.Inspect[id], providers.Renew[id], providers.Destroy[id], providers.Candidate[id] = proxy, proxy, proxy, proxy
+			providers.PauseResume[id] = proxy
+		}
+		copy := *options
+		copy.Providers = providers
+		options = &copy
 	}
 	configured := make(map[string]bool, len(keys))
 	for _, id := range keys {
@@ -189,8 +226,9 @@ func prepareManaged(options *ManagedOptions, urls deployment.URLs) (*managedAsse
 		providers: managedmodule.ProviderSet{
 			Create: options.Providers.Create, Bootstrap: options.Providers.Bootstrap,
 			Inspect: options.Providers.Inspect, Renew: options.Providers.Renew, Destroy: options.Providers.Destroy, Candidate: options.Providers.Candidate,
+			PauseResume: options.Providers.PauseResume,
 		},
 		worker: worker, renewBefore: workerOptions.RenewBefore, destroyCloseTimeout: workerOptions.DestroyAccessCloseTimeout,
-		fingerprint: hex.EncodeToString(sum[:]),
+		fingerprint: hex.EncodeToString(sum[:]), resolver: options.Resolver,
 	}, nil
 }

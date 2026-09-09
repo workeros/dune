@@ -45,8 +45,8 @@ func TestManagedStatusSnapshotReportsOperatorPressure(t *testing.T) {
 			if _, err := store.db.ExecContext(ctx, `UPDATE dune_managed_resources SET expires_at=$2 WHERE runner_id=$1`, ready.Runner.ID, now+5*time.Minute.Milliseconds()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.db.ExecContext(ctx, `INSERT INTO dune_managed_maintenance(runner_id,fabric_id,resource_ref,binding_revision,policy_version,reason,facts,observed_at,next_check_at)
-				SELECT runner_id,fabric_id,resource_ref,1,'personal-v1','NOT_DUE','confirmed',$2,$3 FROM dune_managed_resources WHERE runner_id=$1`, ready.Runner.ID, now, now+time.Hour.Milliseconds()); err != nil {
+			if _, err := store.db.ExecContext(ctx, `INSERT INTO dune_managed_maintenance(runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,binding_revision,policy_version,reason,facts,observed_at,next_check_at)
+				SELECT runner_id,fabric_id,provider_binding_id,provider_binding_revision,resource_ref,1,'personal-v1','NOT_DUE','confirmed',$2,$3 FROM dune_managed_resources WHERE runner_id=$1`, ready.Runner.ID, now, now+time.Hour.Milliseconds()); err != nil {
 				t.Fatal(err)
 			}
 

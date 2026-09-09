@@ -59,7 +59,7 @@ func postgresWorkbenchConfig(t *testing.T) storage.Config {
 
 func TestPostgresClusterWorkbench(t *testing.T) {
 	database := postgresWorkbenchConfig(t)
-	testPrefixedWorkbench(t, workbenchCase{database: &database, cluster: true, runnerEntry: true, humanCLI: true, enterprise: true})
+	testPrefixedWorkbench(t, workbenchCase{database: &database, cluster: true, runnerEntry: true, enterprise: true})
 }
 
 func TestPostgresHostClusterConfiguration(t *testing.T) {

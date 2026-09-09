@@ -2,7 +2,7 @@
 
 本文件固定 `dune-mvp/2` 的工程语义。实现以 `pkg/api/types.go`、`proto/dune/dtp/v1/message.proto` 为准；不与早期 DTP Frame 兼容。
 
-适用范围：下文记录单机 MVP；后续 tmux PTY 后端、Web ACP 控制器和账号层的扩展见 [Web 方案](personal-web-plan.md)。涉及生命周期和历史能力时按对应入口区分，不能把 MVP 限制套用到 Web 扩展。
+适用范围：下文记录单机协议实现；人类远程操作 CLI 与裸 `dune` supervisor 已移除，当前用户入口和启动方式见 [README](../README.md)。后续 tmux PTY 后端、Web ACP 控制器和账号层的扩展见 [Web 方案](personal-web-plan.md)。
 
 ## 网络和协议
 
@@ -38,9 +38,9 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 生产 peer 拨号不使用环境代理、不跟随重定向、不重试；独立 HTTPS 地址和挂载路径须与目录声明完全一致，重复身份头及错误版本/owner 均拒绝。证书过期会关闭空闲连接，配置变更通过协调重启，支持新旧 CA 交叠后移除旧信任。监听器和应用生命周期仍由宿主管理；具体接口及轮换边界见 [peer 传输接入](peer-transport.md)。
 
-官方工作台和 CLI 已通过 `host.Options.Cluster` / `dune web --cluster-config` 装配 PostgreSQL 目录、双向 TLS peer、请求级用户上下文、配置准入、就绪检查和限时排空。正式三进程回归覆盖一跳路由、分区、进程暂停、双用户双机器及旧输入隔离；Linux 验收在同一主机运行三个实例并使用另一主机的 PostgreSQL。该证据不等同于三台独立 Linux 主机或 PostgreSQL HA。协议核心不导入 SQL、HTTP 或产品身份，第二层提供同一元数据后端的目录、用户上下文和独立 peer 接入。
+官方工作台已通过 `host.Options.Cluster` / `dune web --cluster-config` 装配 PostgreSQL 目录、双向 TLS peer、请求级用户上下文、配置准入、就绪检查和限时排空。正式三进程回归覆盖一跳路由、分区、进程暂停、双用户双机器及旧输入隔离；Linux 验收在同一主机运行三个实例并使用另一主机的 PostgreSQL。该证据不等同于三台独立 Linux 主机或 PostgreSQL HA。协议核心不导入 SQL、HTTP 或产品身份，第二层提供同一元数据后端的目录、用户上下文和独立 peer 接入。
 
-`dune-mvp/2` 与旧版本不混用：Gateway、fabricd、CLI 和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
+`dune-mvp/2` 与旧版本不混用：Gateway、fabricd、Web 宿主和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 
 业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 
@@ -48,7 +48,7 @@ Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`�
 
 ## 机器配置和 Profile
 
-配置字段：`gateway`、`listen`、`token`、`target`、`log_level`；仅显式 WSS 配置使用 `certificate` 和 `key`。SDK/CLI 客户端无需 `listen` 或私钥。log_level 目前保存设置，日志使用 Go 标准 logger，只有运行信息/错误；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。为兼容原有配置，显式选择 wss 时仍验证证书，init 会把连接地址加入证书 SAN。
+配置字段：`gateway`、`listen`、`token`、`target`、`log_level`；仅显式 WSS 配置使用 `certificate` 和 `key`。SDK 客户端无需 `listen` 或私钥。log_level 目前保存设置，日志使用 Go 标准 logger，只有运行信息/错误；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。为兼容原有配置，显式选择 wss 时仍验证证书，init 会把连接地址加入证书 SAN。
 
 Profile 要求 `version: 1`、`kind: agent`、绝对 `working_directory`、`adapter: pty|acp`。`env` 合并当前 OS 环境；`setup.steps` 至多 64 步。Command 必须且只能提供 argv 或 run：argv 不展开 shell；run 必须同时给绝对 shell 路径（例如 `/bin/sh`）。`timeout_seconds` 范围 0..86400；setup/Exec 的 0 默认 300s，start 的 0 表示 Runtime 无时间限制。步骤顺序执行，失败返回步骤编号、名称、退出状态与有界输出，之后步骤不执行。没有自动回滚。
 
@@ -113,7 +113,7 @@ fabricd 的一个小型 cleanup 子进程仅在内存记录其创建的上传临
 
 ## Git
 
-使用本机 Git 和当前用户凭证环境，所有 Dune Git 调用串行，避免同 daemon 内并发修改 index。外部编辑器仍可修改同一仓库；Git 锁和冲突错误原样保留。禁止交互凭证提示/askpass，SSH BatchMode，120s 超时；使用已经配置的 helper/agent。失败返回 exit_code、stderr；CLI 返回非零状态。传输丢失时不自动重试写操作。
+使用本机 Git 和当前用户凭证环境，所有 Dune Git 调用串行，避免同 daemon 内并发修改 index。外部编辑器仍可修改同一仓库；Git 锁和冲突错误原样保留。禁止交互凭证提示/askpass，SSH BatchMode，120s 超时；使用已经配置的 helper/agent。失败返回 exit_code、stderr；Web 显示失败状态。传输丢失时不自动重试写操作。
 
 | action | 参数 |
 | --- | --- |
@@ -134,6 +134,6 @@ hunk 使用完整 Git patch，先 `git apply --check` 再应用；stage 使用 c
 
 ## 验证与后续边界
 
-`make test` 用独立 supervisor/Gateway/fabricd 子进程以及本机真实 Files/Git/TCP，服务二进制开启 Go race 检查。mock ACP 可用 `go build -o /tmp/dune-mock-acp ./samples/mock-acp` 后，通过 `samples/mock-acp.yaml` 启动；初始化示例在 `samples/acp-initialize.json`。
+`make test` 分别启动独立 Gateway 与 fabricd 子进程，并使用本机真实 Files/Git/TCP；服务二进制开启 Go race 检查。mock ACP 由进程回归从 `samples/mock-acp` 构建并通过 Web 所用的协议链路验证。
 
 真实 Agent 账号验证与自动化 fixture 分开记录；用户已明确真实 ACP 任务可在后续环境执行。本版不宣称 tus HTTP、ACP HTTP、多用户隔离或完整 DTP/1 兼容。

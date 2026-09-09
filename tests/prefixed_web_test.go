@@ -46,7 +46,7 @@ func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 
 type workbenchCase struct {
 	override, external, separateGateway bool
-	humanCLI, cluster                   bool
+	cluster                             bool
 	enterprise, runnerEntry             bool
 	database                            *storage.Config
 }
@@ -458,17 +458,8 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		connection = connect()
 		readPrefixedTerminalMarker(t, connection)
 	}
-	var checkCLIRevoked func()
-	if mode.humanCLI {
-		checkCLIRevoked = exerciseHumanCLI(t, ctx, site, dir, machineConfig.Target, mode.enterprise, func(id, code string) {
-			do("POST", "api/auth/cli/"+id, map[string]any{"code": code, "approve": true}, nil)
-		})
-	}
 	do("POST", "api/auth/logout", struct{}{}, nil)
 	awaitRevocation()
-	if checkCLIRevoked != nil {
-		checkCLIRevoked()
-	}
 }
 
 func readPrefixedTerminalMarker(t *testing.T, connection *websocket.Conn) {
