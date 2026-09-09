@@ -1,6 +1,6 @@
 # 企业扩展方案实施记录
 
-实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。本文按时间记录实施过程；下文历史 schema 编号及迁移验收不代表当前支持，旧数据兼容已按开发阶段要求移除，当前存储行为以[元数据存储与恢复](metadata-operations.md)为准。S0a、S0b、S0c、S1 与 S3 的公开实现及本文所列验收已经完成；S2 的 Dune 生命周期框架已经完成，但尚无真实 Managed 平台适配器及其创建、查询、引导、反向 WS、续期、销毁和故障恢复验收，因此 S2 仍未达到方案完成条件。企业私有身份/权限实现、三台独立 Linux 主机、PostgreSQL HA 等目标部署证据仍由具体采用方验证，不把仓库测试适配器或同机多进程结果写成这些部署的验收。
+实施依据：[企业扩展方案](enterprise-extensibility-plan.md)。按独立功能提交，阶段只有取得对应证据后才标记完成。本文按时间记录实施过程；下文历史 schema 编号及迁移验收不代表当前支持，旧数据兼容已按开发阶段要求移除，当前存储行为以[元数据存储与恢复](metadata-operations.md)为准。S0a、S0b、S0c、S1、S2 与 S3 的公开实现及本文所列验收已经完成。企业私有身份/权限实现、三台独立 Linux 主机、PostgreSQL HA 等目标部署证据仍由具体采用方验证，不把仓库测试适配器或同机多进程结果写成这些部署的验收。
 
 ## S0a：连接与传输
 
@@ -188,7 +188,7 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 
 下一检查点继续核对 S1 验收矩阵，并推进真实提供方驱动的 S2 Managed 闭环。完整目标中的持久生命周期、续期及 S3 集群仍未交付。
 
-## S2：Managed 生命周期（实施中）
+## S2：Managed 生命周期（已完成）
 
 ### 已完成组件：个人默认续期决定
 
@@ -547,3 +547,11 @@ S1 审查还发现企业检查器当前只能取得 Dune principal 与 namespace
 
 - 新增 `managed.renewal_decision`，只在巡检事实和 RenewalPolicy 决定通过同一元数据事务复核并提交后发出。事件使用数据库观测时间，记录后台 `renewal/policy` 来源、原创建 principal/namespace、Runner/Fabric、已持久资源引用、策略版本与经公共验证器约束的原因码；不包含 subject、session、模板参数、provider 返回、错误正文或凭据。
 - outcome 固定为 `renew`、`recheck`、`stopped`、`policy_error` 或 `policy_invalid`。策略运行期间账号、绑定、资源或领取修订变化导致的旧决定不发成功事件；回调 panic 被隔离，完整宿主仍通过原有有界异步队列投递。内部回归覆盖已提交字段、worker 转发、策略错误及状态变化拒绝，宿主回归覆盖公开事件映射。
+
+### 已完成验收：独立私有 Managed 提供方闭环
+
+- 独立私有 Go module 仅通过 Dune 公开包实现完整 Managed Provider，并由宿主组合 Availability、Create、Bootstrap、Inspect、Renew、Destroy、候选核验及默认续期策略。提供方配置由运行时显式传入；测试环境变量只由验收入口读取，适配器不读取进程环境。提供方专用代码、凭据与部署说明均保留在公共仓库之外。
+- 真实平台验收创建一次性资源，按原动作关联查询并确认引用，在目标内下载安装当前 Dune 构建、消费一次性 enrollment 并启动 fabricd。Dune 经实际反向 WebSocket 确认 Linux amd64 Runner 在线，再通过浏览器授权的 SDK 请求执行 `machine.info`；随后完成巡检、绝对期限续期、销毁及终态历史核对。该闭环不依赖 Agent。
+- 恢复验收在 Create 请求已送达后主动丢弃响应并关闭宿主，以同一 SQLite 状态重启后只执行关联查询，不重发 Create；Bootstrap 响应丢失后通过目标上的动作标记核验成功；Destroy 响应丢失后通过提供方历史收敛为已销毁。单元回归另覆盖 Create、Bootstrap、Renew 和 Destroy 的未知结果只核对原动作，不重放外部变更。
+- 故障验收对真实存续资源分别注入 Renew 与 Destroy 的传输失败。适配器不返回肯定事实，资源在两次失败后仍保持存续，再由正常销毁完成清理。两组真实提供方用例及完整 Dune 重启/反向调用用例连续通过；清理只匹配本轮唯一元数据，结束后复查没有遗留本轮资源。
+- 这组证据满足 S2 对真实提供方使用闭环、响应丢失、宿主重启、续期失败和清理失败结果准确性的完成条件。生产采用方仍须在部署时动态注册其租户配置，并按自身身份源、网络拓扑、容量目标和故障模型补充上线验收。
