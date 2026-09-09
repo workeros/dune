@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Brand } from "@/components/brand";
+import { DesertAtmosphere } from "@/components/desert-atmosphere";
 import { Button } from "@/components/ui/button";
 import { errorText, post, request, type User } from "@/lib/api";
 
@@ -43,7 +44,7 @@ export function CLILogin({ id, user, onDone }: { id: string; user: User; onDone:
     } catch (e) { setError(errorText(e)); }
     finally { setBusy(false); }
   };
-  return <main className="paper-grid grid min-h-screen place-items-center p-6"><section className="paper-card grid w-full max-w-lg gap-5 p-8">
+  return <main className="paper-grid grid min-h-screen place-items-center p-6"><DesertAtmosphere /><section className="paper-card grid w-full max-w-lg gap-5 p-8">
     <Brand /><h1 className="text-2xl font-bold">确认 CLI 登录</h1>
     {result ? <p role="status">{result}</p> : review ? <>
       <p className="muted">将以 <strong className="text-foreground">{user.email || "当前账号"}</strong> 登录终端中的 Dune。</p>
