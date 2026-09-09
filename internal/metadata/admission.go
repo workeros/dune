@@ -17,7 +17,11 @@ var ErrConfigurationConflict = errors.New("another live instance uses incompatib
 type InstanceConfig struct{ BootID, Fingerprint, RecoveryGeneration string }
 
 const instanceColumns = "boot_id,fingerprint,recovery_generation,expires_at"
-const instanceLeaseDuration = 15 * time.Second
+
+const (
+	instanceLeaseDuration = 15 * time.Second
+	instanceAdmissionLock = int64(1146441288)
+)
 
 func (s *Store) RegisterInstance(ctx context.Context, instance InstanceConfig) (time.Duration, error) {
 	return s.instanceLease(ctx, instance, false)
@@ -34,10 +38,9 @@ func (s *Store) instanceLease(ctx context.Context, instance InstanceConfig, rene
 	}
 	var remaining time.Duration
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		// Serialize membership changes in this schema, including simultaneous
-		// standalone/cluster startup. This lock carries no process authority itself.
-		var schemaID int
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM dune_schema WHERE id=1 FOR UPDATE`).Scan(&schemaID); err != nil {
+		// Serialize membership changes, including simultaneous standalone/cluster
+		// startup. This lock carries no process authority itself.
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, instanceAdmissionLock); err != nil {
 			return err
 		}
 		var recovery string

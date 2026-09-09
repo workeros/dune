@@ -40,8 +40,8 @@ func Open(ctx context.Context, config storage.Config) (*Store, error) {
 	return open(ctx, config, true)
 }
 
-// OpenExistingPostgres opens the current format without initializing a database.
-// Offline recovery inspection must not create metadata on a mistaken target.
+// OpenExistingPostgres opens an existing metadata database without initializing
+// it. Offline recovery inspection must not create metadata on a mistaken target.
 func OpenExistingPostgres(ctx context.Context, config *storage.Postgres) (*Store, error) {
 	if config == nil {
 		return nil, fmt.Errorf("PostgreSQL configuration required")
@@ -124,10 +124,10 @@ func open(ctx context.Context, config storage.Config, initialize bool) (*Store, 
 		if initialize {
 			err = s.initializeSchema(ctx)
 		} else {
-			var fingerprint string
-			err = s.db.QueryRowContext(ctx, `SELECT fingerprint FROM dune_schema WHERE id=1`).Scan(&fingerprint)
-			if err == nil {
-				err = checkSchema(fingerprint)
+			var exists bool
+			exists, err = s.schemaExists(ctx, s.db)
+			if err == nil && !exists {
+				err = fmt.Errorf("metadata schema is not initialized")
 			}
 		}
 	}

@@ -2,11 +2,7 @@ package metadata
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"errors"
-	"fmt"
-	"strings"
 )
 
 // Schema is the complete current format. Development builds initialize fresh
@@ -59,17 +55,20 @@ var schema = []string{
 	`CREATE TABLE dune_instances (boot_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,recovery_generation TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
 }
 
-// A content fingerprint makes schema edits explicit at open time without
-// maintaining a second version counter or accepting partially upgraded data.
-func schemaFingerprint() string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(schema, "\n"))))
+type schemaQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func checkSchema(fingerprint string) error {
-	if fingerprint != schemaFingerprint() {
-		return fmt.Errorf("metadata schema differs from this build; use a fresh development database")
+func (s *Store) schemaExists(ctx context.Context, queryer schemaQueryer) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='dune_principals')`
+	if s.postgres {
+		query = `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='dune_principals')`
 	}
-	return nil
+	var exists bool
+	if err := queryer.QueryRowContext(ctx, query).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func (s *Store) initializeSchema(ctx context.Context) error {
@@ -80,15 +79,8 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dune_schema (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL)`); err != nil {
-			return err
-		}
-		var fingerprint string
-		err := tx.QueryRowContext(ctx, `SELECT fingerprint FROM dune_schema WHERE id=1`).Scan(&fingerprint)
-		if err == nil {
-			return checkSchema(fingerprint)
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		exists, err := s.schemaExists(ctx, tx)
+		if err != nil || exists {
 			return err
 		}
 		for _, statement := range schema {
@@ -96,7 +88,6 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO dune_schema(id,fingerprint) VALUES(1,$1)`, schemaFingerprint())
-		return err
+		return nil
 	})
 }

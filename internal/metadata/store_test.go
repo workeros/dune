@@ -227,17 +227,15 @@ func TestSQLiteExclusivitySchemaAndConstraints(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO dune_sessions(hash,principal_id,expires_at) VALUES('hash','missing',1)`); err == nil {
 		t.Fatal("foreign keys disabled on a pooled connection")
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE dune_schema SET fingerprint='unknown'`); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if bad, err := Open(ctx, config); err == nil {
-		bad.Close()
-		t.Fatal("unknown schema opened")
+	if reopened, err := Open(ctx, config); err != nil {
+		t.Fatal("current schema cannot reopen", err)
+	} else if err := reopened.Close(); err != nil {
+		t.Fatal(err)
 	}
-	// Failed opens must release the directory lock, too.
+	// Closed stores must release the directory lock.
 	lock, err := lockDirectory(dir)
 	if err != nil {
 		t.Fatal("failed open retained its lock", err)

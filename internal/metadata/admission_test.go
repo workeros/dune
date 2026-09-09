@@ -116,7 +116,7 @@ func TestPostgresAdmissionRechecksAfterLockWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT id FROM dune_schema WHERE id=1 FOR UPDATE`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, instanceAdmissionLock); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)

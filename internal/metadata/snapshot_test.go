@@ -18,7 +18,7 @@ func TestSnapshotSchemaCoverage(t *testing.T) {
 	}
 	defer s.Close()
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(snapshotTables)+1 {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(snapshotTables) {
 		t.Fatal("snapshot manifest omits a schema table", err)
 	}
 	for _, table := range snapshotTables {
