@@ -17,13 +17,26 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	acpLiveQueueMessages   = 16
+	acpLiveQueueBytes      = wire.MaxMessage
+	acpReplayQueueMessages = 1024
 )
 
 type subscription struct {
-	q      chan *pb.Message
-	failed chan struct{}
-	once   sync.Once
-	owner  bool
+	q               chan *pb.Message
+	failed          chan struct{}
+	once            sync.Once
+	owner           bool
+	queueMu         sync.Mutex
+	queuedMessages  int
+	queuedBytes     int
+	replayByteLimit int
+	space           chan struct{}
 }
 type runtime struct {
 	mu               sync.Mutex
@@ -36,6 +49,38 @@ type runtime struct {
 	tmux             *tmux.Session
 	done             chan struct{}
 	acp              *acpController
+}
+
+// ACP parsing and replay budgets scale with the development machine while the
+// wire frame stays fixed across peers. The caps keep one Runtime from turning
+// a large native transcript into an unbounded process allocation.
+func acpMemoryLimits(total uint64) (lineBytes, replayBytes int) {
+	const gib = uint64(1024 * 1024 * 1024)
+	switch {
+	case total > 0 && total < 4*gib:
+		return 2 * 1024 * 1024, 8 * 1024 * 1024
+	case total >= 16*gib:
+		return 8 * 1024 * 1024, 32 * 1024 * 1024
+	default:
+		return 4 * 1024 * 1024, 16 * 1024 * 1024
+	}
+}
+
+func machineMemoryBytes() uint64 {
+	b, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "MemTotal:" && fields[2] == "kB" {
+			var kib uint64
+			if _, err := fmt.Sscan(fields[1], &kib); err == nil {
+				return kib * 1024
+			}
+		}
+	}
+	return 0
 }
 
 func (r *runtime) info() api.Runtime {
@@ -112,13 +157,77 @@ func (r *runtime) subscribe(owner bool) (*subscription, error) {
 			}
 		}
 	}
-	s := &subscription{q: make(chan *pb.Message, 16), failed: make(chan struct{}), owner: owner}
+	queueSize := acpLiveQueueMessages
+	if r.acp != nil {
+		queueSize = acpReplayQueueMessages
+	}
+	_, replayByteLimit := acpMemoryLimits(machineMemoryBytes())
+	s := &subscription{q: make(chan *pb.Message, queueSize), failed: make(chan struct{}), owner: owner, replayByteLimit: replayByteLimit, space: make(chan struct{}, 1)}
 	r.subs[s] = true
 	if r.exit != nil {
-		s.q <- &pb.Message{Kind: "exit", Payload: api.Payload(r.exit)}
+		m := &pb.Message{Kind: "exit", Payload: api.Payload(r.exit)}
+		if r.acp != nil {
+			s.tryEnqueue(m, acpLiveQueueMessages, acpLiveQueueBytes)
+		} else {
+			s.q <- m
+		}
 	}
 	return s, nil
 }
+
+func (s *subscription) tryEnqueue(m *pb.Message, messageLimit, byteLimit int) bool {
+	size := proto.Size(m)
+	s.queueMu.Lock()
+	if s.queuedMessages >= messageLimit || s.queuedBytes+size > byteLimit {
+		s.queueMu.Unlock()
+		return false
+	}
+	s.queuedMessages++
+	s.queuedBytes += size
+	s.queueMu.Unlock()
+	s.q <- m
+	return true
+}
+
+func (s *subscription) enqueueReplay(m *pb.Message) bool {
+	if s.tryEnqueue(m, acpReplayQueueMessages, s.replayByteLimit) {
+		return true
+	}
+	timer := time.NewTimer(wire.WriteTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-s.failed:
+			return false
+		case <-s.space:
+			if s.tryEnqueue(m, acpReplayQueueMessages, s.replayByteLimit) {
+				return true
+			}
+		case <-timer.C:
+			return false
+		}
+	}
+}
+
+func (s *subscription) release(m *pb.Message) {
+	size := proto.Size(m)
+	s.queueMu.Lock()
+	s.queuedMessages--
+	s.queuedBytes -= size
+	s.queueMu.Unlock()
+	select {
+	case s.space <- struct{}{}:
+	default:
+	}
+}
+
+func (r *runtime) failSubscription(s *subscription) {
+	s.once.Do(func() { close(s.failed) })
+	r.mu.Lock()
+	delete(r.subs, s)
+	r.mu.Unlock()
+}
+
 func (r *runtime) emit(m *pb.Message) {
 	r.mu.Lock()
 	subs := make([]*subscription, 0, len(r.subs))
@@ -126,17 +235,20 @@ func (r *runtime) emit(m *pb.Message) {
 		subs = append(subs, s)
 	}
 	r.mu.Unlock()
+	replaying := r.acp != nil && r.acp.replaying.Load()
 	for _, s := range subs {
 		if r.acp != nil {
-			// A detached or stalled browser must never block the ACP controller.
-			select {
-			case s.q <- m:
-			case <-s.failed:
-			default:
-				s.once.Do(func() { close(s.failed) })
-				r.mu.Lock()
-				delete(r.subs, s)
-				r.mu.Unlock()
+			queued := false
+			if replaying {
+				// session/load can synchronously replay hundreds of updates. Let a
+				// bounded queue absorb the burst, then slow the Agent stdout reader
+				// until the browser catches up instead of truncating valid history.
+				queued = s.enqueueReplay(m)
+			} else {
+				queued = s.tryEnqueue(m, acpLiveQueueMessages, acpLiveQueueBytes)
+			}
+			if !queued {
+				r.failSubscription(s)
 			}
 			continue
 		}
@@ -159,25 +271,7 @@ func (r *runtime) read(rd io.Reader, kind string, wg *sync.WaitGroup) {
 		defer c.Close()
 	}
 	if r.adapter == "acp" && kind == "data" {
-		scan := bufio.NewScanner(rd)
-		scan.Buffer(make([]byte, 4096), 256*1024)
-		for scan.Scan() {
-			b := append([]byte(nil), scan.Bytes()...)
-			if e := validateRPC(b); e != nil {
-				r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: e.Error()})
-				r.stop()
-				return
-			}
-			if r.acp != nil {
-				r.acp.receive(b)
-			} else {
-				r.emit(&pb.Message{Kind: kind, Data: append(b, '\n')})
-			}
-		}
-		if e := scan.Err(); e != nil {
-			r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: e.Error()})
-			r.stop()
-		}
+		r.readACP(rd)
 		return
 	}
 	b := make([]byte, wire.ChunkSize)
@@ -191,6 +285,69 @@ func (r *runtime) read(rd io.Reader, kind string, wg *sync.WaitGroup) {
 			return
 		}
 	}
+}
+
+func (r *runtime) readACP(rd io.Reader) {
+	lineLimit, _ := acpMemoryLimits(machineMemoryBytes())
+	reader := bufio.NewReaderSize(rd, 64*1024)
+	line := make([]byte, 0, 64*1024)
+	lineBytes := 0
+	oversized := false
+	for {
+		fragment, more, err := reader.ReadLine()
+		lineBytes += len(fragment)
+		if !oversized {
+			if len(line)+len(fragment) <= lineLimit {
+				line = append(line, fragment...)
+			} else {
+				oversized = true
+				line = nil
+			}
+		}
+		if !more && (lineBytes > 0 || err == nil) {
+			if oversized {
+				r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
+					"code":          "MESSAGE_OMITTED",
+					"detail":        "ACP output exceeded this machine's per-message memory limit; content was omitted and the Runtime continues",
+					"message_bytes": lineBytes,
+					"limit_bytes":   lineLimit,
+				})})
+			} else if !r.acceptACPLine(line) {
+				return
+			}
+			line = line[:0]
+			lineBytes = 0
+			oversized = false
+		}
+		if err != nil {
+			if err != io.EOF {
+				r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: err.Error()})
+				r.stop()
+			}
+			return
+		}
+	}
+}
+
+func (r *runtime) acceptACPLine(b []byte) bool {
+	if e := validateRPC(b); e != nil {
+		r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: e.Error()})
+		r.stop()
+		return false
+	}
+	if r.acp != nil {
+		r.acp.receive(b)
+	} else if len(b)+1024 <= wire.MaxMessage {
+		r.emit(&pb.Message{Kind: "data", Data: append(append([]byte(nil), b...), '\n')})
+	} else {
+		r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
+			"code":          "MESSAGE_OMITTED",
+			"detail":        "ACP output exceeded the transport frame; content was omitted and the Runtime continues",
+			"message_bytes": len(b),
+			"limit_bytes":   wire.MaxMessage - 1024,
+		})})
+	}
+	return true
 }
 func validateRPC(b []byte) error {
 	var m map[string]json.RawMessage
@@ -537,7 +694,11 @@ func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 			s.Fail("SLOW_CONSUMER", fmt.Errorf("subscription queue full; output incomplete"))
 			return
 		case m := <-sub.q:
-			if s.Send(m) != nil {
+			e := s.Send(m)
+			if r.acp != nil {
+				sub.release(m)
+			}
+			if e != nil {
 				return
 			}
 			if m.Kind == "exit" || m.Kind == "error" {

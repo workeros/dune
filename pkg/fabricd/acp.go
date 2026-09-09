@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -47,6 +50,13 @@ type acpReply struct {
 	Result json.RawMessage
 	Err    error
 }
+
+const (
+	acpBrowserUpdateBytes = 512 * 1024
+	acpTextChunkBytes     = 256 * 1024
+	acpSummaryFieldBytes  = 64 * 1024
+)
+
 type acpController struct {
 	mu          sync.Mutex
 	r           *runtime
@@ -56,6 +66,7 @@ type acpController struct {
 	methods     map[string]string
 	done        chan struct{}
 	once        sync.Once
+	replaying   atomic.Bool
 }
 
 func newACPController(r *runtime) *acpController {
@@ -78,7 +89,16 @@ func (a *acpController) publishLocked() {
 	a.state.Revision++
 	a.r.emit(&pb.Message{Kind: "acp_state", Payload: api.Payload(a.snapshotLocked())})
 }
-func (a *acpController) send(v any) error { return a.r.p.Write(append(api.Payload(v), '\n')) }
+func (a *acpController) send(v any) error {
+	b := api.Payload(v)
+	// Publish before writing so a fast Agent response cannot appear before the
+	// request in the inspector. A subsequent write error is surfaced separately.
+	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": json.RawMessage(b)})})
+	if err := a.r.p.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
 func (a *acpController) rpc(method string, params any, timeout time.Duration) (json.RawMessage, error) {
 	id := wire.ID()
 	ch := make(chan acpReply, 1)
@@ -134,6 +154,14 @@ func (a *acpController) receive(data []byte) {
 	if json.Unmarshal(data, &m) != nil {
 		return
 	}
+	// session/update already has its own browser event. The inspector can rebuild
+	// the envelope from params; carrying the original RPC here would duplicate
+	// large history updates on the browser stream.
+	if m.Method == "session/update" && len(m.ID) == 0 {
+		a.emitUpdate(m.Params)
+		return
+	}
+	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "output", "message": json.RawMessage(data)})})
 	if m.Method == "" {
 		var id string
 		if json.Unmarshal(m.ID, &id) != nil {
@@ -156,10 +184,6 @@ func (a *acpController) receive(data []byte) {
 			default:
 			}
 		}
-		return
-	}
-	if m.Method == "session/update" && len(m.ID) == 0 {
-		a.r.emit(&pb.Message{Kind: "acp_update", Payload: m.Params})
 		return
 	}
 	if len(m.ID) == 0 {
@@ -198,6 +222,99 @@ func (a *acpController) receive(data []byte) {
 	// No file-system/terminal capabilities are advertised. Agents that have
 	// their own tools can use them; unsupported client methods fail explicitly.
 	_ = a.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32601, "message": "Dune does not advertise this client capability"}})
+}
+
+func (a *acpController) emitUpdate(params json.RawMessage) {
+	if len(params) <= acpBrowserUpdateBytes {
+		a.r.emit(&pb.Message{Kind: "acp_update", Payload: params})
+		return
+	}
+	var envelope struct {
+		SessionID string         `json:"sessionId"`
+		Update    map[string]any `json:"update"`
+	}
+	if json.Unmarshal(params, &envelope) != nil || envelope.Update == nil {
+		a.r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
+			"code":          "MESSAGE_OMITTED",
+			"detail":        "A large ACP update could not be compacted; content was omitted and the Runtime continues",
+			"message_bytes": len(params),
+		})})
+		return
+	}
+	kind, _ := envelope.Update["sessionUpdate"].(string)
+	if kind == "" {
+		kind, _ = envelope.Update["session_update"].(string)
+	}
+	if strings.Contains(kind, "message") {
+		if content, ok := envelope.Update["content"].(map[string]any); ok {
+			if text, ok := content["text"].(string); ok && text != "" {
+				for _, part := range splitACPText(text, acpTextChunkBytes) {
+					// Rebuild large message chunks from bounded metadata. Copying the
+					// original update could attach an unrelated multi-MiB field to every
+					// chunk and exceed the fixed transport frame again.
+					update := map[string]any{}
+					for _, key := range []string{"sessionUpdate", "session_update", "messageId", "message_id", "role"} {
+						if value, ok := envelope.Update[key]; ok {
+							update[key] = boundedACPField(value, 4096)
+						}
+					}
+					nextContent := map[string]any{}
+					if value, ok := content["type"]; ok {
+						nextContent["type"] = boundedACPField(value, 4096)
+					}
+					nextContent["text"] = part
+					update["content"] = nextContent
+					a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": envelope.SessionID, "update": update})})
+				}
+				return
+			}
+		}
+	}
+
+	compact := map[string]any{}
+	for _, key := range []string{"sessionUpdate", "session_update", "messageId", "message_id", "toolCallId", "tool_call_id", "title", "kind", "status"} {
+		if value, ok := envelope.Update[key]; ok {
+			compact[key] = boundedACPField(value, 4096)
+		}
+	}
+	for _, key := range []string{"content", "rawInput", "raw_input", "rawOutput", "raw_output", "_meta", "meta"} {
+		if value, ok := envelope.Update[key]; ok {
+			compact[key] = boundedACPField(value, acpSummaryFieldBytes)
+		}
+	}
+	compact["duneOmittedBytes"] = len(params)
+	a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": envelope.SessionID, "update": compact})})
+}
+
+func boundedACPField(value any, limit int) any {
+	b, err := json.Marshal(value)
+	if err == nil && len(b) <= limit {
+		return value
+	}
+	size := len(b)
+	if err != nil {
+		size = 0
+	}
+	return fmt.Sprintf("[Dune omitted oversized ACP field; original JSON bytes: %d]", size)
+}
+
+func splitACPText(text string, limit int) []string {
+	parts := make([]string, 0, len(text)/limit+1)
+	for len(text) > limit {
+		end := limit
+		for end > 0 && !utf8.ValidString(text[:end]) {
+			end--
+		}
+		if end == 0 {
+			end = limit
+		}
+		parts = append(parts, text[:end])
+		text = text[end:]
+	}
+	if text != "" {
+		parts = append(parts, text)
+	}
+	return parts
 }
 func (a *acpController) initialize() {
 	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second)
@@ -343,6 +460,9 @@ func (a *acpController) action(req acpAction) (any, error) {
 		a.state.SessionID = req.SessionID
 		a.state.Cwd = cwd
 	}
+	if req.Action == "load" {
+		a.replaying.Store(true)
+	}
 	a.publishLocked()
 	// A live replay boundary is distinct from a state snapshot. A browser
 	// attaching midway through load must keep its incomplete-history notice.
@@ -354,6 +474,9 @@ func (a *acpController) action(req acpAction) (any, error) {
 		a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": params["sessionId"], "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]string{"type": "text", "text": req.Text}}})})
 	}
 	go func() {
+		if req.Action == "load" {
+			defer a.replaying.Store(false)
+		}
 		timeout := 60 * time.Second
 		if req.Action == "prompt" {
 			timeout = 0

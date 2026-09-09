@@ -84,3 +84,15 @@ func TestFraming(t *testing.T) {
 		t.Fatal("oversize allocation")
 	}
 }
+
+func TestFramingAllowsMultiMiBMessage(t *testing.T) {
+	m := &pb.Message{Kind: "data", Data: bytes.Repeat([]byte("x"), 2*1024*1024)}
+	var b bytes.Buffer
+	if err := Write(&b, m); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(&b)
+	if err != nil || !proto.Equal(m, out) {
+		t.Fatal(err)
+	}
+}

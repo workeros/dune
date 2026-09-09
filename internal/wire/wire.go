@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const MaxMessage = 1024 * 1024
+const MaxMessage = 4 * 1024 * 1024
 const ChunkSize = 32 * 1024
 const MaxStreams = 64
 const WriteTimeout = 5 * time.Second

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,71 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 )
+
+func TestManagedACPHistoryReplayBackpressure(t *testing.T) {
+	h := start(t)
+	mock := filepath.Join(h.dir, "mock-acp")
+	output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
+	if err != nil {
+		t.Fatalf("mock build: %s %v", output, err)
+	}
+	const updateCount = 160
+	largeValue := strings.Repeat("x", 64*1024)
+	history := make([]map[string]any, 0, updateCount)
+	for i := 0; i < updateCount; i++ {
+		value := largeValue
+		if i == 0 {
+			value = strings.Repeat("y", 900*1024)
+		}
+		history = append(history, map[string]any{"sessionUpdate": "available_commands_update", "availableCommands": []any{map[string]string{"name": "large", "description": value}}})
+	}
+	b, err := json.Marshal(history)
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(h.dir, ".dune-mock-acp-history.json"), b, 0600))
+
+	p := profile(h.dir, "acp", mock)
+	p.ManagedACP = true
+	p.Env = map[string]string{"DUNE_MOCK_HISTORY": "1"}
+	rt, initial, err := h.client.Start(h.ctx, p)
+	must(t, err)
+	initial.Close()
+	defer h.client.Stop(h.ctx, rt)
+
+	type state struct {
+		Ready bool   `json:"ready"`
+		Busy  string `json:"busy"`
+	}
+	for deadline := time.Now().Add(8 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		var current state
+		must(t, h.client.CallID(h.ctx, "acp.state", wire.ID(), map[string]any{}, &current, &rt))
+		if current.Ready && current.Busy == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ACP did not become ready")
+		}
+	}
+
+	observer, err := h.client.Attach(h.ctx, rt, true)
+	must(t, err)
+	defer observer.Close()
+	var accepted json.RawMessage
+	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), map[string]any{"action": "load", "session_id": "mock-session"}, &accepted, &rt))
+
+	// Give the Agent time to emit more than both the old 16-message queue and
+	// the new byte budget before consuming the replay.
+	time.Sleep(100 * time.Millisecond)
+	seen := 0
+	for seen < updateCount {
+		m, err := observer.Recv()
+		if err != nil {
+			t.Fatalf("history replay stopped after %d/%d updates: %v", seen, updateCount, err)
+		}
+		if m.Kind == "acp_update" {
+			seen++
+		}
+	}
+}
 
 func TestManagedACPOfflinePermissions(t *testing.T) {
 	h := start(t)
