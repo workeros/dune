@@ -15,6 +15,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/gateway"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 )
 
@@ -74,6 +75,31 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 	}
 }
 
+func TestAPIOnlyServerDoesNotPublishStaticFallback(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "metadata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: "http://dune.example.test/"}, store, identity.NewLocal(store, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	for _, path := range []string{"/", "/index.html", "/unknown"} {
+		response := httptest.NewRecorder()
+		app.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("API-only server published %s: %d", path, response.Code)
+		}
+	}
+	response := httptest.NewRecorder()
+	app.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	if response.Code != http.StatusOK {
+		t.Fatal("API route missing in API-only mode", response.Code)
+	}
+}
+
 // Exercise ownership at every public HTTP/WebSocket entry, before routing to
 // a machine. A guessed runtime ID must not reveal whether it exists.
 func TestHTTPOwnershipAndRevocation(t *testing.T) {
@@ -87,11 +113,12 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	a, at, err := app.identity.Register(context.Background(), "a@example.test", "a-strong-test-password")
+	password := app.identity.(publicidentity.PasswordService)
+	a, at, err := password.Register(context.Background(), "a@example.test", "a-strong-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, bt, err := app.identity.Register(context.Background(), "b@example.test", "b-strong-test-password")
+	b, bt, err := password.Register(context.Background(), "b@example.test", "b-strong-test-password")
 	if err != nil {
 		t.Fatal(err)
 	}

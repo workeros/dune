@@ -22,7 +22,6 @@ type Binding struct {
 	Target        string         `json:"target"`
 	Incarnation   string         `json:"incarnation"`
 	Generation    uint64         `json:"generation"`
-	RouteRecovery string         `json:"route_recovery,omitempty"`
 	RouteEpoch    uint64         `json:"route_epoch,omitempty"`
 	Capabilities  []string       `json:"capabilities"`
 	Limits        map[string]int `json:"limits"`

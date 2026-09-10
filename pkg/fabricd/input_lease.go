@@ -11,13 +11,13 @@ import (
 )
 
 func confirmInputLease(input *wire.InputWindow, control *wire.Stream, grant *pb.Message, binding api.Binding) error {
-	if grant.RouteRecovery != binding.RouteRecovery || grant.RouteEpoch != binding.RouteEpoch {
+	if grant.RouteEpoch != binding.RouteEpoch {
 		return fmt.Errorf("input grant changed ownership identity")
 	}
 	if err := input.Confirm(grant.InputLeaseId, time.Duration(grant.InputLeaseMs)*time.Millisecond); err != nil {
 		return err
 	}
-	return control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: grant.InputLeaseId, RouteRecovery: binding.RouteRecovery, RouteEpoch: binding.RouteEpoch})
+	return control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: grant.InputLeaseId, RouteEpoch: binding.RouteEpoch})
 }
 
 func renewInputLease(ctx context.Context, input *wire.InputWindow, control *wire.Stream, binding api.Binding) error {
@@ -35,7 +35,7 @@ func renewInputLease(ctx context.Context, input *wire.InputWindow, control *wire
 		}
 		_, remaining := input.Current()
 		_ = control.SetReadDeadline(time.Now().Add(remaining))
-		if err := control.Send(&pb.Message{Kind: "lease_request", InputLeaseId: id, RouteRecovery: binding.RouteRecovery, RouteEpoch: binding.RouteEpoch}); err != nil {
+		if err := control.Send(&pb.Message{Kind: "lease_request", InputLeaseId: id, RouteEpoch: binding.RouteEpoch}); err != nil {
 			return err
 		}
 		grant, err := control.Recv()

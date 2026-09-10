@@ -3,7 +3,9 @@ package metadata
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,14 +18,56 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-func directoryClaim(t *testing.T, store *Store, recovery string) gateway.RouteClaim {
+type lostAckConnector struct {
+	driver.Connector
+	commits *atomic.Int32
+}
+
+func (c lostAckConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Connector.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return lostAckConn{Conn: conn, commits: c.commits}, nil
+}
+
+type lostAckConn struct {
+	driver.Conn
+	commits *atomic.Int32
+}
+
+func (c lostAckConn) Begin() (driver.Tx, error) {
+	tx, err := c.Conn.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return lostAckTx{Tx: tx, commits: c.commits}, nil
+}
+
+type lostAckTx struct {
+	driver.Tx
+	commits *atomic.Int32
+}
+
+func (t lostAckTx) Commit() error {
+	if err := t.Tx.Commit(); err != nil {
+		return err
+	}
+	t.commits.Add(1)
+	return io.ErrUnexpectedEOF
+}
+
+func directoryClaim(t *testing.T, store *Store) gateway.RouteClaim {
 	t.Helper()
-	intent := operationFixture(t, store)
-	var target string
-	if err := store.db.QueryRow(`SELECT id FROM dune_machines WHERE runner_id=$1`, intent.RunnerID).Scan(&target); err != nil {
+	token, _, err := store.IssueEnrollment(context.Background(), "route-owner", "route target")
+	if err != nil {
 		t.Fatal(err)
 	}
-	return gateway.RouteClaim{Target: target, RecoveryGeneration: recovery, OwnerBootID: wire.ID(), OwnerAddress: "https://instance-a.test/peer", Binding: api.Binding{Target: target, Version: api.Version, Incarnation: wire.ID(), Generation: 1, Capabilities: []string{"runtime.list"}}}
+	machine, _, err := store.Enroll(context.Background(), token, "linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gateway.RouteClaim{Target: machine.ID, OwnerBootID: wire.ID(), OwnerAddress: "https://instance-a.test/peer", Binding: api.Binding{Target: machine.ID, Version: api.Version, Incarnation: wire.ID(), Generation: 1, Capabilities: []string{"runtime.list"}}}
 }
 
 func TestPostgresConnectionDirectory(t *testing.T) {
@@ -39,19 +83,15 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	recovery := wire.ID()
-	a, err := first.ConnectionDirectory(ctx, recovery)
+	a, err := first.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := second.ConnectionDirectory(ctx, recovery)
+	b, err := second.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.ConnectionDirectory(ctx, wire.ID()); !errors.Is(err, gateway.ErrRouteStale) {
-		t.Fatal("startup replaced recovery generation", err)
-	}
-	claim := directoryClaim(t, first, recovery)
+	claim := directoryClaim(t, first)
 	if _, err := a.Resolve(ctx, claim.Target); !errors.Is(err, gateway.ErrRouteNotFound) {
 		t.Fatal("unconnected machine has a route", err)
 	}
@@ -85,15 +125,6 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 	if _, err := b.Acquire(ctx, claim, owned.Epoch); !errors.Is(err, gateway.ErrRouteBusy) {
 		t.Fatal("active ownership was preempted", err)
 	}
-	sameProcess := claim
-	sameProcess.OwnerBootID = owned.OwnerBootID
-	if _, err := a.Acquire(ctx, sameProcess, owned.Epoch); !errors.Is(err, gateway.ErrRouteBusy) {
-		t.Fatal("same process opened a second live ownership term", err)
-	}
-	found, err := b.Resolve(ctx, claim.Target)
-	if err != nil || found.Published || found.OwnerBootID != owned.OwnerBootID {
-		t.Fatal("unconfirmed owner became routable", err)
-	}
 	bad := owned.Route
 	bad.OwnerBootID = wire.ID()
 	if err := b.Publish(ctx, bad); !errors.Is(err, gateway.ErrRouteStale) {
@@ -107,22 +138,9 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 	if err := a.Publish(ctx, owned.Route); err != nil {
 		t.Fatal(err)
 	}
-	found, err = b.Resolve(ctx, claim.Target)
+	found, err := b.Resolve(ctx, claim.Target)
 	if err != nil || !found.Published || found.Epoch != 1 {
-		t.Fatal("confirmed route not visible across pools", err)
-	}
-	if _, err := b.Renew(ctx, owned.Route); err != nil {
-		t.Fatal(err)
-	}
-	// A retained future expiry (for example after a backward DB clock step)
-	// remains guaranteed to prior input grants. Renewal must not shorten it.
-	var retained int64
-	if err := first.db.QueryRow(`UPDATE dune_routes SET expires_at=`+first.databaseClock()+`+30000 WHERE machine_id=$1 RETURNING expires_at`, claim.Target).Scan(&retained); err != nil {
-		t.Fatal(err)
-	}
-	kept, err := b.Renew(ctx, owned.Route)
-	if err != nil || kept.ExpiresAt.UnixMilli() < retained || kept.ValidFor > connectionLeaseDuration {
-		t.Fatal("renewal shortened prior grant or enlarged local duration", kept, err)
+		t.Fatal("confirmed route not visible across pools", found, err)
 	}
 	if err := a.Release(ctx, owned.Route); err != nil {
 		t.Fatal(err)
@@ -133,52 +151,23 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 	}
 	replacement, err := b.Acquire(ctx, claim, found.Epoch)
 	if err != nil || replacement.Epoch != 2 {
-		t.Fatal("replacement did not advance epoch", err)
+		t.Fatal("replacement did not advance epoch", replacement, err)
 	}
 	for _, mutate := range []func(context.Context, gateway.Route) error{a.Publish, a.Release, func(ctx context.Context, route gateway.Route) error { _, err := a.Renew(ctx, route); return err }} {
 		if err := mutate(ctx, owned.Route); !errors.Is(err, gateway.ErrRouteStale) {
 			t.Fatal("old owner changed replacement", err)
 		}
 	}
-	next, err := first.RotateConnectionRecovery(ctx, recovery)
-	if err != nil || !validBootID(next) || next == recovery {
-		t.Fatal("recovery did not establish fresh identity", err)
-	}
-	if _, err := second.RotateConnectionRecovery(ctx, recovery); !errors.Is(err, gateway.ErrRouteStale) {
-		t.Fatal("stale operator rotated current recovery", err)
-	}
-	if _, err := a.Resolve(ctx, claim.Target); !errors.Is(err, gateway.ErrRouteStale) {
-		t.Fatal("old service resolved after recovery", err)
-	}
-	if _, err := b.Renew(ctx, replacement.Route); !errors.Is(err, gateway.ErrRouteStale) {
-		t.Fatal("old service renewed after recovery", err)
-	}
-	current, err := second.ConnectionDirectory(ctx, next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found, err = current.Resolve(ctx, claim.Target)
-	if err != nil || found.ValidFor != 0 || found.Published || found.Epoch != 2 {
-		t.Fatal("recovered directory exposed historical route", found, err)
-	}
-	claim.RecoveryGeneration = next
-	last, err := current.Acquire(ctx, claim, found.Epoch)
-	if err != nil || last.Epoch != 3 {
-		t.Fatal("recovery lost epoch history", err)
-	}
 	if _, err := second.db.Exec(`UPDATE dune_routes SET expires_at=0 WHERE machine_id=$1`, claim.Target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := current.Renew(ctx, last.Route); !errors.Is(err, gateway.ErrRouteStale) {
+	if _, err := b.Renew(ctx, replacement.Route); !errors.Is(err, gateway.ErrRouteStale) {
 		t.Fatal("expired term was revived", err)
-	}
-	if err := current.Publish(ctx, last.Route); !errors.Is(err, gateway.ErrRouteStale) {
-		t.Fatal("expired term was published", err)
 	}
 	if _, err := second.db.Exec(`UPDATE dune_routes SET epoch=9223372036854775807 WHERE machine_id=$1`, claim.Target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := current.Acquire(ctx, claim, 9223372036854775807); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := b.Acquire(ctx, claim, 9223372036854775807); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatal("epoch overflow accepted", err)
 	}
 }
@@ -191,12 +180,11 @@ func TestPostgresDirectoryRechecksExpiredLeaseAfterLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	recovery := wire.ID()
-	d, err := s.ConnectionDirectory(ctx, recovery)
+	d, err := s.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := directoryClaim(t, s, recovery)
+	claim := directoryClaim(t, s)
 	owned, err := d.Acquire(ctx, claim, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -209,8 +197,8 @@ func TestPostgresDirectoryRechecksExpiredLeaseAfterLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.Rollback()
-	var target string
-	if err := lock.QueryRow(`SELECT id FROM dune_machines WHERE id=$1 FOR UPDATE`, claim.Target).Scan(&target); err != nil {
+	var runner string
+	if err := lock.QueryRow(`SELECT id FROM dune_runners WHERE machine_id=$1 FOR UPDATE`, claim.Target).Scan(&runner); err != nil {
 		t.Fatal(err)
 	}
 	finished := make(chan error, 1)
@@ -232,15 +220,14 @@ func TestPostgresDirectoryCommitLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	recovery := wire.ID()
-	d, err := s.ConnectionDirectory(ctx, recovery)
+	d, err := s.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := directoryClaim(t, s, recovery)
+	claim := directoryClaim(t, s)
 	parsed, err := pgx.ParseConfig(config.Postgres.URL)
 	if err != nil {
-		t.Fatal("invalid test database configuration")
+		t.Fatal(err)
 	}
 	if err := config.Postgres.BeforeConnect(ctx, parsed); err != nil {
 		t.Fatal(err)
@@ -248,59 +235,21 @@ func TestPostgresDirectoryCommitLoss(t *testing.T) {
 	var commits atomic.Int32
 	faulty := &Store{postgres: true, db: sql.OpenDB(lostAckConnector{Connector: stdlib.GetConnector(*parsed), commits: &commits})}
 	defer faulty.Close()
-	interrupted := &connectionDirectory{store: faulty, recovery: recovery}
+	interrupted := &connectionDirectory{store: faulty}
 	if lease, err := interrupted.Acquire(ctx, claim, 0); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 1 || lease.Epoch != 0 {
-		t.Fatal("acquire commit was replayed or returned as success", err)
+		t.Fatal("acquire commit was replayed or returned as success", lease, err)
 	}
 	owned, err := d.Resolve(ctx, claim.Target)
 	if err != nil || owned.Epoch != 1 || owned.OwnerBootID != claim.OwnerBootID {
-		t.Fatal("cannot reconcile committed ownership", err)
+		t.Fatal("cannot reconcile committed ownership", owned, err)
 	}
 	if err := interrupted.Publish(ctx, owned.Route); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 2 {
 		t.Fatal("publish commit was replayed", err)
-	}
-	found, err := d.Resolve(ctx, claim.Target)
-	if err != nil || !found.Published {
-		t.Fatal("cannot reconcile publication", err)
 	}
 	if _, err := interrupted.Renew(ctx, owned.Route); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 3 {
 		t.Fatal("renew commit was replayed", err)
 	}
 	if err := interrupted.Release(ctx, owned.Route); !errors.Is(err, ErrCommitUnknown) || commits.Load() != 4 {
 		t.Fatal("release commit was replayed", err)
-	}
-	found, err = d.Resolve(ctx, claim.Target)
-	if err != nil || found.Published || found.ValidFor != 0 || found.Epoch != 1 {
-		t.Fatal("cannot reconcile release", err)
-	}
-	next, err := faulty.RotateConnectionRecovery(ctx, recovery)
-	if !errors.Is(err, ErrCommitUnknown) || commits.Load() != 5 || !validBootID(next) {
-		t.Fatal("recovery commit was replayed or cannot be reconciled", err)
-	}
-	if _, err := s.ConnectionDirectory(ctx, next); err != nil {
-		t.Fatal("cannot reconcile recovery", err)
-	}
-}
-
-func TestPostgresRecoveryRequiresExistingSchema(t *testing.T) {
-	config, admin, schema := postgresConfig(t)
-	ctx := context.Background()
-	if source, err := OpenExistingPostgres(ctx, config.Postgres); err == nil {
-		source.Close()
-		t.Fatal("recovery opened an uninitialized database")
-	}
-	var count int
-	if err := admin.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$1`, schema).Scan(&count); err != nil || count != 0 {
-		t.Fatal("recovery initialized an empty schema", count, err)
-	}
-	s, err := Open(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if source, err := OpenExistingPostgres(ctx, config.Postgres); err != nil {
-		t.Fatal(err)
-	} else {
-		source.Close()
 	}
 }

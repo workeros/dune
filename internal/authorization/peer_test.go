@@ -8,7 +8,7 @@ import (
 )
 
 func TestPeerDigestBindsBusinessAndExecutionIdentity(t *testing.T) {
-	base := &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: "files", Payload: []byte(`{"action":"write","path":"file"}`), Data: []byte("private file bytes"), Incarnation: "boot", ConnectionGeneration: 1, RuntimeId: "runtime", RuntimeIncarnation: "runtime-boot", RuntimeGeneration: 1, RouteRecovery: "recovery", RouteEpoch: 1}
+	base := &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: "files", Payload: []byte(`{"action":"write","path":"file"}`), Data: []byte("private file bytes"), Incarnation: "boot", ConnectionGeneration: 1, RuntimeId: "runtime", RuntimeIncarnation: "runtime-boot", RuntimeGeneration: 1, RouteEpoch: 1}
 	digest, err := peerDigest(base)
 	if err != nil {
 		t.Fatal(err)
@@ -19,7 +19,7 @@ func TestPeerDigestBindsBusinessAndExecutionIdentity(t *testing.T) {
 		func(m *pb.Message) { m.Data = []byte("replacement") }, func(m *pb.Message) { m.Incarnation += "x" },
 		func(m *pb.Message) { m.ConnectionGeneration++ }, func(m *pb.Message) { m.RuntimeId += "x" },
 		func(m *pb.Message) { m.RuntimeIncarnation += "x" }, func(m *pb.Message) { m.RuntimeGeneration++ },
-		func(m *pb.Message) { m.RouteRecovery += "x" }, func(m *pb.Message) { m.RouteEpoch++ },
+		func(m *pb.Message) { m.RouteEpoch++ },
 	}
 	for i, mutate := range mutations {
 		copy := proto.Clone(base).(*pb.Message)

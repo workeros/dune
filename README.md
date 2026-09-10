@@ -1,106 +1,121 @@
 # Dune
 
-Dune 是面向个人开发环境的 Web 工作台。浏览器负责登录、环境选择、终端与 Agent 交互；Go Web 宿主内嵌 Gateway，开发机上的 connector 主动连回站点并运行 PTY、ACP、文件浏览和 Git diff。
+Dune 是面向开发环境的 Web 工作台。浏览器负责登录、选择 Runner、终端与
+Agent 交互；开发机上的 connector 主动连接 Gateway，并在本机运行 PTY、ACP、
+文件浏览与 Git diff。
 
-产品不再提供人类 CLI 登录、远程命令执行或文件、Git、端口操作客户端。`gateway` 与 `fabricd` 仍是独立启动的服务，不再由裸 `dune` supervisor 一键拉起；`dune` 还保留 Web 站点以及网页接入开发机所需的 `enroll`、`service` 支撑命令。底层 `pkg/client`、`pkg/sdk` 和 `pkg/gateway` 继续供 Web 宿主与内部协议使用，不是人类远程操作入口。
+## 本地启动
 
-## 分别启动 Gateway 与 fabricd
-
-```sh
-./bin/dune --config /absolute/gateway.yaml init \
-  --listen 0.0.0.0:7443 --gateway ws://YOUR_HOST:7443/tunnel
-./bin/dune --config /absolute/gateway.yaml gateway
-
-# 在执行机使用包含 Gateway 地址、机器凭据和 session_dir 的配置：
-./bin/dune --config /absolute/machine.yaml fabricd
-```
-
-两个进程应由各自的服务管理器独立部署和重启。裸 `dune` 不再同时启动它们；Gateway 重启不应被当作 PTY 销毁操作，fabricd 重连后仍按原 Runtime 身份恢复可用会话。
-
-## 启动 Web 工作台
+本地模式由一个进程同时提供静态页面、API 和 Gateway：
 
 ```sh
 make release
-./bin/dune --config /absolute/web.yaml init \
-  --listen 0.0.0.0:7443 --gateway ws://YOUR_HOST:7443/tunnel
-./bin/dune --config /absolute/web.yaml web \
-  --data /absolute/private-accounts --assets web/dist --binaries bin \
-  --url http://YOUR_HOST:7443
+./bin/dune --config /absolute/dune.yaml init \
+  --listen 127.0.0.1:7443 --gateway ws://127.0.0.1:7443/tunnel
+./bin/dune --config /absolute/dune.yaml web \
+  --data /absolute/private-dune-data \
+  --assets web/dist --binaries bin \
+  --url http://127.0.0.1:7443/
 ```
 
-示例使用 HTTP/WS。对外部署应在可信反向代理后使用 HTTPS/WSS，并保留完整部署前缀。`web --url` 可以是 `https://example.com/tools/dune/`；API、静态资源、Cookie、浏览器 WebSocket 和安装引导都会使用该前缀。
+浏览器注册或登录后生成一次性接入命令。安装流程在 Linux/macOS 上写入
+connector 配置并安装用户级后台服务，不要求目标机器开放入站端口。
 
-机器使用独立入口时传入 `--gateway-url wss://machines.example.com/private/connect`，并把它代理到 Web 服务的 `/tools/dune/tunnel`。该选项只改变 connector 地址，不改变浏览器入口。
+## 生产部署
 
-浏览器注册或登录后，可生成一次性接入命令。安装脚本下载平台包，在开发机上完成 `enroll` 和用户级后台服务安装；无需 sudo 或预装 Agent。Linux 使用 systemd user，macOS 使用登录用户的 launchd。
+生产环境由 Nginx 直接服务 `web/dist`，将 `/api/`、`/downloads/` 和 `/tunnel`
+反向代理到不提供静态文件的 Dune Gateway/API 进程。启动后端时传空 assets：
 
-## Web 能力
+```sh
+./bin/dune --config /absolute/dune.yaml web \
+  --database-config /absolute/database.yaml \
+  --cluster-config /absolute/cluster.yaml \
+  --assets= --binaries=/absolute/releases \
+  --url https://dune.example.com/
+```
 
-- 以逻辑 Runner 选择 Attached 或 Managed 开发环境。
-- 固定 Runner、Fabric、机器和绑定修订，绑定变化后要求用户重新选择。
-- 启动与恢复 PTY/ACP 会话；关闭网页不会停止远端任务。
-- 在开发机保存 Agent 命令、参数和环境变量。
-- 浏览目录并查看 Git diff。
-- 显式停止、遗忘会话或解绑开发机。
+最小 Nginx 路由如下；`/tunnel` 必须保留 WebSocket upgrade，部署前缀存在时
+同样保留完整前缀，不使用 `StripPrefix`：
 
-会话选择同时固定 Runtime 的 ID、incarnation 和 generation。同 ID 的执行身份变化后必须重新选择；自动重连不会跟随新的执行身份，也不会重放结果未知的写入或 Agent 请求。
+```nginx
+location /api/       { proxy_pass http://dune_backend; }
+location /downloads/ { proxy_pass http://dune_backend; }
+location /tunnel {
+    proxy_pass http://dune_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+location / { root /srv/dune/web/dist; try_files $uri /index.html; }
+```
+
+`--gateway-url` 可为 connector 指定独立的公网 WSS 入口。PostgreSQL 多副本还
+需要每实例独立、直接可达的 mTLS peer 地址；peer listener 不经公开 Nginx。
 
 ## 数据与身份
 
-Web 登录、浏览器 Session、Runner/Machine 绑定、短期连接票据、发现游标和 Managed 生命周期都需要事务存储。默认使用 `--data` 目录中的私有 SQLite；同一目录只允许一个实例持有。
+Dune 只维护五种逻辑数据：
 
-PostgreSQL 配置使用：
+| 部署 | 表 |
+| --- | --- |
+| 本地 SQLite | `dune_users`、`dune_sessions`、`dune_runners`、`dune_enrollments` |
+| 本地登录 PostgreSQL | 上述四张 + `dune_routes` |
+| SandDance 企业 PostgreSQL | `dune_runners`、`dune_enrollments`、`dune_routes` |
 
-```sh
-./bin/dune --config /absolute/web.yaml web \
-  --database-config /absolute/private/database.yaml \
-  --url https://example.com/tools/dune/
-```
+SQLite 由单实例独占。PostgreSQL 的 `dune_routes` 保存短期 owner 租约和单调
+epoch，允许多个 Gateway 在旧 owner 失租后自动接管。接管会短暂断开浏览器流，
+connector 自动重连，tmux 进程仍在；结果未知的写入和 Agent 请求不会自动重放。
 
-数据库配置文件必须属于当前用户且权限为 0600，内容为 `postgres: {url: "postgres://…"}`。`--database-config` 与 `--data` 不能同时使用。多实例可再提供 `--cluster-config`；连接目录、peer TLS、配置准入和排空边界见[集群接入](docs/peer-transport.md)。
+Dune 不实现数据库备份、恢复、历史回滚或恢复协调，也不维护兼容旧 schema 的
+迁移。只在空 schema 中原子创建当前结构。
 
-企业浏览器登录可添加 `--identity-config /absolute/private/identity.yaml`：
+`pkg/identity.Service` 是公开浏览器会话接口：本地默认实现使用密码与上述两张
+身份表；企业宿主验证自己的 opaque cookie，并直接返回企业用户唯一标识。
+Dune 不保存企业用户、企业 Session、OIDC token 或身份映射。
 
-```yaml
-oidc:
-  issuer: https://identity.example.com
-  client_id: dune
-  client_secret: REPLACE_WITH_PRIVATE_SECRET
-session_lifetime: 8h
-```
+## Managed
 
-启用后只显示企业登录，本地密码登录与注册关闭。Dune 不保存上游 access/refresh token，按 issuer 与 subject 识别用户。配置与恢复边界见[元数据说明](docs/metadata-operations.md)。
+前端与 Web API 保留 Managed Runner 功能，集成边界是
+`pkg/managed.Service`。Dune 不包含 provider 编排、worker、续期、恢复、review
+持久化或生命周期表；SandDance 等宿主自行实现这些能力并注入
+`host.Options.Managed`。`host.Open` 会通过 `BindRunnerAccess` 注入一个窄能力，供
+服务创建/查询 Dune 的逻辑 Runner 与一次性 enrollment；Dune 只持久化这些接入
+事实。pause/resume/destroy 被外部服务接受后，Dune 再持久冻结、解冻或撤销对应
+Runner，并主动关闭本实例上的旧连接。
 
-## Web 宿主
+## 撤销与访问
 
-`pkg/host.Open(ctx, options)` 装配账号、Attached、内嵌 Gateway 和 Web API。返回的 `App` 可作为 `http.Handler` 挂载，也可调用 `App.Serve(listener)`。挂载时中间件必须保留 Hijacker 和 ResponseController 能力。参考[工作台宿主](samples/workbench/main.go)和[企业宿主](samples/enterprise/enterprise.go)。
+Runner 解绑会在 `dune_runners` 中持久保存 disabled 状态、清除机器凭据，并
+主动关闭当前 Gateway 的连接。其他 Gateway 通过约一秒一次的有效性复核
+和 owner 租约到期兜底，不写逐实例关闭回执。
 
-`App.Shutdown(ctx)` 停止新请求和新 worker 迭代，并在 deadline 内排空已受理工作；`Close` 立即取消并释放存储。官方 Web 进程对 SIGINT/SIGTERM 使用 `--drain-timeout`，默认五秒。排空时 `health/ready` 返回 503，仍可服务时 `health/live` 返回 200。
+浏览器连接票据、peer 委派 nonce 和分页游标都只存在进程内或请求本身，不落库。
+目标 owner 经 mTLS 收到 peer 请求后仍会重新验证当前企业/本地 Session、Runner
+绑定及访问策略。传输断开或收到 EOF 不代表业务成功。
 
-企业宿主可注入：
+## 宿主接口
 
-- `Options.Identity`：OIDC 或其他可信身份提供方。
-- `Options.AccessChecker`：统一控制发现、Attached 管理、Web 执行和持续输入。
-- `Options.Observer`：接收去敏后的结构化访问、连接、路由和 Managed 事件。
-- `Options.Cluster`：在 PostgreSQL 上装配多实例连接目录和 peer 路由。
-- `Options.Managed`：提供模板、创建、引导、检查、续期、暂停、恢复、销毁和核对能力。
+`pkg/host.Open(ctx, options)` 装配登录、Attached、Managed Web API 与 Gateway。
+`App` 可作为 `http.Handler` 挂载，也可接管 listener；`ServePeer` 接管独立 mTLS
+peer listener。企业宿主可注入：
 
-Managed provider 通过 binding ID 与 revision 固定实际适配器。Create 首次接受后，Bootstrap、Inspect、Renew、Pause、Resume、Review 与 Destroy 都只恢复同一 revision。Pause 先关闭访问并持久分发断流请求；Resume 只在 provider 报告 Ready 且 connector 恢复健康后开放访问。未决动作、未知结果和历史记录均由 Web 数据库持久化，后台 worker 不依赖浏览器保持在线。
-
-可信宿主还可调用 `App.SetPrincipalEnabled` 停用用户：该事务会撤销浏览器 Session 与待消费安装命令，关闭已有用户连接，但保留机器身份和远端任务。重新启用后必须重新登录。
+- `Options.Identity`：企业 Session 验证；nil 使用本地密码。
+- `Options.AccessChecker`：发现、连接和每项执行操作的策略。
+- `Options.Managed`：宿主拥有的高层 Managed 服务。
+- `Options.Cluster`：PostgreSQL route 目录与 peer 传输。
+- `Options.Observer`：去敏结构化事件。
 
 ## Connector 支撑命令
 
-这些命令由网页安装流程使用，不是人类执行客户端：
+以下命令服务网页安装链路，不是远程执行客户端：
 
 ```sh
-dune --config /absolute/machine.yaml enroll --site https://example.com/tools/dune/ \
-  --token ONE_TIME_TOKEN
+dune --config /absolute/machine.yaml enroll --site https://dune.example.com/ --token TOKEN
 dune --config /absolute/machine.yaml service install --name dune
 dune --config /absolute/machine.yaml fabricd
 ```
 
-`service restart` 只重启 connector；tmux 会话继续运行。结束或删除远端会话应在 Web 工作台中显式操作。
+重启 connector 不销毁 tmux 会话；停止 Runtime 才销毁对应会话与历史。
 
 ## 开发与验证
 
@@ -111,4 +126,5 @@ make check
 make web-check web-build
 ```
 
-按改动选择检查及外部 PostgreSQL、真实 Agent、远端环境的验收边界见[开发流程](docs/workflow.md)。UI 约定见 [DESIGN.md](DESIGN.md)，访问与浏览器绑定语义见[访问检查](docs/access-checks.md)。
+按变更选择检查见[开发流程](docs/workflow.md)，集群边界见
+[peer 传输](docs/peer-transport.md)，授权语义见[访问检查](docs/access-checks.md)。

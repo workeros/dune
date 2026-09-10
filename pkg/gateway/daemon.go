@@ -45,7 +45,7 @@ func (r *route) send(stream *wire.Stream, message *pb.Message) error {
 	// A client or an access hook cannot choose the execution grant. A blocked
 	// send retains this ID, even if a later control exchange grants more time.
 	message.InputLeaseId, message.InputLeaseMs = id, 0
-	message.RouteRecovery, message.RouteEpoch = r.b.RouteRecovery, r.b.RouteEpoch
+	message.RouteEpoch = r.b.RouteEpoch
 	return stream.Send(message)
 }
 
@@ -62,7 +62,7 @@ func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, contr
 	}
 	binding.Target, binding.Incarnation = target, hello.Incarnation
 	binding.Generation, binding.Version = hello.ConnectionGeneration, api.Version
-	binding.RouteRecovery, binding.RouteEpoch = "", 0
+	binding.RouteEpoch = 0
 	r := &route{ctx: ctx, s: session, b: binding, input: wire.NewInputWindow(), admission: admission.Admission}
 	if !wire.ValidID(hello.InputLeaseId) {
 		control.Fail("HANDSHAKE", fmt.Errorf("input lease challenge required"))
@@ -75,7 +75,7 @@ func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, contr
 			return nil
 		}
 		r.owner = owner
-		r.b.RouteRecovery, r.b.RouteEpoch = owner.route.RecoveryGeneration, owner.route.Epoch
+		r.b.RouteEpoch = owner.route.Epoch
 		defer func() { session.Close(); owner.release(ctx) }()
 		go owner.watch(ctx, func() { session.Close() })
 	}
@@ -160,7 +160,7 @@ func (g *Gateway) serveDaemon(ctx context.Context, session *yamux.Session, contr
 		if err != nil {
 			return nil
 		}
-		if request.Kind != "lease_request" || request.InputLeaseMs != 0 || request.RouteRecovery != r.b.RouteRecovery || request.RouteEpoch != r.b.RouteEpoch {
+		if request.Kind != "lease_request" || request.InputLeaseMs != 0 || request.RouteEpoch != r.b.RouteEpoch {
 			control.Fail("STALE_BINDING", fmt.Errorf("invalid lease request"))
 			return nil
 		}
@@ -196,14 +196,14 @@ func (r *route) grant(ctx context.Context, control *wire.Stream, id, kind string
 		deadline = time.Now().Add(remaining)
 	}
 	_ = control.SetReadDeadline(deadline)
-	if err := control.Send(&pb.Message{Kind: kind, Payload: payload, InputLeaseId: id, InputLeaseMs: uint32(duration / time.Millisecond), RouteRecovery: r.b.RouteRecovery, RouteEpoch: r.b.RouteEpoch}); err != nil {
+	if err := control.Send(&pb.Message{Kind: kind, Payload: payload, InputLeaseId: id, InputLeaseMs: uint32(duration / time.Millisecond), RouteEpoch: r.b.RouteEpoch}); err != nil {
 		return err
 	}
 	ready, err := control.Recv()
 	if err != nil {
 		return err
 	}
-	if ready.Kind != "lease_ready" || ready.InputLeaseId != id || ready.InputLeaseMs != 0 || ready.RouteRecovery != r.b.RouteRecovery || ready.RouteEpoch != r.b.RouteEpoch {
+	if ready.Kind != "lease_ready" || ready.InputLeaseId != id || ready.InputLeaseMs != 0 || ready.RouteEpoch != r.b.RouteEpoch {
 		return fmt.Errorf("input lease confirmation required")
 	}
 	return r.input.Confirm(id, duration)

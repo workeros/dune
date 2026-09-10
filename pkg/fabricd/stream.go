@@ -18,7 +18,6 @@ type executionStream struct {
 	engine     *Engine
 	generation uint64
 	input      *wire.InputWindow
-	recovery   string
 	epoch      uint64
 }
 
@@ -35,7 +34,7 @@ func (s *executionStream) Recv() (*pb.Message, error) {
 		s.Fail(err.Code, err)
 		return nil, err
 	}
-	if m.RouteRecovery != s.recovery || m.RouteEpoch != s.epoch {
+	if m.RouteEpoch != s.epoch {
 		err := &api.Error{Code: "ROUTE_STALE", Detail: "message belongs to another ownership term"}
 		s.Fail(err.Code, err)
 		return nil, err

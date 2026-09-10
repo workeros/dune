@@ -27,8 +27,8 @@ message Message {
   string input_lease_id = 14;
   // Relative grant duration on welcome/lease_grant only, bounded by the protocol.
   uint32 input_lease_ms = 15;
-  // Ownership identity for directory-backed routes; both absent in local mode.
-  string route_recovery = 16;
+  // Ownership epoch for directory-backed routes; zero in local mode.
+  reserved 16;
   uint64 route_epoch = 17;
   // Opaque application authorization, mandatory only on a peer's first request.
   // Never accepted from SDK clients or delivered to fabricd.

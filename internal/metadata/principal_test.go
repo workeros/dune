@@ -13,7 +13,7 @@ import (
 	"github.com/aiomni/dune/pkg/storage"
 )
 
-func TestPrincipalSuspensionTransactions(t *testing.T) {
+func TestLocalUserSuspensionTransactions(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			ctx := context.Background()
@@ -51,13 +51,13 @@ func TestPrincipalSuspensionTransactions(t *testing.T) {
 			if _, err := s.db.Exec(`ALTER TABLE dune_enrollments RENAME TO dune_enrollments_paused`); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.SetPrincipalEnabled(ctx, user.ID, false); err == nil {
+			if err := s.SetUserEnabled(ctx, user.ID, false); err == nil {
 				t.Fatal("partial suspension succeeded")
 			}
 			var enabled bool
 			var version int64
-			if err := s.db.QueryRow(`SELECT enabled,auth_version FROM dune_principals WHERE id=$1`, user.ID).Scan(&enabled, &version); err != nil || !enabled || version != 1 {
-				t.Fatal("failed suspension changed principal", err)
+			if err := s.db.QueryRow(`SELECT enabled,auth_version FROM dune_users WHERE id=$1`, user.ID).Scan(&enabled, &version); err != nil || !enabled || version != 1 {
+				t.Fatal("failed suspension changed user", err)
 			}
 			if _, err := s.db.Exec(`ALTER TABLE dune_enrollments_paused RENAME TO dune_enrollments`); err != nil {
 				t.Fatal(err)
@@ -82,15 +82,15 @@ func TestPrincipalSuspensionTransactions(t *testing.T) {
 					}
 				})
 			}
-			if err := s.SetPrincipalEnabled(ctx, user.ID, false); err != nil {
+			if err := s.SetUserEnabled(ctx, user.ID, false); err != nil {
 				t.Fatal(err)
 			}
 			wg.Wait()
-			if err := s.SetPrincipalEnabled(ctx, user.ID, false); err != nil {
+			if err := s.SetUserEnabled(ctx, user.ID, false); err != nil {
 				t.Fatal(err)
 			}
 			var count int
-			if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE principal_id=$1`, user.ID).Scan(&count); err != nil || count != 0 {
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE user_id=$1`, user.ID).Scan(&count); err != nil || count != 0 {
 				t.Fatal("concurrent login survived suspension", err)
 			}
 			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
@@ -99,7 +99,7 @@ func TestPrincipalSuspensionTransactions(t *testing.T) {
 			if _, _, err := local.Login(ctx, user.Email, "suspend-test-password"); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("suspended password accepted", err)
 			}
-			if _, _, err := s.IssueEnrollment(ctx, user.ID, "new machine"); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, err := s.IssueEnrollmentForSession(ctx, user, "new machine", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("suspended user created enrollment", err)
 			}
 			if id, err := other.MachineCredential(ctx, credential); err != nil || id != machine.ID {
@@ -109,11 +109,11 @@ func TestPrincipalSuspensionTransactions(t *testing.T) {
 				t.Fatal("suspension affected another principal", err)
 			}
 			for range 2 {
-				if err := s.SetPrincipalEnabled(ctx, user.ID, true); err != nil {
+				if err := s.SetUserEnabled(ctx, user.ID, true); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := s.db.QueryRow(`SELECT auth_version FROM dune_principals WHERE id=$1`, user.ID).Scan(&version); err != nil || version != 3 {
+			if err := s.db.QueryRow(`SELECT auth_version FROM dune_users WHERE id=$1`, user.ID).Scan(&version); err != nil || version != 3 {
 				t.Fatal("state changes did not advance version exactly once", err)
 			}
 			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
@@ -123,7 +123,7 @@ func TestPrincipalSuspensionTransactions(t *testing.T) {
 				t.Fatal("re-enabling revived an old installation token", err)
 			}
 			// Even a retained old session row cannot cross a principal version.
-			if _, err := s.db.Exec(`INSERT INTO dune_sessions(hash,principal_id,expires_at,auth_version) VALUES($1,$2,$3,1)`, tokenHash(cookie), user.ID, time.Now().Add(time.Hour).Unix()); err != nil {
+			if _, err := s.db.Exec(`INSERT INTO dune_sessions(hash,user_id,expires_at,auth_version) VALUES($1,$2,$3,1)`, tokenHash(cookie), user.ID, time.Now().Add(time.Hour).Unix()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
@@ -132,7 +132,7 @@ func TestPrincipalSuspensionTransactions(t *testing.T) {
 			if _, _, err := local.Login(ctx, user.Email, "suspend-test-password"); err != nil {
 				t.Fatal("fresh login after enabling failed", err)
 			}
-			if err := s.SetPrincipalEnabled(ctx, "missing", false); !errors.Is(err, ErrNotFound) {
+			if err := s.SetUserEnabled(ctx, "missing", false); !errors.Is(err, ErrNotFound) {
 				t.Fatal("unknown principal accepted", err)
 			}
 		})

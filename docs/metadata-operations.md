@@ -1,123 +1,63 @@
-# 元数据存储与恢复
+# 元数据结构与运维边界
 
-工作台支持 SQLite 和 PostgreSQL。默认 `dune web --data /absolute/private-directory` 使用目录内的 `metadata.sqlite`，目录须私有并由当前用户持有；`metadata.lock` 保证同一目录只由一个实例打开，不能通过共享盘运行多个实例。
+Dune 支持单实例 SQLite 和 PostgreSQL。SQLite 目录必须是绝对路径、0700、由
+当前用户持有；数据库文件为 0600，`metadata.lock` 阻止两个进程同时打开同一
+目录。PostgreSQL 可由多个 Gateway 共享。
 
-当前处于初始开发阶段，不维护旧数据、旧 schema 或旧客户端兼容逻辑。空库在一个事务内创建完整当前结构；PostgreSQL 使用事务内锁协调并发初始化。数据库保存结构指纹，结构不匹配则拒绝打开。结构变更后选择新的开发目录或数据库；程序不会自动转换、升级或删除已有数据。
+## 当前结构
 
-## 选择 PostgreSQL
+Dune 只初始化空 schema，不维护迁移版本或旧结构兼容。建表在一个事务内完成；
+PostgreSQL 使用 transaction advisory lock 串行化并发首次启动。每次打开都会校验
+当前部署模式下精确的 `dune_*` 表与列集合；旧表、缺列或多列都会明确拒绝，不会
+尝试就地修复。
 
-创建权限为 0600 的私有配置文件，填写部署系统提供的连接 URL：
+| 逻辑事实 | 表 | 说明 |
+| --- | --- | --- |
+| 本地用户 | `dune_users` | 邮箱、密码哈希、enabled、认证版本 |
+| 本地浏览器会话 | `dune_sessions` | token 哈希、用户、有效期、认证版本 |
+| Runner 与机器绑定 | `dune_runners` | owner、类型、binding revision、机器凭据、enabled、Managed suspended |
+| 一次性安装材料 | `dune_enrollments` | token 哈希、短期身份 scope、Runner/Fabric、有效期 |
+| PostgreSQL owner 目录 | `dune_routes` | machine、owner boot/address、binding、epoch、租约 |
+
+本地 SQLite 有前四张表；本地登录 PostgreSQL 有五张；使用企业身份的
+PostgreSQL 省略本地用户与 Session，只保留后三张。索引不是额外逻辑表。
+
+浏览器访问票据和 peer nonce 保存在 Gateway 内存，分页游标编码为无权限的
+位置值。Managed operation、provider action、renewal、review 等状态属于外部
+Managed 服务，不进入 Dune 数据库。
+
+## PostgreSQL 配置
 
 ```yaml
 postgres:
   url: "postgres://USER:PASSWORD@HOST:5432/DATABASE?sslmode=verify-full"
 ```
 
-官方入口使用 `dune --config /absolute/gateway.yaml web --database-config /absolute/database.yaml --url https://example.com/tools/dune/`。`--data` 和 `--database-config` 互斥。配置也可用单独的 `sqlite_dir: /absolute/private-directory` 选择 SQLite。不要将含密码的配置提交到仓库。
+配置文件应为 0600 且不提交仓库。Go 宿主通过 `host.Options.Database` 传入
+`storage.Config`。`BeforeConnect` 可为每条新物理连接更新私有认证信息，但必须
+响应 context，并保持所有连接指向同一 database/schema。
 
-Go 宿主通过 `host.Options.Database` 传入 `storage.Config`，与 `DataDir` 互斥。`storage.Postgres.BeforeConnect` 为每条新物理连接接收独立的 pgx 配置副本，可以调用私有 SDK 更新鉴权信息；回调可能并发执行，须响应 context，所有连接仍须指向同一数据库/schema。已经建立的连接继续由同一连接池管理。
+## 不支持的操作
 
-## 备份与恢复
+Dune 明确不实现：
 
-备份用于恢复同一当前结构的数据。SQLite 先停止工作台，再将整个私有目录复制到新的备份目录；恢复时复制到单独的私有目录，核对数据后显式切换 `--data`。不要复制正在写入的数据库主文件并遗漏 WAL。备份包含密码和凭据哈希，保持原私有权限。
+- 数据库备份与还原命令；
+- 历史状态回滚；
+- 恢复代次或运行中副本与旧快照之间的协调；
+- 自动 schema 迁移。
 
-PostgreSQL 使用发行版提供的 [pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html) 和 [pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html)。停止 Dune 写入后备份到私有目录，恢复到为本次恢复准备的空数据库；使用匹配服务器版本的工具，连接和密码由私有 libpq service 配置提供。例如：
+部署系统如需备份，应在 Dune 全部停机后使用自身数据库能力处理；恢复后的
+数据库只能在确认所有旧 Gateway 已停止后作为一次新的整体部署启动。这是外部
+运维责任，Dune 不验证或协调该流程，也不承诺备份时刻之后的外部副作用可回滚。
 
-```sh
-umask 077
-pg_dump --dbname=service=dune_backup --format=custom --file=/private/dune.dump
-pg_restore --list /private/dune.dump
-pg_restore --dbname=service=dune_restore --single-transaction --exit-on-error \
-  --no-owner --no-privileges /private/dune.dump
-```
+## 一致性边界
 
-`dune_backup` 和 `dune_restore` 分别指向源库和新恢复库；恢复账号须具有建表权限，目标服务账号的权限由部署方配置。核对当前结构指纹、各表数据、原登录与机器身份，再切换应用。恢复不会延长已过期会话或凭据，也不能恢复备份之后的新增记录。保留原库直到验收完成，禁止用恢复备份的方式隐式丢弃已开放的新写入。
+业务写入在事务内提交。若提交确认丢失，调用返回 outcome unknown，调用方只能
+通过当前事实核对，不能自动重放写入。网络 EOF、peer 断开或 connector 重连同样
+不代表原业务请求成功或失败。
 
-## 集群恢复代次
+Runner 撤销将 `enabled` 持久改为 false 并清除凭据；当前 Gateway 主动断开目标，
+其他副本通过有效性轮询与 route 租约到期停止访问。没有每实例 ACK 表。
 
-已有集群记录的 PostgreSQL 备份恢复后，须停止所有旧实例，核对数据库，生成新的恢复代次并更新所有实例配置，再允许机器重连。不能直接使用备份中的代次启动服务。离线工具支持先读取，再对明确的原代次进行一次条件旋转：
-
-```sh
-dune metadata cluster-recovery --database-config /absolute/private/database.yaml
-dune metadata cluster-recovery --database-config /absolute/private/database.yaml \
-  --rotate-from ORIGINAL_GENERATION
-```
-
-成功返回 `outcome: changed` 和新 `generation`；工具自己生成随机新代次，不接受指定历史代次。未初始化集群记录的单机数据库和 SQLite 会拒绝旋转。原机器、用户及工作内容不删除，历史 route 留作核对，但不具有新代次的路由权限。数据库事务不能停止外部旧服务；停站、配置更新和重新接入仍是恢复流程的一部分。
-
-提交回执丢失时，命令以非零状态返回，并输出 `outcome: unknown` 与本次候选代次。此时只运行不带 `--rotate-from` 的读取命令：若数据库已是候选代次，则原操作已提交；不要盲目再旋转。若读取失败或出现第三个代次，先核对恢复操作的并发与数据库状态。该工具不恢复 Agent 或上游资源，也不替代 S3 的 owner 期限和 epoch 握手。
-
-## 身份源与本次登录主体
-
-启用 OIDC 后，仅接受该 issuer 签发身份对应的 Dune 会话；原本地会话不能用于企业模式，不同 issuer 的会话也不能混用。切回本地模式后，未撤销且未过期的本地会话仍可能有效；配置切换不等同于永久撤销全部旧会话。需要永久撤销时通过可信宿主管理入口停用对应用户。
-
-首次企业登录按 issuer + subject 新建独立用户，不根据邮箱接管本地账号、机器或 Runner。关联既有 Dune 用户使用下述明确授权的身份关联流程，不通过改邮箱或直接改 SQL 绕过此边界。Dune 用户停用会同时阻止企业新登录并撤销已有会话；上游停用自动同步尚未实现，不能将回调成功或短期会话视为持续上游授权证明。
-
-会话保存本次登录验证的 namespace 与 subject；短期连接凭据和 Attached 安装材料保留同一引用。持续访问复核原主体，不查询关联列表来替换身份。开发部署不兼容旧 CLI schema，升级时直接重建元数据；备份之后的撤销需由部署方核对并重新执行。
-
-## 显式关联既有账号
-
-可信宿主管理员先认证实际操作者、授权这次身份关联，核验既有 Dune principal 与稳定外部身份的归属，再调用 `App.LinkIdentity`。应在用户首次企业登录前完成；已归属另一 principal 的外部身份会冲突，当前不提供账号合并或身份转移。`Actor` 必须来自管理员认证结果，不能直接信任普通用户传入的值。`Reason` 保存非敏感核验依据或审批单引用，禁止放入密码、令牌或工作内容。
-
-```go
-// verifiedPrincipalID、verifiedIssuer 和 verifiedSubject 来自宿主核验流程。
-decision := identity.LinkRequest{
-    RequestID: approval.RequestID, Actor: administrator.ID,
-    PrincipalID: verifiedPrincipalID,
-    Namespace: verifiedIssuer, Subject: verifiedSubject,
-    Reason: approval.Reference,
-}
-record, err := app.LinkIdentity(ctx, decision)
-```
-
-成功时身份关联、审计记录、用户授权版本递增、已有会话及待消费 enrollment 撤销一起提交。新登录获得原 principal ID，保留原机器、Runner、运行中的 Runtime 和历史；已有用户连接按撤销机制关闭。身份源和本地密码凭据本身不被删除，站点允许的登录方式仍由配置决定。
-
-请求 ID 与所有决定字段相同的重试返回原记录，不再次撤销会话；复用请求 ID 修改决定或把外部身份关联给另一个用户均失败。提交回执丢失时，先调用 `App.IdentityLink(ctx, decision.RequestID)` 核对持久记录与完整决定；查不到或查询失败不能据此宣称先前未提交，不自动换请求 ID 重试。查询同样由宿主授权。此表只记录成功关联决定，失败的身份核验、拒绝和其他管理员活动由宿主审计，不声称覆盖所有审计事件。
-
-## 业务状态与恢复边界
-
-备份保存 Runner/机器绑定、操作意图与不可变创建参数、提供方动作键与已知资源引用、续期巡检计划、业务互斥、worker 租约、连接目录与准入预约。恢复不延长任何期限、不复活旧进程权限，也不触发提供方调用。外部操作可能已在备份之后发生，恢复服务后先核对原操作与资源事实；无法确认时保留 unknown，不能重放创建、续期或销毁。
-
-Managed 模板来自启动配置，不在数据库中编辑。新建时先针对配置中的精确 Fabric、模板 ID 和版本做访问检查，再校验声明的字段类型、范围与大小；事务只保存规范化后的公开参数快照和摘要，不保存提供方 Secret 或私有 SDK 设置。已禁用版本不再用于新建，但部署方应在仍有对应资源或未完成操作时保留查询、核对和清理所需的适配配置。
-
-配置准入和集群装配见 [peer 传输接入](peer-transport.md)，访问凭据与执行授权见 [访问检查](access-checks.md)，回归选择见 [开发流程](workflow.md)。
-
-提供方动作在调用前写入独立稳定键，预约提交不确定时不会给予派发资格。派发结果未知的记录不能通过租约接管、恢复备份或普通重试变回首次派发。新 worker 只能核对原动作；明确完成后才保存阶段结果和资源事实。首次资源确认时间不因查询或恢复重置。提供方自身的去重、旧执行者隔离和可靠核对仍由适配器保证，SQL 租约不构成外部系统的隔离机制。
-
-创建执行器只在首次动作预约得到明确提交且执行权复核通过后调用一次适配器 `Create`。后续进入同一动作时，包括 timeout、unknown、进程重启、租约接管和结果提交回执丢失，只能调用 `Reconcile` 查询原动作关联；已完成动作不再访问提供方。适配器返回错误时附带结果会被忽略：deadline 记为 timed_out，其他错误记为 unknown；已核验的部分引用应以 unknown 事实正常返回。查询未找到不能自行触发再次创建。
-
-Managed 创建 worker 按数据库时钟扫描仍处于 create 阶段且执行租约已到期的 Operation；扫描结果在 Runner 与 Operation 锁内再次检查，避免把已经进入 Bootstrap 的旧快照重新领取。集群副本竞争同一 SQL 租约，调用期间定期续约，提供方 context 到期与保存结果使用不同 context，因此本次调用超时仍能持久记录 timed_out。终态动作立即交还执行租约；unknown/timed_out 保留本次租约作为最短核对间隔，租约到期后只核对原动作。交还执行租约不释放 Runner 业务互斥，也不清除 unknown。
-
-Managed Bootstrap 的提供方动作和一次性 enrollment 哈希由一个事务提交。令牌限定原创建 Operation、已确认的 Fabric/resource_ref、Runner 与 binding revision，明文只在首次明确提交后返回；提交结果未知或重复进入只返回原动作供核对，不重新生成令牌。fabricd 消费时重新锁定并检查 principal、Runner、Operation、动作、资源引用、有效期和访问门，再把机器身份绑定到已有 Managed Runner；并发消费只有一份机器凭据能返回。普通 Attached enrollment 仍创建新 Runner，两种令牌在访问检查中使用各自的 `attached`/`managed` 子操作。
-
-Bootstrap executor 固定规范化的公开 enrollment 地址、完整 Gateway WS(S) 地址、安装版本和令牌有效期，并用它们生成非敏感动作摘要。首次明确提交同时得到动作和明文 grant 后才调用 `Bootstrap`；此后只用原动作调用 `ReconcileBootstrap`，即使当前启动配置已变化也不改写旧动作。若原 grant 已被 fabricd 消费，已有机器与同一 Runner/Fabric/binding revision 的绑定是本地可信完成证据，可直接结束原 Bootstrap 动作而无需查询提供方。适配器错误只记录 timeout/unknown，不采信伴随错误返回的字段。
-
-Managed worker 在同一持久循环中先处理销毁，再处理用户已受理的人工核对，然后依次处理到期巡检、已有续期 Operation、冻结续期计划、Bootstrap 与 create，每次只执行一个提供方调用，最后才处理历史清理。候选 SQL 只扫描本进程已配置对应能力的 Fabric，避免较早的未配置任务占满批次；Bootstrap 在锁内重新检查 create 成功、资源引用、访问门、数据库时钟有效期与原动作状态。Bootstrap 终态进入等待连接并交还执行租约，unknown/timed_out 保留租约作为最短核对间隔，接管后仍只查询原动作。
-
-Managed enrollment 被消费及 Bootstrap 动作成功后，创建 Operation 仍停留在等待连接。机器凭据的 Gateway 握手先确认 fabricd 输入 grant；集群模式再发布当前 owner 路由，然后通过有界可信回调提交首次在线事实。元数据事务重新锁定 Runner 和原创建 Operation，核对机器绑定、binding revision、Create/Bootstrap 终态、resource_ref、访问门及数据库时钟有效期，才将创建标成 succeeded。PostgreSQL 集群还要求回调携带当前恢复代次和 epoch，并与刚发布、未过期的完整路由绑定相同；SQLite 或没有集群记录的 PostgreSQL 要求路由字段为空。回调完成前本机路由不对业务流可见，失败时握手和已发布 owner 都会撤销。提交回执未知不会在同一握手内重试；已提交的结果由后续重连幂等核对。Attached 机器不进入 Managed 生命周期事务。
-
-资源一经确认便进入独立巡检计划，不等待首次连接。公开 `fabric.InspectProvider` 只能按固定 Runner、Fabric、resource_ref 与 binding revision 读取事实，不携带动作键，也不授予创建、续期或删除权限。适配器错误和 deadline 分别保存为 unknown/timed_out，并丢弃伴随字段；只有无错误、引用一致的 confirmed 结果可以更新到期时间或确认 Gone。确认 Gone 在同一事务关闭访问并删除 Managed enrollment 与机器身份，网络错误或本地到期时间不会触发该变化。
-
-巡检候选、领取和续租都使用数据库时钟。每个资源的策略版本、最后事实、观测时间、下次检查时间与固定 `renew_until` 决定持久化在同一行；多副本通过独立执行修订和短租约竞争，锁内再次核对资源引用、绑定和访问状态。公开 `pkg/renewal.Policy` 在 SQL 事务外取得数据库时间、原创建 principal/namespace、当前账号 enabled、Runner/Fabric、创建及首次资源确认时间和受控状态；输入不含 identity subject、浏览器 session、模板参数或 provider 凭据。策略回调有独立的 `CallTimeout`，返回后事务重新构造并精确比较同一输入与巡检租约，状态或账号变化会拒绝旧决定及其巡检事实。续期目标必须真正晚于当前已确认期限，且无法绕过 Gone、未确认、过期、Bootstrap 失败、销毁或变更中的状态。策略错误和非法决定分别固定保存 `POLICY_ERROR`、`POLICY_INVALID`，30 秒后重新巡检，不保存错误正文。个人策略基于首次资源确认时间和持久 create/Bootstrap 状态计算；首次在线会重新激活因未连接而停止的计划，曾经可用后不会重套首次连接宽限期。
-
-冻结的 `renew_until` 由独立事务消费成自动 Renew Operation，同时保存原策略版本、绝对目标、稳定请求摘要和 Runner 业务互斥。事务在 principal → Runner 锁顺序下复核策略、观测、资源引用、绑定和数据库时钟；目标已过期会返回巡检，已有创建、续期或销毁操作则保持原计划不变。提交回执未知不返回执行权，恢复扫描只领取已持久化且租约到期的原 Operation。
-
-公开 `fabric.RenewProvider` 将首次 `Renew` 与只读 `ReconcileRenew` 分开。只有动作预约明确提交并再次复核执行权后才允许首次调用；动作携带原 issuer、execution revision、resource_ref 和冻结绝对目标。超时、unknown、进程重启和租约接管均只核对原动作，错误返回的伴随字段会丢弃。成功必须确认同一资源的到期时间不早于目标，才原子更新资源、完成 Operation 并立即安排下一次巡检；明确失败同样结束本次 Operation 并回到巡检。资源在派发前已经过期或访问关闭时，Operation 直接失败且不生成 Provider 动作。SQL 租约不能隔离外部迟到调用，适配器仍须按动作 ID 去重，并在可用时使用原 issuer/revision 做提供方侧 fencing。
-
-Managed 销毁由当前浏览器主体对权威 Runner 执行独立的 `runner.destroy/managed` 访问检查。接受事务重新检查同一登录主体，固定 Fabric、resource_ref、binding revision 和访问关闭期限；随后一次性保存 Destroy Operation、暂停续期、把资源标为禁止访问，并删除 Managed enrollment、机器身份及级联的连接票据和 route。Runner、资源引用和操作记录继续保留用于清理与核对。并发重试返回原记录，提交回执未知不返回成功；机器删除后按原请求键重试时仍能恢复原 machine ID 和截止时间。已有冲突变更时不关闭访问，也不抢占 Runner 业务互斥。
-
-访问关闭与提供方删除是不同事实。有机器绑定的销毁先记录 `waiting` 和数据库时钟生成的固定 deadline；没有绑定可立即记为 `confirmed`。接受事务为当前实例及当时仍持有配置准入租约的每个实例保存关闭请求；后启动的实例无法从已删除的机器身份取得新访问。各实例的 Managed worker 调用本机 Gateway 关闭精确 machine 目标，等待该目标的连接、已受理流和应用清理回调退出，再按原 Operation、instance、machine 和 binding revision 幂等确认。所有快照实例均确认后才把总体结果改为 `confirmed`；任一实例失联并由 deadline 先到时只记为 `timed_out`，不能伪装成连接已经确认退出。worker 只领取 confirmed/timed_out 的销毁，并在锁内重复核对 access_closed、resource_ref 和数据库时钟。
-
-公开 `fabric.DestroyProvider` 把首次删除和只读 `ReconcileDestroy` 分开。只有 Destroy 动作预约明确提交并再次复核执行权后才可首次调用；超时、unknown、重启或租约接管只查询原动作键。适配器错误的伴随字段会丢弃，成功必须给出同一 resource_ref 的明确 Gone 事实，才原子完成动作与 Operation；失败或不确定结果都不会恢复访问。关闭通知由共享 SQL 待办扇出，不依赖仍可解析的 machine route；未确认实例及确认时间随备份保留。实例失联时仍由固定 deadline 进入 timed_out 后继续清理，该状态明确保留关闭确认不足的事实。
-
-`host.Options.Managed` 把不可变模板目录、同一 Fabric 的 Availability 与六种生命周期能力、可选 RenewalPolicy、业务服务和一个持久 worker 装进现有 Host/Web 生命周期。启动先验证目录、提供方集合、公开地址及所有时间界限；失败时不留下 worker 或存储锁。PostgreSQL 准入指纹自动包含公开目录、提供方命名空间、续期策略版本和 worker 行为，并要求宿主另给出 `ConfigurationVersion` 表达 Dune 无法读取的私有 SDK 或策略语义。
-
-浏览器 API 只有配置完整时才注册。模板列表和详情逐项执行访问检查；创建返回 durable acceptance，销毁返回 access-close acceptance。Operation 状态只允许原浏览器主体读取，Runner 状态要求当前 Runner 访问权；响应保留 action、stage、provider outcome、已知 resource_ref/expiry、最后续期策略版本/原因/时间和销毁关闭事实，不返回 principal、请求键、worker、执行修订或 provider action key。工作台按字符串边界检查模板的 `int64` 并把原十进制词法直接写入 JSON，避免 JavaScript 浮点转换；unknown 明示为只核对原动作，页面关闭不会停止 worker。
-
-人工核对请求执行新的 `runner.resolve/managed` 访问检查，并在事务中复核当前浏览器身份、Runner/Fabric/binding revision、未决 Operation 与原 Provider action。请求保存操作者、理由、候选引用和幂等摘要；同一 action 同时只允许一个未完成核对。`reconcile` 只调用对应动作的 `Reconcile*`；`candidate` 仅用于未决 Create，并调用 `CandidateProvider.VerifyCandidate` 核验候选与原 action 的关联。已知部分资源引用不能被另一个候选覆盖。核验结果仍通过原 action 的资源及阶段事务规则提交，失败或 unknown 不清业务互斥；核对审计随后以条件更新完成，进程若在两次事务间退出，下个 worker 从已完成 action 收敛审计，不再次查询。没有直接编辑绑定、强制成功或重新派发 Create/Bootstrap/Renew/Destroy 的接口。
-
-每个 Operation 在进入 succeeded/failed 时用数据库时钟写入不可变的完成时间。Managed worker 默认以 30 天作为恢复及幂等窗口，可通过 `ManagedWorkerOptions.HistoryRetention` 设置 24 小时至 366 天；该值属于集群配置指纹。高优先级生命周期工作为空时，worker 每个事务最多清理 32 条终态记录：先删除超过窗口且没有近期或不确定 action/review 的 Renew 历史；随后只归档资源已经 Gone、访问关闭得到确认的 Runner，或明确 Create 失败且从未确认资源的 Runner。整个 Runner 还必须没有机器、enrollment、未完成/近期 Operation、近期 action/review 或不确定 review。残留 resource_ref、unknown/timed_out、销毁关闭 timed_out 和有效绑定都保留。
-
-可信宿主通过 `App.ManagedStatusSnapshot` 读取共享状态的全局计数，不开放普通用户 HTTP 管理入口。查询在一个 SQL statement 中固定数据库时间：分别统计 unknown/timed-out Operation、当前策略版本下没有决定或已经到期的续期工作、配置 `RenewBefore` 范围内仍可访问的到期资源，以及访问已关闭但未确认 Gone、或无 machine 且生命周期不确定/失败的残留资源。结果不含 principal、Runner ID、resource_ref 或 provider 错误，也不调用外部平台；查询成功不能解释为 provider 健康。
-
-清理事务使用数据库时间和 PostgreSQL `SKIP LOCKED`，多个 worker 可以竞争而不会重复计算删除；有删除时继续按批推进，无可清理记录后本机最多每小时检查一次。这里的归档是从当前事务库删除完整终态对象，没有普通用户清理 API，也没有把审计复制到外部归档。超过窗口后原请求键不再提供恢复证据；调用方必须发起新的显式操作和请求键，不能把查不到旧记录解释成原外部动作从未发生。
+集群细节见 [peer 传输](peer-transport.md)，身份与请求授权见
+[访问检查](access-checks.md)。

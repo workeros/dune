@@ -72,9 +72,8 @@ func newPeerFixture(t *testing.T, ownerHandler ConnectionHandler) *peerFixture {
 		d.r.Published = true
 		return nil
 	}
-	recovery := wire.ID()
 	var err error
-	f.owner, err = NewWithPeers(d, "https://owner.test/peer", recovery, func(context.Context, string, Route) (net.Conn, error) {
+	f.owner, err = NewWithPeers(d, "https://owner.test/peer", func(context.Context, string, Route) (net.Conn, error) {
 		f.redials.Add(1)
 		return nil, errors.New("peer must not relay")
 	})
@@ -82,7 +81,7 @@ func newPeerFixture(t *testing.T, ownerHandler ConnectionHandler) *peerFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.owner.Close)
-	f.entry, err = NewWithPeers(d, "https://entry.test/peer", recovery, func(_ context.Context, source string, destination Route) (net.Conn, error) {
+	f.entry, err = NewWithPeers(d, "https://entry.test/peer", func(_ context.Context, source string, destination Route) (net.Conn, error) {
 		f.dials.Add(1)
 		left, right := net.Pipe()
 		go func() {
@@ -103,7 +102,7 @@ func newPeerFixture(t *testing.T, ownerHandler ConnectionHandler) *peerFixture {
 	if err := wire.Decode(welcome, &f.binding); err != nil {
 		t.Fatal(err)
 	}
-	if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteRecovery: f.binding.RouteRecovery, RouteEpoch: f.binding.RouteEpoch}); err != nil {
+	if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteEpoch: f.binding.RouteEpoch}); err != nil {
 		t.Fatal(err)
 	}
 	for !f.owner.Online("machine") {
@@ -145,7 +144,7 @@ func (f *peerFixture) request(t *testing.T, s *yamux.Session, accessContext []by
 	t.Cleanup(func() { st.Close() })
 	_ = st.SetReadDeadline(time.Now().Add(2 * time.Second))
 	err = st.Send(&pb.Message{Kind: "request", RequestId: "request-1", Operation: "runtime.attach", Target: f.binding.Target,
-		Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation, RouteRecovery: f.binding.RouteRecovery, RouteEpoch: f.binding.RouteEpoch, AccessContext: accessContext})
+		Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation, RouteEpoch: f.binding.RouteEpoch, AccessContext: accessContext})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +276,7 @@ func TestPeerRequiresIndependentRequestAuthorization(t *testing.T) {
 }
 
 func TestPeerStaleDestinationNeverRedirects(t *testing.T) {
-	for _, mode := range []string{"boot", "epoch", "recovery", "unpublished", "local-missing"} {
+	for _, mode := range []string{"boot", "epoch", "unpublished", "local-missing"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPeerFixture(t, ownedHandler{})
 			f.directory.mu.Lock()
@@ -286,8 +285,6 @@ func TestPeerStaleDestinationNeverRedirects(t *testing.T) {
 				f.directory.r.OwnerBootID = wire.ID()
 			case "epoch":
 				f.directory.r.Epoch++
-			case "recovery":
-				f.directory.r.RecoveryGeneration = wire.ID()
 			case "unpublished":
 				f.directory.r.Published = false
 			case "local-missing":
@@ -321,7 +318,7 @@ func TestPeerIdentityMustMatchAuthenticatedTransport(t *testing.T) {
 			}
 			s := f.session(t, f.owner, binding, ownedHandler{})
 			_, _, err := wire.Handshake(s, &pb.Message{Kind: "hello", Target: "machine", Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation,
-				RouteRecovery: f.binding.RouteRecovery, RouteEpoch: f.binding.RouteEpoch, Payload: api.Payload(api.Hello{Version: api.Version, Role: RolePeer, PeerOwner: f.owner.BootID(), PeerSource: wire.ID()})})
+				RouteEpoch: f.binding.RouteEpoch, Payload: api.Payload(api.Hello{Version: api.Version, Role: RolePeer, PeerOwner: f.owner.BootID(), PeerSource: wire.ID()})})
 			var failure *api.Error
 			if !errors.As(err, &failure) || failure.Code != "HANDSHAKE" {
 				t.Fatal("unauthenticated peer accepted", err)
@@ -341,7 +338,7 @@ func TestPeerOwnerRejectsMissingOrOversizeContext(t *testing.T) {
 		return nil, errors.New("must reject before application")
 	}})
 	_, _, err := wire.Handshake(s, &pb.Message{Kind: "hello", Target: "machine", Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation,
-		RouteRecovery: f.binding.RouteRecovery, RouteEpoch: f.binding.RouteEpoch, Payload: api.Payload(api.Hello{Version: api.Version, Role: RolePeer, PeerOwner: f.owner.BootID(), PeerSource: f.entry.BootID()})})
+		RouteEpoch: f.binding.RouteEpoch, Payload: api.Payload(api.Hello{Version: api.Version, Role: RolePeer, PeerOwner: f.owner.BootID(), PeerSource: f.entry.BootID()})})
 	if err != nil {
 		t.Fatal(err)
 	}

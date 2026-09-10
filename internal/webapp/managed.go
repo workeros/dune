@@ -1,11 +1,13 @@
 package webapp
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
-	"github.com/aiomni/dune/internal/lifecycle"
+	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/fabric"
+	"github.com/aiomni/dune/pkg/managed"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -47,7 +49,7 @@ type reviewView struct {
 	VerifiedResourceRef string     `json:"verified_resource_ref,omitempty"`
 }
 
-func reviewResponse(review lifecycle.Review) reviewView {
+func reviewResponse(review managed.Review) reviewView {
 	view := reviewView{ID: review.ID, OperationID: review.OperationID, Mode: review.Mode, Candidate: review.Candidate, Reason: review.Reason, CreatedAt: review.CreatedAt, Outcome: review.Outcome, VerifiedResourceRef: review.VerifiedResourceRef}
 	if !review.CompletedAt.IsZero() {
 		completed := review.CompletedAt
@@ -56,7 +58,7 @@ func reviewResponse(review lifecycle.Review) reviewView {
 	return view
 }
 
-func statusResponse(status lifecycle.ManagedStatus) operationView {
+func statusResponse(status managed.Status) operationView {
 	view := operationResponse(status.Operation)
 	view.Stage, view.ProviderOutcome, view.ResourceRef = status.Stage, status.ProviderOutcome, status.ResourceRef
 	view.AccessClosed = status.AccessClosed
@@ -86,7 +88,7 @@ func statusResponse(status lifecycle.ManagedStatus) operationView {
 	return view
 }
 
-func operationResponse(operation lifecycle.Operation) operationView {
+func operationResponse(operation managed.Operation) operationView {
 	return operationView{
 		ID: operation.ID, RunnerID: operation.RunnerID,
 		FabricID: operation.FabricID, BindingRevision: operation.BindingRevision,
@@ -95,11 +97,11 @@ func operationResponse(operation lifecycle.Operation) operationView {
 }
 
 func (s *Server) managedTemplates(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
-	templates, err := s.options.Managed.Templates(r.Context(), cookie)
+	templates, err := s.options.Managed.Templates(r.Context(), user)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -108,11 +110,11 @@ func (s *Server) managedTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) managedTemplate(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
-	template, err := s.options.Managed.Template(r.Context(), cookie, r.PathValue("fabric"), r.PathValue("template"), r.PathValue("version"))
+	template, err := s.options.Managed.Template(r.Context(), user, r.PathValue("fabric"), r.PathValue("template"), r.PathValue("version"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -121,7 +123,7 @@ func (s *Server) managedTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createManagedRunner(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
@@ -132,19 +134,28 @@ func (s *Server) createManagedRunner(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	created, err := s.options.Managed.Create(r.Context(), cookie, request.RequestKey, request.Request)
+	created, err := s.options.Managed.Create(r.Context(), user, request.RequestKey, request.Request)
 	if err != nil {
 		writeMetadataError(w, err)
+		return
+	}
+	logical, err := s.store.Runner(r.Context(), user.ID, created.Runner.ID)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	if logical.Kind != "managed" || created.Operation.RunnerID != logical.ID {
+		writeMetadataError(w, metadata.ErrInvalidArgument)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, struct {
 		Runner    runner.Runner `json:"runner"`
 		Operation operationView `json:"operation"`
-	}{Runner: created.Runner, Operation: operationResponse(created.Operation)})
+	}{Runner: logical, Operation: operationResponse(created.Operation)})
 }
 
 func (s *Server) destroyManagedRunner(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
@@ -154,20 +165,25 @@ func (s *Server) destroyManagedRunner(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	destroyed, err := s.options.Managed.Destroy(r.Context(), cookie, request.RequestKey, r.PathValue("runner"), s.options.DestroyAccessCloseTimeout)
+	destroyed, err := s.options.Managed.Destroy(r.Context(), user, request.RequestKey, r.PathValue("runner"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
 	}
-	if destroyed.MachineID != "" {
-		s.gateway.Disconnect(destroyed.MachineID)
+	machineID, err := s.store.RevokeManaged(r.Context(), user.ID, r.PathValue("runner"))
+	if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+		writeMetadataError(w, err)
+		return
+	}
+	if machineID != "" {
+		s.gateway.Disconnect(machineID)
 	}
 	writeJSON(w, http.StatusAccepted, struct {
 		Operation         operationView `json:"operation"`
 		AccessClosedAt    time.Time     `json:"access_closed_at"`
 		CloseDeadline     time.Time     `json:"close_deadline"`
 		AccessCloseResult string        `json:"access_close_outcome"`
-	}{Operation: operationResponse(destroyed.Operation), AccessClosedAt: destroyed.AccessClosedAt, CloseDeadline: destroyed.CloseDeadline, AccessCloseResult: destroyed.AccessCloseOutcome})
+	}{Operation: operationResponse(destroyed.Operation), AccessClosedAt: destroyed.AccessClosedAt, CloseDeadline: destroyed.AccessCloseDeadline, AccessCloseResult: destroyed.AccessCloseOutcome})
 }
 
 func (s *Server) pauseManagedRunner(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +195,7 @@ func (s *Server) resumeManagedRunner(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pauseResumeManagedRunner(w http.ResponseWriter, r *http.Request, action string) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
@@ -189,29 +205,34 @@ func (s *Server) pauseResumeManagedRunner(w http.ResponseWriter, r *http.Request
 	if !readJSON(w, r, &request) {
 		return
 	}
-	var mutation lifecycle.ManagedPauseResume
+	var mutation managed.Mutation
 	var err error
 	if action == "pause" {
-		mutation, err = s.options.Managed.Pause(r.Context(), cookie, request.RequestKey, r.PathValue("runner"))
+		mutation, err = s.options.Managed.Pause(r.Context(), user, request.RequestKey, r.PathValue("runner"))
 	} else {
-		mutation, err = s.options.Managed.Resume(r.Context(), cookie, request.RequestKey, r.PathValue("runner"))
+		mutation, err = s.options.Managed.Resume(r.Context(), user, request.RequestKey, r.PathValue("runner"))
 	}
 	if err != nil {
 		writeMetadataError(w, err)
 		return
 	}
-	if action == "pause" && mutation.MachineID != "" {
-		s.gateway.Disconnect(mutation.MachineID)
+	machineID, err := s.store.SetManagedSuspended(r.Context(), user.ID, r.PathValue("runner"), action == "pause")
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	if action == "pause" && machineID != "" {
+		s.gateway.Drop(machineID)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"operation": operationResponse(mutation.Operation)})
 }
 
 func (s *Server) managedOperation(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
-	status, err := s.options.Managed.Status(r.Context(), cookie, r.PathValue("operation"))
+	status, err := s.options.Managed.Status(r.Context(), user, r.PathValue("operation"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -220,11 +241,11 @@ func (s *Server) managedOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) managedRunnerStatus(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
-	status, err := s.options.Managed.RunnerStatus(r.Context(), cookie, r.PathValue("runner"))
+	status, err := s.options.Managed.RunnerStatus(r.Context(), user, r.PathValue("runner"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -233,7 +254,7 @@ func (s *Server) managedRunnerStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createManagedReview(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
@@ -246,7 +267,7 @@ func (s *Server) createManagedReview(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	review, err := s.options.Managed.Review(r.Context(), cookie, request.RequestKey, lifecycle.ReviewRequest{OperationID: r.PathValue("operation"), Mode: request.Mode, Candidate: request.Candidate, Reason: request.Reason})
+	review, err := s.options.Managed.Review(r.Context(), user, request.RequestKey, managed.ReviewRequest{OperationID: r.PathValue("operation"), Mode: request.Mode, Candidate: request.Candidate, Reason: request.Reason})
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -255,11 +276,11 @@ func (s *Server) createManagedReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) managedReview(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
-	review, err := s.options.Managed.ReviewStatus(r.Context(), cookie, r.PathValue("review"))
+	review, err := s.options.Managed.ReviewStatus(r.Context(), user, r.PathValue("review"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -268,11 +289,11 @@ func (s *Server) managedReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) managedOperationReview(w http.ResponseWriter, r *http.Request) {
-	_, cookie, ok := s.user(w, r)
+	user, _, ok := s.user(w, r)
 	if !ok {
 		return
 	}
-	review, err := s.options.Managed.OperationReview(r.Context(), cookie, r.PathValue("operation"))
+	review, err := s.options.Managed.OperationReview(r.Context(), user, r.PathValue("operation"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return

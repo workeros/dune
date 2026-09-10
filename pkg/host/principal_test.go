@@ -34,7 +34,7 @@ func TestPrincipalAdministrationHonorsApplicationLifecycle(t *testing.T) {
 	cookie := out.Result().Cookies()[0]
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := app.SetPrincipalEnabled(canceled, user.ID, false); !errors.Is(err, context.Canceled) {
+	if err := app.SetUserEnabled(canceled, user.ID, false); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled administration accepted", err)
 	}
 	me := httptest.NewRequest("GET", "/dune/api/me", nil)
@@ -47,7 +47,7 @@ func TestPrincipalAdministrationHonorsApplicationLifecycle(t *testing.T) {
 	if err := app.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.SetPrincipalEnabled(context.Background(), user.ID, false); err == nil {
+	if err := app.SetUserEnabled(context.Background(), user.ID, false); err == nil {
 		t.Fatal("closed host admitted administration")
 	}
 }

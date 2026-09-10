@@ -3,14 +3,11 @@ module github.com/aiomni/dune
 go 1.27.0
 
 require (
-	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/creack/pty v1.1.24
 	github.com/fasthttp/websocket v1.5.12
-	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/valyala/fasthttp v1.62.0
-	golang.org/x/oauth2 v0.36.0
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0

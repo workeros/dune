@@ -27,7 +27,7 @@ func (a *App) Readiness() Readiness {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	core := a.core.Status()
-	serving := !a.closed && a.ctx.Err() == nil && a.admission.Remaining() > 0
+	serving := !a.closed && a.ctx.Err() == nil
 	peerReady := a.peer == nil || a.peer.Ready()
 	return Readiness{Accepting: serving && !a.draining && core.Accepting && peerReady, Serving: serving, Draining: a.draining, Requests: a.requests, Gateway: core}
 }
@@ -72,7 +72,6 @@ func (a *App) beginDrainLocked() {
 		return
 	}
 	a.draining = true
-	close(a.managedDrain)
 	if a.requests == 0 {
 		close(a.requestsDone)
 	}
@@ -99,7 +98,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 		servers = append(servers, srv)
 	}
 	a.mu.Unlock()
-	for _, done := range []<-chan struct{}{a.requestsDone, streamsDone, a.managedDone} {
+	for _, done := range []<-chan struct{}{a.requestsDone, streamsDone} {
 		select {
 		case <-done:
 		case <-ctx.Done():

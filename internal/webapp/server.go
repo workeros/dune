@@ -18,13 +18,13 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
-	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
-	"github.com/aiomni/dune/pkg/fabric"
 	"github.com/aiomni/dune/pkg/gateway"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
+	"github.com/aiomni/dune/pkg/managed"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -33,8 +33,11 @@ import (
 
 const cookieName = "dune_session"
 
+func (s *Server) setSession(w http.ResponseWriter, token string, lifetime time.Duration) {
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, HttpOnly: true, Secure: strings.HasPrefix(s.urls.PublicURL, "https://"), SameSite: http.SameSiteStrictMode, Path: s.urls.CookiePath, MaxAge: int(lifetime.Seconds())})
+}
+
 type Options struct {
-	External   *identity.External
 	Binaries   string
 	Assets     string
 	PublicURL  string
@@ -43,27 +46,8 @@ type Options struct {
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
 	// Online optionally reads shared directory facts for already authorized IDs.
-	Online                    func(context.Context, []string) (map[string]bool, error)
-	Admission                 *gateway.AdmissionLease
-	Managed                   ManagedService
-	DestroyAccessCloseTimeout time.Duration
-}
-
-// ManagedService is the finite lifecycle surface used by the reusable Web API.
-// Hosts may omit it; startup discovery and every route then report Managed as
-// unavailable without weakening Attached behavior.
-type ManagedService interface {
-	Templates(context.Context, string) ([]fabric.TemplateStatus, error)
-	Template(context.Context, string, string, string, string) (fabric.TemplateStatus, error)
-	Create(context.Context, string, string, fabric.CreateRequest) (lifecycle.Creation, error)
-	Destroy(context.Context, string, string, string, time.Duration) (lifecycle.ManagedDestruction, error)
-	Pause(context.Context, string, string, string) (lifecycle.ManagedPauseResume, error)
-	Resume(context.Context, string, string, string) (lifecycle.ManagedPauseResume, error)
-	Status(context.Context, string, string) (lifecycle.ManagedStatus, error)
-	RunnerStatus(context.Context, string, string) (lifecycle.ManagedStatus, error)
-	Review(context.Context, string, string, lifecycle.ReviewRequest) (lifecycle.Review, error)
-	ReviewStatus(context.Context, string, string) (lifecycle.Review, error)
-	OperationReview(context.Context, string, string) (lifecycle.Review, error)
+	Online  func(context.Context, []string) (map[string]bool, error)
+	Managed managed.Service
 }
 
 type authRate struct {
@@ -73,7 +57,7 @@ type authRate struct {
 
 type Server struct {
 	store     *metadata.Store
-	identity  identity.Service
+	identity  publicidentity.Service
 	access    *authorization.Service
 	urls      deployment.URLs
 	gateway   *gateway.Gateway
@@ -86,8 +70,8 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
-func NewServer(parent context.Context, options Options, store *metadata.Store, local identity.Service, authorizer *authorization.Service, core *gateway.Gateway) (*Server, error) {
-	if options.DialGateway == nil || local == nil || authorizer == nil || core == nil {
+func NewServer(parent context.Context, options Options, store *metadata.Store, service publicidentity.Service, authorizer *authorization.Service, core *gateway.Gateway) (*Server, error) {
+	if options.DialGateway == nil || service == nil || authorizer == nil || core == nil {
 		return nil, fmt.Errorf("Gateway, dialer, identity and access modules required")
 	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
@@ -96,19 +80,16 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, l
 	}
 	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
-	s := &Server{urls: addresses, store: store, identity: local, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	s := &Server{urls: addresses, store: store, identity: service, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = core
 	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		binding, handler, err := authorizer.Authorize(credential)
-		binding.Admission = options.Admission
 		return binding, handler, err
 	}))
-	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
-	s.mux.HandleFunc("POST /api/auth/login", s.login)
-	if options.External != nil {
-		s.mux.HandleFunc("GET /api/auth/external/start", s.externalStart)
-		s.mux.HandleFunc("GET /api/auth/external/callback", s.externalCallback)
+	if _, ok := service.(publicidentity.PasswordService); ok {
+		s.mux.HandleFunc("POST /api/auth/register", s.register)
+		s.mux.HandleFunc("POST /api/auth/login", s.login)
 	}
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/me", s.me)
@@ -279,7 +260,8 @@ func (s *Server) authAllowedFor(w http.ResponseWriter, r *http.Request, group st
 }
 
 func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
-	if s.options.External != nil {
+	password, ok := s.identity.(publicidentity.PasswordService)
+	if !ok {
 		writeError(w, 403, "LOCAL_LOGIN_DISABLED", "此站点使用企业登录。")
 		return
 	}
@@ -298,9 +280,9 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 	var token string
 	var err error
 	if register {
-		user, token, err = s.identity.Register(r.Context(), request.Email, request.Password)
+		user, token, err = password.Register(r.Context(), request.Email, request.Password)
 	} else {
-		user, token, err = s.identity.Login(r.Context(), request.Email, request.Password)
+		user, token, err = password.Login(r.Context(), request.Email, request.Password)
 	}
 	if err != nil {
 		writeMetadataError(w, err)

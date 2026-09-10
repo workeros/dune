@@ -86,7 +86,7 @@ func TestShutdownFinishesOrCancelsAcceptedHTTP(t *testing.T) {
 						t.Fatal("draining response", path, response.StatusCode)
 					}
 				}
-				if err := app.SetPrincipalEnabled(context.Background(), "late", false); err == nil {
+				if err := app.SetUserEnabled(context.Background(), "late", false); err == nil {
 					t.Fatal("drain admitted administration")
 				}
 				if complete {

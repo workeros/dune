@@ -22,14 +22,14 @@ const ownerLeaseLimit = 15 * time.Second
 // shared directory. Each Gateway receives a fresh process identity. Address must
 // reach this instance directly; the application validates its transport-specific
 // address and supplies a trusted directory and
-// recovery generation. The caller owns the directory and its storage lifecycle.
+// The caller owns the directory and its storage lifecycle.
 // This constructor does not provide a peer transport for remote SDK routing.
-func NewWithDirectory(directory Directory, address, recovery string) (*Gateway, error) {
-	if directory == nil || !wire.ValidID(recovery) || address == "" || len(address) > 2048 || strings.ContainsFunc(address, unicode.IsControl) {
-		return nil, fmt.Errorf("directory, recovery generation and direct instance address required")
+func NewWithDirectory(directory Directory, address string) (*Gateway, error) {
+	if directory == nil || address == "" || len(address) > 2048 || strings.ContainsFunc(address, unicode.IsControl) {
+		return nil, fmt.Errorf("directory and direct instance address required")
 	}
 	g := New()
-	g.directory, g.ownerAddress, g.recovery, g.bootID = directory, address, recovery, wire.ID()
+	g.directory, g.ownerAddress, g.bootID = directory, address, wire.ID()
 	return g, nil
 }
 
@@ -63,7 +63,7 @@ func (g *Gateway) acquireOwner(ctx context.Context, binding api.Binding) (*owner
 		}
 		expected = previous.Epoch
 	}
-	claim := RouteClaim{Target: binding.Target, OwnerBootID: g.bootID, OwnerAddress: g.ownerAddress, RecoveryGeneration: g.recovery, Binding: binding}
+	claim := RouteClaim{Target: binding.Target, OwnerBootID: g.bootID, OwnerAddress: g.ownerAddress, Binding: binding}
 	started := time.Now()
 	bounded, cancel := context.WithTimeout(ctx, directoryTimeout)
 	defer cancel()

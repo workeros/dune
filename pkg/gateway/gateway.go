@@ -26,20 +26,20 @@ type route struct {
 }
 
 type Gateway struct {
-	directory                      Directory
-	ownerAddress, recovery, bootID string
-	dialPeer                       PeerDialer
-	mu                             sync.Mutex
-	observeMu                      sync.RWMutex
-	observer                       func(observe.Event)
-	closed, draining               bool
-	drained                        chan struct{}
-	routes                         map[string]*route
-	sessions                       map[*yamux.Session]BindingContext
-	blocked                        map[string]chan struct{}
-	targetStreams                  map[string]int
-	slots                          chan struct{}
-	streams                        chan struct{}
+	directory            Directory
+	ownerAddress, bootID string
+	dialPeer             PeerDialer
+	mu                   sync.Mutex
+	observeMu            sync.RWMutex
+	observer             func(observe.Event)
+	closed, draining     bool
+	drained              chan struct{}
+	routes               map[string]*route
+	sessions             map[*yamux.Session]BindingContext
+	blocked              map[string]chan struct{}
+	targetStreams        map[string]int
+	slots                chan struct{}
+	streams              chan struct{}
 }
 
 func New() *Gateway {
@@ -102,6 +102,23 @@ func (g *Gateway) Disconnect(target string) <-chan struct{} {
 		sess.Close()
 	}
 	return done
+}
+
+// Drop closes current sessions for target without permanently blocking a
+// future connector. It is used after a Managed provider has accepted pause;
+// durable suspension in metadata prevents reconnect until resume.
+func (g *Gateway) Drop(target string) {
+	g.mu.Lock()
+	var sessions []*yamux.Session
+	for session, binding := range g.sessions {
+		if binding.Target == target {
+			sessions = append(sessions, session)
+		}
+	}
+	g.mu.Unlock()
+	for _, session := range sessions {
+		session.Close()
+	}
 }
 
 func (g *Gateway) finishDisconnectLocked(target string) {
@@ -254,7 +271,7 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 		r.admission = binding.Admission
 		defer r.s.Close()
 	}
-	if h.Role == RolePeer && (r.owner == nil || m.Incarnation != r.b.Incarnation || m.ConnectionGeneration != r.b.Generation || m.RouteRecovery != r.b.RouteRecovery || m.RouteEpoch != r.b.RouteEpoch) {
+	if h.Role == RolePeer && (r.owner == nil || m.Incarnation != r.b.Incarnation || m.ConnectionGeneration != r.b.Generation || m.RouteEpoch != r.b.RouteEpoch) {
 		st.Fail("ROUTE_STALE", ErrRouteStale)
 		return nil
 	}

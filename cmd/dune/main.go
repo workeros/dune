@@ -39,7 +39,7 @@ func run() error {
 		return fmt.Errorf("a Web or connector command is required; use dune help")
 	}
 	if args[0] == "help" || args[0] == "version" {
-		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--identity-config FILE] [--cluster-config FILE]\n  dune metadata cluster-recovery --database-config FILE [--rotate-from GENERATION]\n  dune --config FILE enroll --site URL --token TOKEN\n  dune --config FILE service install|restart|stop|status [--name dune]")
+		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN\n  dune --config FILE service install|restart|stop|status [--name dune]")
 		return nil
 	}
 	if args[0] == "init" {
@@ -70,9 +70,6 @@ func run() error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if args[0] == "metadata" {
-		return runMetadata(ctx, args[1:])
-	}
 	machineConfig, err := config.Load(*configPath)
 	if err != nil {
 		return fmt.Errorf("%w; initialize with dune init", err)
@@ -106,9 +103,7 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 	flags := flag.NewFlagSet("web", flag.ContinueOnError)
 	data := flags.String("data", ".local/web-accounts", "private SQLite metadata directory")
 	databaseFile := flags.String("database-config", "", "private SQL configuration; replaces the default SQLite data directory")
-	configurationVersion := flags.String("configuration-version", "", "shared nonsecret version of custom identity and policy settings")
 	clusterFile := flags.String("cluster-config", "", "private PostgreSQL cluster and mutual TLS peer configuration")
-	identityFile := flags.String("identity-config", "", "private OIDC configuration; replaces local password login")
 	assets := flags.String("assets", "web/dist", "built React assets directory")
 	binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 	publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
@@ -119,14 +114,7 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	options := host.Options{ConfigurationVersion: *configurationVersion, DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
-	if *identityFile != "" {
-		identity, err := config.Identity(ctx, *identityFile)
-		if err != nil {
-			return err
-		}
-		options.Identity = &identity
-	}
+	options := host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
 	if *databaseFile != "" {
 		dataSet := false
 		flags.Visit(func(f *flag.Flag) {
@@ -152,7 +140,7 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 		if err != nil {
 			return err
 		}
-		options.Cluster = &host.ClusterOptions{RecoveryGeneration: cluster.RecoveryGeneration, Peer: cluster.Peer}
+		options.Cluster = &host.ClusterOptions{Peer: cluster.Peer}
 		peerListen = cluster.Listen
 	}
 	return runWeb(ctx, machineConfig, options, *webListen, peerListen, *drainTimeout)

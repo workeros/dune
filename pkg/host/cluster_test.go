@@ -13,7 +13,7 @@ import (
 
 func TestClusterRejectsInvalidConfigurationBeforeStorage(t *testing.T) {
 	for _, database := range []*storage.Config{nil, {Postgres: &storage.Postgres{URL: "invalid"}}} {
-		options := host.Options{PublicURL: "http://example.test/", Database: database, Cluster: &host.ClusterOptions{RecoveryGeneration: "invalid"}}
+		options := host.Options{PublicURL: "http://example.test/", Database: database, Cluster: &host.ClusterOptions{}}
 		if database == nil {
 			options.DataDir = filepath.Join(t.TempDir(), "untouched")
 		}

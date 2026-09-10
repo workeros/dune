@@ -23,7 +23,6 @@ import (
 	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
-	"github.com/aiomni/dune/internal/wire"
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,7 +39,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	}
 	databaseFile := filepath.Join(dir, "database.yaml")
 	writeYAML(databaseFile, map[string]any{"postgres": map[string]string{"url": postgresWorkbenchURL(t, database)}})
-	ca, recovery := testcert.New(t), wire.ID()
+	ca := testcert.New(t)
 	sites := make([]string, 3)
 	for i := range sites {
 		instanceDir := filepath.Join(dir, fmt.Sprint(i))
@@ -62,7 +61,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 			must(t, os.WriteFile(filepath.Join(instanceDir, name), data, 0600))
 		}
 		clusterFile := filepath.Join(instanceDir, "cluster.yaml")
-		writeYAML(clusterFile, map[string]any{"recovery_generation": recovery, "peer": map[string]string{"listen": peerAddress, "address": "https://" + peerAddress + "/private/peer", "certificate": "cert.pem", "key": "key.pem", "ca": "ca.pem"}})
+		writeYAML(clusterFile, map[string]any{"peer": map[string]string{"listen": peerAddress, "address": "https://" + peerAddress + "/private/peer", "certificate": "cert.pem", "key": "key.pem", "ca": "ca.pem"}})
 		localFile := filepath.Join(instanceDir, "local.yaml")
 		must(t, config.Create(localFile, config.Config{Gateway: "ws://" + publicAddress + "/dune/tunnel", Listen: publicAddress, Token: strings.Repeat("x", 32), Target: "unused-local-token"}))
 		log, err := os.Create(filepath.Join(instanceDir, "web.log"))

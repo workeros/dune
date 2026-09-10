@@ -3,7 +3,6 @@ package tests
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -25,15 +24,12 @@ import (
 	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
-	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
-	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
-	"github.com/aiomni/dune/pkg/transport/ws"
 	"github.com/fasthttp/websocket"
 )
 
@@ -45,10 +41,11 @@ func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 }
 
 type workbenchCase struct {
-	override, external, separateGateway bool
-	cluster                             bool
-	enterprise, runnerEntry             bool
-	database                            *storage.Config
+	override, external bool
+	cluster            bool
+	enterprise         bool
+	runnerEntry        bool
+	database           *storage.Config
 }
 
 func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
@@ -64,7 +61,6 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	var sharedPrincipal atomic.Value
 	var policyRevoked, sharedExecution atomic.Bool
 	if mode.enterprise {
-		options.ConfigurationVersion = "enterprise-test-v1"
 		options.AccessChecker = enterpriseCheck(func(ctx context.Context, r access.Request) (access.Decision, error) {
 			shared, _ := sharedPrincipal.Load().(string)
 			allowed := r.PrincipalID == r.OwnerID || (shared != "" && r.PrincipalID == shared)
@@ -87,12 +83,12 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	var peerListener net.Listener
 	var newCluster func() (*host.ClusterOptions, net.Listener)
 	if mode.cluster {
-		ca, recovery := testcert.New(t), wire.ID()
+		ca := testcert.New(t)
 		newCluster = func() (*host.ClusterOptions, net.Listener) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			must(t, err)
 			t.Cleanup(func() { listener.Close() })
-			return &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{
+			return &host.ClusterOptions{Peer: peer.Config{
 				Address:     "https://" + listener.Addr().String() + "/private/peer",
 				Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots(),
 			}}, listener
@@ -114,37 +110,25 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			}
 		})
 	}
-	if mode.separateGateway || mode.cluster {
+	if mode.cluster {
 		if mode.database == nil {
-			t.Fatal("separate gateway requires PostgreSQL")
+			t.Fatal("cluster workbench requires PostgreSQL")
 		}
 		remote := httptest.NewUnstartedServer(nil)
 		remoteSite := "http://" + remote.Listener.Addr().String() + "/tools/dune/"
-		onlineSite = remoteSite
-		remoteOptions := host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker, ConfigurationVersion: options.ConfigurationVersion}
+		remoteOptions := host.Options{PublicURL: remoteSite, Database: mode.database, AccessChecker: options.AccessChecker}
 		var remotePeer net.Listener
-		if mode.cluster {
-			remoteOptions.Cluster, remotePeer = newCluster()
-		}
+		remoteOptions.Cluster, remotePeer = newCluster()
 		remoteApp, err := host.Open(ctx, remoteOptions)
 		must(t, err)
 		defer remoteApp.Close()
-		if mode.cluster {
-			servePeer(remoteApp, remotePeer)
-		}
+		servePeer(remoteApp, remotePeer)
 		remote.Config.Handler = remoteApp
 		remote.Start()
 		defer remote.Close()
 		ownerGateway = "ws" + strings.TrimPrefix(remoteSite, "http") + "tunnel"
-		if mode.cluster {
-			// Keep all user entry points on A. Only fabricd connects to owner B.
-			onlineSite = site
-		} else {
-			options.GatewayURL = ownerGateway
-			options.DialGateway = func(ctx context.Context, token string) (net.Conn, error) {
-				return ws.Dial(ctx, options.GatewayURL, token, &tls.Config{MinVersion: tls.VersionTLS12})
-			}
-		}
+		// Keep all user entry points on A. Only fabricd connects to owner B.
+		onlineSite = site
 	}
 	if mode.override {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -417,12 +401,12 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	if app != nil {
 		started := time.Now()
-		must(t, app.SetPrincipalEnabled(ctx, user.ID, false))
+		must(t, app.SetUserEnabled(ctx, user.ID, false))
 		awaitRevocation()
 		t.Logf("principal suspension closed idle terminal in %s", time.Since(started))
 		for _, reenable := range []bool{false, true} {
 			if reenable {
-				must(t, app.SetPrincipalEnabled(ctx, user.ID, true))
+				must(t, app.SetUserEnabled(ctx, user.ID, true))
 			}
 			response, err := browser.Get(site + "api/me")
 			must(t, err)
@@ -436,23 +420,6 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		do("POST", executionRoute("call"), map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
 			t.Fatal("principal suspension changed the running PTY")
-		}
-		connection.Close()
-		connection = connect()
-		readPrefixedTerminalMarker(t, connection)
-		_, err := app.LinkIdentity(ctx, identity.LinkRequest{RequestID: "terminal-link", Actor: "admin:regression", PrincipalID: user.ID, Namespace: "https://identity.example.test", Subject: "terminal-owner", Reason: "verified regression account ownership"})
-		must(t, err)
-		awaitRevocation()
-		response, err := browser.Get(site + "api/me")
-		must(t, err)
-		response.Body.Close()
-		if response.StatusCode != http.StatusUnauthorized {
-			t.Fatal("pre-link session survived")
-		}
-		do("POST", "api/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
-		do("POST", executionRoute("call"), map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
-		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
-			t.Fatal("identity link changed the running PTY")
 		}
 		connection.Close()
 		connection = connect()

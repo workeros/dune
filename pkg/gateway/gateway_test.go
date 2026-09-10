@@ -119,6 +119,29 @@ func TestMandatoryHandlerAndConnectionOwnership(t *testing.T) {
 	}
 }
 
+func TestDropClosesCurrentTargetButAllowsReentry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	g := gateway.New()
+	defer g.Close()
+	_, daemonHandler, err := (access.Grant{Target: "machine", Role: gateway.RoleDaemon}).Bind()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := session(t, ctx, g, gateway.RoleDaemon, daemonHandler)
+	g.Drop("machine")
+	for (g.Online("machine") || !first.IsClosed()) && ctx.Err() == nil {
+		time.Sleep(time.Millisecond)
+	}
+	if ctx.Err() != nil || !first.IsClosed() {
+		t.Fatal("drop did not close the current target session")
+	}
+	second := session(t, ctx, g, gateway.RoleDaemon, daemonHandler)
+	if second.IsClosed() || !g.Online("machine") {
+		t.Fatal("drop permanently blocked a future target session")
+	}
+}
+
 func TestRequestDeniedBeforeForwarding(t *testing.T) {
 	h := &handler{open: func(context.Context, *pb.Message, *gateway.Stream) (gateway.StreamHandler, error) {
 		return nil, errors.New("denied")

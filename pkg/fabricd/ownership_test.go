@@ -74,12 +74,11 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery := wire.ID()
-	d1, err := first.ConnectionDirectory(ctx, recovery)
+	d1, err := first.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d2, err := second.ConnectionDirectory(ctx, recovery)
+	d2, err := second.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +96,11 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	server1, peer1 := newPeer()
 	server2, peer2 := newPeer()
 	entryServer, entryPeer := newPeer()
-	g1, err := gateway.NewWithDirectory(d1, peer1.Address(), recovery)
+	g1, err := gateway.NewWithDirectory(d1, peer1.Address())
 	if err != nil {
 		t.Fatal(err)
 	}
-	g2, err := gateway.NewWithDirectory(d2, peer2.Address(), recovery)
+	g2, err := gateway.NewWithDirectory(d2, peer2.Address())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +120,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, err := gateway.NewWithPeers(d2, entryPeer.Address(), recovery, func(dialCtx context.Context, source string, destination gateway.Route) (net.Conn, error) {
+	entry, err := gateway.NewWithPeers(d2, entryPeer.Address(), func(dialCtx context.Context, source string, destination gateway.Route) (net.Conn, error) {
 		peerDials.Add(1)
 		return entryPeer.Dial(dialCtx, source, destination)
 	})
@@ -222,7 +221,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		t.Fatal("entry allow bypassed owner policy")
 	}
 	ownerChecker.denied.Store(false)
-	if original.Binding.RouteEpoch != 1 || original.Binding.RouteRecovery != recovery {
+	if original.Binding.RouteEpoch != 1 {
 		t.Fatal("SDK did not receive fixed ownership", original.Binding)
 	}
 	owned, err := d2.Resolve(ctx, machine.ID)
@@ -297,7 +296,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if peerDials.Load() != 2 {
 		t.Fatal("peer route was retried instead of explicitly reconnected", peerDials.Load())
 	}
-	if current.Binding.RouteEpoch != 2 || current.Binding.RouteRecovery != recovery || current.Binding.Incarnation != snapshot.Incarnation || current.Binding.Generation <= snapshot.Generation {
+	if current.Binding.RouteEpoch != 2 || current.Binding.Incarnation != snapshot.Incarnation || current.Binding.Generation <= snapshot.Generation {
 		t.Fatal("reconnection did not advance ownership independently", current.Binding)
 	}
 	if err := d1.Release(ctx, owned.Route); !errors.Is(err, gateway.ErrRouteStale) {
@@ -356,20 +355,6 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if _, err := current.List(ctx); err == nil {
 		t.Fatal("revoked peer user opened another request")
 	}
-	// Restore fencing must reach a running owner via its next directory renewal.
-	if _, err := second.RotateConnectionRecovery(ctx, recovery); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(7 * time.Second)
-	for g2.Online(machine.ID) {
-		if time.Now().After(deadline) {
-			t.Fatal("old recovery kept its live tunnel")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if _, err := current.List(ctx); err == nil {
-		t.Fatal("old recovery still executes")
-	}
 }
 
 type peerOwnerChecker struct{ denied atomic.Bool }
@@ -386,9 +371,9 @@ type peerEntryRepository struct {
 	stale atomic.Bool
 }
 
-func (r *peerEntryRepository) CheckAccess(ctx context.Context, c authorization.ConnectionAccess, now int64) (bool, error) {
+func (r *peerEntryRepository) CheckRunnerAccess(ctx context.Context, c authorization.ConnectionAccess) (bool, error) {
 	if r.stale.Load() {
 		return true, nil
 	}
-	return r.Repository.CheckAccess(ctx, c, now)
+	return r.Repository.CheckRunnerAccess(ctx, c)
 }

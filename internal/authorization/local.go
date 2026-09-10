@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
@@ -31,6 +32,9 @@ type Service struct {
 	sessions  Sessions
 	bindings  Repository
 	bootID    string
+	mu        sync.Mutex
+	tickets   map[string]ConnectionAccess
+	peerSeen  map[string]time.Time
 }
 
 func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Service {
@@ -44,7 +48,7 @@ func NewObserved(ctx context.Context, sessions Sessions, bindings Repository, ch
 	if checker == nil {
 		checker = access.Owner{}
 	}
-	return &Service{ctx: ctx, sessions: sessions, bindings: bindings, ownerOnly: ownerOnly, checker: &boundedChecker{Checker: checker, slots: make(chan struct{}, 64)}, observer: observer}
+	return &Service{ctx: ctx, sessions: sessions, bindings: bindings, ownerOnly: ownerOnly, checker: &boundedChecker{Checker: checker, slots: make(chan struct{}, 64)}, observer: observer, tickets: map[string]ConnectionAccess{}, peerSeen: map[string]time.Time{}}
 }
 
 func (l *Service) evaluate(ctx context.Context, request access.Request) (access.Decision, error) {
@@ -97,22 +101,27 @@ func (l *Service) client(ctx context.Context, session, target string, authentica
 	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
 	defer cancel()
 	token := ticketPrefix + wire.ID() + wire.ID()
-	var record ConnectionAccess
-	expires := time.Now().Add(TicketLifetime).Unix()
-	record, err = l.bindings.CreateRunnerAccess(ctx, credentialHash(token), credentialHash(session), user.ID, user.Namespace, expected, expires)
-	if err != nil {
-		return nil, err
+	record := ConnectionAccess{Session: session, PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, Target: expected.MachineID, RunnerID: expected.RunnerID, FabricID: expected.FabricID, BindingRevision: expected.Revision, OwnerID: resource.OwnerID, ExpiresAt: time.Now().Add(TicketLifetime).Unix()}
+	l.mu.Lock()
+	now := time.Now().Unix()
+	pending := 0
+	for key, ticket := range l.tickets {
+		if ticket.ExpiresAt <= now {
+			delete(l.tickets, key)
+		} else if ticket.Session == session {
+			pending++
+		}
 	}
-	if record.OwnerID != resource.OwnerID || record.Subject != user.Subject {
-		_ = l.bindings.DeleteAccess(ctx, credentialHash(token))
-		return nil, runner.ErrBindingChanged
+	if pending >= 64 || len(l.tickets) >= maxPendingTickets {
+		l.mu.Unlock()
+		return nil, identity.ErrLoginLimit
 	}
+	l.tickets[token] = record
+	l.mu.Unlock()
 	return &ClientGrant{token: token, expires: record.ExpiresAt, valid: l.validAccess(record), release: func() {
-		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
-		defer cancel()
-		// Cleanup is best-effort; expiry bounds an unconsumed ticket if storage
-		// is unavailable. Consumed tickets have already been deleted atomically.
-		_ = l.bindings.DeleteAccess(ctx, credentialHash(token))
+		l.mu.Lock()
+		delete(l.tickets, token)
+		l.mu.Unlock()
 	}}, nil
 }
 
@@ -124,7 +133,11 @@ func (l *Service) validAccess(record ConnectionAccess) func() bool {
 		}
 		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
 		defer cancel()
-		valid, err := l.bindings.CheckAccess(ctx, record, time.Now().Unix())
+		user, err := l.sessions.Authenticate(ctx, record.Session)
+		if err != nil || user.ID != record.PrincipalID || user.Namespace != record.Namespace || user.Subject != record.Subject {
+			return false
+		}
+		valid, err := l.bindings.CheckRunnerAccess(ctx, record)
 		return err == nil && valid
 	}
 }
@@ -141,11 +154,17 @@ func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.Conne
 		if len(token) != len(ticketPrefix)+64 {
 			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
-		record, err := l.bindings.ConsumeAccess(ctx, credentialHash(token), l.sessions.Namespace(), time.Now().Unix())
-		if err != nil {
-			return gateway.BindingContext{}, nil, err
+		l.mu.Lock()
+		record, found := l.tickets[token]
+		delete(l.tickets, token)
+		l.mu.Unlock()
+		if !found {
+			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
 		if record.ExpiresAt <= time.Now().Unix() {
+			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
+		}
+		if !l.validAccess(record)() {
 			return gateway.BindingContext{}, nil, identity.ErrUnauthorized
 		}
 		fixed := record.Scope()

@@ -16,8 +16,4 @@ func TestEnterpriseSharedExecutionAndRevocation(t *testing.T) {
 	t.Run("sqlite", func(t *testing.T) {
 		testPrefixedWorkbench(t, workbenchCase{enterprise: true, runnerEntry: true})
 	})
-	t.Run("postgres-separate-gateway", func(t *testing.T) {
-		database := postgresWorkbenchConfig(t)
-		testPrefixedWorkbench(t, workbenchCase{database: &database, separateGateway: true, enterprise: true, runnerEntry: true})
-	})
 }

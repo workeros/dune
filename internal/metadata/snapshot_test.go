@@ -2,7 +2,6 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +9,14 @@ import (
 	"github.com/aiomni/dune/pkg/storage"
 )
 
-func TestSnapshotSchemaCoverage(t *testing.T) {
+var localTables = []struct{ name, columns string }{
+	{"dune_users", "id,email,salt,password_hash,enabled,auth_version"},
+	{"dune_sessions", "hash,user_id,expires_at,auth_version"},
+	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,enabled,suspended,created_at"},
+	{"dune_enrollments", "hash,owner_id,namespace,subject,name,runner_id,kind,fabric_id,expires_at"},
+}
+
+func TestLocalSQLiteSchemaIsExactlyFourTables(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")})
 	if err != nil {
@@ -18,81 +24,39 @@ func TestSnapshotSchemaCoverage(t *testing.T) {
 	}
 	defer s.Close()
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(snapshotTables) {
-		t.Fatal("snapshot manifest omits a schema table", err)
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(localTables) {
+		t.Fatal("local SQLite schema must contain exactly four logical tables", total, err)
 	}
-	for _, table := range snapshotTables {
+	for _, table := range localTables {
 		rows, err := s.db.QueryContext(ctx, "SELECT * FROM "+table.name+" LIMIT 0")
 		if err != nil {
 			t.Fatal(err)
 		}
-		columns, err := rows.Columns()
+		columns, columnErr := rows.Columns()
 		rows.Close()
-		if err != nil || strings.Join(columns, ",") != table.columns {
-			t.Fatalf("snapshot columns for %s: %v (%v)", table.name, columns, err)
+		if columnErr != nil || strings.Join(columns, ",") != table.columns {
+			t.Fatalf("columns for %s: %v (%v)", table.name, columns, columnErr)
 		}
 	}
 }
 
-func snapshotRecords(t *testing.T, s *Store) map[string]string {
-	t.Helper()
-	result := make(map[string]string)
-	for _, table := range snapshotTables {
-		rows, err := s.db.Query("SELECT " + table.columns + " FROM " + table.name + " ORDER BY " + table.columns)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var records [][]any
-		for rows.Next() {
-			values := make([]any, len(strings.Split(table.columns, ",")))
-			pointers := make([]any, len(values))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
+func TestPostgresLogicalTableCounts(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		external bool
+		want     int
+	}{{"local", false, 5}, {"enterprise", true, 3}} {
+		t.Run(test.name, func(t *testing.T) {
+			config, _, _ := postgresConfig(t)
+			s, err := Open(context.Background(), config, OpenOptions{ExternalIdentity: test.external})
+			if err != nil {
 				t.Fatal(err)
 			}
-			records = append(records, values)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, err := json.Marshal(records)
-		if err != nil {
-			t.Fatal(err)
-		}
-		result[table.name] = string(encoded)
+			defer s.Close()
+			var count int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema()`).Scan(&count); err != nil || count != test.want {
+				t.Fatal("unexpected Dune table count", count, err)
+			}
+		})
 	}
-	return result
-}
-
-// Snapshot every domain field for rollback and native restore assertions.
-var snapshotTables = []struct{ name, columns string }{
-	{"dune_principals", "id,email,enabled,auth_version"},
-	{"dune_external_identities", "namespace,subject,principal_id"},
-	{"dune_identity_links", "request_id,actor,principal_id,namespace,subject,reason,created_at"},
-	{"dune_discovery_cursors", "id,principal_id,identity_namespace,operation,after_id,expires_at"},
-	{"dune_local_accounts", "principal_id,email,salt,password_hash"},
-	{"dune_sessions", "hash,principal_id,expires_at,auth_version,identity_namespace,identity_subject"},
-	{"dune_login_transactions", "state_hash,browser_hash,namespace,redirect_url,nonce,verifier,expires_at"},
-	{"dune_enrollments", "hash,principal_id,name,expires_at,identity_namespace,identity_subject"},
-	{"dune_runners", "id,owner_id,name,kind,fabric_id,binding_revision,created_at"},
-	{"dune_operations", operationColumns},
-	{"dune_managed_creations", "runner_id,operation_id,specification"},
-	{"dune_managed_resources", resourceColumns},
-	{"dune_managed_maintenance", maintenanceColumns},
-	{"dune_managed_renewals", managedRenewalColumns},
-	{"dune_managed_destroys", managedDestroyColumns},
-	{"dune_managed_access_closures", managedDestroyClosureColumns},
-	{"dune_provider_actions", actionColumns},
-	{"dune_managed_reviews", reviewColumns},
-	{"dune_managed_enrollments", "hash,action_id,operation_id,runner_id,fabric_id,binding_revision,resource_ref,expires_at"},
-	{"dune_machines", "id,runner_id,credential_hash,os,arch"},
-	{"dune_cluster", "id,recovery_generation"},
-	{"dune_instances", instanceColumns},
-	{"dune_routes", routeColumns},
-	{"dune_access_tickets", "hash,session_hash,principal_id,identity_namespace,machine_id,runner_id,fabric_id,binding_revision,auth_version,expires_at,owner_id,identity_subject"},
-	{"dune_peer_access", "hash,session_hash,machine_id,source_boot_id,owner_boot_id,identity_namespace,request_digest,expires_at,context"},
 }

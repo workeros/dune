@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
@@ -14,31 +15,22 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const peerPrefix = "dune_peer_access_"
-
-// PeerReference is matched atomically when consuming a one-shot capability.
-// RequestDigest covers all business bytes and execution/ownership identities,
-// including Runtime identity. Raw commands, payloads and credentials are absent.
-type PeerReference struct {
-	SourceBootID, OwnerBootID, Target, Namespace, RequestDigest string
-}
-
+// PeerAccess is carried only inside the mutually authenticated peer stream.
+// It is short-lived and single-use at the owner. The owner revalidates the
+// enterprise/local session, current Runner state and policy independently.
 type PeerAccess struct {
-	PeerReference
-	Connection ConnectionAccess
-	Request    access.Request
-	DecisionID string
+	Nonce, SourceBootID, OwnerBootID, Target, Namespace, RequestDigest string
+	ExpiresAt                                                          int64
+	Connection                                                         ConnectionAccess
+	Request                                                            access.Request
 }
 
-// WithPeers creates an immutable assembly for one Gateway boot. The underlying
-// repository remains the selected shared Dune transaction domain.
 func (l *Service) WithPeers(bootID string) (*Service, error) {
 	if !wire.ValidID(bootID) {
 		return nil, identity.ErrUnauthorized
 	}
-	peer := *l
-	peer.bootID = bootID
-	return &peer, nil
+	l.bootID = bootID
+	return l, nil
 }
 
 func peerDigest(m *pb.Message) (string, error) {
@@ -54,29 +46,23 @@ func peerDigest(m *pb.Message) (string, error) {
 
 func (l *Service) delegate(record ConnectionAccess) func(context.Context, gateway.Route, *pb.Message, access.Request, access.Decision) ([]byte, error) {
 	return func(ctx context.Context, route gateway.Route, message *pb.Message, request access.Request, decision access.Decision) ([]byte, error) {
-		if l.ctx.Err() != nil || record.Scope() != request.Scope || route.Target != record.Target || route.RecoveryGeneration != message.RouteRecovery || route.Epoch != message.RouteEpoch || !wire.ValidID(route.OwnerBootID) || route.OwnerBootID == l.bootID || !l.validAccess(record)() {
+		if l.ctx.Err() != nil || record.Scope() != request.Scope || route.Target != record.Target || route.Epoch != message.RouteEpoch || !wire.ValidID(route.OwnerBootID) || route.OwnerBootID == l.bootID || !l.validAccess(record)() {
 			return nil, identity.ErrUnauthorized
 		}
 		digest, err := peerDigest(message)
 		if err != nil {
 			return nil, err
 		}
-		value := peerPrefix + wire.ID() + wire.ID()
-		r := PeerAccess{PeerReference: PeerReference{SourceBootID: l.bootID, OwnerBootID: route.OwnerBootID, Target: record.Target, Namespace: record.Namespace, RequestDigest: digest}, Connection: record, Request: request, DecisionID: decision.ID}
-		err = l.bindings.CreatePeerAccess(ctx, credentialHash(value), r, min(TicketLifetime, time.Until(decision.ValidUntil)))
-		if err != nil {
-			return nil, err
+		expiresAt := time.Now().Add(TicketLifetime)
+		if decision.ValidUntil.Before(expiresAt) {
+			expiresAt = decision.ValidUntil
 		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return []byte(value), nil
+		expires := expiresAt.Unix()
+		value := PeerAccess{Nonce: wire.ID(), SourceBootID: l.bootID, OwnerBootID: route.OwnerBootID, Target: record.Target, Namespace: record.Namespace, RequestDigest: digest, ExpiresAt: expires, Connection: record, Request: request}
+		return json.Marshal(value)
 	}
 }
 
-// Peer is only called after the confidential peer transport authenticates the
-// source boot and target. This grants no user authority: Open consumes and checks
-// an independent capability for each request before rechecking current policy.
 func (l *Service) Peer(sourceBootID, target string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 	if l.ctx.Err() != nil || !wire.ValidID(l.bootID) || !wire.ValidID(sourceBootID) || sourceBootID == l.bootID || target == "" {
 		return gateway.BindingContext{}, nil, identity.ErrUnauthorized
@@ -92,23 +78,36 @@ type peerConnection struct {
 func (p *peerConnection) Connected(ctx context.Context, _ *gateway.Connection) error {
 	return ctx.Err()
 }
-func (p *peerConnection) Open(ctx context.Context, m *pb.Message, flow *gateway.Stream) (gateway.StreamHandler, error) {
+
+func (p *peerConnection) Open(ctx context.Context, message *pb.Message, flow *gateway.Stream) (gateway.StreamHandler, error) {
 	l := p.service
-	value := string(m.AccessContext)
-	if l.ctx.Err() != nil || len(value) != len(peerPrefix)+64 || value[:len(peerPrefix)] != peerPrefix || m.Target != p.target {
+	var value PeerAccess
+	now := time.Now()
+	if l.ctx.Err() != nil || json.Unmarshal(message.AccessContext, &value) != nil || !wire.ValidID(value.Nonce) || value.SourceBootID != p.source || value.OwnerBootID != l.bootID || value.Target != p.target || value.Namespace != l.sessions.Namespace() || value.ExpiresAt <= now.Unix() || value.ExpiresAt > now.Add(TicketLifetime).Unix() {
 		return nil, identity.ErrUnauthorized
 	}
-	digest, err := peerDigest(m)
-	if err != nil {
-		return nil, err
-	}
-	r, err := l.bindings.ConsumePeerAccess(ctx, credentialHash(value), PeerReference{SourceBootID: p.source, OwnerBootID: l.bootID, Target: p.target, Namespace: l.sessions.Namespace(), RequestDigest: digest})
-	if err != nil {
-		return nil, err
-	}
-	request, err := access.Describe(r.Connection.Scope(), m)
-	if err != nil || request != r.Request {
+	digest, err := peerDigest(message)
+	if err != nil || digest != value.RequestDigest || value.Connection.Target != p.target {
 		return nil, identity.ErrUnauthorized
 	}
-	return (access.Grant{Target: p.target, Role: gateway.RoleSDK, Valid: l.validAccess(r.Connection), Policy: &access.Policy{Scope: r.Connection.Scope(), Checker: l.checker, Observer: l.observer}}).Open(ctx, m, flow)
+	l.mu.Lock()
+	for nonce, expires := range l.peerSeen {
+		if !now.Before(expires) {
+			delete(l.peerSeen, nonce)
+		}
+	}
+	if _, replayed := l.peerSeen[value.Nonce]; replayed || len(l.peerSeen) >= maxSeenPeerNonces {
+		l.mu.Unlock()
+		return nil, identity.ErrUnauthorized
+	}
+	l.peerSeen[value.Nonce] = time.Unix(value.ExpiresAt, 0)
+	l.mu.Unlock()
+	request, err := access.Describe(value.Connection.Scope(), message)
+	if err != nil || request != value.Request || !l.validAccess(value.Connection)() {
+		return nil, identity.ErrUnauthorized
+	}
+	if _, err := l.evaluate(ctx, request); err != nil {
+		return nil, err
+	}
+	return (access.Grant{Target: p.target, Role: gateway.RoleSDK, Valid: l.validAccess(value.Connection), Policy: &access.Policy{Scope: value.Connection.Scope(), Checker: l.checker, Observer: l.observer}}).Open(ctx, message, flow)
 }

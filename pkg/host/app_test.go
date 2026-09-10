@@ -14,7 +14,33 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/managed"
 )
+
+type managedBinderStub struct {
+	managed.Service
+	access managed.RunnerAccess
+}
+
+func (s *managedBinderStub) BindRunnerAccess(access managed.RunnerAccess) error {
+	if s.access != nil {
+		return errors.New("runner access bound twice")
+	}
+	s.access = access
+	return nil
+}
+
+func TestOpenBindsManagedRunnerAccess(t *testing.T) {
+	service := &managedBinderStub{}
+	app, err := host.Open(context.Background(), host.Options{DataDir: filepath.Join(t.TempDir(), "metadata"), PublicURL: "http://example.test/", Managed: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if service.access == nil {
+		t.Fatal("Managed service did not receive Dune Runner access")
+	}
+}
 
 func await(t *testing.T, done <-chan struct{}) {
 	t.Helper()

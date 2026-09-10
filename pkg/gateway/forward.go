@@ -50,7 +50,7 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 		return
 	}
 	event.RequestID, event.Operation = m.RequestId, m.Operation
-	if m.RouteRecovery != r.b.RouteRecovery || m.RouteEpoch != r.b.RouteEpoch {
+	if m.RouteEpoch != r.b.RouteEpoch {
 		c.Fail("ROUTE_STALE", fmt.Errorf("request belongs to another ownership term"))
 		return
 	}

@@ -9,22 +9,19 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/transport/peer"
 )
 
 // ClusterConfig is the official application's private listener configuration.
 // Go hosts supply host.ClusterOptions and own their listeners directly.
 type ClusterConfig struct {
-	Listen             string
-	RecoveryGeneration string
-	Peer               peer.Config
+	Listen string
+	Peer   peer.Config
 }
 
 func Cluster(path string) (ClusterConfig, error) {
 	var value struct {
-		RecoveryGeneration string `yaml:"recovery_generation"`
-		Peer               struct {
+		Peer struct {
 			Listen      string `yaml:"listen"`
 			Address     string `yaml:"address"`
 			Certificate string `yaml:"certificate"`
@@ -34,9 +31,6 @@ func Cluster(path string) (ClusterConfig, error) {
 	}
 	if err := privateYAML(path, "cluster", &value); err != nil {
 		return ClusterConfig{}, err
-	}
-	if !wire.ValidID(value.RecoveryGeneration) {
-		return ClusterConfig{}, fmt.Errorf("cluster requires a valid recovery generation")
 	}
 	if err := listenAddress(value.Peer.Listen); err != nil {
 		return ClusterConfig{}, fmt.Errorf("invalid peer listener: %w", err)
@@ -70,7 +64,7 @@ func Cluster(path string) (ClusterConfig, error) {
 	if !roots.AppendCertsFromPEM(caPEM) {
 		return ClusterConfig{}, fmt.Errorf("invalid peer CA file")
 	}
-	result := ClusterConfig{Listen: value.Peer.Listen, RecoveryGeneration: value.RecoveryGeneration, Peer: peer.Config{Address: value.Peer.Address, Certificate: certificate, Roots: roots}}
+	result := ClusterConfig{Listen: value.Peer.Listen, Peer: peer.Config{Address: value.Peer.Address, Certificate: certificate, Roots: roots}}
 	if _, err := peer.New(result.Peer); err != nil {
 		return ClusterConfig{}, err
 	}

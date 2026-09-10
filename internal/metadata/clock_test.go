@@ -24,7 +24,7 @@ func postgresClockConfig(t *testing.T) (storage.Config, *postgresTestClock) {
 	t.Helper()
 	config, admin, schema := postgresConfig(t)
 	quoted := pgx.Identifier{schema}.Sanitize()
-	table := quoted + ".dune_test_clock"
+	table := quoted + ".test_clock"
 	if _, err := admin.Exec(context.Background(), fmt.Sprintf(`
 		CREATE TABLE %s(offset_millis BIGINT NOT NULL);
 		INSERT INTO %s VALUES(0);
@@ -69,16 +69,15 @@ func TestPostgresDirectoryDatabaseClockDisturbance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	recovery := wire.ID()
-	owner, err := first.ConnectionDirectory(ctx, recovery)
+	owner, err := first.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer, err := second.ConnectionDirectory(ctx, recovery)
+	peer, err := second.ConnectionDirectory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := directoryClaim(t, first, recovery)
+	claim := directoryClaim(t, first)
 	original, err := owner.Acquire(ctx, claim, 0)
 	if err != nil {
 		t.Fatal(err)

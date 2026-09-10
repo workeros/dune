@@ -188,7 +188,7 @@ func TestDrainPreservesAcceptedPeerWork(t *testing.T) {
 			rejected := wire.Wrap(raw)
 			defer rejected.Close()
 			rejected.SetReadDeadline(time.Now().Add(time.Second))
-			_ = rejected.Send(&pb.Message{Kind: "request", RequestId: "late", Operation: "runtime.attach", Target: f.binding.Target, Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation, RouteEpoch: f.binding.RouteEpoch, RouteRecovery: f.binding.RouteRecovery})
+			_ = rejected.Send(&pb.Message{Kind: "request", RequestId: "late", Operation: "runtime.attach", Target: f.binding.Target, Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation, RouteEpoch: f.binding.RouteEpoch})
 			// Entry drain closes the stream; owner drain may return an explicit
 			// transport error through the entry. Neither can reach fabric.
 			if m, err := rejected.Recv(); err == nil && m.Kind != "error" {

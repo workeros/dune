@@ -29,34 +29,36 @@ var (
 )
 
 type Store struct {
-	db       *sql.DB
-	postgres bool
-	lock     *os.File
-	once     sync.Once
-	closeErr error
+	db            *sql.DB
+	postgres      bool
+	localIdentity bool
+	lock          *os.File
+	once          sync.Once
+	closeErr      error
 }
 
-func Open(ctx context.Context, config storage.Config) (*Store, error) {
-	return open(ctx, config, true)
+type OpenOptions struct {
+	// ExternalIdentity omits local users and sessions. The host identity service
+	// remains authoritative for enterprise cookies and user disablement.
+	ExternalIdentity bool
 }
 
-// OpenExistingPostgres opens an existing metadata database without initializing
-// it. Offline recovery inspection must not create metadata on a mistaken target.
-func OpenExistingPostgres(ctx context.Context, config *storage.Postgres) (*Store, error) {
-	if config == nil {
-		return nil, fmt.Errorf("PostgreSQL configuration required")
+func Open(ctx context.Context, config storage.Config, options ...OpenOptions) (*Store, error) {
+	if len(options) > 1 {
+		return nil, fmt.Errorf("at most one metadata option set is allowed")
 	}
-	return open(ctx, storage.Config{Postgres: config}, false)
+	local := len(options) == 0 || !options[0].ExternalIdentity
+	return open(ctx, config, local)
 }
 
-func open(ctx context.Context, config storage.Config, initialize bool) (*Store, error) {
+func open(ctx context.Context, config storage.Config, localIdentity bool) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if (config.SQLiteDir == "") == (config.Postgres == nil) {
 		return nil, fmt.Errorf("choose exactly one SQLite or PostgreSQL backend")
 	}
-	s := &Store{postgres: config.Postgres != nil}
+	s := &Store{postgres: config.Postgres != nil, localIdentity: localIdentity}
 	var err error
 	if s.postgres {
 		options := config.Postgres
@@ -117,19 +119,11 @@ func open(ctx context.Context, config storage.Config, initialize bool) (*Store, 
 	s.db.SetMaxOpenConns(8)
 	s.db.SetMaxIdleConns(4)
 	s.db.SetConnMaxLifetime(30 * time.Minute)
-	if err = s.db.PingContext(ctx); err == nil && !s.postgres && initialize {
+	if err = s.db.PingContext(ctx); err == nil && !s.postgres {
 		_, err = s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
 	}
 	if err == nil {
-		if initialize {
-			err = s.initializeSchema(ctx)
-		} else {
-			var exists bool
-			exists, err = s.schemaExists(ctx, s.db)
-			if err == nil && !exists {
-				err = fmt.Errorf("metadata schema is not initialized")
-			}
-		}
+		err = s.initializeSchema(ctx)
 	}
 	if err != nil {
 		s.Close()

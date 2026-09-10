@@ -62,7 +62,7 @@ func TestOwnershipDeadlineCountsDirectoryDelay(t *testing.T) {
 				time.Sleep(delay)
 				return RouteLease{Route: Route{RouteClaim: claim, Epoch: epoch + 1, ExpiresAt: time.Now().Add(100 * time.Hour)}, ValidFor: 80 * time.Millisecond}, nil
 			}}
-			g, err := NewWithDirectory(directory, "https://instance.test/peer", wire.ID())
+			g, err := NewWithDirectory(directory, "https://instance.test/peer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestOwnedHandshakeRequiresEpochConfirmation(t *testing.T) {
 				publish: func(context.Context, Route) error { published.Add(1); return nil },
 				release: func(context.Context, Route) error { released.Add(1); return nil },
 			}
-			g, err := NewWithDirectory(directory, "https://instance.test/peer", wire.ID())
+			g, err := NewWithDirectory(directory, "https://instance.test/peer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +173,7 @@ func TestOwnedHandshakeRequiresEpochConfirmation(t *testing.T) {
 			if err := wire.Decode(welcome, &binding); err != nil {
 				t.Fatal(err)
 			}
-			if binding.RouteRecovery != g.recovery || binding.RouteEpoch != 7 || welcome.InputLeaseMs == 0 || welcome.InputLeaseMs >= 15000 {
+			if binding.RouteEpoch != 7 || welcome.InputLeaseMs == 0 || welcome.InputLeaseMs >= 15000 {
 				t.Fatal("ownership missing or input grant exceeds conservative owner time", welcome)
 			}
 			if published.Load() != 0 || g.Online("machine") {
@@ -183,7 +183,7 @@ func TestOwnedHandshakeRequiresEpochConfirmation(t *testing.T) {
 			if correct {
 				epoch = 7
 			}
-			if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteRecovery: g.recovery, RouteEpoch: epoch}); err != nil {
+			if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteEpoch: epoch}); err != nil {
 				t.Fatal(err)
 			}
 			if correct {
@@ -230,7 +230,7 @@ func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
 				publish: func(context.Context, Route) error { published.Add(1); return nil },
 				release: func(context.Context, Route) error { released.Add(1); return nil },
 			}
-			g, err := NewWithDirectory(directory, "https://instance.test/peer", wire.ID())
+			g, err := NewWithDirectory(directory, "https://instance.test/peer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -270,12 +270,12 @@ func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteRecovery: g.recovery, RouteEpoch: 4}); err != nil {
+			if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteEpoch: 4}); err != nil {
 				t.Fatal(err)
 			}
 			select {
 			case observed := <-bindingSeen:
-				if observed.Target != "machine" || observed.Generation != 2 || observed.RouteRecovery != g.recovery || observed.RouteEpoch != 4 {
+				if observed.Target != "machine" || observed.Generation != 2 || observed.RouteEpoch != 4 {
 					t.Fatal("callback received a different binding", observed)
 				}
 			case <-ctx.Done():
@@ -330,7 +330,7 @@ func TestOwnerExpiryClosesLocallyHandledStream(t *testing.T) {
 	directory := directoryStub{acquire: func(_ context.Context, claim RouteClaim, _ uint64) (RouteLease, error) {
 		return RouteLease{Route: Route{RouteClaim: claim, Epoch: 1}, ValidFor: 500 * time.Millisecond}, nil
 	}}
-	g, err := NewWithDirectory(directory, "https://instance.test/peer", wire.ID())
+	g, err := NewWithDirectory(directory, "https://instance.test/peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestOwnerExpiryClosesLocallyHandledStream(t *testing.T) {
 		return peer, control, welcome
 	}
 	_, control, welcome := connect(RoleDaemon, ownedHandler{})
-	if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteRecovery: g.recovery, RouteEpoch: 1}); err != nil {
+	if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteEpoch: 1}); err != nil {
 		t.Fatal(err)
 	}
 	for !g.Online("machine") {
@@ -371,7 +371,7 @@ func TestOwnerExpiryClosesLocallyHandledStream(t *testing.T) {
 	}
 	request := wire.Wrap(raw)
 	defer request.Close()
-	if err := request.Send(&pb.Message{Kind: "request", RequestId: wire.ID(), Operation: "runtime.attach", Target: "machine", Incarnation: "boot", ConnectionGeneration: 1, RouteRecovery: g.recovery, RouteEpoch: 1}); err != nil {
+	if err := request.Send(&pb.Message{Kind: "request", RequestId: wire.ID(), Operation: "runtime.attach", Target: "machine", Incarnation: "boot", ConnectionGeneration: 1, RouteEpoch: 1}); err != nil {
 		t.Fatal(err)
 	}
 	var flow *Stream

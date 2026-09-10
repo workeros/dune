@@ -22,11 +22,6 @@ func TestPostgresWorkbenchEnrollmentAndTerminal(t *testing.T) {
 	testPrefixedWorkbench(t, workbenchCase{database: &database})
 }
 
-func TestPostgresAccessIssuerAndGateway(t *testing.T) {
-	database := postgresWorkbenchConfig(t)
-	testPrefixedWorkbench(t, workbenchCase{database: &database, separateGateway: true})
-}
-
 func postgresWorkbenchConfig(t *testing.T) storage.Config {
 	t.Helper()
 	address := os.Getenv("DUNE_TEST_POSTGRES")
@@ -68,24 +63,15 @@ func TestPostgresHostClusterConfiguration(t *testing.T) {
 	store, err := metadata.Open(ctx, database)
 	must(t, err)
 	defer store.Close()
-	recovery := wire.ID()
-	_, err = store.ConnectionDirectory(ctx, recovery)
+	_, err = store.ConnectionDirectory(ctx)
 	must(t, err)
 	ca := testcert.New(t)
-	cluster := &host.ClusterOptions{RecoveryGeneration: recovery, Peer: peer.Config{Address: "https://127.0.0.1:9443/private/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}}
+	cluster := &host.ClusterOptions{Peer: peer.Config{Address: "https://127.0.0.1:9443/private/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}}
 	options := host.Options{PublicURL: "http://example.test/", Database: &database}
-	for _, selected := range []*host.ClusterOptions{nil, {RecoveryGeneration: wire.ID(), Peer: cluster.Peer}} {
-		options.Cluster = selected
-		app, err := host.Open(ctx, options)
-		if err == nil {
-			app.Close()
-			t.Fatal("cluster database admitted missing or stale configuration")
-		}
-	}
-	actual, err := store.ConnectionRecovery(ctx)
+	standalone, err := host.Open(ctx, options)
 	must(t, err)
-	if actual != recovery {
-		t.Fatal("startup changed recovery generation")
+	if err := standalone.Close(); err != nil {
+		t.Fatal(err)
 	}
 	options.Cluster = cluster
 	app, err := host.Open(ctx, options)

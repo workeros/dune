@@ -69,7 +69,7 @@ func setup(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.gateway, err = gateway.NewWithDirectory(emptyDirectory{}, f.transport.Address(), wire.ID())
+	f.gateway, err = gateway.NewWithDirectory(emptyDirectory{}, f.transport.Address())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func setup(t *testing.T) *fixture {
 	f.server.Config.Handler = h
 	f.server.TLS = f.transport.ServerTLSConfig()
 	f.server.StartTLS()
-	f.route = gateway.Route{RouteClaim: gateway.RouteClaim{Target: "machine", OwnerBootID: f.gateway.BootID(), OwnerAddress: f.transport.Address(), RecoveryGeneration: wire.ID()}}
+	f.route = gateway.Route{RouteClaim: gateway.RouteClaim{Target: "machine", OwnerBootID: f.gateway.BootID(), OwnerAddress: f.transport.Address()}}
 	return f
 }
 
@@ -262,7 +262,7 @@ func TestPeerConfigurationAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongGateway, err := gateway.NewWithDirectory(emptyDirectory{}, "https://other.test/peer", wire.ID())
+	wrongGateway, err := gateway.NewWithDirectory(emptyDirectory{}, "https://other.test/peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestPeerCARotationOverHTTPS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			g, err := gateway.NewWithDirectory(emptyDirectory{}, transport.Address(), wire.ID())
+			g, err := gateway.NewWithDirectory(emptyDirectory{}, transport.Address())
 			if err != nil {
 				t.Fatal(err)
 			}

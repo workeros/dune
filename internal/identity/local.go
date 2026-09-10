@@ -15,34 +15,22 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/wire"
+	public "github.com/aiomni/dune/pkg/identity"
 )
 
 var (
-	ErrInvalidArgument      = errors.New("invalid argument")
-	ErrUnauthorized         = errors.New("invalid credentials or expired session")
-	ErrRegistrationDisabled = errors.New("此站点未开放本地注册，请使用已有账号登录。")
-	ErrSessionLimit         = errors.New("active login session limit reached; log out of another browser or wait for expiry")
-	ErrLoginLimit           = errors.New("login service busy; retry later")
+	ErrInvalidArgument      = public.ErrInvalidArgument
+	ErrUnauthorized         = public.ErrUnauthorized
+	ErrRegistrationDisabled = public.ErrRegistrationDisabled
+	ErrSessionLimit         = public.ErrSessionLimit
+	ErrLoginLimit           = public.ErrLoginLimit
 )
 
 const SessionLifetime = 7 * 24 * time.Hour
 const maxSessions = 32
 
-type User struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Namespace string `json:"-"`
-	Subject   string `json:"-"`
-}
-
-type Service interface {
-	Register(context.Context, string, string) (User, string, error)
-	Login(context.Context, string, string) (User, string, error)
-	Authenticate(context.Context, string) (User, error)
-	Logout(context.Context, string) error
-	RegistrationAllowed() bool
-	Namespace() string
-}
+type User = public.User
+type Service = public.Service
 
 type Account struct {
 	User
@@ -71,6 +59,9 @@ func NewLocal(store Repository, registration bool) *Local {
 
 func (l *Local) RegistrationAllowed() bool { return l.registration }
 func (*Local) Namespace() string           { return "" }
+func (*Local) LoginMethods(publicURL string) []public.LoginMethod {
+	return []public.LoginMethod{{Kind: "password", URL: publicURL + "api/auth/login"}}
+}
 
 func digest(value string) string {
 	sum := sha256.Sum256([]byte(value))

@@ -8,7 +8,7 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 )
 
-const runnerSelect = `SELECT r.id,r.name,r.kind,r.created_at,r.fabric_id,r.binding_revision,m.id FROM dune_runners r LEFT JOIN dune_machines m ON m.runner_id=r.id`
+const runnerSelect = `SELECT id,name,kind,created_at,fabric_id,binding_revision,machine_id FROM dune_runners`
 
 func scanRunner(row interface{ Scan(...any) error }) (runner.Runner, error) {
 	var out runner.Runner
@@ -27,7 +27,7 @@ func scanRunner(row interface{ Scan(...any) error }) (runner.Runner, error) {
 // Runners is the default owner discovery. The per-owner Runner limit bounds
 // this result; enterprise candidate scanning is a separate authorization path.
 func (s *Store) Runners(ctx context.Context, owner string) ([]runner.Runner, error) {
-	rows, err := s.db.QueryContext(ctx, runnerSelect+` WHERE r.owner_id=$1 ORDER BY r.created_at,r.id`, owner)
+	rows, err := s.db.QueryContext(ctx, runnerSelect+` WHERE owner_id=$1 AND enabled=TRUE ORDER BY created_at,id`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (s *Store) Runners(ctx context.Context, owner string) ([]runner.Runner, err
 }
 
 func (s *Store) Runner(ctx context.Context, owner, id string) (runner.Runner, error) {
-	out, err := scanRunner(s.db.QueryRowContext(ctx, runnerSelect+` WHERE r.owner_id=$1 AND r.id=$2`, owner, id))
+	out, err := scanRunner(s.db.QueryRowContext(ctx, runnerSelect+` WHERE owner_id=$1 AND id=$2 AND enabled=TRUE`, owner, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}

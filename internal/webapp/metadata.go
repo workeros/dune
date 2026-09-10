@@ -6,10 +6,10 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
-	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/fabric"
+	"github.com/aiomni/dune/pkg/managed"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -31,7 +31,7 @@ func writeMetadataError(w http.ResponseWriter, err error) {
 		writeError(w, 401, "UNAUTHORIZED", identity.ErrUnauthorized.Error())
 	case errors.Is(err, runner.ErrBindingChanged):
 		writeError(w, 409, "BINDING_CHANGED", runner.ErrBindingChanged.Error())
-	case errors.Is(err, lifecycle.ErrBusy), errors.Is(err, lifecycle.ErrIntentConflict):
+	case errors.Is(err, managed.ErrBusy), errors.Is(err, managed.ErrIntentConflict):
 		writeError(w, 409, "LIFECYCLE_CONFLICT", err.Error())
 	case errors.Is(err, fabric.ErrTemplateNotFound):
 		writeError(w, 404, "NOT_FOUND", "resource not found")

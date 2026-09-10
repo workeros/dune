@@ -30,11 +30,11 @@ type PeerDialer func(ctx context.Context, sourceBootID string, destination Route
 // a handler that independently validates every request's AccessContext. Default
 // user or machine grants cannot authenticate this role. No HTTP or credentials
 // are supplied by core; applications assemble the controlled peer entry point.
-func NewWithPeers(directory Directory, address, recovery string, dial PeerDialer) (*Gateway, error) {
+func NewWithPeers(directory Directory, address string, dial PeerDialer) (*Gateway, error) {
 	if dial == nil {
 		return nil, fmt.Errorf("peer dialer required")
 	}
-	g, err := NewWithDirectory(directory, address, recovery)
+	g, err := NewWithDirectory(directory, address)
 	if err != nil {
 		return nil, err
 	}
@@ -69,13 +69,13 @@ func (g *Gateway) connectPeer(parent context.Context, target string) (*route, er
 	if lookupErr != nil {
 		return nil, lookupErr
 	}
-	if !lease.Published || lease.Target != target || lease.RecoveryGeneration != g.recovery || lease.Epoch == 0 || lease.ValidFor <= 0 || lease.ValidFor > ownerLeaseLimit {
+	if !lease.Published || lease.Target != target || lease.Epoch == 0 || lease.ValidFor <= 0 || lease.ValidFor > ownerLeaseLimit {
 		return nil, ErrRouteStale
 	}
 	if !wire.ValidID(lease.OwnerBootID) || lease.OwnerBootID == g.bootID || lease.OwnerAddress == "" {
 		return nil, ErrRouteStale
 	}
-	if lease.Binding.Target != target || lease.Binding.Version != api.Version || lease.Binding.Incarnation == "" || lease.Binding.Generation == 0 || lease.Binding.RouteRecovery != "" || lease.Binding.RouteEpoch != 0 {
+	if lease.Binding.Target != target || lease.Binding.Version != api.Version || lease.Binding.Incarnation == "" || lease.Binding.Generation == 0 || lease.Binding.RouteEpoch != 0 {
 		return nil, ErrRouteStale
 	}
 	event.OwnerID, event.Incarnation, event.Generation, event.Epoch = lease.OwnerBootID, lease.Binding.Incarnation, lease.Binding.Generation, lease.Epoch
@@ -119,10 +119,10 @@ func (g *Gateway) connectPeer(parent context.Context, target string) (*route, er
 		}
 	}()
 	binding := lease.Binding
-	binding.RouteRecovery, binding.RouteEpoch = lease.RecoveryGeneration, lease.Epoch
+	binding.RouteEpoch = lease.Epoch
 	control, welcome, err := wire.Handshake(session, &pb.Message{
 		Kind: "hello", Target: target, Incarnation: binding.Incarnation,
-		ConnectionGeneration: binding.Generation, RouteRecovery: binding.RouteRecovery, RouteEpoch: binding.RouteEpoch,
+		ConnectionGeneration: binding.Generation, RouteEpoch: binding.RouteEpoch,
 		Payload: api.Payload(api.Hello{Version: api.Version, Role: RolePeer, PeerSource: g.bootID, PeerOwner: lease.OwnerBootID}),
 	})
 	if err != nil {

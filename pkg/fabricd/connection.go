@@ -60,7 +60,7 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 		return err
 	}
 	var accepted api.Binding
-	if err := wire.Decode(welcome, &accepted); err != nil || accepted.Target != target || accepted.Incarnation != d.inc || accepted.Generation != gen || accepted.Version != api.Version || ((accepted.RouteEpoch == 0) != (accepted.RouteRecovery == "")) || (accepted.RouteEpoch != 0 && !wire.ValidID(accepted.RouteRecovery)) {
+	if err := wire.Decode(welcome, &accepted); err != nil || accepted.Target != target || accepted.Incarnation != d.inc || accepted.Generation != gen || accepted.Version != api.Version {
 		return fmt.Errorf("invalid accepted execution binding")
 	}
 	if err := confirmInputLease(input, ctrl, welcome, accepted); err != nil {
@@ -89,7 +89,7 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 			go func() {
 				defer d.active.Done()
 				defer func() { <-sem }()
-				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen, input: input, recovery: accepted.RouteRecovery, epoch: accepted.RouteEpoch}, target, gen)
+				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen, input: input, epoch: accepted.RouteEpoch}, target, gen)
 			}()
 		default:
 			raw.Close()

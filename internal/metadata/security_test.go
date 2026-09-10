@@ -47,21 +47,21 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 				t.Fatal("password was not salted and hashed", err)
 			}
 			var hash string
-			if err := s.db.QueryRowContext(ctx, `SELECT hash FROM dune_sessions WHERE principal_id=$1`, user.ID).Scan(&hash); err != nil || hash != tokenHash(cookie) {
+			if err := s.db.QueryRowContext(ctx, `SELECT hash FROM dune_sessions WHERE user_id=$1`, user.ID).Scan(&hash); err != nil || hash != tokenHash(cookie) {
 				t.Fatal("session token not hashed", err)
 			}
 			enrollment, _, err := s.IssueEnrollment(ctx, user.ID, "private machine")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := s.db.QueryRowContext(ctx, `SELECT hash FROM dune_enrollments WHERE principal_id=$1`, user.ID).Scan(&hash); err != nil || hash != tokenHash(enrollment) {
+			if err := s.db.QueryRowContext(ctx, `SELECT hash FROM dune_enrollments WHERE owner_id=$1`, user.ID).Scan(&hash); err != nil || hash != tokenHash(enrollment) {
 				t.Fatal("enrollment token not hashed", err)
 			}
 			machine, credential, err := s.Enroll(ctx, enrollment, "linux", "amd64")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := s.db.QueryRowContext(ctx, `SELECT credential_hash FROM dune_machines WHERE id=$1`, machine.ID).Scan(&hash); err != nil || hash != tokenHash(credential) {
+			if err := s.db.QueryRowContext(ctx, `SELECT credential_hash FROM dune_runners WHERE machine_id=$1`, machine.ID).Scan(&hash); err != nil || hash != tokenHash(credential) {
 				t.Fatal("machine credential not hashed", err)
 			}
 			for i := 1; i < 32; i++ {

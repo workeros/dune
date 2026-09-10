@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/aiomni/dune/internal/testcert"
-	"github.com/aiomni/dune/internal/wire"
 )
 
 func TestPrivateClusterConfiguration(t *testing.T) {
@@ -32,7 +31,7 @@ func TestPrivateClusterConfiguration(t *testing.T) {
 		}
 	}
 	file := filepath.Join(dir, "cluster.yaml")
-	valid := "recovery_generation: " + wire.ID() + "\npeer:\n  listen: 127.0.0.1:9443\n  address: https://127.0.0.1:9443/private/peer\n  certificate: cert.pem\n  key: key.pem\n  ca: ca.pem\n"
+	valid := "peer:\n  listen: 127.0.0.1:9443\n  address: https://127.0.0.1:9443/private/peer\n  certificate: cert.pem\n  key: key.pem\n  ca: ca.pem\n"
 	write := func(source string) {
 		t.Helper()
 		if err := os.WriteFile(file, []byte(source), 0600); err != nil {
@@ -48,7 +47,7 @@ func TestPrivateClusterConfiguration(t *testing.T) {
 		strings.Replace(valid, "listen: 127.0.0.1:9443", "listen: example.test:9443", 1),
 		strings.Replace(valid, "https://127.0.0.1:9443", "http://127.0.0.1:9443", 1),
 		strings.Replace(valid, "https://127.0.0.1:9443", "https://127.0.0.2:9443", 1),
-		strings.Replace(valid, "recovery_generation:", "unknown:", 1),
+		"unknown: value\n" + valid,
 		valid + "---\nprivate: private-password\n",
 	} {
 		write(source)

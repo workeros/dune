@@ -12,27 +12,27 @@ Gateway HTTP 服务使用 fasthttp，WebSocket 升级使用 fasthttp/websocket�
 
 第一条 stream 必须在 5s 内发送 hello（版本、角色、target）。fabricd 额外提交随机 incarnation、递增 connection generation 和能力清单；SDK 收到当前 daemon 的绑定。之后每条业务 stream 的首消息是 request，含 request_id、operation、target、incarnation、connection_generation；Runtime 操作还需 runtime_id、runtime_incarnation 和 runtime_generation。Gateway 和 daemon 均校验绑定。连接重新建立需新的 SDK Client；旧 stream 不恢复。
 
-fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录模式还会校验消息所属的恢复代次和 epoch。
+fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录模式另外校验当前 owner epoch。
 
 fabricd 在 hello 中提交随机 `input_lease_id`，Gateway 的 welcome 提供同一标识及最多 15000ms 的相对期限。fabricd 从自己发出 challenge 前的本地单调时间计时，确认仍有效后回复 `lease_ready`；Gateway 收到确认才发布路由。未确认或确认失败的新连接不会替换原路由。此处的租约只限制当前反向连接，不赋予集群机器归属。
 
 控制流每五秒发起新的 `lease_request → lease_grant → lease_ready`，同一时刻只允许一个待确认 challenge。双端检查原有效期，迟到确认不能复活已经过期的连接。Gateway 转发每条业务消息时覆盖 `input_lease_id`，fabricd 解码后按该标识的原期限检查，续租不改变旧消息的期限。保留尚未过期的少量原 grant 供在途消息使用，避免每次续租打断合法传输；没有无限历史。空闲连接也在期限结束时关闭，消息检查不依赖关闭计时器是否及时得到调度。传输状态不参与业务请求去重。
 
-协议宿主通过 `gateway.NewWithDirectory(directory, instanceAddress, recoveryGeneration)` 显式选择目录模式。Gateway 为每次实例启动生成新的 ownerBootID；完成 hello 校验后查询原 epoch 并条件领取十五秒归属，有效 owner 不被抢占。目录调用逐次限时一秒，响应的剩余期限从调用开始的本地单调时间计算，迟到响应和数据库墙钟值不能延长本地准入。fabricd 在 welcome/lease_ready 中确认 `route_recovery` 与 `route_epoch` 后才发布目录和本地路由。
+协议宿主通过 `gateway.NewWithDirectory(directory, instanceAddress)` 显式选择目录模式。Gateway 为每次实例启动生成新的 ownerBootID；完成 hello 校验后查询原 epoch 并条件领取十五秒归属，有效 owner 不被抢占。过期后的新 owner 原子增加 epoch，旧 owner 的延迟续约、发布或释放都被 epoch fence 拒绝。目录调用逐次限时一秒，响应的剩余期限从调用开始的本地单调时间计算，迟到响应和数据库墙钟值不能延长本地准入。fabricd 在 welcome/lease_ready 中确认 `route_epoch` 后才发布目录和本地路由；没有数据库恢复代次或人工切代协议。
 
 目录模式的五秒控制续租先刷新原 owner，输入 grant 至多延伸到 owner 的保守期限。原期限已过时不调用续约，等待期间过期或结果未知也不会恢复执行权限。独立期限检查覆盖空闲连接、SDK 新 stream 与每条转发消息；由 Gateway 本地处理的流也绑定原执行连接，并在交给处理器前检查当前归属；结束连接先关闭隧道，再按原 owner/epoch 条件释放目录，清理失败不重试。既有外部操作及 Runtime 的生命周期不因目录释放而改变。
 
-SDK 的首请求固定恢复代次与 epoch，Gateway 不随目录变化转投另一个 owner；后续消息由原 route 标记同一归属，fabricd 即使收到有效输入 grant，也拒绝另一恢复代次或 epoch 的消息。明确发现归属不匹配时返回 `ROUTE_STALE`；可能已经提交的调用仍遵守结果未知、不自动重放的规则。较早的 v2 实现缺少归属确认字段，不能接入目录模式；原单机模式的两个字段为空/零，继续使用原输入租约。
+SDK 的首请求固定当前 epoch，Gateway 不随目录变化转投另一个 owner；后续消息由原 route 标记同一归属，fabricd 即使收到有效输入 grant，也拒绝另一 epoch 的消息。明确发现归属不匹配时返回 `ROUTE_STALE`；可能已经提交的调用仍遵守结果未知、不自动重放的规则。单机模式的 epoch 为零，继续只使用原输入租约。
 
-`gateway.NewWithPeers(directory, instanceAddress, recoveryGeneration, dialPeer)` 在目录归属上增加单跳 SDK 路由。入口先使用本地有效连接；否则只查询一次目录并向原 owner 定向拨号。目录未发布、过期、恢复代次不同或指向自身但没有本地连接均拒绝；拨号及握手最多五秒，并扣除目录查询耗时。每条 SDK 连接固定一条 peer 连接，不共享用户连接、不在故障后重新解析 owner 或重放请求。
+`gateway.NewWithPeers(directory, instanceAddress, dialPeer)` 在目录归属上增加单跳 SDK 路由。入口先使用本地有效连接；否则只查询一次目录并向原 owner 定向拨号。目录未发布、过期或指向自身但没有本地连接均拒绝；拨号及握手最多五秒，并扣除目录查询耗时。每条 SDK 连接固定一条 peer 连接，不共享用户连接、不在故障后重新解析 owner 或重放请求。
 
-peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证与保密性的 `net.Conn`，在受控入口把验证过的入口启动身份设为 `BindingContext.PeerBootID`；普通 SDK、机器及共享凭据不能进入该角色。hello 的 `peer_source` / `peer_owner` 与可信入口身份、本实例启动身份一致，目标实例还验证原执行绑定、恢复代次及 epoch。peer 只能访问该实例当前持有的本地反向连接，缺失或过期返回 `ROUTE_STALE`，绝不再拨号第三个实例。原 owner 关闭时一并关闭空闲 peer 与 SDK 连接。
+peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证与保密性的 `net.Conn`，在受控入口把验证过的入口启动身份设为 `BindingContext.PeerBootID`；普通 SDK、机器及共享凭据不能进入该角色。hello 的 `peer_source` / `peer_owner` 与可信入口身份、本实例启动身份一致，目标实例还验证原执行绑定及 epoch。peer 只能访问该实例当前持有的本地反向连接，缺失或过期返回 `ROUTE_STALE`，绝不再拨号第三个实例。原 owner 关闭时一并关闭空闲 peer 与 SDK 连接。
 
 应用访问处理器从 `Stream.PeerRoute()` 取得固定 owner 的副本，在批准操作并构造该请求的访问上下文后调用 `ForwardPeer(context)`。普通 `Forward()` 对远端路由拒绝。`access_context` 仅允许出现在 peer stream 的首请求，必须为 1–16384 字节；SDK 伪造、后续消息替换及缺失上下文在准入前拒绝。目标实例的处理器必须独立验证用户、原请求和当前授权；core 不解析用户与 Runner，peer 身份本身不构成用户授权。上下文只到 owner，后者转发给 fabricd 前移除该字段，并设置自己的有界输入 grant。
 
-默认访问模块通过 `authorization.Service.WithPeers(bootID)` 装配用户委派。入口在原会话、绑定及操作获准后，把短期随机凭据的哈希与原会话引用、两端启动身份、请求摘要、授权决定 ID 和有界操作属性保存到同一 Dune SQL 后端。SHA-256 摘要包括原请求 ID、全部业务字节、Runtime 身份、执行连接身份、恢复代次和 epoch；不保存命令、文件内容或原始 bearer。凭据最多三十秒、每会话最多六十四个未消费项，数据库期限扣除签发等待，不需要另设用户上下文签名密钥。
+默认访问模块通过 `authorization.Service.WithPeers(bootID)` 装配用户委派。入口在原会话、绑定及操作获准后，把短期随机凭据及原会话引用、两端启动身份、请求摘要、授权决定 ID 和有界操作属性保存在当前进程的有界内存中。摘要包括原请求 ID、全部业务字节、Runtime 身份、执行连接身份和 epoch；不保存命令、文件内容或原始 bearer。凭据最多三十秒、每会话最多六十四个未消费项，进程重启即失效，不进入 SQL，也不需要用户上下文签名密钥。
 
-目标实例的访问模块按已认证的 peer 身份、目标、身份源及实际请求摘要单次消费凭据，然后复核当前会话/父会话、subject、授权版本、Runner/Fabric/owner/绑定修订，并独立执行自己的 AccessChecker。原决定 ID 只记录入口的授权依据，不替代目标的当前决定。请求不匹配不会消费其他请求的凭据；提交回执丢失在业务发送前拒绝，不重试消费。凭据到期限制新请求准入，已建立流继续按原身份与操作检查；目标侧每秒检查撤销，并维持原有独立授权期限、只读和后续输入检查。此实现没有第二套用户身份或权限存储。
+目标实例的访问模块只接受 mTLS peer 传来的原始企业 Session，并按已认证的 peer 身份、目标、身份源及实际请求摘要单次消费对应的内存凭据，然后重新调用权威 `identity.Service`、复核 Runner/Fabric/owner/绑定修订，并独立执行自己的 AccessChecker。原决定 ID 只记录入口的授权依据，不替代目标的当前决定。请求不匹配不会消费其他请求的凭据；消费结果不做跨实例确认或自动重试。凭据到期限制新请求准入，已建立流继续按原身份与操作检查；目标侧每秒检查撤销，并维持原有独立授权期限、只读和后续输入检查。此实现没有第二套用户身份或权限存储。
 
 `pkg/transport/peer` 提供独立的双向 TLS 1.3 / WebSocket 入口。应用配置专用集群 CA、同时允许 serverAuth/clientAuth 且匹配本实例广告地址的叶证书；模块验证链、期限、用途和私钥匹配，复制证书及信任配置。CA 认证可信集群成员，受保护的 HTTP 协商核对原 owner 启动身份，后续 core hello 继续核对完整归属。Handler 独立验证实际 TLS 客户端链，不接受证书转发头、普通 bearer、Cookie 或 Origin；普通 tunnel 仍拒绝 peer 角色。
 

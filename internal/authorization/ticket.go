@@ -12,16 +12,21 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 )
 
+func credentialHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
 const TicketLifetime = 30 * time.Second
 const ticketPrefix = "dune_access_"
+const maxPendingTickets = 4096
+const maxSeenPeerNonces = 4096
 
-// ConnectionAccess fixes the authenticated session and binding at issuance.
-// It contains only a session reference, never the original bearer credential.
-// Ticket expiry limits connection establishment; a live connection continually
-// rechecks the current session and binding instead of extending the ticket.
+// ConnectionAccess exists only in process memory or on an authenticated peer
+// connection. Dune never persists browser credentials or access tickets.
 type ConnectionAccess struct {
-	SessionHash, PrincipalID, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
-	BindingRevision, AuthVersion, ExpiresAt                                           int64
+	Session, PrincipalID, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
+	BindingRevision, ExpiresAt                                                    int64
 }
 
 func (r ConnectionAccess) Scope() access.Scope {
@@ -40,15 +45,5 @@ type Repository interface {
 	EnrollmentIdentity(context.Context, string) (identity.User, string, error)
 	MachineCredential(context.Context, string) (string, error)
 	ConfirmMachineOnline(context.Context, api.Binding) error
-	CreateRunnerAccess(context.Context, string, string, string, string, runner.Binding, int64) (ConnectionAccess, error)
-	ConsumeAccess(context.Context, string, string, int64) (ConnectionAccess, error)
-	CheckAccess(context.Context, ConnectionAccess, int64) (bool, error)
-	DeleteAccess(context.Context, string) error
-	CreatePeerAccess(context.Context, string, PeerAccess, time.Duration) error
-	ConsumePeerAccess(context.Context, string, PeerReference) (PeerAccess, error)
-}
-
-func credentialHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
+	CheckRunnerAccess(context.Context, ConnectionAccess) (bool, error)
 }

@@ -3,62 +3,46 @@ package metadata
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"slices"
 )
 
-// Schema is the complete current format. Development builds initialize fresh
-// databases; there is no historical schema upgrade or data conversion path.
-var schema = []string{
-	`CREATE TABLE dune_principals (id TEXT PRIMARY KEY, email TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, auth_version BIGINT NOT NULL DEFAULT 1 CHECK(auth_version > 0))`,
-	`CREATE TABLE dune_local_accounts (principal_id TEXT PRIMARY KEY REFERENCES dune_principals(id), email TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL)`,
-	`CREATE TABLE dune_sessions (hash TEXT PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES dune_principals(id), expires_at BIGINT NOT NULL, auth_version BIGINT NOT NULL DEFAULT 1 CHECK(auth_version > 0), identity_namespace TEXT NOT NULL DEFAULT '', identity_subject TEXT NOT NULL DEFAULT '')`,
-	`CREATE INDEX dune_sessions_principal ON dune_sessions(principal_id, expires_at)`,
-	`CREATE TABLE dune_enrollments (hash TEXT PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES dune_principals(id), name TEXT NOT NULL, expires_at BIGINT NOT NULL, identity_namespace TEXT NOT NULL DEFAULT '', identity_subject TEXT NOT NULL DEFAULT '')`,
-	`CREATE INDEX dune_enrollments_principal ON dune_enrollments(principal_id, expires_at)`,
-	`CREATE TABLE dune_runners (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES dune_principals(id), name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('attached','managed')), fabric_id TEXT NOT NULL, binding_revision BIGINT NOT NULL CHECK(binding_revision > 0), created_at BIGINT NOT NULL)`,
+// Dune initializes only fresh schemas. There is intentionally no migration,
+// backup-restore generation or historical rollback compatibility path.
+var localIdentitySchema = []string{
+	`CREATE TABLE dune_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,salt TEXT NOT NULL,password_hash TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT TRUE,auth_version BIGINT NOT NULL DEFAULT 1 CHECK(auth_version>0))`,
+	`CREATE TABLE dune_sessions (hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES dune_users(id) ON DELETE CASCADE,expires_at BIGINT NOT NULL,auth_version BIGINT NOT NULL CHECK(auth_version>0))`,
+	`CREATE INDEX dune_sessions_user ON dune_sessions(user_id,expires_at)`,
+}
+
+var executionSchema = []string{
+	`CREATE TABLE dune_runners (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),machine_id TEXT UNIQUE,credential_hash TEXT UNIQUE,os TEXT NOT NULL DEFAULT '',arch TEXT NOT NULL DEFAULT '',enabled BOOLEAN NOT NULL DEFAULT TRUE,suspended BOOLEAN NOT NULL DEFAULT FALSE,created_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_runners_owner ON dune_runners(owner_id,id)`,
-	`CREATE TABLE dune_machines (id TEXT PRIMARY KEY, runner_id TEXT NOT NULL UNIQUE REFERENCES dune_runners(id) ON DELETE CASCADE, credential_hash TEXT NOT NULL UNIQUE, os TEXT NOT NULL, arch TEXT NOT NULL)`,
-	`CREATE TABLE dune_external_identities (namespace TEXT NOT NULL, subject TEXT NOT NULL, principal_id TEXT NOT NULL REFERENCES dune_principals(id), PRIMARY KEY(namespace,subject))`,
-	`CREATE INDEX dune_external_principal ON dune_external_identities(principal_id)`,
-	`CREATE TABLE dune_login_transactions (state_hash TEXT PRIMARY KEY, browser_hash TEXT NOT NULL, namespace TEXT NOT NULL, redirect_url TEXT NOT NULL, nonce TEXT NOT NULL, verifier TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
-	`CREATE INDEX dune_login_expires ON dune_login_transactions(expires_at)`,
-	`CREATE TABLE dune_identity_links (request_id TEXT PRIMARY KEY, actor TEXT NOT NULL, principal_id TEXT NOT NULL REFERENCES dune_principals(id), namespace TEXT NOT NULL, subject TEXT NOT NULL, reason TEXT NOT NULL, created_at BIGINT NOT NULL)`,
-	`CREATE INDEX dune_identity_links_principal ON dune_identity_links(principal_id,created_at)`,
-	`CREATE TABLE dune_access_tickets (hash TEXT PRIMARY KEY, session_hash TEXT NOT NULL REFERENCES dune_sessions(hash) ON DELETE CASCADE, principal_id TEXT NOT NULL REFERENCES dune_principals(id), identity_namespace TEXT NOT NULL, machine_id TEXT NOT NULL REFERENCES dune_machines(id) ON DELETE CASCADE, runner_id TEXT NOT NULL REFERENCES dune_runners(id) ON DELETE CASCADE, fabric_id TEXT NOT NULL, binding_revision BIGINT NOT NULL CHECK(binding_revision>0), auth_version BIGINT NOT NULL CHECK(auth_version>0), expires_at BIGINT NOT NULL, owner_id TEXT NOT NULL, identity_subject TEXT NOT NULL DEFAULT '')`,
-	`CREATE INDEX dune_access_expiry ON dune_access_tickets(expires_at)`,
-	`CREATE INDEX dune_access_session ON dune_access_tickets(session_hash)`,
-	`CREATE TABLE dune_discovery_cursors (id TEXT PRIMARY KEY,principal_id TEXT NOT NULL REFERENCES dune_principals(id) ON DELETE CASCADE,identity_namespace TEXT NOT NULL,operation TEXT NOT NULL,after_id TEXT NOT NULL,expires_at BIGINT NOT NULL,UNIQUE(principal_id,identity_namespace,operation,after_id))`,
-	`CREATE INDEX dune_discovery_expiry ON dune_discovery_cursors(expires_at)`,
-	`CREATE TABLE dune_operations (id TEXT PRIMARY KEY,request_key TEXT NOT NULL,request_digest TEXT NOT NULL,principal_id TEXT NOT NULL REFERENCES dune_principals(id),identity_namespace TEXT NOT NULL,identity_subject TEXT NOT NULL,runner_id TEXT NOT NULL REFERENCES dune_runners(id),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),provider_binding_id TEXT NOT NULL,provider_binding_revision BIGINT NOT NULL CHECK(provider_binding_revision>0),action TEXT NOT NULL CHECK(action IN ('create','renew','destroy','pause','resume')),created_at BIGINT NOT NULL,finished_at BIGINT NOT NULL DEFAULT 0,finished BOOLEAN NOT NULL DEFAULT FALSE,outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','unknown','timed_out','succeeded','failed')),worker TEXT NOT NULL DEFAULT '',execution_revision BIGINT NOT NULL DEFAULT 0 CHECK(execution_revision>=0),lease_until BIGINT NOT NULL DEFAULT 0,exclusive BOOLEAN NOT NULL DEFAULT TRUE,UNIQUE(principal_id,request_key),CHECK(finished=FALSE OR exclusive=FALSE),CHECK((finished=FALSE AND finished_at=0 AND outcome IN ('','unknown','timed_out')) OR (finished=TRUE AND finished_at>0 AND outcome IN ('succeeded','failed'))))`,
-	`CREATE UNIQUE INDEX dune_operations_active_runner ON dune_operations(runner_id) WHERE exclusive=TRUE`,
-	`CREATE TABLE dune_managed_creations (runner_id TEXT PRIMARY KEY REFERENCES dune_runners(id),operation_id TEXT NOT NULL UNIQUE REFERENCES dune_operations(id),specification TEXT NOT NULL)`,
-	`CREATE TABLE dune_managed_resources (runner_id TEXT PRIMARY KEY REFERENCES dune_runners(id),fabric_id TEXT NOT NULL,provider_binding_id TEXT NOT NULL,provider_binding_revision BIGINT NOT NULL CHECK(provider_binding_revision>0),resource_ref TEXT NOT NULL,confirmed_at BIGINT NOT NULL,expires_at BIGINT NOT NULL DEFAULT 0,gone BOOLEAN NOT NULL DEFAULT FALSE,access_closed BOOLEAN NOT NULL DEFAULT FALSE,access_suspended BOOLEAN NOT NULL DEFAULT FALSE,state TEXT NOT NULL DEFAULT 'unknown' CHECK(state IN ('ready','paused','unknown')),capabilities TEXT NOT NULL DEFAULT '',UNIQUE(provider_binding_id,provider_binding_revision,resource_ref))`,
-	`CREATE TABLE dune_managed_maintenance (runner_id TEXT PRIMARY KEY REFERENCES dune_managed_resources(runner_id) ON DELETE CASCADE,fabric_id TEXT NOT NULL,provider_binding_id TEXT NOT NULL,provider_binding_revision BIGINT NOT NULL CHECK(provider_binding_revision>0),resource_ref TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),policy_version TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',facts TEXT NOT NULL DEFAULT '' CHECK(facts IN ('','confirmed','unknown','timed_out')),observed_at BIGINT NOT NULL DEFAULT 0,next_check_at BIGINT NOT NULL DEFAULT 0,renew_until BIGINT NOT NULL DEFAULT 0,worker TEXT NOT NULL DEFAULT '',execution_revision BIGINT NOT NULL DEFAULT 0 CHECK(execution_revision>=0),lease_until BIGINT NOT NULL DEFAULT 0,UNIQUE(provider_binding_id,provider_binding_revision,resource_ref),CHECK(renew_until=0 OR next_check_at=0))`,
-	`CREATE INDEX dune_managed_maintenance_due ON dune_managed_maintenance(next_check_at,lease_until)`,
-	`CREATE TABLE dune_managed_renewals (operation_id TEXT PRIMARY KEY REFERENCES dune_operations(id) ON DELETE CASCADE,runner_id TEXT NOT NULL REFERENCES dune_managed_resources(runner_id),policy_version TEXT NOT NULL,renew_until BIGINT NOT NULL CHECK(renew_until>0),UNIQUE(runner_id,renew_until))`,
-	`CREATE TABLE dune_managed_destroys (operation_id TEXT PRIMARY KEY REFERENCES dune_operations(id) ON DELETE CASCADE,runner_id TEXT NOT NULL UNIQUE REFERENCES dune_managed_resources(runner_id),resource_ref TEXT NOT NULL,machine_id TEXT NOT NULL,access_closed_at BIGINT NOT NULL,close_deadline BIGINT NOT NULL,access_close_outcome TEXT NOT NULL CHECK(access_close_outcome IN ('waiting','confirmed','timed_out')),CHECK(close_deadline>=access_closed_at))`,
-	`CREATE TABLE dune_managed_access_closures (operation_id TEXT NOT NULL REFERENCES dune_operations(id) ON DELETE CASCADE,instance_id TEXT NOT NULL,machine_id TEXT NOT NULL,acknowledged_at BIGINT NOT NULL DEFAULT 0,PRIMARY KEY(operation_id,instance_id))`,
-	`CREATE INDEX dune_managed_access_closures_pending ON dune_managed_access_closures(instance_id,acknowledged_at)`,
-	`CREATE TABLE dune_provider_actions (id TEXT PRIMARY KEY,operation_id TEXT NOT NULL REFERENCES dune_operations(id),kind TEXT NOT NULL CHECK(kind IN ('create','bootstrap','renew','destroy','pause','resume')),request_digest TEXT NOT NULL,resource_ref TEXT NOT NULL,renew_until BIGINT NOT NULL DEFAULT 0,worker TEXT NOT NULL,execution_revision BIGINT NOT NULL CHECK(execution_revision>0),started_at BIGINT NOT NULL,completed_at BIGINT NOT NULL DEFAULT 0,outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','unknown','timed_out','succeeded','failed')),UNIQUE(operation_id,kind),CHECK((completed_at=0 AND outcome IN ('','unknown','timed_out')) OR (completed_at>0 AND outcome IN ('succeeded','failed'))))`,
-	`CREATE UNIQUE INDEX dune_provider_actions_pending ON dune_provider_actions(operation_id) WHERE completed_at=0`,
-	`CREATE TABLE dune_managed_reviews (id TEXT PRIMARY KEY,request_key TEXT NOT NULL,request_digest TEXT NOT NULL,principal_id TEXT NOT NULL REFERENCES dune_principals(id),identity_namespace TEXT NOT NULL,identity_subject TEXT NOT NULL,operation_id TEXT NOT NULL REFERENCES dune_operations(id),action_id TEXT NOT NULL REFERENCES dune_provider_actions(id),mode TEXT NOT NULL CHECK(mode IN ('reconcile','candidate')),candidate_resource_ref TEXT NOT NULL,reason TEXT NOT NULL,created_at BIGINT NOT NULL,completed_at BIGINT NOT NULL DEFAULT 0,outcome TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','unknown','timed_out','succeeded','failed')),verified_resource_ref TEXT NOT NULL DEFAULT '',worker TEXT NOT NULL DEFAULT '',execution_revision BIGINT NOT NULL DEFAULT 0 CHECK(execution_revision>=0),lease_until BIGINT NOT NULL DEFAULT 0,UNIQUE(principal_id,request_key),CHECK((completed_at=0 AND outcome='') OR (completed_at>0 AND outcome IN ('unknown','timed_out','succeeded','failed'))))`,
-	`CREATE INDEX dune_managed_reviews_pending ON dune_managed_reviews(completed_at,lease_until,created_at)`,
-	`CREATE TABLE dune_managed_enrollments (hash TEXT PRIMARY KEY,action_id TEXT NOT NULL UNIQUE REFERENCES dune_provider_actions(id),operation_id TEXT NOT NULL UNIQUE REFERENCES dune_operations(id),runner_id TEXT NOT NULL UNIQUE REFERENCES dune_runners(id),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),resource_ref TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
-	`CREATE INDEX dune_managed_enrollments_expiry ON dune_managed_enrollments(expires_at)`,
-	`CREATE TABLE dune_cluster (id INTEGER PRIMARY KEY CHECK(id=1),recovery_generation TEXT NOT NULL)`,
-	`CREATE TABLE dune_routes (machine_id TEXT PRIMARY KEY REFERENCES dune_machines(id) ON DELETE CASCADE,recovery_generation TEXT NOT NULL,epoch BIGINT NOT NULL CHECK(epoch>0),owner_boot_id TEXT NOT NULL,owner_address TEXT NOT NULL,binding TEXT NOT NULL,published BOOLEAN NOT NULL DEFAULT FALSE,expires_at BIGINT NOT NULL)`,
-	`CREATE TABLE dune_peer_access (hash TEXT PRIMARY KEY,session_hash TEXT NOT NULL REFERENCES dune_sessions(hash) ON DELETE CASCADE,machine_id TEXT NOT NULL REFERENCES dune_machines(id) ON DELETE CASCADE,source_boot_id TEXT NOT NULL,owner_boot_id TEXT NOT NULL,identity_namespace TEXT NOT NULL,request_digest TEXT NOT NULL,expires_at BIGINT NOT NULL,context TEXT NOT NULL)`,
-	`CREATE INDEX dune_peer_access_session ON dune_peer_access(session_hash)`,
-	`CREATE TABLE dune_instances (boot_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,recovery_generation TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
+	`CREATE TABLE dune_enrollments (hash TEXT PRIMARY KEY,owner_id TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,name TEXT NOT NULL,runner_id TEXT UNIQUE,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
+	`CREATE INDEX dune_enrollments_owner ON dune_enrollments(owner_id,expires_at)`,
+}
+
+var postgresSchema = []string{
+	`CREATE TABLE dune_routes (machine_id TEXT PRIMARY KEY,epoch BIGINT NOT NULL CHECK(epoch>0),owner_boot_id TEXT NOT NULL,owner_address TEXT NOT NULL,binding TEXT NOT NULL,published BOOLEAN NOT NULL DEFAULT FALSE,expires_at BIGINT NOT NULL)`,
 }
 
 type schemaQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+var schemaColumns = map[string][]string{
+	"dune_users":       {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
+	"dune_sessions":    {"hash", "user_id", "expires_at", "auth_version"},
+	"dune_runners":     {"id", "owner_id", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
+	"dune_enrollments": {"hash", "owner_id", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
+	"dune_routes":      {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
+}
+
 func (s *Store) schemaExists(ctx context.Context, queryer schemaQueryer) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='dune_principals')`
+	query := `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='dune_runners')`
 	if s.postgres {
-		query = `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='dune_principals')`
+		query = `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='dune_runners')`
 	}
 	var exists bool
 	if err := queryer.QueryRowContext(ctx, query).Scan(&exists); err != nil {
@@ -70,20 +54,111 @@ func (s *Store) schemaExists(ctx context.Context, queryer schemaQueryer) (bool, 
 func (s *Store) initializeSchema(ctx context.Context) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
 		if s.postgres {
-			// Serialize fresh initialization across processes; released with the transaction.
+			// Serialize fresh initialization across application replicas.
 			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(1146441285)`); err != nil {
 				return err
 			}
 		}
 		exists, err := s.schemaExists(ctx, tx)
-		if err != nil || exists {
+		if err != nil {
 			return err
 		}
-		for _, statement := range schema {
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return err
+		if !exists {
+			statements := make([]string, 0, len(localIdentitySchema)+len(executionSchema)+len(postgresSchema))
+			if s.localIdentity {
+				statements = append(statements, localIdentitySchema...)
+			}
+			statements = append(statements, executionSchema...)
+			if s.postgres {
+				statements = append(statements, postgresSchema...)
+			}
+			for _, statement := range statements {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
 			}
 		}
-		return nil
+		return s.validateSchema(ctx, tx)
 	})
+}
+
+func (s *Store) expectedTables() []string {
+	tables := []string{"dune_enrollments", "dune_runners"}
+	if s.localIdentity {
+		tables = append(tables, "dune_sessions", "dune_users")
+	}
+	if s.postgres {
+		tables = append(tables, "dune_routes")
+	}
+	slices.Sort(tables)
+	return tables
+}
+
+func (s *Store) validateSchema(ctx context.Context, queryer schemaQueryer) error {
+	query := `SELECT name FROM sqlite_schema WHERE type='table' AND name GLOB 'dune_*' ORDER BY name`
+	if s.postgres {
+		query = `SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name LIKE 'dune\_%' ESCAPE '\' ORDER BY table_name`
+	}
+	rows, err := queryer.QueryContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	var actual []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		actual = append(actual, name)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	expected := s.expectedTables()
+	if !slices.Equal(actual, expected) {
+		return fmt.Errorf("incompatible Dune metadata schema: got tables %v, want %v; automatic migration and recovery are unsupported", actual, expected)
+	}
+	for _, table := range expected {
+		columns, err := s.tableColumns(ctx, queryer, table)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(columns, schemaColumns[table]) {
+			return fmt.Errorf("incompatible Dune metadata schema: table %s has columns %v, want %v; automatic migration and recovery are unsupported", table, columns, schemaColumns[table])
+		}
+	}
+	return nil
+}
+
+func (s *Store) tableColumns(ctx context.Context, queryer schemaQueryer, table string) ([]string, error) {
+	query := `SELECT name FROM pragma_table_info('` + table + `') ORDER BY cid`
+	if s.postgres {
+		query = `SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 ORDER BY ordinal_position`
+	}
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if s.postgres {
+		rows, err = queryer.QueryContext(ctx, query, table)
+	} else {
+		rows, err = queryer.QueryContext(ctx, query)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		columns = append(columns, name)
+	}
+	return columns, rows.Err()
 }
