@@ -23,14 +23,14 @@ func (l *Service) IssueEnrollment(ctx context.Context, cookie, name string) (str
 	return l.bindings.IssueEnrollmentForSession(ctx, user, name, credentialHash(cookie))
 }
 func (l *Service) EnrollmentDecision(ctx context.Context, token string) (access.Decision, error) {
-	user, kind, err := l.bindings.EnrollmentIdentity(ctx, token)
+	user, ownerID, kind, err := l.bindings.EnrollmentIdentity(ctx, token)
 	if err != nil {
 		return access.Decision{}, err
 	}
 	if user.Namespace != l.sessions.Namespace() {
 		return access.Decision{}, identity.ErrUnauthorized
 	}
-	return l.Check(ctx, user, Resource{OwnerID: user.ID, Runner: runner.Runner{Kind: kind}}, "runner.create", kind)
+	return l.Check(ctx, user, Resource{OwnerID: ownerID, Runner: runner.Runner{Kind: kind}}, "runner.create", kind)
 }
 func (l *Service) Revoke(ctx context.Context, cookie, target string) error {
 	return l.revoke(ctx, cookie, target, nil)

@@ -13,6 +13,7 @@ type startupInfo struct {
 	LocalRegistration bool                   `json:"local_registration"`
 	Attached          bool                   `json:"attached"`
 	Managed           bool                   `json:"managed"`
+	TenantScoped      bool                   `json:"tenant_scoped"`
 	PublicURL         string                 `json:"public_url"`
 	GatewayURL        string                 `json:"gateway_url"`
 }
@@ -24,8 +25,9 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, startupInfo{
 		LoginMethods:      methods,
 		LocalRegistration: registration,
-		Attached:          true,
+		Attached:          !s.options.DisableAttached,
 		Managed:           s.options.Managed != nil,
+		TenantScoped:      s.options.TenantScoped,
 		PublicURL:         s.urls.PublicURL,
 		GatewayURL:        s.urls.GatewayURL,
 	})

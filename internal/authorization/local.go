@@ -101,7 +101,7 @@ func (l *Service) client(ctx context.Context, session, target string, authentica
 	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
 	defer cancel()
 	token := ticketPrefix + wire.ID() + wire.ID()
-	record := ConnectionAccess{Session: session, PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, Target: expected.MachineID, RunnerID: expected.RunnerID, FabricID: expected.FabricID, BindingRevision: expected.Revision, OwnerID: resource.OwnerID, ExpiresAt: time.Now().Add(TicketLifetime).Unix()}
+	record := ConnectionAccess{Session: session, PrincipalID: user.ID, PrincipalKind: user.Kind, Namespace: user.Namespace, Subject: user.Subject, Target: expected.MachineID, RunnerID: expected.RunnerID, FabricID: expected.FabricID, BindingRevision: expected.Revision, OwnerID: resource.OwnerID, ExpiresAt: time.Now().Add(TicketLifetime).Unix()}
 	l.mu.Lock()
 	now := time.Now().Unix()
 	pending := 0
@@ -134,7 +134,7 @@ func (l *Service) validAccess(record ConnectionAccess) func() bool {
 		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
 		defer cancel()
 		user, err := l.sessions.Authenticate(ctx, record.Session)
-		if err != nil || user.ID != record.PrincipalID || user.Namespace != record.Namespace || user.Subject != record.Subject {
+		if err != nil || user.ID != record.PrincipalID || user.Kind != record.PrincipalKind || user.Namespace != record.Namespace || user.Subject != record.Subject {
 			return false
 		}
 		valid, err := l.bindings.CheckRunnerAccess(ctx, record)

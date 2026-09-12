@@ -23,8 +23,9 @@ var ErrUnavailable = fmt.Errorf("access checker unavailable: %w", ErrDenied)
 // Scope is supplied from authenticated session and authoritative binding data.
 // None of these fields may be taken from an execution request payload.
 type Scope struct {
-	PrincipalID string
-	Namespace   string
+	PrincipalID   string
+	PrincipalKind string
+	Namespace     string
 	// Subject is the verified external ID within Namespace for this login.
 	// Both are empty for local login; email and upstream tokens are excluded.
 	Subject string

@@ -18,16 +18,19 @@ import (
 var (
 	ErrBusy           = errors.New("managed operation is busy")
 	ErrIntentConflict = errors.New("managed request key already has a different intent")
+	ErrNotFound       = errors.New("managed resource not found")
+	ErrForbidden      = errors.New("managed access denied")
+	ErrInvalid        = errors.New("invalid managed request")
 )
 
 // Operation is the stable, display-safe state shared with the Dune frontend.
 // Its persistence and execution semantics belong to the Service implementation.
 type Operation struct {
-	ID, RunnerID, FabricID, Action string
-	BindingRevision                int64
-	CreatedAt                      time.Time
-	Finished                       bool
-	Outcome                        string
+	ID, OwnerID, RunnerID, FabricID, Action string
+	BindingRevision                         int64
+	CreatedAt                               time.Time
+	Finished                                bool
+	Outcome                                 string
 }
 
 type Creation struct {
@@ -54,8 +57,10 @@ type RunnerState struct {
 // into Dune's three-table enterprise schema. IssueEnrollment creates the
 // logical Managed Runner and one-shot connector token atomically.
 type RunnerAccess interface {
-	IssueEnrollment(context.Context, identity.User, runner.Runner, string) (Enrollment, error)
-	State(context.Context, identity.User, string) (RunnerState, error)
+	IssueEnrollment(context.Context, identity.User, string, runner.Runner, string) (Enrollment, error)
+	State(context.Context, string, string) (RunnerState, error)
+	SetSuspended(context.Context, string, string, bool) error
+	Revoke(context.Context, string, string) error
 }
 
 // Mutation describes an accepted pause or resume request.
@@ -74,28 +79,15 @@ type Destruction struct {
 
 type Status struct {
 	Operation
-	Stage, ProviderOutcome, ResourceRef                 string
-	ExpiresAt                                           time.Time
-	RenewalPolicyVersion, RenewalReason                 string
-	RenewalObservedAt, RenewalNextCheckAt, RenewalUntil time.Time
-	AccessClosed, AccessSuspended                       bool
-	ResourceState                                       string
-	Capabilities                                        *fabric.ResourceCapabilities
-	AccessCloseOutcome                                  string
-	AccessCloseDeadline                                 time.Time
-}
-
-type ReviewRequest struct {
-	OperationID string `json:"operation_id"`
-	Mode        string `json:"mode"`
-	Candidate   string `json:"candidate_resource_ref,omitempty"`
-	Reason      string `json:"reason"`
-}
-
-type Review struct {
-	ID, OperationID, Mode, Candidate, Reason string
-	CreatedAt, CompletedAt                   time.Time
-	Outcome, VerifiedResourceRef             string
+	Stage, ProviderOutcome, ResourceRef, CredentialState, ErrorCode string
+	ExpiresAt                                                       time.Time
+	RenewalPolicyVersion, RenewalReason                             string
+	RenewalObservedAt, RenewalNextCheckAt, RenewalUntil             time.Time
+	AccessClosed, AccessSuspended                                   bool
+	ResourceState                                                   string
+	Capabilities                                                    *fabric.ResourceCapabilities
+	AccessCloseOutcome                                              string
+	AccessCloseDeadline                                             time.Time
 }
 
 // Service is intentionally a high-level product API. Implementations receive
@@ -106,15 +98,12 @@ type Service interface {
 	// exposed to requests. The implementation must use this capability to create
 	// and inspect Dune's logical Runner; it must not retain an earlier binding.
 	BindRunnerAccess(RunnerAccess) error
-	Templates(context.Context, identity.User) ([]fabric.TemplateStatus, error)
-	Template(context.Context, identity.User, string, string, string) (fabric.TemplateStatus, error)
-	Create(context.Context, identity.User, string, fabric.CreateRequest) (Creation, error)
+	Templates(context.Context, identity.User, string) ([]fabric.TemplateStatus, error)
+	Template(context.Context, identity.User, string, string, string, string) (fabric.TemplateStatus, error)
+	Create(context.Context, identity.User, string, string, fabric.CreateRequest) (Creation, error)
 	Destroy(context.Context, identity.User, string, string) (Destruction, error)
 	Pause(context.Context, identity.User, string, string) (Mutation, error)
 	Resume(context.Context, identity.User, string, string) (Mutation, error)
 	Status(context.Context, identity.User, string) (Status, error)
 	RunnerStatus(context.Context, identity.User, string) (Status, error)
-	Review(context.Context, identity.User, string, ReviewRequest) (Review, error)
-	ReviewStatus(context.Context, identity.User, string) (Review, error)
-	OperationReview(context.Context, identity.User, string) (Review, error)
 }

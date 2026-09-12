@@ -16,13 +16,14 @@ scope；拒绝、错误、timeout 或非法结果都不会回退到默认 owner 
 
 ## Managed
 
-宿主实现 `pkg/managed.Service`，负责模板、创建、暂停、恢复、销毁、Operation、
-状态与 review。该实现自己拥有 provider 凭据、数据库、worker、重试和核对。
+宿主实现 `pkg/managed.Service`，负责模板、创建、暂停、恢复、销毁、Operation
+和状态。该实现自己拥有 provider 凭据、数据库、worker 与失败策略。
 Dune 只提供现有 Web 路由和前端展示，不持久化 lifecycle 状态。`host.Open` 在
-发布路由前调用服务的 `BindRunnerAccess`，注入只能创建/查询 Dune Runner 与
-一次性 enrollment 的能力；外部服务不接触 Dune SQL 或 Gateway 内部对象。
-pause/resume/destroy 被服务接受后，Dune 依据自己的 Runner 记录冻结、解冻或
-撤销连接访问，不接受服务回传的 machine ID 作为授权事实。
+发布路由前调用服务的 `BindRunnerAccess`，注入只能创建/查询 Dune Runner、签发
+或撤销一次性 enrollment，以及开关用户访问 gate 的能力；外部服务不接触 Dune
+SQL 或 Gateway 内部对象。Managed 服务按 provider 生命周期顺序调用这些 gate，
+Dune 始终依据自己的 Runner 记录处理，不接受服务回传的 machine ID 作为授权
+事实。
 
 SandDance 可以继续使用其 TAE provider 和 tenant binding registry 作为内部实现
 细节，但不能把底层 provider 或 worker 配置注入 Dune。

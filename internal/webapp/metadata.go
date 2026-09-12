@@ -33,6 +33,12 @@ func writeMetadataError(w http.ResponseWriter, err error) {
 		writeError(w, 409, "BINDING_CHANGED", runner.ErrBindingChanged.Error())
 	case errors.Is(err, managed.ErrBusy), errors.Is(err, managed.ErrIntentConflict):
 		writeError(w, 409, "LIFECYCLE_CONFLICT", err.Error())
+	case errors.Is(err, managed.ErrForbidden):
+		writeError(w, 403, "ACCESS_DENIED", "access denied")
+	case errors.Is(err, managed.ErrNotFound):
+		writeError(w, 404, "NOT_FOUND", "resource not found")
+	case errors.Is(err, managed.ErrInvalid):
+		writeError(w, 400, "INVALID_ARGUMENT", err.Error())
 	case errors.Is(err, fabric.ErrTemplateNotFound):
 		writeError(w, 404, "NOT_FOUND", "resource not found")
 	case errors.Is(err, metadata.ErrNotFound), errors.Is(err, authorization.ErrNotFound):

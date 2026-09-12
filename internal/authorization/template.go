@@ -16,7 +16,7 @@ func (l *Service) TemplateDecision(ctx context.Context, user identity.User, temp
 		return access.Decision{}, access.ErrDenied
 	}
 	return l.evaluate(ctx, access.Request{
-		Scope:     access.Scope{PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, OwnerID: user.ID},
+		Scope:     access.Scope{PrincipalID: user.ID, PrincipalKind: user.Kind, Namespace: user.Namespace, Subject: user.Subject, OwnerID: user.ID},
 		RequestID: wire.ID(), Operation: operation, Suboperation: "managed",
 		Resource: access.Resource{FabricID: template.FabricID, TemplateID: template.ID, TemplateVersion: template.Version},
 	})

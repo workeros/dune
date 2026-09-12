@@ -43,27 +43,30 @@ func validRunnerName(name string) (string, error) {
 // IssueEnrollment is retained for trusted local callers and tests. Browser code
 // uses IssueEnrollmentForSession so local session revocation races are closed.
 func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (string, int64, error) {
-	return s.issueEnrollment(ctx, identity.User{ID: userID}, name, "", "", "attached")
+	return s.issueEnrollment(ctx, identity.User{ID: userID}, userID, name, "", "", "attached")
 }
 
 func (s *Store) IssueEnrollmentForSession(ctx context.Context, user identity.User, name, sessionHash string) (string, int64, error) {
 	if user.ID == "" || sessionHash == "" {
 		return "", 0, identity.ErrUnauthorized
 	}
-	return s.issueEnrollment(ctx, user, name, sessionHash, "", "attached")
+	return s.issueEnrollment(ctx, user, user.ID, name, sessionHash, "", "attached")
 }
 
 // IssueManagedEnrollment is the small Dune-side attachment primitive available
 // to an external Managed implementation. Provider operations and their state do
 // not enter Dune; only the resulting logical Runner and one-shot binding token do.
-func (s *Store) IssueManagedEnrollment(ctx context.Context, user identity.User, logical runner.Runner, fabricID string) (string, int64, error) {
-	if user.ID == "" || logical.ID == "" || fabricID == "" || logical.Kind != "managed" || logical.Binding != nil {
+func (s *Store) IssueManagedEnrollment(ctx context.Context, user identity.User, ownerID string, logical runner.Runner, fabricID string) (string, int64, error) {
+	if user.ID == "" || ownerID == "" || logical.ID == "" || fabricID == "" || logical.Kind != "managed" || logical.Binding != nil {
 		return "", 0, ErrInvalidArgument
 	}
-	return s.issueEnrollment(ctx, user, logical.Name, "", logical.ID, "managed:"+fabricID)
+	return s.issueEnrollment(ctx, user, ownerID, logical.Name, "", logical.ID, "managed:"+fabricID)
 }
 
-func (s *Store) issueEnrollment(ctx context.Context, user identity.User, name, sessionHash, runnerID, mode string) (string, int64, error) {
+func (s *Store) issueEnrollment(ctx context.Context, user identity.User, ownerID, name, sessionHash, runnerID, mode string) (string, int64, error) {
+	if ownerID == "" {
+		return "", 0, ErrInvalidArgument
+	}
 	name, err := validRunnerName(name)
 	if err != nil {
 		return "", 0, err
@@ -80,29 +83,34 @@ func (s *Store) issueEnrollment(ctx context.Context, user identity.User, name, s
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1 AND expires_at<=$2`, user.ID, time.Now().Unix()); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1 AND expires_at<=$2`, ownerID, time.Now().Unix()); err != nil {
 			return err
 		}
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_enrollments WHERE owner_id=$1`, user.ID).Scan(&count); err != nil {
-			return err
-		}
-		if count >= 5 {
-			return fmt.Errorf("%w: at most five pending binding commands", ErrInvalidArgument)
+		tenantOwned := ownerID != user.ID
+		if !tenantOwned {
+			var count int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_enrollments WHERE owner_id=$1`, ownerID).Scan(&count); err != nil {
+				return err
+			}
+			if count >= 5 {
+				return fmt.Errorf("%w: at most five pending binding commands", ErrInvalidArgument)
+			}
 		}
 		if runnerID != "" {
-			var runners int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_runners WHERE owner_id=$1 AND enabled=TRUE`, user.ID).Scan(&runners); err != nil {
-				return err
+			if !tenantOwned {
+				var runners int
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_runners WHERE owner_id=$1 AND enabled=TRUE`, ownerID).Scan(&runners); err != nil {
+					return err
+				}
+				if runners >= 32 {
+					return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
+				}
 			}
-			if runners >= 32 {
-				return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,'managed',$4,1,$5)`, runnerID, user.ID, name, fabricID, time.Now().Unix()); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,$4,$5,$6,'managed',$7,1,$8)`, runnerID, ownerID, user.ID, user.Namespace, user.Subject, name, fabricID, time.Now().Unix()); err != nil {
 				return err
 			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,owner_id,namespace,subject,name,runner_id,kind,fabric_id,expires_at) VALUES($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9)`, tokenHash(token), user.ID, user.Namespace, user.Subject, name, runnerID, kind, fabricID, expires)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,owner_id,issued_to_id,issued_to_kind,namespace,subject,name,runner_id,kind,fabric_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9,$10,$11)`, tokenHash(token), ownerID, user.ID, user.Kind, user.Namespace, user.Subject, name, runnerID, kind, fabricID, expires)
 		return err
 	})
 	if err != nil {
@@ -121,13 +129,14 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 	credential := wire.ID() + wire.ID()
 	machine := Machine{ID: wire.ID(), OS: osName, Arch: arch, CreatedAt: time.Now().Unix()}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		query := `SELECT owner_id,name,COALESCE(runner_id,''),kind,fabric_id,expires_at FROM dune_enrollments WHERE hash=$1`
+		query := `SELECT owner_id,issued_to_id,issued_to_kind,namespace,subject,name,COALESCE(runner_id,''),kind,fabric_id,expires_at FROM dune_enrollments WHERE hash=$1`
 		if s.postgres {
 			query += ` FOR UPDATE`
 		}
-		var owner, kind, fabricID string
+		var owner, issuedToID, namespace, subject, kind, fabricID string
 		var expires int64
-		if err := tx.QueryRowContext(ctx, query, tokenHash(token)).Scan(&owner, &machine.Name, &machine.RunnerID, &kind, &fabricID, &expires); err != nil {
+		var issuedToKind string
+		if err := tx.QueryRowContext(ctx, query, tokenHash(token)).Scan(&owner, &issuedToID, &issuedToKind, &namespace, &subject, &machine.Name, &machine.RunnerID, &kind, &fabricID, &expires); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return identity.ErrUnauthorized
 			}
@@ -145,7 +154,7 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 				return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
 			}
 			machine.RunnerID = wire.ID()
-			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,created_at) VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,$9,$10)`, machine.RunnerID, owner, machine.Name, kind, fabricID, machine.ID, tokenHash(credential), osName, arch, machine.CreatedAt); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$12,$13)`, machine.RunnerID, owner, issuedToID, namespace, subject, machine.Name, kind, fabricID, machine.ID, tokenHash(credential), osName, arch, machine.CreatedAt); err != nil {
 				return err
 			}
 		} else {
@@ -203,7 +212,7 @@ func (s *Store) MachineCredential(ctx context.Context, token string) (string, er
 		return "", identity.ErrUnauthorized
 	}
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT machine_id FROM dune_runners WHERE credential_hash=$1 AND enabled=TRUE AND suspended=FALSE`, tokenHash(token)).Scan(&id)
+	err := s.db.QueryRowContext(ctx, `SELECT machine_id FROM dune_runners WHERE credential_hash=$1 AND enabled=TRUE`, tokenHash(token)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
@@ -238,10 +247,11 @@ func (s *Store) disableRunner(ctx context.Context, owner, machineID string, expe
 	})
 }
 
-// SetManagedSuspended gates both user and connector access without discarding
-// the machine credential. Resume can therefore reconnect the same fabricd and
-// retain its tmux sessions. The machine ID comes from Dune's binding record,
-// never from lifecycle-service output.
+// SetManagedSuspended gates discovery and user execution without discarding or
+// disabling the machine credential. A resumed provider can therefore reconnect
+// fabricd while the user gate remains closed; SandDance opens that gate only
+// after it observes the connector online. The machine ID comes from Dune's
+// binding record, never from lifecycle-service output.
 func (s *Store) SetManagedSuspended(ctx context.Context, owner, runnerID string, suspended bool) (string, error) {
 	var machine sql.NullString
 	err := s.db.QueryRowContext(ctx, `UPDATE dune_runners SET suspended=$3 WHERE id=$1 AND owner_id=$2 AND kind='managed' AND enabled=TRUE RETURNING machine_id`, runnerID, owner, suspended).Scan(&machine)
@@ -252,14 +262,21 @@ func (s *Store) SetManagedSuspended(ctx context.Context, owner, runnerID string,
 }
 
 // RevokeManaged persistently disables a logical Managed Runner and invalidates
-// both an issued machine credential and a still-pending enrollment token.
+// both an issued machine credential and a still-pending enrollment token. It
+// is idempotent so a lifecycle service can retry provider cleanup after the
+// access gate was closed by an earlier failed destroy operation.
 func (s *Store) RevokeManaged(ctx context.Context, owner, runnerID string) (string, error) {
 	var machine sql.NullString
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
 		query := `UPDATE dune_runners SET enabled=FALSE,suspended=FALSE,credential_hash=NULL WHERE id=$1 AND owner_id=$2 AND kind='managed' AND enabled=TRUE RETURNING machine_id`
 		if err := tx.QueryRowContext(ctx, query, runnerID, owner).Scan(&machine); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
+				var exists bool
+				err = tx.QueryRowContext(ctx, `SELECT TRUE FROM dune_runners WHERE id=$1 AND owner_id=$2 AND kind='managed' AND enabled=FALSE`, runnerID, owner).Scan(&exists)
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrNotFound
+				}
+				return err
 			}
 			return err
 		}
@@ -269,21 +286,21 @@ func (s *Store) RevokeManaged(ctx context.Context, owner, runnerID string) (stri
 	return machine.String, err
 }
 
-func (s *Store) EnrollmentIdentity(ctx context.Context, token string) (identity.User, string, error) {
+func (s *Store) EnrollmentIdentity(ctx context.Context, token string) (identity.User, string, string, error) {
 	var user identity.User
 	if len(token) != 64 {
-		return user, "", identity.ErrUnauthorized
+		return user, "", "", identity.ErrUnauthorized
 	}
-	var kind string
-	err := s.db.QueryRowContext(ctx, `SELECT owner_id,namespace,subject,kind FROM dune_enrollments WHERE hash=$1 AND expires_at>`+s.databaseClock()+`/1000`, tokenHash(token)).Scan(&user.ID, &user.Namespace, &user.Subject, &kind)
+	var ownerID, kind string
+	err := s.db.QueryRowContext(ctx, `SELECT issued_to_id,issued_to_kind,owner_id,namespace,subject,kind FROM dune_enrollments WHERE hash=$1 AND expires_at>`+s.databaseClock()+`/1000`, tokenHash(token)).Scan(&user.ID, &user.Kind, &ownerID, &user.Namespace, &user.Subject, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
-	return user, kind, err
+	return user, ownerID, kind, err
 }
 
 func (s *Store) EnrollmentUser(ctx context.Context, token string) (identity.User, error) {
-	user, _, err := s.EnrollmentIdentity(ctx, token)
+	user, _, _, err := s.EnrollmentIdentity(ctx, token)
 	return user, err
 }
 
@@ -309,7 +326,7 @@ func (s *Store) RevokeAuthorized(ctx context.Context, user identity.User, sessio
 
 func (s *Store) ConfirmMachineOnline(ctx context.Context, binding api.Binding) error {
 	var found int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_runners WHERE machine_id=$1 AND enabled=TRUE AND suspended=FALSE`, binding.Target).Scan(&found)
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_runners WHERE machine_id=$1 AND enabled=TRUE`, binding.Target).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return identity.ErrUnauthorized
 	}

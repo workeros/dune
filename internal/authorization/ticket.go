@@ -25,12 +25,12 @@ const maxSeenPeerNonces = 4096
 // ConnectionAccess exists only in process memory or on an authenticated peer
 // connection. Dune never persists browser credentials or access tickets.
 type ConnectionAccess struct {
-	Session, PrincipalID, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
-	BindingRevision, ExpiresAt                                                    int64
+	Session, PrincipalID, PrincipalKind, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
+	BindingRevision, ExpiresAt                                                                   int64
 }
 
 func (r ConnectionAccess) Scope() access.Scope {
-	return access.Scope{PrincipalID: r.PrincipalID, Namespace: r.Namespace, Subject: r.Subject, OwnerID: r.OwnerID,
+	return access.Scope{PrincipalID: r.PrincipalID, PrincipalKind: r.PrincipalKind, Namespace: r.Namespace, Subject: r.Subject, OwnerID: r.OwnerID,
 		Binding: runner.Binding{RunnerID: r.RunnerID, FabricID: r.FabricID, MachineID: r.Target, Revision: r.BindingRevision}}
 }
 
@@ -42,7 +42,7 @@ type Repository interface {
 	Candidates(context.Context, string, string, int) ([]Resource, error)
 	ReadCursor(context.Context, string, string, string, string) (string, error)
 	SaveCursor(context.Context, string, string, string, string) (string, error)
-	EnrollmentIdentity(context.Context, string) (identity.User, string, error)
+	EnrollmentIdentity(context.Context, string) (identity.User, string, string, error)
 	MachineCredential(context.Context, string) (string, error)
 	ConfirmMachineOnline(context.Context, api.Binding) error
 	CheckRunnerAccess(context.Context, ConnectionAccess) (bool, error)

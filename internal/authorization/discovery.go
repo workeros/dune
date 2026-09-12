@@ -27,7 +27,7 @@ type Page struct {
 }
 
 func scope(user identity.User, resource Resource) access.Scope {
-	out := access.Scope{PrincipalID: user.ID, Namespace: user.Namespace, Subject: user.Subject, OwnerID: resource.OwnerID}
+	out := access.Scope{PrincipalID: user.ID, PrincipalKind: user.Kind, Namespace: user.Namespace, Subject: user.Subject, OwnerID: resource.OwnerID}
 	if resource.Runner.Binding != nil {
 		out.Binding = *resource.Runner.Binding
 	} else {

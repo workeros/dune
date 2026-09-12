@@ -18,9 +18,10 @@ export function call<T>(binding: Binding, operation: string, payload: unknown = 
 }
 export const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 export type User = { id: string; email: string };
-export type StartupInfo = { login_methods: { kind: string; url: string }[]; local_registration: boolean; attached: boolean; managed: boolean; public_url: string; gateway_url: string };
+export type Tenant = { id: string; name: string; created_by: { type: string; subject: string }; created_at: string };
+export type StartupInfo = { login_methods: { kind: string; url: string }[]; local_registration: boolean; attached: boolean; managed: boolean; tenant_scoped: boolean; public_url: string; gateway_url: string };
 export type Binding = { runner_id: string; fabric_id: string; machine_id: string; revision: number };
-export type Runner = { id: string; name: string; kind: string; binding?: Binding; os?: string; arch?: string; online: boolean };
+export type Runner = { id: string; name: string; kind: string; tenant_id?: string; binding?: Binding; os?: string; arch?: string; online: boolean };
 export type BoundRunner = Runner & { binding: Binding };
 export function bindingKey(binding?: Binding): string { return binding ? JSON.stringify([binding.runner_id, binding.fabric_id, binding.machine_id, binding.revision]) : ""; }
 export function runnerPath(binding: Binding, suffix: string): string {
@@ -39,15 +40,11 @@ export type ManagedUnavailableReason = "maintenance" | "capacity" | "configurati
 export type ManagedTemplate = { fabric_id: string; id: string; version: string; name: string; disabled: boolean; fields: ManagedField[]; available: boolean; unavailable_reason?: ManagedUnavailableReason };
 export type ManagedOperation = {
   id: string; runner_id: string; fabric_id: string; binding_revision: number; action: "create" | "renew" | "destroy" | "pause" | "resume";
-  created_at: string; finished: boolean; outcome?: string; stage?: string; provider_outcome?: string; resource_ref?: string;
+  created_at: string; finished: boolean; outcome?: string; stage?: string; provider_outcome?: string; resource_ref?: string; error_code?: string;
   expires_at?: string; renewal_policy_version?: string; renewal_reason?: string; renewal_observed_at?: string; renewal_next_check_at?: string; renewal_until?: string;
-  access_closed: boolean; access_suspended: boolean; resource_state?: "ready" | "paused" | "unknown";
+  access_closed: boolean; access_suspended: boolean; resource_state?: "ready" | "paused" | "expired" | "gone" | "unknown"; credential_state?: "ready" | "degraded";
   capabilities?: { pause_resume: boolean; disk_snapshot: boolean }; access_close_outcome?: string; access_close_deadline?: string;
 };
 export type ManagedCreation = { runner: Runner; operation: ManagedOperation };
-export type ManagedReview = {
-  id: string; operation_id: string; mode: "reconcile" | "candidate"; candidate_resource_ref?: string; reason: string;
-  created_at: string; completed_at?: string; outcome?: string; verified_resource_ref?: string;
-};
 
 export type Page<T> = { items: T[]; next_cursor?: string };

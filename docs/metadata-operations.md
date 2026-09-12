@@ -23,7 +23,7 @@ PostgreSQL 使用 transaction advisory lock 串行化并发首次启动。每次
 PostgreSQL 省略本地用户与 Session，只保留后三张。索引不是额外逻辑表。
 
 浏览器访问票据和 peer nonce 保存在 Gateway 内存，分页游标编码为无权限的
-位置值。Managed operation、provider action、renewal、review 等状态属于外部
+位置值。Managed operation、provider action、renewal 等状态属于外部
 Managed 服务，不进入 Dune 数据库。
 
 ## PostgreSQL 配置

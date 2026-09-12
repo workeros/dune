@@ -17,13 +17,13 @@ type managedRunnerAccess struct {
 	online func(context.Context, []string) (map[string]bool, error)
 }
 
-func (a managedRunnerAccess) IssueEnrollment(ctx context.Context, user identity.User, logical runner.Runner, fabricID string) (managed.Enrollment, error) {
-	token, expires, err := a.store.IssueManagedEnrollment(ctx, user, logical, fabricID)
+func (a managedRunnerAccess) IssueEnrollment(ctx context.Context, user identity.User, ownerID string, logical runner.Runner, fabricID string) (managed.Enrollment, error) {
+	token, expires, err := a.store.IssueManagedEnrollment(ctx, user, ownerID, logical, fabricID)
 	return managed.Enrollment{Token: token, ExpiresAt: time.Unix(expires, 0).UTC()}, err
 }
 
-func (a managedRunnerAccess) State(ctx context.Context, user identity.User, id string) (managed.RunnerState, error) {
-	logical, err := a.store.Runner(ctx, user.ID, id)
+func (a managedRunnerAccess) State(ctx context.Context, ownerID, id string) (managed.RunnerState, error) {
+	logical, err := a.store.Runner(ctx, ownerID, id)
 	if err != nil {
 		return managed.RunnerState{}, err
 	}
@@ -41,6 +41,22 @@ func (a managedRunnerAccess) State(ctx context.Context, user identity.User, id s
 	}
 	state.Online = online[logical.Binding.MachineID]
 	return state, nil
+}
+
+func (a managedRunnerAccess) SetSuspended(ctx context.Context, ownerID, runnerID string, suspended bool) error {
+	machineID, err := a.store.SetManagedSuspended(ctx, ownerID, runnerID, suspended)
+	if err == nil && suspended && machineID != "" {
+		a.core.Drop(machineID)
+	}
+	return err
+}
+
+func (a managedRunnerAccess) Revoke(ctx context.Context, ownerID, runnerID string) error {
+	machineID, err := a.store.RevokeManaged(ctx, ownerID, runnerID)
+	if err == nil && machineID != "" {
+		a.core.Disconnect(machineID)
+	}
+	return err
 }
 
 var _ managed.RunnerAccess = managedRunnerAccess{}

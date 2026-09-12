@@ -1,7 +1,6 @@
 package webapp
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
@@ -32,37 +31,19 @@ type operationView struct {
 	AccessClosed         bool                         `json:"access_closed"`
 	AccessSuspended      bool                         `json:"access_suspended"`
 	ResourceState        string                       `json:"resource_state,omitempty"`
+	CredentialState      string                       `json:"credential_state,omitempty"`
+	ErrorCode            string                       `json:"error_code,omitempty"`
 	Capabilities         *fabric.ResourceCapabilities `json:"capabilities,omitempty"`
 	AccessCloseOutcome   string                       `json:"access_close_outcome,omitempty"`
 	AccessCloseDeadline  *time.Time                   `json:"access_close_deadline,omitempty"`
-}
-
-type reviewView struct {
-	ID                  string     `json:"id"`
-	OperationID         string     `json:"operation_id"`
-	Mode                string     `json:"mode"`
-	Candidate           string     `json:"candidate_resource_ref,omitempty"`
-	Reason              string     `json:"reason"`
-	CreatedAt           time.Time  `json:"created_at"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
-	Outcome             string     `json:"outcome,omitempty"`
-	VerifiedResourceRef string     `json:"verified_resource_ref,omitempty"`
-}
-
-func reviewResponse(review managed.Review) reviewView {
-	view := reviewView{ID: review.ID, OperationID: review.OperationID, Mode: review.Mode, Candidate: review.Candidate, Reason: review.Reason, CreatedAt: review.CreatedAt, Outcome: review.Outcome, VerifiedResourceRef: review.VerifiedResourceRef}
-	if !review.CompletedAt.IsZero() {
-		completed := review.CompletedAt
-		view.CompletedAt = &completed
-	}
-	return view
 }
 
 func statusResponse(status managed.Status) operationView {
 	view := operationResponse(status.Operation)
 	view.Stage, view.ProviderOutcome, view.ResourceRef = status.Stage, status.ProviderOutcome, status.ResourceRef
 	view.AccessClosed = status.AccessClosed
-	view.AccessSuspended, view.ResourceState, view.Capabilities = status.AccessSuspended, status.ResourceState, status.Capabilities
+	view.AccessSuspended, view.ResourceState, view.CredentialState, view.Capabilities = status.AccessSuspended, status.ResourceState, status.CredentialState, status.Capabilities
+	view.ErrorCode = status.ErrorCode
 	if !status.ExpiresAt.IsZero() {
 		expires := status.ExpiresAt
 		view.ExpiresAt = &expires
@@ -101,7 +82,7 @@ func (s *Server) managedTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	templates, err := s.options.Managed.Templates(r.Context(), user)
+	templates, err := s.options.Managed.Templates(r.Context(), user, r.PathValue("tenant"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -114,7 +95,7 @@ func (s *Server) managedTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	template, err := s.options.Managed.Template(r.Context(), user, r.PathValue("fabric"), r.PathValue("template"), r.PathValue("version"))
+	template, err := s.options.Managed.Template(r.Context(), user, r.PathValue("tenant"), r.PathValue("fabric"), r.PathValue("template"), r.PathValue("version"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -134,12 +115,12 @@ func (s *Server) createManagedRunner(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	created, err := s.options.Managed.Create(r.Context(), user, request.RequestKey, request.Request)
+	created, err := s.options.Managed.Create(r.Context(), user, r.PathValue("tenant"), request.RequestKey, request.Request)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
 	}
-	logical, err := s.store.Runner(r.Context(), user.ID, created.Runner.ID)
+	logical, err := s.store.Runner(r.Context(), created.Operation.OwnerID, created.Runner.ID)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -169,14 +150,6 @@ func (s *Server) destroyManagedRunner(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeMetadataError(w, err)
 		return
-	}
-	machineID, err := s.store.RevokeManaged(r.Context(), user.ID, r.PathValue("runner"))
-	if err != nil && !errors.Is(err, metadata.ErrNotFound) {
-		writeMetadataError(w, err)
-		return
-	}
-	if machineID != "" {
-		s.gateway.Disconnect(machineID)
 	}
 	writeJSON(w, http.StatusAccepted, struct {
 		Operation         operationView `json:"operation"`
@@ -216,14 +189,6 @@ func (s *Server) pauseResumeManagedRunner(w http.ResponseWriter, r *http.Request
 		writeMetadataError(w, err)
 		return
 	}
-	machineID, err := s.store.SetManagedSuspended(r.Context(), user.ID, r.PathValue("runner"), action == "pause")
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	if action == "pause" && machineID != "" {
-		s.gateway.Drop(machineID)
-	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"operation": operationResponse(mutation.Operation)})
 }
 
@@ -251,52 +216,4 @@ func (s *Server) managedRunnerStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, statusResponse(status))
-}
-
-func (s *Server) createManagedReview(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.user(w, r)
-	if !ok {
-		return
-	}
-	var request struct {
-		RequestKey string `json:"request_key"`
-		Mode       string `json:"mode"`
-		Candidate  string `json:"candidate_resource_ref"`
-		Reason     string `json:"reason"`
-	}
-	if !readJSON(w, r, &request) {
-		return
-	}
-	review, err := s.options.Managed.Review(r.Context(), user, request.RequestKey, managed.ReviewRequest{OperationID: r.PathValue("operation"), Mode: request.Mode, Candidate: request.Candidate, Reason: request.Reason})
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, reviewResponse(review))
-}
-
-func (s *Server) managedReview(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.user(w, r)
-	if !ok {
-		return
-	}
-	review, err := s.options.Managed.ReviewStatus(r.Context(), user, r.PathValue("review"))
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, reviewResponse(review))
-}
-
-func (s *Server) managedOperationReview(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.user(w, r)
-	if !ok {
-		return
-	}
-	review, err := s.options.Managed.OperationReview(r.Context(), user, r.PathValue("operation"))
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, reviewResponse(review))
 }

@@ -46,6 +46,8 @@ type Options struct {
 	// overrides the full machine WS(S) entry point without changing browser URLs.
 	PublicURL, GatewayURL string
 	DisableRegistration   bool
+	DisableAttached       bool
+	TenantScoped          bool
 	// Identity selects host-owned session validation. Nil uses Dune's local
 	// password implementation. Enterprise implementations live outside Dune and
 	// return their stable enterprise user ID directly.
@@ -176,9 +178,11 @@ func Open(parent context.Context, options Options) (*App, error) {
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		Assets: options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
-		DialGateway: dial,
-		Online:      online,
-		Managed:     options.Managed,
+		DialGateway:     dial,
+		Online:          online,
+		Managed:         options.Managed,
+		DisableAttached: options.DisableAttached,
+		TenantScoped:    options.TenantScoped,
 	}, store, service, authorizer, core)
 	if err != nil {
 		return nil, err

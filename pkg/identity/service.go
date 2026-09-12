@@ -24,6 +24,7 @@ type User struct {
 	Email     string `json:"email,omitempty"`
 	Namespace string `json:"-"`
 	Subject   string `json:"-"`
+	Kind      string `json:"-"`
 }
 
 // LoginMethod is advertised by /api/bootstrap. URL may point outside Dune when

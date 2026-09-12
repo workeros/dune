@@ -12,13 +12,14 @@ import (
 // display information; execution always verifies the selected binding again.
 type runnerView struct {
 	runner.Runner
-	Online bool   `json:"online"`
-	OS     string `json:"os,omitempty"`
-	Arch   string `json:"arch,omitempty"`
+	TenantID string `json:"tenant_id,omitempty"`
+	Online   bool   `json:"online"`
+	OS       string `json:"os,omitempty"`
+	Arch     string `json:"arch,omitempty"`
 }
 
 func runnerResponse(resource authorization.Resource, online map[string]bool) runnerView {
-	view := runnerView{Runner: resource.Runner, OS: resource.OS, Arch: resource.Arch}
+	view := runnerView{Runner: resource.Runner, TenantID: resource.OwnerID, OS: resource.OS, Arch: resource.Arch}
 	if b := resource.Runner.Binding; b != nil {
 		view.Online = online[b.MachineID]
 	}

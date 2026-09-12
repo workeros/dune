@@ -53,7 +53,7 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 					if i >= 128 {
 						owner = user.ID
 					}
-					_, err := tx.Exec(`INSERT INTO dune_runners(id,owner_id,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,created_at) VALUES($1,$2,$1,'attached','attached',1,$3,$1,'linux','amd64',1)`, id, owner, "machine-"+id)
+					_, err := tx.Exec(`INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,created_at) VALUES($1,$2,$2,'','',$1,'attached','attached',1,$3,$1,'linux','amd64',1)`, id, owner, "machine-"+id)
 					if err != nil {
 						return err
 					}

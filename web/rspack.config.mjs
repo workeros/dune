@@ -6,7 +6,7 @@ export default {
   entry: "./src/main.tsx",
   target: "web",
   experiments: { css: true },
-  output: { path: fileURLToPath(new URL("./dist", import.meta.url)), clean: true, publicPath: "auto" },
+  output: { path: fileURLToPath(new URL("./dist", import.meta.url)), clean: true, publicPath: "auto", filename: "[name].[contenthash:16].js", cssFilename: "[name].[contenthash:16].css" },
   resolve: { extensions: [".tsx", ".ts", ".js"], alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   module: { rules: [
     { test: /\.tsx?$/, exclude: /node_modules/, loader: "builtin:swc-loader", options: { jsc: { parser: { syntax: "typescript", tsx: true }, transform: { react: { runtime: "automatic" } } } } },

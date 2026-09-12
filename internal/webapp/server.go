@@ -46,8 +46,10 @@ type Options struct {
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
 	// Online optionally reads shared directory facts for already authorized IDs.
-	Online  func(context.Context, []string) (map[string]bool, error)
-	Managed managed.Service
+	Online          func(context.Context, []string) (map[string]bool, error)
+	Managed         managed.Service
+	DisableAttached bool
+	TenantScoped    bool
 }
 
 type authRate struct {
@@ -96,17 +98,14 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	s.mux.HandleFunc("GET /api/runners", s.runners)
 	s.mux.HandleFunc("GET /api/runners/{runner}", s.runner)
 	if options.Managed != nil {
-		s.mux.HandleFunc("GET /api/managed/templates", s.managedTemplates)
-		s.mux.HandleFunc("GET /api/managed/templates/{fabric}/{template}/{version}", s.managedTemplate)
-		s.mux.HandleFunc("POST /api/managed/runners", s.createManagedRunner)
+		s.mux.HandleFunc("GET /api/managed/tenants/{tenant}/templates", s.managedTemplates)
+		s.mux.HandleFunc("GET /api/managed/tenants/{tenant}/templates/{fabric}/{template}/{version}", s.managedTemplate)
+		s.mux.HandleFunc("POST /api/managed/tenants/{tenant}/runners", s.createManagedRunner)
 		s.mux.HandleFunc("DELETE /api/managed/runners/{runner}", s.destroyManagedRunner)
 		s.mux.HandleFunc("POST /api/managed/runners/{runner}/pause", s.pauseManagedRunner)
 		s.mux.HandleFunc("POST /api/managed/runners/{runner}/resume", s.resumeManagedRunner)
 		s.mux.HandleFunc("GET /api/managed/runners/{runner}", s.managedRunnerStatus)
 		s.mux.HandleFunc("GET /api/managed/operations/{operation}", s.managedOperation)
-		s.mux.HandleFunc("POST /api/managed/operations/{operation}/reviews", s.createManagedReview)
-		s.mux.HandleFunc("GET /api/managed/operations/{operation}/reviews", s.managedOperationReview)
-		s.mux.HandleFunc("GET /api/managed/reviews/{review}", s.managedReview)
 	}
 	s.mux.HandleFunc("GET /downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("binary")
@@ -124,7 +123,9 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 		http.ServeFile(w, r, filepath.Join(options.Binaries, name))
 	})
 	s.mux.HandleFunc("GET /api/machines", s.machines)
-	s.mux.HandleFunc("POST /api/enrollments", s.enrollment)
+	if !options.DisableAttached {
+		s.mux.HandleFunc("POST /api/enrollments", s.enrollment)
+	}
 	s.mux.HandleFunc("POST /api/enroll", s.enroll)
 	s.mux.HandleFunc("DELETE /api/machines/{machine}", s.revoke)
 	s.mux.HandleFunc("POST /api/machines/{machine}/call", s.call)
@@ -208,10 +209,17 @@ func readJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 }
 
 func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, bool) {
-	cookie, err := r.Cookie(cookieName)
-	if err == nil {
-		if user, err := s.identity.Authenticate(r.Context(), cookie.Value); err == nil {
-			return user, cookie.Value, true
+	token := ""
+	if value := strings.TrimSpace(r.Header.Get("X-Jwt-Token")); value != "" {
+		token = value
+	} else if value := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(value, "Bearer ") {
+		token = strings.TrimSpace(strings.TrimPrefix(value, "Bearer "))
+	} else if cookie, err := r.Cookie(cookieName); err == nil {
+		token = cookie.Value
+	}
+	if token != "" {
+		if user, err := s.identity.Authenticate(r.Context(), token); err == nil {
+			return user, token, true
 		} else if !errors.Is(err, identity.ErrUnauthorized) {
 			writeError(w, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "identity service unavailable")
 			return User{}, "", false

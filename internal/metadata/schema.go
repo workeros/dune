@@ -16,9 +16,9 @@ var localIdentitySchema = []string{
 }
 
 var executionSchema = []string{
-	`CREATE TABLE dune_runners (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),machine_id TEXT UNIQUE,credential_hash TEXT UNIQUE,os TEXT NOT NULL DEFAULT '',arch TEXT NOT NULL DEFAULT '',enabled BOOLEAN NOT NULL DEFAULT TRUE,suspended BOOLEAN NOT NULL DEFAULT FALSE,created_at BIGINT NOT NULL)`,
+	`CREATE TABLE dune_runners (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,created_by_id TEXT NOT NULL,created_by_namespace TEXT NOT NULL,created_by_subject TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),machine_id TEXT UNIQUE,credential_hash TEXT UNIQUE,os TEXT NOT NULL DEFAULT '',arch TEXT NOT NULL DEFAULT '',enabled BOOLEAN NOT NULL DEFAULT TRUE,suspended BOOLEAN NOT NULL DEFAULT FALSE,created_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_runners_owner ON dune_runners(owner_id,id)`,
-	`CREATE TABLE dune_enrollments (hash TEXT PRIMARY KEY,owner_id TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,name TEXT NOT NULL,runner_id TEXT UNIQUE,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
+	`CREATE TABLE dune_enrollments (hash TEXT PRIMARY KEY,owner_id TEXT NOT NULL,issued_to_id TEXT NOT NULL,issued_to_kind TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,name TEXT NOT NULL,runner_id TEXT UNIQUE,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_enrollments_owner ON dune_enrollments(owner_id,expires_at)`,
 }
 
@@ -34,8 +34,8 @@ type schemaQueryer interface {
 var schemaColumns = map[string][]string{
 	"dune_users":       {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
 	"dune_sessions":    {"hash", "user_id", "expires_at", "auth_version"},
-	"dune_runners":     {"id", "owner_id", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
-	"dune_enrollments": {"hash", "owner_id", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
+	"dune_runners":     {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
+	"dune_enrollments": {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
 	"dune_routes":      {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
 }
 
