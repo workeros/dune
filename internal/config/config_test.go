@@ -8,7 +8,7 @@ import (
 
 func TestHTTPWildcard(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if e := InitWithGateway(path, "0.0.0.0:7443", "ws://gateway.example.test:7443/tunnel"); e != nil {
+	if e := InitWithGateway(path, "0.0.0.0:7443", "ws://gateway.example.test:7443/api/v1/tunnel"); e != nil {
 		t.Fatal(e)
 	}
 	c, e := Load(path)
@@ -36,7 +36,7 @@ func TestHTTPWildcard(t *testing.T) {
 }
 
 func TestEndpointValidation(t *testing.T) {
-	for _, address := range []string{"ws://0.0.0.0:7443/tunnel", "ws://host:0/tunnel", "ws://host:65536/tunnel", "http://host:7443/tunnel", "ws://user@host:7443/tunnel", "ws://host:7443/tunnel?token=secret"} {
+	for _, address := range []string{"ws://0.0.0.0:7443/api/v1/tunnel", "ws://host:0/api/v1/tunnel", "ws://host:65536/api/v1/tunnel", "http://host:7443/api/v1/tunnel", "ws://user@host:7443/api/v1/tunnel", "ws://host:7443/tunnel", "ws://host:7443/api/v1/tunnel?token=secret"} {
 		if _, e := gatewayURL(address); e == nil {
 			t.Errorf("accepted %s", address)
 		}

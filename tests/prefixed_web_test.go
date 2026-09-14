@@ -89,7 +89,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			must(t, err)
 			t.Cleanup(func() { listener.Close() })
 			return &host.ClusterOptions{Peer: peer.Config{
-				Address:     "https://" + listener.Addr().String() + "/private/peer",
+				Address:     "https://" + listener.Addr().String() + peer.EndpointPath,
 				Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots(),
 			}}, listener
 		}
@@ -126,23 +126,23 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		remote.Config.Handler = remoteApp
 		remote.Start()
 		defer remote.Close()
-		ownerGateway = "ws" + strings.TrimPrefix(remoteSite, "http") + "tunnel"
+		ownerGateway = "ws" + strings.TrimPrefix(remoteSite, "http") + "api/v1/tunnel"
 		// Keep all user entry points on A. Only fabricd connects to owner B.
 		onlineSite = site
 	}
 	if mode.override {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/private/connect" {
+			if r.URL.Path != "/api/v1/tunnel" {
 				http.NotFound(w, r)
 				return
 			}
 			r = r.Clone(r.Context())
-			r.URL.Path = "/tools/dune/tunnel"
+			r.URL.Path = "/tools/dune/api/v1/tunnel"
 			r.URL.RawPath = ""
 			app.ServeHTTP(w, r)
 		}))
 		defer proxy.Close()
-		options.GatewayURL = "ws" + strings.TrimPrefix(proxy.URL, "http") + "/private/connect"
+		options.GatewayURL = "ws" + strings.TrimPrefix(proxy.URL, "http") + "/api/v1/tunnel"
 	}
 	if mode.external {
 		address := server.Listener.Addr().String()
@@ -185,21 +185,21 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	var user struct{ ID string }
 	email := "prefix@example.test"
-	do("POST", "api/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
+	do("POST", "api/v1/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
 	var enrollment struct{ Token string }
-	do("POST", "api/enrollments", map[string]string{"name": "prefixed machine"}, &enrollment)
+	do("POST", "api/v1/enrollments", map[string]string{"name": "prefixed machine"}, &enrollment)
 	machinePath := filepath.Join(dir, "machine", "config.yaml")
 	must(t, webapp.EnrollMachine(ctx, machinePath, site, enrollment.Token, ""))
 	machineConfig, err := config.Load(machinePath)
 	must(t, err)
 	if mode.enterprise {
 		email = "shared@example.test"
-		do("POST", "api/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
+		do("POST", "api/v1/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
 		sharedPrincipal.Store(user.ID)
 	}
 	expectedGateway := options.GatewayURL
 	if expectedGateway == "" {
-		expectedGateway = "ws" + strings.TrimPrefix(site, "http") + "tunnel"
+		expectedGateway = "ws" + strings.TrimPrefix(site, "http") + "api/v1/tunnel"
 	}
 	if machineConfig.Gateway != expectedGateway {
 		t.Fatalf("machine address = %s", machineConfig.Gateway)
@@ -233,7 +233,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 		// Standalone split-host tests observe the actual owner. Cluster tests
 		// read shared online facts from A and execute through A's peer route.
-		response, err := browser.Get(onlineSite + "api/machines")
+		response, err := browser.Get(onlineSite + "api/v1/machines")
 		must(t, err)
 		if response.StatusCode != 200 {
 			response.Body.Close()
@@ -254,7 +254,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	var selected runner.Runner
 	if mode.runnerEntry {
 		var page runner.Page
-		do("GET", "api/runners", nil, &page)
+		do("GET", "api/v1/runners", nil, &page)
 		for _, row := range page.Items {
 			if row.Binding != nil && row.Binding.MachineID == machineConfig.Target {
 				selected = row
@@ -267,11 +267,11 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	executionRoute := func(suffix string) string {
 		if !mode.runnerEntry {
-			return "api/machines/" + machineConfig.Target + "/" + suffix
+			return "api/v1/machines/" + machineConfig.Target + "/" + suffix
 		}
 		b := selected.Binding
 		query := url.Values{"machine_id": {b.MachineID}, "fabric_id": {b.FabricID}, "revision": {fmt.Sprint(b.Revision)}}
-		return "api/runners/" + selected.ID + "/" + suffix + "?" + query.Encode()
+		return "api/v1/runners/" + selected.ID + "/" + suffix + "?" + query.Encode()
 	}
 	var runtime api.Runtime
 	do("POST", executionRoute("sessions"), profile(dir, "pty", "/bin/sh"), &runtime)
@@ -386,7 +386,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 		policyRevoked.Store(true)
 		awaitRevocation()
-		response, err = browser.Get(site + "api/machines")
+		response, err = browser.Get(site + "api/v1/machines")
 		must(t, err)
 		var page struct{ Items []json.RawMessage }
 		must(t, json.NewDecoder(response.Body).Decode(&page))
@@ -408,14 +408,14 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			if reenable {
 				must(t, app.SetUserEnabled(ctx, user.ID, true))
 			}
-			response, err := browser.Get(site + "api/me")
+			response, err := browser.Get(site + "api/v1/me")
 			must(t, err)
 			response.Body.Close()
 			if response.StatusCode != http.StatusUnauthorized {
 				t.Fatal("suspended session revived")
 			}
 		}
-		do("POST", "api/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
+		do("POST", "api/v1/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
 		var remaining []api.Runtime
 		do("POST", executionRoute("call"), map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
 		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
@@ -425,7 +425,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		connection = connect()
 		readPrefixedTerminalMarker(t, connection)
 	}
-	do("POST", "api/auth/logout", struct{}{}, nil)
+	do("POST", "api/v1/auth/logout", struct{}{}, nil)
 	awaitRevocation()
 }
 

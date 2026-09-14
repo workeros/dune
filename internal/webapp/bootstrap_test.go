@@ -29,7 +29,7 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 				t.Fatal(err)
 			}
 			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway,
-				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/private/connect",
+				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/api/v1/tunnel",
 			}, store, identity.NewLocal(store, !disabled))
 			if err != nil {
 				t.Fatal(err)
@@ -46,20 +46,20 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 				app.ServeHTTP(w, r)
 				return w
 			}
-			response := do("GET", "/tools/dune/api/bootstrap", "")
+			response := do("GET", "/tools/dune/api/v1/bootstrap", "")
 			var actual map[string]any
 			if err := json.Unmarshal(response.Body.Bytes(), &actual); err != nil {
 				t.Fatal(err)
 			}
 			want := map[string]any{
-				"login_methods":      []any{map[string]any{"kind": "password", "url": "https://example.test/tools/dune/api/auth/login"}},
+				"login_methods":      []any{map[string]any{"kind": "password", "url": "https://example.test/tools/dune/api/v1/auth/login"}},
 				"local_registration": !disabled, "attached": true, "managed": false, "tenant_scoped": false,
-				"public_url": "https://example.test/tools/dune/", "gateway_url": "wss://machines.test/private/connect",
+				"public_url": "https://example.test/tools/dune/", "gateway_url": "wss://machines.test/api/v1/tunnel",
 			}
 			if response.Code != 200 || !reflect.DeepEqual(actual, want) || response.Header().Get("Cache-Control") != "no-store" || len(response.Result().Cookies()) != 0 {
 				t.Fatalf("anonymous startup information: %d %v", response.Code, actual)
 			}
-			response = do("POST", "/tools/dune/api/auth/register", `{"email":"new@example.test","password":"a-strong-test-password"}`)
+			response = do("POST", "/tools/dune/api/v1/auth/register", `{"email":"new@example.test","password":"a-strong-test-password"}`)
 			if disabled {
 				if response.Code != 403 || !strings.Contains(response.Body.String(), `"code":"REGISTRATION_DISABLED"`) || len(response.Result().Cookies()) != 0 {
 					t.Fatalf("disabled registration: %d %s", response.Code, response.Body.String())
@@ -96,12 +96,12 @@ func TestDisableAttachedHidesCapabilityAndIssuanceRoute(t *testing.T) {
 	defer app.Close()
 
 	bootstrap := httptest.NewRecorder()
-	app.ServeHTTP(bootstrap, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	app.ServeHTTP(bootstrap, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap", nil))
 	if bootstrap.Code != http.StatusOK || !strings.Contains(bootstrap.Body.String(), `"attached":false`) {
 		t.Fatalf("attached capability remained visible: %d %s", bootstrap.Code, bootstrap.Body.String())
 	}
 
-	request := httptest.NewRequest(http.MethodPost, "/api/enrollments", strings.NewReader(`{"name":"hidden"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/enrollments", strings.NewReader(`{"name":"hidden"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Dune-Request", "1")
 	request.Header.Set("Origin", "https://example.test")

@@ -95,7 +95,7 @@ func TestManagedCreateReturnsAuthoritativeDuneRunner(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer app.Close()
-			r := httptest.NewRequest(http.MethodPost, "/api/managed/tenants/tenant-a/runners", bytes.NewBufferString(`{"request_key":"request","request":{}}`))
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/managed/tenants/tenant-a/runners", bytes.NewBufferString(`{"request_key":"request","request":{}}`))
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Origin", "http://dune.example.test")
 			r.Header.Set("X-Dune-Request", "1")
@@ -152,15 +152,15 @@ func TestManagedMutationsPersistDuneAccessState(t *testing.T) {
 		return out
 	}
 
-	request(http.MethodPost, "/api/managed/runners/managed-runner/pause")
+	request(http.MethodPost, "/api/v1/managed/runners/managed-runner/pause")
 	if got, err := store.MachineCredential(ctx, credential); err != nil || got != machine.ID {
 		t.Fatal("pause prevented fabricd from reconnecting behind the user gate", got, err)
 	}
-	request(http.MethodPost, "/api/managed/runners/managed-runner/resume")
+	request(http.MethodPost, "/api/v1/managed/runners/managed-runner/resume")
 	if got, err := store.MachineCredential(ctx, credential); err != nil || got != machine.ID {
 		t.Fatal("resume did not restore the persisted machine credential", got, err)
 	}
-	request(http.MethodDelete, "/api/managed/runners/managed-runner")
+	request(http.MethodDelete, "/api/v1/managed/runners/managed-runner")
 	if _, err := store.RevokeManaged(ctx, user.ID, "managed-runner"); err != nil {
 		t.Fatal("managed revoke was not idempotent for provider cleanup retry", err)
 	}
@@ -198,7 +198,7 @@ func TestManagedDestroyRevokesPendingEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	r := httptest.NewRequest(http.MethodDelete, "/api/managed/runners/pending-runner", bytes.NewBufferString(`{"request_key":"request"}`))
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/managed/runners/pending-runner", bytes.NewBufferString(`{"request_key":"request"}`))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Origin", "http://dune.example.test")
 	r.Header.Set("X-Dune-Request", "1")

@@ -60,7 +60,7 @@ func NewLocal(store Repository, registration bool) *Local {
 func (l *Local) RegistrationAllowed() bool { return l.registration }
 func (*Local) Namespace() string           { return "" }
 func (*Local) LoginMethods(publicURL string) []public.LoginMethod {
-	return []public.LoginMethod{{Kind: "password", URL: publicURL + "api/auth/login"}}
+	return []public.LoginMethod{{Kind: "password", URL: publicURL + "api/v1/auth/login"}}
 }
 
 func digest(value string) string {

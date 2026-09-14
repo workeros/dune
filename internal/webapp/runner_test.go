@@ -57,7 +57,7 @@ func TestBrowserRunnerBindingIsFixed(t *testing.T) {
 			}
 			route += separator + "incarnation=selected&generation=1"
 		}
-		r := httptest.NewRequest(method, "/tools/dune/api/"+route, bytes.NewBufferString(`{"operation":"runtime.list"}`))
+		r := httptest.NewRequest(method, "/tools/dune/api/v1/"+route, bytes.NewBufferString(`{"operation":"runtime.list"}`))
 		r.AddCookie(&http.Cookie{Name: cookieName, Value: session})
 		r.Header.Set("Origin", app.urls.Origin)
 		r.Header.Set("X-Dune-Request", "1")

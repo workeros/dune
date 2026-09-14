@@ -51,7 +51,7 @@ func TestExternalFabricdHost(t *testing.T) {
 		return (access.Grant{Target: "machine", Role: role}).Bind()
 	}))
 	defer server.Close()
-	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/tunnel"
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/tunnel"
 	log, err := os.Create(filepath.Join(dir, "host.log"))
 	must(t, err)
 	defer log.Close()

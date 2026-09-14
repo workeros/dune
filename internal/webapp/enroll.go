@@ -55,7 +55,7 @@ func EnrollMachine(ctx context.Context, path, site, token, certificate string) e
 	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: tc}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	body, _ := json.Marshal(map[string]string{"token": token, "os": runtime.GOOS, "arch": runtime.GOARCH})
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(site, "/")+"/api/enroll", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(site, "/")+"/api/v1/enroll", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

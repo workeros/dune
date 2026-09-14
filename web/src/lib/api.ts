@@ -26,7 +26,7 @@ export type BoundRunner = Runner & { binding: Binding };
 export function bindingKey(binding?: Binding): string { return binding ? JSON.stringify([binding.runner_id, binding.fabric_id, binding.machine_id, binding.revision]) : ""; }
 export function runnerPath(binding: Binding, suffix: string): string {
   const query = new URLSearchParams({ machine_id: binding.machine_id, fabric_id: binding.fabric_id, revision: String(binding.revision) });
-  return `/api/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
+  return `/api/v1/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
 }
 export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; title?: string; working_directory?: string };
 export function runtimeKey(runtime: Runtime): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }

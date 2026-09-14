@@ -65,7 +65,7 @@ func TestShutdownFinishesOrCancelsAcceptedHTTP(t *testing.T) {
 				defer conn.Close()
 				conn.SetDeadline(time.Now().Add(10 * time.Second))
 				body := `{"email":"shutdown@example.test","password":"shutdown-test-password"}`
-				fmt.Fprintf(conn, "POST /dune/api/auth/register HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/json\r\nX-Dune-Request: 1\r\nContent-Length: %d\r\n\r\n%s", len(body), body[:1])
+				fmt.Fprintf(conn, "POST /dune/api/v1/auth/register HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/json\r\nX-Dune-Request: 1\r\nContent-Length: %d\r\n\r\n%s", len(body), body[:1])
 				waitReadiness(t, app, func(r host.Readiness) bool { return r.Requests == 1 })
 				budget := time.Second
 				if complete {
@@ -76,7 +76,7 @@ func TestShutdownFinishesOrCancelsAcceptedHTTP(t *testing.T) {
 				done := make(chan error, 1)
 				go func() { done <- app.Shutdown(ctx) }()
 				waitReadiness(t, app, func(r host.Readiness) bool { return r.Draining })
-				for path, want := range map[string]int{"/dune/health/ready": 503, "/dune/health/live": 200, "/dune/api/bootstrap": 503} {
+				for path, want := range map[string]int{"/dune/health/ready": 503, "/dune/health/live": 200, "/dune/api/v1/bootstrap": 503} {
 					response, err := http.Get("http://" + address + path)
 					if err != nil {
 						t.Fatal(err)

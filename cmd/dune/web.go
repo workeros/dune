@@ -30,10 +30,10 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 		return err
 	}
 	if options.PublicURL == "" {
-		if !strings.HasSuffix(c.Gateway, "/tunnel") {
+		if !strings.HasSuffix(c.Gateway, "/api/v1/tunnel") {
 			return fmt.Errorf("public browser URL required when configured gateway uses a nonstandard connection path")
 		}
-		options.PublicURL = strings.Replace(strings.TrimSuffix(c.Gateway, "/tunnel"), "ws", "http", 1)
+		options.PublicURL = strings.Replace(strings.TrimSuffix(c.Gateway, "/api/v1/tunnel"), "ws", "http", 1)
 	}
 	addresses, err := deployment.NewURLs(options.PublicURL, options.GatewayURL)
 	if err != nil {
@@ -56,7 +56,7 @@ func runWeb(ctx context.Context, c config.Config, options host.Options, webListe
 	if err != nil {
 		return err
 	}
-	local.Path = addresses.Path + "tunnel"
+	local.Path = addresses.Path + "api/v1/tunnel"
 	if tc != nil {
 		tc.ServerName = local.Hostname()
 	}

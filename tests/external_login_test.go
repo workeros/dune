@@ -88,19 +88,19 @@ func TestEnterpriseSessionBoundary(t *testing.T) {
 				app.ServeHTTP(out, r)
 				return out
 			}
-			bootstrap := request("GET", site+"api/bootstrap", "", false)
+			bootstrap := request("GET", site+"api/v1/bootstrap", "", false)
 			if bootstrap.Code != 200 || !strings.Contains(bootstrap.Body.String(), `"kind":"enterprise"`) || strings.Contains(bootstrap.Body.String(), `"kind":"password"`) || !strings.Contains(bootstrap.Body.String(), `"local_registration":false`) {
 				t.Fatal("bootstrap did not advertise host login", bootstrap.Code, bootstrap.Body.String())
 			}
-			if out := request("GET", site+"api/me", "", true); out.Code != 200 || !strings.Contains(out.Body.String(), `"id":"enterprise-uid-42"`) {
+			if out := request("GET", site+"api/v1/me", "", true); out.Code != 200 || !strings.Contains(out.Body.String(), `"id":"enterprise-uid-42"`) {
 				t.Fatal("host-verified session rejected", out.Code, out.Body.String())
 			}
 			for _, route := range []string{"login", "register"} {
-				if out := request("POST", site+"api/auth/"+route, `{"email":"browser@example.test","password":"browser-test-password"}`, false); out.Code != 404 {
+				if out := request("POST", site+"api/v1/auth/"+route, `{"email":"browser@example.test","password":"browser-test-password"}`, false); out.Code != 404 {
 					t.Fatal("Dune exposed local password route with enterprise identity", route, out.Code)
 				}
 			}
-			created := request("POST", site+"api/enrollments", `{"name":"subject machine"}`, true)
+			created := request("POST", site+"api/v1/enrollments", `{"name":"subject machine"}`, true)
 			if created.Code != 200 || provider.checked.Load() != 1 {
 				t.Fatal("enterprise UID did not reach policy", created.Code, provider.checked.Load())
 			}
@@ -110,18 +110,18 @@ func TestEnterpriseSessionBoundary(t *testing.T) {
 			if err := json.Unmarshal(created.Body.Bytes(), &enrollment); err != nil || enrollment.Token == "" {
 				t.Fatal("enterprise enrollment token missing", err, created.Body.String())
 			}
-			consumed := request("POST", site+"api/enroll", `{"token":"`+enrollment.Token+`","os":"linux","arch":"amd64"}`, false)
+			consumed := request("POST", site+"api/v1/enroll", `{"token":"`+enrollment.Token+`","os":"linux","arch":"amd64"}`, false)
 			if consumed.Code != 200 || provider.checked.Load() != 2 {
 				t.Fatal("enterprise enrollment lost identity scope", consumed.Code, provider.checked.Load(), consumed.Body.String())
 			}
 			if err := app.SetUserEnabled(context.Background(), "enterprise-uid-42", false); err == nil {
 				t.Fatal("Dune tried to persist enterprise user state")
 			}
-			logout := request("POST", site+"api/auth/logout", `{}`, true)
+			logout := request("POST", site+"api/v1/auth/logout", `{}`, true)
 			if logout.Code != 200 {
 				t.Fatal("host logout failed", logout.Code)
 			}
-			if out := request("GET", site+"api/me", "", true); out.Code != 401 {
+			if out := request("GET", site+"api/v1/me", "", true); out.Code != 401 {
 				t.Fatal("revoked enterprise session survived", out.Code)
 			}
 			if _, err := provider.Authenticate(context.Background(), "sanddance-session"); !errors.Is(err, identity.ErrUnauthorized) {

@@ -9,9 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"github.com/aiomni/dune/internal/wire"
-	"github.com/aiomni/dune/pkg/deployment"
-	"gopkg.in/yaml.v3"
 	"math/big"
 	"net"
 	"net/url"
@@ -20,6 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/deployment"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -125,9 +126,9 @@ func InitWithGateway(path, listen, gateway string) error {
 	if gateway == "" {
 		host, _, _ := net.SplitHostPort(listen)
 		if net.ParseIP(host).IsUnspecified() {
-			return fmt.Errorf("wildcard listen requires --gateway ws://HOST:PORT/tunnel")
+			return fmt.Errorf("wildcard listen requires --gateway ws://HOST:PORT/api/v1/tunnel")
 		}
-		gateway = "ws://" + listen + "/tunnel"
+		gateway = "ws://" + listen + "/api/v1/tunnel"
 	}
 	endpoint, e := gatewayURL(gateway)
 	if e != nil {

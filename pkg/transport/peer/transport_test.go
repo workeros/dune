@@ -61,11 +61,11 @@ func setup(t *testing.T) *fixture {
 	f.server = httptest.NewUnstartedServer(nil)
 	t.Cleanup(f.server.Close)
 	var err error
-	f.transport, err = New(Config{Address: "https://" + f.server.Listener.Addr().String() + "/private/peer", Certificate: f.ca.Issue(t, "127.0.0.1", nil), Roots: f.ca.Roots()})
+	f.transport, err = New(Config{Address: "https://" + f.server.Listener.Addr().String() + EndpointPath, Certificate: f.ca.Issue(t, "127.0.0.1", nil), Roots: f.ca.Roots()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.client, err = New(Config{Address: "https://127.0.0.1:1/private/peer", Certificate: f.ca.Issue(t, "127.0.0.1", nil), Roots: f.ca.Roots()})
+	f.client, err = New(Config{Address: "https://127.0.0.1:1" + EndpointPath, Certificate: f.ca.Issue(t, "127.0.0.1", nil), Roots: f.ca.Roots()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestPeerRequestBoundary(t *testing.T) {
 			case "duplicate":
 				r.Header.Add(targetHeader, "other-machine")
 			case "path":
-				r.URL.Path = "/tunnel"
+				r.URL.Path = "/api/v1/tunnel"
 			case "query":
 				r.URL.RawQuery = "target=other"
 			case "host":
@@ -218,7 +218,7 @@ func TestPeerDoesNotFollowRedirectsOrAcceptWrongOwner(t *testing.T) {
 	redirect.StartTLS()
 	defer redirect.Close()
 	wrong = f.route
-	wrong.OwnerAddress = redirect.URL + "/peer"
+	wrong.OwnerAddress = redirect.URL + EndpointPath
 	if conn, err := f.client.Dial(f.ctx, f.source, wrong); err == nil {
 		conn.Close()
 		t.Fatal("redirect followed")
@@ -230,8 +230,8 @@ func TestPeerDoesNotFollowRedirectsOrAcceptWrongOwner(t *testing.T) {
 
 func TestPeerConfigurationAndRotation(t *testing.T) {
 	ca, next := testcert.New(t), testcert.New(t)
-	base := Config{Address: "https://127.0.0.1:443/private/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}
-	for _, value := range []string{"http://127.0.0.1/peer", "https://0.0.0.0/peer", "https://[::]/peer", "https://*/peer", "https://user:secret@127.0.0.1/peer", "https://127.0.0.1/peer?q=x", "https://127.0.0.1/a/../peer", "https://127.0.0.1:0/peer", "https://127.0.0.1:99999/peer", "https://127.0.0.1:443/peer#"} {
+	base := Config{Address: "https://127.0.0.1:443" + EndpointPath, Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}
+	for _, value := range []string{"http://127.0.0.1" + EndpointPath, "https://0.0.0.0" + EndpointPath, "https://[::]" + EndpointPath, "https://*" + EndpointPath, "https://user:secret@127.0.0.1" + EndpointPath, "https://127.0.0.1" + EndpointPath + "?q=x", "https://127.0.0.1/a/../peer", "https://127.0.0.1:0" + EndpointPath, "https://127.0.0.1:99999" + EndpointPath, "https://127.0.0.1:443" + EndpointPath + "#", "https://127.0.0.1/private/peer", "https://127.0.0.1/api/v2/peer"} {
 		bad := base
 		bad.Address = value
 		if _, err := New(bad); err == nil {
@@ -262,7 +262,7 @@ func TestPeerConfigurationAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongGateway, err := gateway.NewWithDirectory(emptyDirectory{}, "https://other.test/peer")
+	wrongGateway, err := gateway.NewWithDirectory(emptyDirectory{}, "https://other.test"+EndpointPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestPeerCARotationOverHTTPS(t *testing.T) {
 	defer cancel()
 	newClient := func(ca *testcert.Authority) *Transport {
 		t.Helper()
-		client, err := New(Config{Address: "https://127.0.0.1:1/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: roots})
+		client, err := New(Config{Address: "https://127.0.0.1:1" + EndpointPath, Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: roots})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -367,7 +367,7 @@ func TestPeerCARotationOverHTTPS(t *testing.T) {
 			if overlap {
 				trust = roots
 			}
-			transport, err := New(Config{Address: "https://" + server.Listener.Addr().String() + "/peer", Certificate: next.Issue(t, "127.0.0.1", nil), Roots: trust})
+			transport, err := New(Config{Address: "https://" + server.Listener.Addr().String() + EndpointPath, Certificate: next.Issue(t, "127.0.0.1", nil), Roots: trust})
 			if err != nil {
 				t.Fatal(err)
 			}

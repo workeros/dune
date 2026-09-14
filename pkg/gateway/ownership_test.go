@@ -62,7 +62,7 @@ func TestOwnershipDeadlineCountsDirectoryDelay(t *testing.T) {
 				time.Sleep(delay)
 				return RouteLease{Route: Route{RouteClaim: claim, Epoch: epoch + 1, ExpiresAt: time.Now().Add(100 * time.Hour)}, ValidFor: 80 * time.Millisecond}, nil
 			}}
-			g, err := NewWithDirectory(directory, "https://instance.test/peer")
+			g, err := NewWithDirectory(directory, "https://instance.test/api/v1/peer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestOwnedHandshakeRequiresEpochConfirmation(t *testing.T) {
 				publish: func(context.Context, Route) error { published.Add(1); return nil },
 				release: func(context.Context, Route) error { released.Add(1); return nil },
 			}
-			g, err := NewWithDirectory(directory, "https://instance.test/peer")
+			g, err := NewWithDirectory(directory, "https://instance.test/api/v1/peer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -230,7 +230,7 @@ func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
 				publish: func(context.Context, Route) error { published.Add(1); return nil },
 				release: func(context.Context, Route) error { released.Add(1); return nil },
 			}
-			g, err := NewWithDirectory(directory, "https://instance.test/peer")
+			g, err := NewWithDirectory(directory, "https://instance.test/api/v1/peer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -330,7 +330,7 @@ func TestOwnerExpiryClosesLocallyHandledStream(t *testing.T) {
 	directory := directoryStub{acquire: func(_ context.Context, claim RouteClaim, _ uint64) (RouteLease, error) {
 		return RouteLease{Route: Route{RouteClaim: claim, Epoch: 1}, ValidFor: 500 * time.Millisecond}, nil
 	}}
-	g, err := NewWithDirectory(directory, "https://instance.test/peer")
+	g, err := NewWithDirectory(directory, "https://instance.test/api/v1/peer")
 	if err != nil {
 		t.Fatal(err)
 	}

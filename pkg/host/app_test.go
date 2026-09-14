@@ -71,7 +71,7 @@ func TestParentCancellationClosesOwnedListenersAndReleasesStore(t *testing.T) {
 			t.Fatal(err)
 		}
 		go func() { done <- app.Serve(listener) }()
-		response, err := http.Get("http://" + listener.Addr().String() + "/dune/api/bootstrap")
+		response, err := http.Get("http://" + listener.Addr().String() + "/dune/api/v1/bootstrap")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,7 +150,7 @@ func TestCloseInterruptsPartialRequestWithoutClosingExternalServer(t *testing.T)
 	defer conn.Close()
 	// The client leaves a JSON body unfinished. Cancelling a request context
 	// alone cannot release the blocked net/http body reader.
-	fmt.Fprintf(conn, "POST /dune/api/auth/register HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/json\r\nX-Dune-Request: 1\r\nContent-Length: 100\r\n\r\n{")
+	fmt.Fprintf(conn, "POST /dune/api/v1/auth/register HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/json\r\nX-Dune-Request: 1\r\nContent-Length: 100\r\n\r\n{")
 	await(t, reading)
 	go app.Close()
 	await(t, app.Done())
@@ -165,7 +165,7 @@ func TestCloseInterruptsPartialRequestWithoutClosingExternalServer(t *testing.T)
 	if response.StatusCode != 200 || string(body) != "host alive" {
 		t.Fatal("closing Dune affected the host's own route")
 	}
-	response, err = http.Get(server.URL + "/dune/api/bootstrap")
+	response, err = http.Get(server.URL + "/dune/api/v1/bootstrap")
 	if err != nil {
 		t.Fatal(err)
 	}

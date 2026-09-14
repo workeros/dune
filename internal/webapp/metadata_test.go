@@ -49,7 +49,7 @@ func TestMetadataFailureResponses(t *testing.T) {
 		"auth/register": `{"email":"owner@example.test","password":"strong-test-password"}`,
 		"enroll":        `{"token":"` + strings.Repeat("a", 64) + `","os":"linux","arch":"amd64"}`,
 	} {
-		r := httptest.NewRequest("POST", "/api/"+route, bytes.NewBufferString(body))
+		r := httptest.NewRequest("POST", "/api/v1/"+route, bytes.NewBufferString(body))
 		r.Header.Set("Origin", app.urls.Origin)
 		r.Header.Set("X-Dune-Request", "1")
 		r.Header.Set("Content-Type", "application/json")

@@ -46,7 +46,7 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	defer g.Close()
-	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/tunnel"
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/tunnel"
 	register := func(target string) *yamux.Session {
 		t.Helper()
 		conn, err := ws.Dial(ctx, endpoint, "machine-"+target, nil)
@@ -199,7 +199,7 @@ func TestFastHTTPGatewayCloseUnblocksHijackedConnection(t *testing.T) {
 	// KeepHijackedConns intentionally retains fasthttp's default false value.
 	server := &fasthttp.Server{Handler: handler.ServeFastHTTP}
 	go func() { _ = server.Serve(listener) }()
-	conn, err := ws.Dial(ctx, "ws://"+listener.Addr().String()+"/tunnel", "token", nil)
+	conn, err := ws.Dial(ctx, "ws://"+listener.Addr().String()+"/api/v1/tunnel", "token", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

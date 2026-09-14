@@ -30,7 +30,7 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	for _, path := range []string{"/api/me", "/api/machines"} {
+	for _, path := range []string{"/api/v1/me", "/api/v1/machines"} {
 		response := httptest.NewRecorder()
 		app.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
 		if response.Code != http.StatusUnauthorized {
@@ -38,14 +38,14 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		}
 	}
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest("POST", "/api/auth/register", bytes.NewBufferString(`{"email":"test@example.com","password":"a-strong-test-password"}`))
+	request := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewBufferString(`{"email":"test@example.com","password":"a-strong-test-password"}`))
 	request.Header.Set("Content-Type", "application/json")
 	app.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatal("accepted missing request guard")
 	}
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest("POST", "/api/auth/register", bytes.NewBufferString(`{"email":"test@example.com","password":"a-strong-test-password"}`))
+	request = httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewBufferString(`{"email":"test@example.com","password":"a-strong-test-password"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Dune-Request", "1")
 	request.Header.Set("Origin", "http://dune.example.test:17443")
@@ -58,14 +58,14 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		t.Fatal("incorrect login cookie")
 	}
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest("GET", "/api/machines", nil)
+	request = httptest.NewRequest("GET", "/api/v1/machines", nil)
 	request.AddCookie(cookies[0])
 	app.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatal("signed-in machine listing failed")
 	}
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest("DELETE", "/api/machines/guessed-id", nil)
+	request = httptest.NewRequest("DELETE", "/api/v1/machines/guessed-id", nil)
 	request.AddCookie(cookies[0])
 	request.Header.Set("X-Dune-Request", "1")
 	request.Header.Set("Origin", "https://attacker.example")
@@ -94,7 +94,7 @@ func TestAPIOnlyServerDoesNotPublishStaticFallback(t *testing.T) {
 		}
 	}
 	response := httptest.NewRecorder()
-	app.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil))
+	app.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap", nil))
 	if response.Code != http.StatusOK {
 		t.Fatal("API route missing in API-only mode", response.Code)
 	}
@@ -139,7 +139,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, pair := range []struct{ token, own, other string }{{at, ma.ID, mb.ID}, {bt, mb.ID, ma.ID}} {
-		req := httptest.NewRequest("GET", "/api/machines", nil)
+		req := httptest.NewRequest("GET", "/api/v1/machines", nil)
 		req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 		out := httptest.NewRecorder()
 		app.ServeHTTP(out, req)
@@ -147,7 +147,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 			t.Fatal("machine listing leaked ownership")
 		}
 		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events?incarnation=guessed&generation=1", ""}, {"DELETE", "", ""}} {
-			req := httptest.NewRequest(route.method, "/api/machines/"+pair.other+route.suffix, bytes.NewBufferString(route.body))
+			req := httptest.NewRequest(route.method, "/api/v1/machines/"+pair.other+route.suffix, bytes.NewBufferString(route.body))
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 			req.Header.Set("Origin", app.urls.Origin)
 			req.Header.Set("X-Dune-Request", "1")
@@ -160,7 +160,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 		}
 	}
 	for _, pair := range []struct{ token, own, other string }{{at, ma.RunnerID, mb.RunnerID}, {bt, mb.RunnerID, ma.RunnerID}} {
-		for _, path := range []string{"/api/runners", "/api/runners/" + pair.own, "/api/runners/" + pair.other} {
+		for _, path := range []string{"/api/v1/runners", "/api/v1/runners/" + pair.own, "/api/v1/runners/" + pair.other} {
 			req := httptest.NewRequest("GET", path, nil)
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 			out := httptest.NewRecorder()
@@ -174,16 +174,16 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 			}
 		}
 		for _, route := range []struct{ method, path string }{
-			{"POST", "/api/auth/cli/start"},
-			{"POST", "/api/auth/cli/consume"},
-			{"GET", "/api/auth/cli/request"},
-			{"POST", "/api/auth/cli/request"},
-			{"GET", "/api/cli/machines"},
-			{"GET", "/api/cli/runners"},
-			{"GET", "/api/cli/runners/" + pair.own},
-			{"POST", "/api/cli/runner-access"},
-			{"POST", "/api/cli/access"},
-			{"POST", "/api/cli/logout"},
+			{"POST", "/api/v1/auth/cli/start"},
+			{"POST", "/api/v1/auth/cli/consume"},
+			{"GET", "/api/v1/auth/cli/request"},
+			{"POST", "/api/v1/auth/cli/request"},
+			{"GET", "/api/v1/cli/machines"},
+			{"GET", "/api/v1/cli/runners"},
+			{"GET", "/api/v1/cli/runners/" + pair.own},
+			{"POST", "/api/v1/cli/runner-access"},
+			{"POST", "/api/v1/cli/access"},
+			{"POST", "/api/v1/cli/logout"},
 		} {
 			req := httptest.NewRequest(route.method, route.path, nil)
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
@@ -201,7 +201,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if err = app.identity.Logout(context.Background(), at); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest("GET", "/api/machines", nil)
+	req := httptest.NewRequest("GET", "/api/v1/machines", nil)
 	req.AddCookie(&http.Cookie{Name: cookieName, Value: at})
 	out := httptest.NewRecorder()
 	app.ServeHTTP(out, req)

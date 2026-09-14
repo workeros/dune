@@ -16,9 +16,9 @@ mkdir -p "$root" "$(dirname "$config")"
 tmp=$(mktemp -d "$root/.install-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 if [ -n "$cert" ]; then
- curl --fail --silent --show-error --proto '=http,https' --cacert "$cert" "$site/downloads/dune-$platform-$arch.tar.gz" -o "$tmp/package.tar.gz"
+ curl --fail --silent --show-error --proto '=http,https' --cacert "$cert" "$site/api/v1/downloads/dune-$platform-$arch.tar.gz" -o "$tmp/package.tar.gz"
 else
- curl --fail --silent --show-error --proto '=http,https' "$site/downloads/dune-$platform-$arch.tar.gz" -o "$tmp/package.tar.gz"
+ curl --fail --silent --show-error --proto '=http,https' "$site/api/v1/downloads/dune-$platform-$arch.tar.gz" -o "$tmp/package.tar.gz"
 fi
 tar -xzf "$tmp/package.tar.gz" -C "$tmp"
 chmod 700 "$tmp/dune" "$tmp/tmux"

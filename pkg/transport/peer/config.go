@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -35,10 +34,13 @@ type Transport struct {
 	expires     time.Time
 }
 
+// EndpointPath is the fixed private Gateway peer API endpoint.
+const EndpointPath = "/api/v1/peer"
+
 func address(value string) (*url.URL, error) {
 	u, err := url.Parse(value)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" || u.RawPath != "" || u.Path == "" || path.Clean(u.Path) != u.Path || u.String() != value {
-		return nil, fmt.Errorf("canonical HTTPS instance endpoint required")
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" || u.RawPath != "" || u.Path != EndpointPath || u.String() != value {
+		return nil, fmt.Errorf("canonical HTTPS instance endpoint ending in %s required", EndpointPath)
 	}
 	if ip := net.ParseIP(u.Hostname()); ip != nil {
 		if ip.IsUnspecified() || ip.IsMulticast() {

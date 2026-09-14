@@ -87,7 +87,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		t.Helper()
 		server := httptest.NewUnstartedServer(nil)
 		t.Cleanup(server.Close)
-		transport, err := peer.New(peer.Config{Address: "https://" + server.Listener.Addr().String() + "/private/dune/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()})
+		transport, err := peer.New(peer.Config{Address: "https://" + server.Listener.Addr().String() + peer.EndpointPath, Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()})
 		if err != nil {
 			t.Fatal(err)
 		}

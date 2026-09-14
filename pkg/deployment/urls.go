@@ -19,6 +19,8 @@ type URLs struct {
 	CookiePath string
 }
 
+const APIPrefix = "/api/v1"
+
 func parse(value string) (*url.URL, error) {
 	u, err := url.Parse(value)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(value, "#") {
@@ -71,15 +73,15 @@ func Public(value string) (*url.URL, error) {
 	return u, nil
 }
 
-// Gateway accepts a final WS(S) connection URL, including its full path. It
-// never appends /tunnel or infers a browser deployment prefix.
+// Gateway accepts the final versioned WS(S) connection URL. A deployment
+// prefix may precede /api/v1/tunnel, but the service path itself is fixed.
 func Gateway(value string) (*url.URL, error) {
 	u, err := parse(value)
 	if err != nil {
 		return nil, err
 	}
-	if (u.Scheme != "ws" && u.Scheme != "wss") || u.Path == "" || u.Path == "/" || path.Clean(u.Path) != u.Path {
-		return nil, fmt.Errorf("gateway URL must be an absolute WS(S) URL with a complete connection path")
+	if (u.Scheme != "ws" && u.Scheme != "wss") || path.Clean(u.Path) != u.Path || !strings.HasSuffix(u.Path, APIPrefix+"/tunnel") {
+		return nil, fmt.Errorf("gateway URL must be an absolute WS(S) URL ending in %s/tunnel", APIPrefix)
 	}
 	return u, nil
 }
@@ -92,7 +94,7 @@ func NewURLs(publicURL, gatewayURL string) (URLs, error) {
 	if gatewayURL == "" {
 		gateway := *u
 		gateway.Scheme = strings.Replace(u.Scheme, "http", "ws", 1)
-		gateway.Path += "tunnel"
+		gateway.Path += strings.TrimPrefix(APIPrefix, "/") + "/tunnel"
 		gatewayURL = gateway.String()
 	}
 	gateway, err := Gateway(gatewayURL)

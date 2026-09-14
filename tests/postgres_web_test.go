@@ -66,7 +66,7 @@ func TestPostgresHostClusterConfiguration(t *testing.T) {
 	_, err = store.ConnectionDirectory(ctx)
 	must(t, err)
 	ca := testcert.New(t)
-	cluster := &host.ClusterOptions{Peer: peer.Config{Address: "https://127.0.0.1:9443/private/peer", Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}}
+	cluster := &host.ClusterOptions{Peer: peer.Config{Address: "https://127.0.0.1:9443" + peer.EndpointPath, Certificate: ca.Issue(t, "127.0.0.1", nil), Roots: ca.Roots()}}
 	options := host.Options{PublicURL: "http://example.test/", Database: &database}
 	standalone, err := host.Open(ctx, options)
 	must(t, err)
@@ -78,7 +78,7 @@ func TestPostgresHostClusterConfiguration(t *testing.T) {
 	must(t, err)
 	defer app.Close()
 	response := httptest.NewRecorder()
-	app.ServeHTTP(response, httptest.NewRequest("GET", "http://example.test/private/peer", nil))
+	app.ServeHTTP(response, httptest.NewRequest("GET", "http://example.test"+peer.EndpointPath, nil))
 	if response.Code != 404 {
 		t.Fatal("public listener exposed peer", response.Code)
 	}

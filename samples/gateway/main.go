@@ -1,5 +1,5 @@
 // A Gateway embedded in a standard HTTP server, using only public Dune packages.
-// Run with DUNE_TOKEN and DUNE_TARGET; point fabricd and sdk.Dial at /tunnel.
+// Run with DUNE_TOKEN and DUNE_TARGET; point fabricd and sdk.Dial at /api/v1/tunnel.
 package main
 
 import (
@@ -35,7 +35,7 @@ func run() error {
 	g := gateway.New()
 	defer g.Close()
 	mux := http.NewServeMux()
-	mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, g, func(presented string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+	mux.Handle("GET /api/v1/tunnel", tunnel.NewHandler(ctx, g, func(presented string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(presented)) != 1 {
 			return gateway.BindingContext{}, nil, fmt.Errorf("unauthorized")
 		}

@@ -99,7 +99,7 @@ func TestPostgresDirectoryDatabaseClockDisturbance(t *testing.T) {
 	}
 	contender := claim
 	contender.OwnerBootID = wire.ID()
-	contender.OwnerAddress = "https://instance-b.test/peer"
+	contender.OwnerAddress = "https://instance-b.test/api/v1/peer"
 	if _, err := peer.Acquire(ctx, contender, original.Epoch); !errors.Is(err, gateway.ErrRouteBusy) {
 		t.Fatal("backward step let another owner preempt a live term", err)
 	}
@@ -141,7 +141,7 @@ func TestPostgresDirectoryDatabaseClockDisturbance(t *testing.T) {
 	}
 	third := contender
 	third.OwnerBootID = wire.ID()
-	third.OwnerAddress = "https://instance-c.test/peer"
+	third.OwnerAddress = "https://instance-c.test/api/v1/peer"
 	if _, err := owner.Acquire(ctx, third, replacement.Epoch); !errors.Is(err, gateway.ErrRouteBusy) {
 		t.Fatal("clock correction preempted retained ownership", err)
 	}

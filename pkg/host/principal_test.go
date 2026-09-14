@@ -18,7 +18,7 @@ func TestPrincipalAdministrationHonorsApplicationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	request := httptest.NewRequest("POST", "/dune/api/auth/register", strings.NewReader(`{"email":"admin-test@example.test","password":"admin-test-password"}`))
+	request := httptest.NewRequest("POST", "/dune/api/v1/auth/register", strings.NewReader(`{"email":"admin-test@example.test","password":"admin-test-password"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Dune-Request", "1")
 	request.Header.Set("Origin", "http://example.test")
@@ -37,7 +37,7 @@ func TestPrincipalAdministrationHonorsApplicationLifecycle(t *testing.T) {
 	if err := app.SetUserEnabled(canceled, user.ID, false); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled administration accepted", err)
 	}
-	me := httptest.NewRequest("GET", "/dune/api/me", nil)
+	me := httptest.NewRequest("GET", "/dune/api/v1/me", nil)
 	me.AddCookie(cookie)
 	out = httptest.NewRecorder()
 	app.ServeHTTP(out, me)

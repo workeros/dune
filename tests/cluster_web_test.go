@@ -61,9 +61,9 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 			must(t, os.WriteFile(filepath.Join(instanceDir, name), data, 0600))
 		}
 		clusterFile := filepath.Join(instanceDir, "cluster.yaml")
-		writeYAML(clusterFile, map[string]any{"peer": map[string]string{"listen": peerAddress, "address": "https://" + peerAddress + "/private/peer", "certificate": "cert.pem", "key": "key.pem", "ca": "ca.pem"}})
+		writeYAML(clusterFile, map[string]any{"peer": map[string]string{"listen": peerAddress, "address": "https://" + peerAddress + "/api/v1/peer", "certificate": "cert.pem", "key": "key.pem", "ca": "ca.pem"}})
 		localFile := filepath.Join(instanceDir, "local.yaml")
-		must(t, config.Create(localFile, config.Config{Gateway: "ws://" + publicAddress + "/dune/tunnel", Listen: publicAddress, Token: strings.Repeat("x", 32), Target: "unused-local-token"}))
+		must(t, config.Create(localFile, config.Config{Gateway: "ws://" + publicAddress + "/dune/api/v1/tunnel", Listen: publicAddress, Token: strings.Repeat("x", 32), Target: "unused-local-token"}))
 		log, err := os.Create(filepath.Join(instanceDir, "web.log"))
 		must(t, err)
 		defer log.Close()
@@ -96,7 +96,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 		})
 		probe := &http.Client{Timeout: time.Second}
 		for {
-			response, err := probe.Get(sites[i] + "api/bootstrap")
+			response, err := probe.Get(sites[i] + "api/v1/bootstrap")
 			if err == nil {
 				response.Body.Close()
 				if response.StatusCode == 200 {
@@ -135,9 +135,9 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 		}
 	}
 	credentials := map[string]string{"email": "cluster-web@example.test", "password": "cluster-process-password"}
-	request(sites[0], "POST", "api/auth/register", credentials, nil)
+	request(sites[0], "POST", "api/v1/auth/register", credentials, nil)
 	var enrollment struct{ Token string }
-	request(sites[0], "POST", "api/enrollments", map[string]string{"name": "cluster machine"}, &enrollment)
+	request(sites[0], "POST", "api/v1/enrollments", map[string]string{"name": "cluster machine"}, &enrollment)
 	machineFile := filepath.Join(dir, "machine", "config.yaml")
 	// Enrollment itself is consumed on B after being issued by A.
 	must(t, webapp.EnrollMachine(ctx, machineFile, sites[1], enrollment.Token, ""))
@@ -157,7 +157,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	for _, entry := range []int{0, 2} {
 		site := sites[entry]
 		if entry != 0 {
-			request(site, "POST", "api/auth/login", credentials, nil)
+			request(site, "POST", "api/v1/auth/login", credentials, nil)
 		}
 		for {
 			var page struct {
@@ -166,7 +166,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 					Online bool
 				}
 			}
-			request(site, "GET", "api/machines", nil, &page)
+			request(site, "GET", "api/v1/machines", nil, &page)
 			if len(page.Items) == 1 && page.Items[0].ID == machine.Target && page.Items[0].Online {
 				break
 			}
@@ -176,8 +176,8 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 			case <-time.After(25 * time.Millisecond):
 			}
 		}
-		request(site, "POST", "api/machines/"+machine.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, nil)
+		request(site, "POST", "api/v1/machines/"+machine.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, nil)
 		// A different entry revokes the shared browser session.
-		request(sites[1], "POST", "api/auth/logout", struct{}{}, nil)
+		request(sites[1], "POST", "api/v1/auth/logout", struct{}{}, nil)
 	}
 }

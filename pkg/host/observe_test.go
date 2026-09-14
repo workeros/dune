@@ -47,11 +47,11 @@ func TestHostEmitsStructuredAccessObservation(t *testing.T) {
 				app.ServeHTTP(out, r)
 				return out
 			}
-			registered := request(http.MethodPost, "/dune/api/auth/register", `{"email":"observe@example.test","password":"observe-test-password"}`, nil)
+			registered := request(http.MethodPost, "/dune/api/v1/auth/register", `{"email":"observe@example.test","password":"observe-test-password"}`, nil)
 			if registered.Code != http.StatusOK || len(registered.Result().Cookies()) != 1 {
 				t.Fatal("registration failed", registered.Code, registered.Body.String())
 			}
-			response := request(http.MethodPost, "/dune/api/enrollments", `{"name":"observed machine"}`, registered.Result().Cookies()[0])
+			response := request(http.MethodPost, "/dune/api/v1/enrollments", `{"name":"observed machine"}`, registered.Result().Cookies()[0])
 			wantStatus, wantOutcome := http.StatusOK, "allowed"
 			if !allowed {
 				wantStatus, wantOutcome = http.StatusForbidden, "denied"

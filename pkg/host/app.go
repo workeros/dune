@@ -61,10 +61,10 @@ type Options struct {
 	// Managed supplies the external lifecycle service used by the existing Web
 	// UI. Dune does not run lifecycle workers or persist provider operations.
 	Managed managed.Service
-	// DialGateway optionally connects the workbench to this application's tunnel
+	// DialGateway optionally connects the workbench to this application's Gateway
 	// using the supplied short-lived credential. The returned connection belongs
 	// to Dune. It must honor context cancellation and must not replay requests.
-	// By default, Dune dials PublicURL + "tunnel" using verified WS(S). A host can
+	// By default, Dune dials PublicURL + "api/v1/tunnel" using verified WS(S). A host can
 	// provide a local network route or its TLS trust configuration here.
 	DialGateway func(context.Context, string) (net.Conn, error)
 }
@@ -109,7 +109,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	dial := options.DialGateway
 	if dial == nil {
-		endpoint := strings.Replace(addresses.PublicURL, "http", "ws", 1) + "tunnel"
+		endpoint := strings.Replace(addresses.PublicURL, "http", "ws", 1) + "api/v1/tunnel"
 		dial = func(ctx context.Context, token string) (net.Conn, error) {
 			return ws.Dial(ctx, endpoint, token, &tls.Config{MinVersion: tls.VersionTLS12})
 		}
@@ -197,7 +197,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.health(w, r) {
 		return
 	}
-	a.serveHTTP(a.web, w, r, r.URL.Path == a.publicPath+"tunnel")
+	a.serveHTTP(a.web, w, r, r.URL.Path == a.publicPath+"api/v1/tunnel")
 }
 
 func (a *App) serveHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request, connection bool) {

@@ -58,7 +58,7 @@ mock ACP 只验证协议，不证明真实 Agent 可用。涉及 ACP 行为、PT
 ## 前端与部署
 
 前端变更运行 TypeScript/lint 与生产构建。生产验收同时检查 Nginx 直接返回静态
-文件，API/downloads 反代后端，`/tunnel` upgrade 可用，而 backend 在
+文件，API/downloads 反代后端，`/api/v1/tunnel` upgrade 可用，而 backend 在
 `--assets=` 下不返回静态页面。本地组合模式仍用 `--assets web/dist`。
 
 ## 失败处理

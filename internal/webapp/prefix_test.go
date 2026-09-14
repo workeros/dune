@@ -32,7 +32,7 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 				t.Fatal(err)
 			}
 			origin := "https://example.test"
-			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/private/connect", Assets: assets, Binaries: binaries}, store, identity.NewLocal(store, true))
+			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/api/v1/tunnel", Assets: assets, Binaries: binaries}, store, identity.NewLocal(store, true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -50,20 +50,25 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 				app.ServeHTTP(response, request)
 				return response
 			}
-			for _, route := range []string{"", "main.js", "install.sh", "downloads/dune-linux-amd64.tar.gz"} {
+			for _, route := range []string{"", "main.js", "install.sh", "api/v1/downloads/dune-linux-amd64.tar.gz"} {
 				if response := do("GET", prefix+route, "", "", nil); response.Code != 200 {
 					t.Fatalf("static %s = %d", route, response.Code)
+				}
+			}
+			for _, route := range []string{"api/me", "downloads/dune-linux-amd64.tar.gz", "tunnel"} {
+				if response := do("GET", prefix+route, "", "", nil); response.Code != 404 {
+					t.Fatalf("legacy route %s = %d", route, response.Code)
 				}
 			}
 			if prefix != "/" {
 				if response := do("GET", strings.TrimSuffix(prefix, "/"), "", "", nil); response.Code != 308 || response.Header().Get("Location") != prefix {
 					t.Fatalf("canonical redirect = %d %s", response.Code, response.Header().Get("Location"))
 				}
-				if response := do("GET", "/api/me", "", "", nil); response.Code != 404 {
+				if response := do("GET", "/api/v1/me", "", "", nil); response.Code != 404 {
 					t.Fatal("root route bypassed prefix")
 				}
 			}
-			response := do("POST", prefix+"api/auth/register", `{"email":"owner@example.test","password":"a-strong-test-password"}`, origin, nil)
+			response := do("POST", prefix+"api/v1/auth/register", `{"email":"owner@example.test","password":"a-strong-test-password"}`, origin, nil)
 			if response.Code != 200 {
 				t.Fatalf("register: %d %s", response.Code, response.Body.String())
 			}
@@ -71,13 +76,13 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 			if cookie.Path != prefix || !cookie.Secure || !cookie.HttpOnly {
 				t.Fatalf("cookie scope = %+v", cookie)
 			}
-			if response := do("GET", prefix+"api/me", "", "", cookie); response.Code != 200 {
+			if response := do("GET", prefix+"api/v1/me", "", "", cookie); response.Code != 200 {
 				t.Fatal("cookie could not authenticate prefixed API")
 			}
-			if response := do("POST", prefix+"api/enrollments", `{"name":"machine"}`, origin+prefix, cookie); response.Code != 403 {
+			if response := do("POST", prefix+"api/v1/enrollments", `{"name":"machine"}`, origin+prefix, cookie); response.Code != 403 {
 				t.Fatal("accepted an Origin containing a path")
 			}
-			response = do("POST", prefix+"api/enrollments", `{"name":"machine"}`, origin, cookie)
+			response = do("POST", prefix+"api/v1/enrollments", `{"name":"machine"}`, origin, cookie)
 			var enrollment struct{ Token, Command, Endpoint string }
 			if err := json.Unmarshal(response.Body.Bytes(), &enrollment); err != nil || response.Code != 200 {
 				t.Fatalf("enrollment: %d %v", response.Code, err)
@@ -86,11 +91,11 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 				t.Fatalf("incorrect installation address: %+v", enrollment)
 			}
 			body, _ := json.Marshal(map[string]string{"token": enrollment.Token, "os": "linux", "arch": "amd64"})
-			response = do("POST", prefix+"api/enroll", string(body), "", nil)
-			if response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"gateway":"wss://machines.test/private/connect"`)) {
+			response = do("POST", prefix+"api/v1/enroll", string(body), "", nil)
+			if response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"gateway":"wss://machines.test/api/v1/tunnel"`)) {
 				t.Fatalf("gateway override: %d %s", response.Code, response.Body.String())
 			}
-			response = do("POST", prefix+"api/auth/logout", `{}`, origin, cookie)
+			response = do("POST", prefix+"api/v1/auth/logout", `{}`, origin, cookie)
 			if response.Code != 200 || response.Result().Cookies()[0].Path != prefix || response.Result().Cookies()[0].MaxAge != -1 {
 				t.Fatal("logout did not clear the same cookie path")
 			}

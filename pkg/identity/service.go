@@ -27,7 +27,7 @@ type User struct {
 	Kind      string `json:"-"`
 }
 
-// LoginMethod is advertised by /api/bootstrap. URL may point outside Dune when
+// LoginMethod is advertised by /api/v1/bootstrap. URL may point outside Dune when
 // a host owns the enterprise login flow.
 type LoginMethod struct {
 	Kind string `json:"kind"`

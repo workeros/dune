@@ -84,30 +84,30 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{urls: addresses, store: store, identity: service, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = core
-	s.mux.Handle("GET /tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+	s.mux.Handle("GET /api/v1/tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		binding, handler, err := authorizer.Authorize(credential)
 		return binding, handler, err
 	}))
-	s.mux.HandleFunc("GET /api/bootstrap", s.bootstrap)
+	s.mux.HandleFunc("GET /api/v1/bootstrap", s.bootstrap)
 	if _, ok := service.(publicidentity.PasswordService); ok {
-		s.mux.HandleFunc("POST /api/auth/register", s.register)
-		s.mux.HandleFunc("POST /api/auth/login", s.login)
+		s.mux.HandleFunc("POST /api/v1/auth/register", s.register)
+		s.mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	}
-	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
-	s.mux.HandleFunc("GET /api/me", s.me)
-	s.mux.HandleFunc("GET /api/runners", s.runners)
-	s.mux.HandleFunc("GET /api/runners/{runner}", s.runner)
+	s.mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	s.mux.HandleFunc("GET /api/v1/me", s.me)
+	s.mux.HandleFunc("GET /api/v1/runners", s.runners)
+	s.mux.HandleFunc("GET /api/v1/runners/{runner}", s.runner)
 	if options.Managed != nil {
-		s.mux.HandleFunc("GET /api/managed/tenants/{tenant}/templates", s.managedTemplates)
-		s.mux.HandleFunc("GET /api/managed/tenants/{tenant}/templates/{fabric}/{template}/{version}", s.managedTemplate)
-		s.mux.HandleFunc("POST /api/managed/tenants/{tenant}/runners", s.createManagedRunner)
-		s.mux.HandleFunc("DELETE /api/managed/runners/{runner}", s.destroyManagedRunner)
-		s.mux.HandleFunc("POST /api/managed/runners/{runner}/pause", s.pauseManagedRunner)
-		s.mux.HandleFunc("POST /api/managed/runners/{runner}/resume", s.resumeManagedRunner)
-		s.mux.HandleFunc("GET /api/managed/runners/{runner}", s.managedRunnerStatus)
-		s.mux.HandleFunc("GET /api/managed/operations/{operation}", s.managedOperation)
+		s.mux.HandleFunc("GET /api/v1/managed/tenants/{tenant}/templates", s.managedTemplates)
+		s.mux.HandleFunc("GET /api/v1/managed/tenants/{tenant}/templates/{fabric}/{template}/{version}", s.managedTemplate)
+		s.mux.HandleFunc("POST /api/v1/managed/tenants/{tenant}/runners", s.createManagedRunner)
+		s.mux.HandleFunc("DELETE /api/v1/managed/runners/{runner}", s.destroyManagedRunner)
+		s.mux.HandleFunc("POST /api/v1/managed/runners/{runner}/pause", s.pauseManagedRunner)
+		s.mux.HandleFunc("POST /api/v1/managed/runners/{runner}/resume", s.resumeManagedRunner)
+		s.mux.HandleFunc("GET /api/v1/managed/runners/{runner}", s.managedRunnerStatus)
+		s.mux.HandleFunc("GET /api/v1/managed/operations/{operation}", s.managedOperation)
 	}
-	s.mux.HandleFunc("GET /downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("GET /api/v1/downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("binary")
 		switch name {
 		case "dune-linux-amd64.tar.gz", "dune-linux-arm64.tar.gz", "dune-darwin-amd64.tar.gz", "dune-darwin-arm64.tar.gz":
@@ -122,19 +122,19 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 		w.Header().Set("Content-Type", "application/octet-stream")
 		http.ServeFile(w, r, filepath.Join(options.Binaries, name))
 	})
-	s.mux.HandleFunc("GET /api/machines", s.machines)
+	s.mux.HandleFunc("GET /api/v1/machines", s.machines)
 	if !options.DisableAttached {
-		s.mux.HandleFunc("POST /api/enrollments", s.enrollment)
+		s.mux.HandleFunc("POST /api/v1/enrollments", s.enrollment)
 	}
-	s.mux.HandleFunc("POST /api/enroll", s.enroll)
-	s.mux.HandleFunc("DELETE /api/machines/{machine}", s.revoke)
-	s.mux.HandleFunc("POST /api/machines/{machine}/call", s.call)
-	s.mux.HandleFunc("POST /api/machines/{machine}/sessions", s.start)
-	s.mux.HandleFunc("GET /api/machines/{machine}/sessions/{runtime}/events", s.events)
-	s.mux.HandleFunc("DELETE /api/runners/{runner}/binding", s.revokeRunner)
-	s.mux.HandleFunc("POST /api/runners/{runner}/call", s.call)
-	s.mux.HandleFunc("POST /api/runners/{runner}/sessions", s.start)
-	s.mux.HandleFunc("GET /api/runners/{runner}/sessions/{runtime}/events", s.events)
+	s.mux.HandleFunc("POST /api/v1/enroll", s.enroll)
+	s.mux.HandleFunc("DELETE /api/v1/machines/{machine}", s.revoke)
+	s.mux.HandleFunc("POST /api/v1/machines/{machine}/call", s.call)
+	s.mux.HandleFunc("POST /api/v1/machines/{machine}/sessions", s.start)
+	s.mux.HandleFunc("GET /api/v1/machines/{machine}/sessions/{runtime}/events", s.events)
+	s.mux.HandleFunc("DELETE /api/v1/runners/{runner}/binding", s.revokeRunner)
+	s.mux.HandleFunc("POST /api/v1/runners/{runner}/call", s.call)
+	s.mux.HandleFunc("POST /api/v1/runners/{runner}/sessions", s.start)
+	s.mux.HandleFunc("GET /api/v1/runners/{runner}/sessions/{runtime}/events", s.events)
 	if options.Assets != "" {
 		s.mux.Handle("GET /", http.FileServer(http.Dir(options.Assets)))
 	}
@@ -166,7 +166,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-	if strings.HasPrefix(r.URL.Path, "/api/") {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
