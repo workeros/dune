@@ -7,7 +7,7 @@ import (
 )
 
 func creationSpec() CreateRequest {
-	return CreateRequest{Name: " Development ", FabricID: "sandbox", TemplateID: "small", TemplateVersion: "v1", Parameters: map[string]json.RawMessage{"cpu": json.RawMessage(` 9007199254740993 `), "label": json.RawMessage(`"work"`)}}
+	return CreateRequest{Name: " Development ", BindingID: "binding", FabricID: "sandbox", TemplateID: "small", TemplateVersion: "v1", Parameters: map[string]json.RawMessage{"cpu": json.RawMessage(` 9007199254740993 `), "label": json.RawMessage(`"work"`)}}
 }
 
 func TestCreateRequestFreezesExactPublicInput(t *testing.T) {

@@ -59,6 +59,20 @@ func (l *Service) Resource(ctx context.Context, user identity.User, id string, m
 }
 
 func (l *Service) Discover(ctx context.Context, user identity.User, query runner.Query, machines bool) (Page, error) {
+	return l.discover(ctx, user, query, machines, "")
+}
+
+func (l *Service) DiscoverTenant(ctx context.Context, user identity.User, ownerID string, query runner.Query) (Page, error) {
+	if ownerID == "" {
+		return Page{}, identity.ErrInvalidArgument
+	}
+	if _, err := l.Check(ctx, user, Resource{OwnerID: ownerID, Runner: runner.Runner{Kind: "attached"}}, "runner.list", "tenant"); err != nil {
+		return Page{}, err
+	}
+	return l.discover(ctx, user, query, false, ownerID)
+}
+
+func (l *Service) discover(ctx context.Context, user identity.User, query runner.Query, machines bool, selectedOwner string) (Page, error) {
 	limit := query.Limit
 	if limit == 0 {
 		limit = 32
@@ -80,7 +94,7 @@ func (l *Service) Discover(ctx context.Context, user identity.User, query runner
 			return Page{}, err
 		}
 	}
-	owner := ""
+	owner := selectedOwner
 	if l.ownerOnly {
 		owner = user.ID
 	}

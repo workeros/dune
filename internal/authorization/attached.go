@@ -22,6 +22,20 @@ func (l *Service) IssueEnrollment(ctx context.Context, cookie, name string) (str
 	defer cancel()
 	return l.bindings.IssueEnrollmentForSession(ctx, user, name, credentialHash(cookie))
 }
+
+func (l *Service) IssueTenantEnrollment(ctx context.Context, cookie, ownerID, name string) (runner.Runner, string, int64, error) {
+	user, err := l.sessions.Authenticate(ctx, cookie)
+	if err != nil {
+		return runner.Runner{}, "", 0, err
+	}
+	decision, err := l.Check(ctx, user, Resource{OwnerID: ownerID, Runner: runner.Runner{Kind: "attached"}}, "runner.create", "attached")
+	if err != nil {
+		return runner.Runner{}, "", 0, err
+	}
+	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
+	defer cancel()
+	return l.bindings.IssueTenantEnrollment(ctx, user, ownerID, name, credentialHash(cookie))
+}
 func (l *Service) EnrollmentDecision(ctx context.Context, token string) (access.Decision, error) {
 	user, ownerID, kind, err := l.bindings.EnrollmentIdentity(ctx, token)
 	if err != nil {

@@ -19,11 +19,13 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
 	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/managed"
 	"github.com/aiomni/dune/pkg/observe"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/aiomni/dune/pkg/transport/ws"
@@ -67,6 +69,10 @@ type Options struct {
 	// By default, Dune dials PublicURL + "api/v1/tunnel" using verified WS(S). A host can
 	// provide a local network route or its TLS trust configuration here.
 	DialGateway func(context.Context, string) (net.Conn, error)
+	// ConsumeWebSocketTicket enables browser WebSocket authentication without
+	// putting a JWT in a URL. SandDance supplies the persistent one-time store.
+	ConsumeWebSocketTicket func(context.Context, string, string, runner.Binding, api.Runtime) (string, error)
+	CanDetachAttached      func(context.Context, publicidentity.User, string, string) (bool, error)
 }
 
 // App is an http.Handler mounted with the complete deployment prefix preserved.
@@ -178,11 +184,13 @@ func Open(parent context.Context, options Options) (*App, error) {
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		Assets: options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
-		DialGateway:     dial,
-		Online:          online,
-		Managed:         options.Managed,
-		DisableAttached: options.DisableAttached,
-		TenantScoped:    options.TenantScoped,
+		DialGateway:            dial,
+		Online:                 online,
+		Managed:                options.Managed,
+		DisableAttached:        options.DisableAttached,
+		TenantScoped:           options.TenantScoped,
+		ConsumeWebSocketTicket: options.ConsumeWebSocketTicket,
+		CanDetachAttached:      options.CanDetachAttached,
 	}, store, service, authorizer, core)
 	if err != nil {
 		return nil, err

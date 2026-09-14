@@ -19,7 +19,7 @@ func templateFixture() Template {
 	}}
 }
 func templateRequest() CreateRequest {
-	return CreateRequest{Name: "Development", FabricID: "sandbox", TemplateID: "small", TemplateVersion: "v1", Parameters: map[string]json.RawMessage{"cpu": json.RawMessage(`2`), "region": json.RawMessage(`"east"`)}}
+	return CreateRequest{Name: "Development", BindingID: "binding", FabricID: "sandbox", TemplateID: "small", TemplateVersion: "v1", Parameters: map[string]json.RawMessage{"cpu": json.RawMessage(`2`), "region": json.RawMessage(`"east"`)}}
 }
 
 func TestTemplateCatalogIsImmutableAndVersioned(t *testing.T) {

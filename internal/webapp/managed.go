@@ -82,7 +82,7 @@ func (s *Server) managedTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	templates, err := s.options.Managed.Templates(r.Context(), user, r.PathValue("tenant"))
+	templates, err := s.options.Managed.Templates(r.Context(), user, r.PathValue("tenant"), r.URL.Query().Get("binding_id"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return
@@ -95,7 +95,7 @@ func (s *Server) managedTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	template, err := s.options.Managed.Template(r.Context(), user, r.PathValue("tenant"), r.PathValue("fabric"), r.PathValue("template"), r.PathValue("version"))
+	template, err := s.options.Managed.Template(r.Context(), user, r.PathValue("tenant"), r.URL.Query().Get("binding_id"), r.PathValue("fabric"), r.PathValue("template"), r.PathValue("version"))
 	if err != nil {
 		writeMetadataError(w, err)
 		return

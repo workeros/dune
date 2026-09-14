@@ -25,6 +25,7 @@ import (
 	"github.com/aiomni/dune/pkg/gateway"
 	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/managed"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -50,6 +51,10 @@ type Options struct {
 	Managed         managed.Service
 	DisableAttached bool
 	TenantScoped    bool
+	// ConsumeWebSocketTicket exchanges a one-time browser subprotocol ticket
+	// for the session token used by the normal Dune identity/access path.
+	ConsumeWebSocketTicket func(context.Context, string, string, runner.Binding, api.Runtime) (string, error)
+	CanDetachAttached      func(context.Context, publicidentity.User, string, string) (bool, error)
 }
 
 type authRate struct {
@@ -122,9 +127,21 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 		w.Header().Set("Content-Type", "application/octet-stream")
 		http.ServeFile(w, r, filepath.Join(options.Binaries, name))
 	})
+	s.mux.HandleFunc("GET /api/v1/install.sh", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = io.WriteString(w, attachedInstallScript)
+	})
 	s.mux.HandleFunc("GET /api/v1/machines", s.machines)
-	if !options.DisableAttached {
+	if !options.DisableAttached && !options.TenantScoped {
 		s.mux.HandleFunc("POST /api/v1/enrollments", s.enrollment)
+	}
+	if !options.DisableAttached && options.TenantScoped {
+		s.mux.HandleFunc("POST /api/v1/tenants/{tenant}/enrollments", s.tenantEnrollment)
+		s.mux.HandleFunc("DELETE /api/v1/tenants/{tenant}/runners/{runner}/binding", s.detachTenantRunner)
+	}
+	if options.TenantScoped {
+		s.mux.HandleFunc("GET /api/v1/tenants/{tenant}/runners", s.tenantRunners)
 	}
 	s.mux.HandleFunc("POST /api/v1/enroll", s.enroll)
 	s.mux.HandleFunc("DELETE /api/v1/machines/{machine}", s.revoke)
@@ -374,6 +391,117 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 		"command": fmt.Sprintf("curl --fail --show-error --proto '=http,https' %s -o dune-install.sh && sh dune-install.sh %s %s", shellQuote(endpoint+"/install.sh"), shellQuote(endpoint), shellQuote(token))})
 }
 
+func (s *Server) tenantEnrollment(w http.ResponseWriter, r *http.Request) {
+	_, cookie, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if !readJSON(w, r, &request) {
+		return
+	}
+	logical, token, expires, err := s.access.IssueTenantEnrollment(r.Context(), cookie, r.PathValue("tenant"), request.Name)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	endpoint := strings.TrimSuffix(s.urls.PublicURL, "/")
+	writeJSON(w, http.StatusCreated, map[string]any{"runner": logical, "token": token, "expires_at": expires, "endpoint": endpoint,
+		"command": fmt.Sprintf("curl --fail --show-error --proto '=https' %s -o sanddance-install.sh && sh sanddance-install.sh %s %s", shellQuote(endpoint+"/api/v1/install.sh"), shellQuote(endpoint), shellQuote(token))})
+}
+
+const attachedInstallScript = `#!/bin/sh
+set -eu
+site=${1:?usage: sh sanddance-install.sh SITE ONE_TIME_TOKEN}
+site=${site%/}
+token=${2:?one-time token required}
+case "$site" in https://*) ;; *) echo 'HTTPS SandDance site required' >&2; exit 1;; esac
+case "$(uname -s)" in Linux) platform=linux;; Darwin) platform=darwin;; *) echo 'Linux or macOS required' >&2; exit 1;; esac
+case "$(uname -m)" in x86_64|amd64) arch=amd64;; arm64|aarch64) arch=arm64;; *) echo 'amd64 or arm64 required' >&2; exit 1;; esac
+umask 077
+install_dir=${DUNE_INSTALL_DIR:-"$HOME/.local/share/dune"}
+config_file=${DUNE_CONFIG:-"$HOME/.config/dune/config.yaml"}
+mkdir -p "$install_dir" "$(dirname "$config_file")"
+work_dir=$(mktemp -d "$install_dir/.sanddance-install-XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
+curl --fail --silent --show-error --proto '=https' "$site/api/v1/downloads/dune-$platform-$arch.tar.gz" -o "$work_dir/dune.tar.gz"
+tar -xzf "$work_dir/dune.tar.gz" -C "$work_dir"
+chmod 700 "$work_dir/dune" "$work_dir/tmux"
+"$work_dir/dune" --config "$config_file" enroll --site "$site" --token "$token"
+mv "$work_dir/dune" "$install_dir/dune"
+mv "$work_dir/tmux" "$install_dir/tmux"
+mkdir -p "$install_dir/licenses"
+cp -R "$work_dir/licenses/." "$install_dir/licenses/"
+"$install_dir/dune" --config "$config_file" service install --name dune
+printf 'SandDance Devbox attached. Config: %s\n' "$config_file"
+`
+
+func (s *Server) tenantRunners(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	query, ok := pageQuery(w, r)
+	if !ok {
+		return
+	}
+	page, err := s.access.DiscoverTenant(r.Context(), user, r.PathValue("tenant"), query)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	online, err := s.online(r.Context(), page.Items)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	out := struct {
+		Items      []runnerView `json:"items"`
+		NextCursor string       `json:"next_cursor,omitempty"`
+	}{Items: []runnerView{}, NextCursor: page.NextCursor}
+	for _, resource := range page.Items {
+		out.Items = append(out.Items, runnerResponse(resource, online))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) detachTenantRunner(w http.ResponseWriter, r *http.Request) {
+	user, cookie, ok := s.user(w, r)
+	if !ok {
+		return
+	}
+	binding, ok := selectedBinding(w, r)
+	if !ok {
+		return
+	}
+	resource, _, err := s.access.Resource(r.Context(), user, binding.RunnerID, false, "runner.unbind")
+	if err != nil || resource.OwnerID != r.PathValue("tenant") || resource.Runner.Kind != "attached" || resource.Runner.Binding == nil || *resource.Runner.Binding != binding {
+		writeMetadataError(w, authorization.ErrNotFound)
+		return
+	}
+	if s.options.CanDetachAttached == nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "attached Runner detach policy is unavailable")
+		return
+	}
+	allowed, err := s.options.CanDetachAttached(r.Context(), user, resource.OwnerID, resource.Runner.ID)
+	if err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "only the creator or a Tenant owner/admin can detach this Runner")
+		return
+	}
+	if err := s.access.RevokeRunner(r.Context(), cookie, binding); err != nil {
+		writeMetadataError(w, err)
+		return
+	}
+	s.gateway.Disconnect(binding.MachineID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
@@ -549,6 +677,34 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	webSocketProtocol := ""
+	purpose := ""
+	if s.options.ConsumeWebSocketTicket != nil {
+		binding, bindingOK := selectedBinding(w, r)
+		if !bindingOK {
+			return
+		}
+		purpose = r.URL.Query().Get("purpose")
+		if (purpose != "terminal" && purpose != "acp") || len(r.URL.Query()["purpose"]) != 1 {
+			writeError(w, http.StatusBadRequest, "INVALID_PURPOSE", "terminal or acp WebSocket purpose is required")
+			return
+		}
+		var ticket string
+		webSocketProtocol, ticket, ok = browserTicketProtocol(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "WEBSOCKET_TICKET_REQUIRED", "a one-time WebSocket ticket is required")
+			return
+		}
+		token, err := s.options.ConsumeWebSocketTicket(r.Context(), ticket, purpose, binding, selected)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "INVALID_WEBSOCKET_TICKET", "the WebSocket ticket is invalid, expired, used, or outside its scope")
+			return
+		}
+		request := r.Clone(r.Context())
+		request.Header = r.Header.Clone()
+		request.Header.Set("X-Jwt-Token", token)
+		r = request
+	}
 	client, valid, ok := s.executionClient(w, r)
 	if !ok {
 		return
@@ -565,6 +721,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "STALE_RUNTIME", "Runtime identity changed; select the current session")
 		return
 	}
+	if (purpose == "terminal" && runtime.Adapter != "pty") || (purpose == "acp" && runtime.Adapter != "acp") {
+		writeError(w, http.StatusConflict, "RUNTIME_PURPOSE_MISMATCH", "Runtime adapter does not match the ticket purpose")
+		return
+	}
 	var stream *sdk.Stream
 	if runtime.Adapter == "pty" {
 		stream, err = client.Attach(r.Context(), runtime, false)
@@ -577,6 +737,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stream.Close()
 	u := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == s.urls.Origin }}
+	if webSocketProtocol != "" {
+		u.Subprotocols = []string{webSocketProtocol}
+	}
 	wc, err := u.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -686,4 +849,24 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+const browserTicketProtocolPrefix = "sanddance.ticket."
+
+func browserTicketProtocol(r *http.Request) (string, string, bool) {
+	parts := strings.Split(strings.Join(r.Header.Values("Sec-WebSocket-Protocol"), ","), ",")
+	if len(parts) != 1 {
+		return "", "", false
+	}
+	protocol := strings.TrimSpace(parts[0])
+	if !strings.HasPrefix(protocol, browserTicketProtocolPrefix) {
+		return "", "", false
+	}
+	ticket := strings.TrimPrefix(protocol, browserTicketProtocolPrefix)
+	if len(ticket) != 43 || strings.ContainsFunc(ticket, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
+	}) {
+		return "", "", false
+	}
+	return protocol, ticket, true
 }

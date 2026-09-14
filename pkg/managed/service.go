@@ -98,8 +98,8 @@ type Service interface {
 	// exposed to requests. The implementation must use this capability to create
 	// and inspect Dune's logical Runner; it must not retain an earlier binding.
 	BindRunnerAccess(RunnerAccess) error
-	Templates(context.Context, identity.User, string) ([]fabric.TemplateStatus, error)
-	Template(context.Context, identity.User, string, string, string, string) (fabric.TemplateStatus, error)
+	Templates(context.Context, identity.User, string, string) ([]fabric.TemplateStatus, error)
+	Template(context.Context, identity.User, string, string, string, string, string) (fabric.TemplateStatus, error)
 	Create(context.Context, identity.User, string, string, fabric.CreateRequest) (Creation, error)
 	Destroy(context.Context, identity.User, string, string) (Destruction, error)
 	Pause(context.Context, identity.User, string, string) (Mutation, error)

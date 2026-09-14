@@ -17,6 +17,7 @@ import (
 // meaning belongs to this exact template version, not the current template.
 type CreateRequest struct {
 	Name            string                     `json:"name"`
+	BindingID       string                     `json:"binding_id"`
 	FabricID        string                     `json:"fabric_id"`
 	TemplateID      string                     `json:"template_id"`
 	TemplateVersion string                     `json:"template_version"`
@@ -99,7 +100,7 @@ func validStringEscapes(raw []byte) bool {
 // requested integer or a future provider's interpretation of a decimal value.
 func (s CreateRequest) Encode() (string, error) {
 	s.Name = strings.TrimSpace(s.Name)
-	if !boundedText(s.Name, 120) || !boundedIdentifier(s.FabricID, 128) || s.FabricID == "attached" || !boundedIdentifier(s.TemplateID, 128) || !boundedIdentifier(s.TemplateVersion, 128) || (s.CredentialEmail != "" && (!boundedText(s.CredentialEmail, 256) || strings.TrimSpace(s.CredentialEmail) != s.CredentialEmail)) || len(s.Parameters) > 32 {
+	if !boundedText(s.Name, 120) || !boundedIdentifier(s.BindingID, 128) || !boundedIdentifier(s.FabricID, 128) || s.FabricID == "attached" || !boundedIdentifier(s.TemplateID, 128) || !boundedIdentifier(s.TemplateVersion, 128) || (s.CredentialEmail != "" && (!boundedText(s.CredentialEmail, 256) || strings.TrimSpace(s.CredentialEmail) != s.CredentialEmail)) || len(s.Parameters) > 32 {
 		return "", fmt.Errorf("invalid managed creation specification")
 	}
 	parameters := make(map[string]json.RawMessage, len(s.Parameters))

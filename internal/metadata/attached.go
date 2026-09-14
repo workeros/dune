@@ -53,6 +53,22 @@ func (s *Store) IssueEnrollmentForSession(ctx context.Context, user identity.Use
 	return s.issueEnrollment(ctx, user, user.ID, name, sessionHash, "", "attached")
 }
 
+func (s *Store) IssueTenantEnrollment(ctx context.Context, user identity.User, ownerID, name, sessionHash string) (runner.Runner, string, int64, error) {
+	if user.ID == "" || ownerID == "" || ownerID == user.ID || sessionHash == "" {
+		return runner.Runner{}, "", 0, identity.ErrUnauthorized
+	}
+	name, err := validRunnerName(name)
+	if err != nil {
+		return runner.Runner{}, "", 0, err
+	}
+	logical := runner.Runner{ID: wire.ID(), Name: name, Kind: "attached"}
+	token, expires, err := s.issueEnrollment(ctx, user, ownerID, name, sessionHash, logical.ID, "attached")
+	if err != nil {
+		return runner.Runner{}, "", 0, err
+	}
+	return logical, token, expires, nil
+}
+
 // IssueManagedEnrollment is the small Dune-side attachment primitive available
 // to an external Managed implementation. Provider operations and their state do
 // not enter Dune; only the resulting logical Runner and one-shot binding token do.
@@ -106,7 +122,7 @@ func (s *Store) issueEnrollment(ctx context.Context, user identity.User, ownerID
 					return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
 				}
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,$4,$5,$6,'managed',$7,1,$8)`, runnerID, ownerID, user.ID, user.Namespace, user.Subject, name, fabricID, time.Now().Unix()); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9)`, runnerID, ownerID, user.ID, user.Namespace, user.Subject, name, kind, fabricID, time.Now().Unix()); err != nil {
 				return err
 			}
 		}
