@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/gateway"
 	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
@@ -212,6 +213,35 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 
 func noGateway(context.Context, string) (net.Conn, error) {
 	return nil, fmt.Errorf("no test execution connection")
+}
+
+func TestWorkbenchOperationAdmission(t *testing.T) {
+	for _, action := range []string{"stat", "list", "list_page", "search", "read", "write", "mkdir", "rename", "remove"} {
+		if !workbenchFileAction(action) {
+			t.Fatalf("file action %q is not admitted", action)
+		}
+	}
+	for _, action := range []string{"create", "query", "chunk", "commit", "cancel"} {
+		if !workbenchUploadAction(action) {
+			t.Fatalf("upload action %q is not admitted", action)
+		}
+	}
+	for _, action := range []string{"status", "diff", "log", "show", "stage", "unstage", "discard", "commit", "amend", "branch", "checkout", "stash", "fetch", "pull", "push", "merge", "rebase", "conflicts"} {
+		if !workbenchGitAction(action) {
+			t.Fatalf("Git action %q is not admitted", action)
+		}
+	}
+	if workbenchFileAction("execute") || workbenchUploadAction("begin") || workbenchGitAction("reset-hard") {
+		t.Fatal("unknown workbench action admitted")
+	}
+}
+
+func TestFileChangedUsesConflictStatus(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	operationError(recorder, &api.Error{Code: "FILE_CHANGED", Detail: "changed"})
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "FILE_CHANGED") {
+		t.Fatalf("unexpected conflict response: %d %s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func newTestServer(ctx context.Context, options Options, store *metadata.Store, local *identity.Local) (*Server, error) {

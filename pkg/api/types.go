@@ -18,13 +18,13 @@ type Hello struct {
 	PeerOwner  string `json:"peer_owner,omitempty"`
 }
 type Binding struct {
-	Version       string         `json:"version"`
-	Target        string         `json:"target"`
-	Incarnation   string         `json:"incarnation"`
-	Generation    uint64         `json:"generation"`
-	RouteEpoch    uint64         `json:"route_epoch,omitempty"`
-	Capabilities  []string       `json:"capabilities"`
-	Limits        map[string]int `json:"limits"`
+	Version      string         `json:"version"`
+	Target       string         `json:"target"`
+	Incarnation  string         `json:"incarnation"`
+	Generation   uint64         `json:"generation"`
+	RouteEpoch   uint64         `json:"route_epoch,omitempty"`
+	Capabilities []string       `json:"capabilities"`
+	Limits       map[string]int `json:"limits"`
 }
 type Command struct {
 	Name           string   `json:"name,omitempty" yaml:"name,omitempty"`
@@ -147,40 +147,62 @@ type Resize struct {
 	Cols uint16 `json:"cols"`
 }
 type File struct {
-	Action      string `json:"action"`
-	Path        string `json:"path"`
-	Destination string `json:"destination,omitempty"`
-	Data        []byte `json:"data,omitempty"`
-	Offset      int64  `json:"offset,omitempty"`
-	Length      int    `json:"length,omitempty"`
-	Overwrite   bool   `json:"overwrite,omitempty"`
-	Recursive   bool   `json:"recursive,omitempty"`
+	Action           string `json:"action"`
+	Path             string `json:"path"`
+	Destination      string `json:"destination,omitempty"`
+	Data             []byte `json:"data,omitempty"`
+	Offset           int64  `json:"offset,omitempty"`
+	Length           int    `json:"length,omitempty"`
+	Cursor           string `json:"cursor,omitempty"`
+	Limit            int    `json:"limit,omitempty"`
+	Query            string `json:"query,omitempty"`
+	ExpectedRevision string `json:"expected_revision,omitempty"`
+	Overwrite        bool   `json:"overwrite,omitempty"`
+	Force            bool   `json:"force,omitempty"`
+	Recursive        bool   `json:"recursive,omitempty"`
 }
 type FileInfo struct {
-	Name  string `json:"name"`
-	Size  int64  `json:"size"`
-	Mode  uint32 `json:"mode"`
-	IsDir bool   `json:"is_dir"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	Mode        uint32 `json:"mode"`
+	IsDir       bool   `json:"is_dir"`
+	ModifiedAt  string `json:"modified_at"`
+	ContentHash string `json:"content_hash,omitempty"`
+	Revision    string `json:"revision"`
+}
+type FilePage struct {
+	Items      []FileInfo `json:"items"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+}
+type FileChunk struct {
+	Data   []byte   `json:"data"`
+	Offset int64    `json:"offset"`
+	EOF    bool     `json:"eof"`
+	Info   FileInfo `json:"info"`
 }
 type Upload struct {
-	Action      string `json:"action"`
-	ID          string `json:"id,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Size        int64  `json:"size,omitempty"`
-	SHA256      string `json:"sha256,omitempty"`
-	Offset      int64  `json:"offset,omitempty"`
-	Data        []byte `json:"data,omitempty"`
-	ChunkSHA256 string `json:"chunk_sha256,omitempty"`
-	Overwrite   bool   `json:"overwrite,omitempty"`
-	TTLSeconds  int    `json:"ttl_seconds,omitempty"`
+	Action           string `json:"action"`
+	ID               string `json:"id,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Size             int64  `json:"size,omitempty"`
+	SHA256           string `json:"sha256,omitempty"`
+	Offset           int64  `json:"offset,omitempty"`
+	Data             []byte `json:"data,omitempty"`
+	ChunkSHA256      string `json:"chunk_sha256,omitempty"`
+	ExpectedRevision string `json:"expected_revision,omitempty"`
+	Overwrite        bool   `json:"overwrite,omitempty"`
+	Force            bool   `json:"force,omitempty"`
+	TTLSeconds       int    `json:"ttl_seconds,omitempty"`
 }
 type UploadState struct {
-	ID          string `json:"id"`
-	Incarnation string `json:"incarnation"`
-	Offset      int64  `json:"offset"`
-	Size        int64  `json:"size"`
-	ExpiresAt   string `json:"expires_at"`
-	Committed   bool   `json:"committed"`
+	ID          string    `json:"id"`
+	Incarnation string    `json:"incarnation"`
+	Offset      int64     `json:"offset"`
+	Size        int64     `json:"size"`
+	ExpiresAt   string    `json:"expires_at"`
+	Committed   bool      `json:"committed"`
+	File        *FileInfo `json:"file,omitempty"`
 }
 type Git struct {
 	Action    string   `json:"action"`

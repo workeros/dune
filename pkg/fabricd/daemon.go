@@ -33,6 +33,7 @@ type Engine struct {
 	uploads    map[string]*upload
 	cache      map[string]*cached
 	bulk       chan struct{}
+	fileMu     sync.Mutex
 	gitMu      sync.Mutex
 	ctx        context.Context
 	tmux       *tmux.Server

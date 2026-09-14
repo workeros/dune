@@ -2,32 +2,221 @@ package fabricd
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/aiomni/dune/internal/wire"
-	"github.com/aiomni/dune/pkg/api"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
 )
 
-func fileInfo(i os.FileInfo) api.FileInfo {
-	return api.FileInfo{Name: i.Name(), Size: i.Size(), Mode: uint32(i.Mode()), IsDir: i.IsDir()}
+const (
+	defaultFilePageSize = 200
+	maxFilePageSize     = 1000
+)
+
+func contentHash(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.CopyBuffer(h, f, make([]byte, 128*1024)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+func fileInfo(path string, info os.FileInfo, hashContents bool) (api.FileInfo, error) {
+	result := api.FileInfo{
+		Name:       info.Name(),
+		Path:       path,
+		Size:       info.Size(),
+		Mode:       uint32(info.Mode()),
+		IsDir:      info.IsDir(),
+		ModifiedAt: info.ModTime().UTC().Format(time.RFC3339Nano),
+	}
+	if hashContents && info.Mode().IsRegular() {
+		hash, err := contentHash(path)
+		if err != nil {
+			return api.FileInfo{}, err
+		}
+		result.ContentHash = hash
+	}
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%d\x00%d\x00%d", result.Mode, result.Size, info.ModTime().UnixNano())
+	result.Revision = hex.EncodeToString(h.Sum(nil))
+	return result, nil
+}
+
+func detailedFileInfo(path string) (api.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return api.FileInfo{}, err
+	}
+	return fileInfo(path, info, true)
+}
+
+func filePageLimit(limit int) (int, error) {
+	if limit == 0 {
+		return defaultFilePageSize, nil
+	}
+	if limit < 1 || limit > maxFilePageSize {
+		return 0, fmt.Errorf("limit must be 1..%d", maxFilePageSize)
+	}
+	return limit, nil
+}
+
+func encodeFileCursor(value string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func decodeFileCursor(cursor string) (string, error) {
+	if cursor == "" {
+		return "", nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", fmt.Errorf("invalid cursor")
+	}
+	return string(decoded), nil
+}
+
+func listFilePage(path, cursor string, limit int) (api.FilePage, error) {
+	pageSize, err := filePageLimit(limit)
+	if err != nil {
+		return api.FilePage{}, err
+	}
+	after, err := decodeFileCursor(cursor)
+	if err != nil {
+		return api.FilePage{}, err
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return api.FilePage{}, err
+	}
+	page := api.FilePage{Items: []api.FileInfo{}}
+	for _, entry := range entries {
+		if entry.Name() <= after {
+			continue
+		}
+		if len(page.Items) == pageSize {
+			page.NextCursor = encodeFileCursor(page.Items[len(page.Items)-1].Name)
+			break
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return api.FilePage{}, err
+		}
+		item, err := fileInfo(filepath.Join(path, entry.Name()), info, false)
+		if err != nil {
+			return api.FilePage{}, err
+		}
+		page.Items = append(page.Items, item)
+	}
+	return page, nil
+}
+
+func searchFiles(root, query, cursor string, limit int) (api.FilePage, error) {
+	if strings.TrimSpace(query) == "" {
+		return api.FilePage{}, fmt.Errorf("query required")
+	}
+	pageSize, err := filePageLimit(limit)
+	if err != nil {
+		return api.FilePage{}, err
+	}
+	after, err := decodeFileCursor(cursor)
+	if err != nil {
+		return api.FilePage{}, err
+	}
+	query = strings.ToLower(query)
+	type match struct {
+		relative string
+		item     api.FileInfo
+	}
+	matches := []match{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(strings.ToLower(relative), query) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		item, err := fileInfo(path, info, false)
+		if err != nil {
+			return err
+		}
+		matches = append(matches, match{relative: relative, item: item})
+		return nil
+	})
+	if err != nil {
+		return api.FilePage{}, err
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].relative < matches[j].relative })
+	page := api.FilePage{Items: []api.FileInfo{}}
+	for _, match := range matches {
+		if match.relative <= after {
+			continue
+		}
+		if len(page.Items) == pageSize {
+			last, err := filepath.Rel(root, page.Items[len(page.Items)-1].Path)
+			if err != nil {
+				return api.FilePage{}, err
+			}
+			page.NextCursor = encodeFileCursor(last)
+			break
+		}
+		page.Items = append(page.Items, match.item)
+	}
+	return page, nil
+}
+
+func fileChanged(path, expected string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &api.Error{Code: "FILE_CHANGED", Detail: "file no longer exists"}
+		}
+		return err
+	}
+	current, err := fileInfo(path, info, false)
+	if err != nil {
+		return err
+	}
+	if current.Revision != expected {
+		return &api.Error{Code: "FILE_CHANGED", Detail: "file changed since it was opened"}
+	}
+	return nil
+}
+
 func (d *Engine) files(a api.File) (any, error) {
 	if a.Path == "" {
 		return nil, fmt.Errorf("path required")
 	}
 	switch a.Action {
 	case "stat":
-		i, e := os.Stat(a.Path)
-		if e != nil {
-			return nil, e
-		}
-		return fileInfo(i), nil
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
+		return detailedFileInfo(a.Path)
 	case "list":
 		f, e := os.Open(a.Path)
 		if e != nil {
@@ -43,13 +232,24 @@ func (d *Engine) files(a api.File) (any, error) {
 		}
 		out := []api.FileInfo{}
 		for _, i := range infos {
-			out = append(out, fileInfo(i))
+			item, e := fileInfo(filepath.Join(a.Path, i.Name()), i, false)
+			if e != nil {
+				return nil, e
+			}
+			out = append(out, item)
 		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		return out, nil
+	case "list_page":
+		return listFilePage(a.Path, a.Cursor, a.Limit)
+	case "search":
+		return searchFiles(a.Path, a.Query, a.Cursor, a.Limit)
 	case "read":
 		if a.Length <= 0 || a.Length > wire.ChunkSize || a.Offset < 0 {
 			return nil, fmt.Errorf("read requires length 1..32768 and nonnegative offset")
 		}
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
 		f, e := os.Open(a.Path)
 		if e != nil {
 			return nil, e
@@ -60,13 +260,37 @@ func (d *Engine) files(a api.File) (any, error) {
 		if e == io.EOF {
 			e = nil
 		}
-		return map[string]any{"data": b[:n], "offset": a.Offset + int64(n)}, e
+		if e != nil {
+			return nil, e
+		}
+		rawInfo, e := f.Stat()
+		if e != nil {
+			return nil, e
+		}
+		info, e := fileInfo(a.Path, rawInfo, a.Offset == 0)
+		if e != nil {
+			return nil, e
+		}
+		next := a.Offset + int64(n)
+		return api.FileChunk{Data: b[:n], Offset: next, EOF: next >= info.Size, Info: info}, nil
 	case "write":
 		if len(a.Data) > wire.ChunkSize {
 			return nil, fmt.Errorf("use upload for files larger than 32768 bytes")
 		}
-		return nil, atomicWrite(a.Path, a.Data, a.Overwrite)
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
+		if !a.Force && a.ExpectedRevision != "" {
+			if err := fileChanged(a.Path, a.ExpectedRevision); err != nil {
+				return nil, err
+			}
+		}
+		if err := atomicWrite(a.Path, a.Data, a.Overwrite); err != nil {
+			return nil, err
+		}
+		return detailedFileInfo(a.Path)
 	case "mkdir":
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
 		return nil, os.MkdirAll(a.Path, 0755)
 	case "rename":
 		if a.Destination == "" {
@@ -75,8 +299,12 @@ func (d *Engine) files(a api.File) (any, error) {
 		if !a.Overwrite {
 			return nil, fmt.Errorf("rename requires explicit overwrite=true (POSIX rename semantics)")
 		}
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
 		return nil, os.Rename(a.Path, a.Destination)
 	case "remove":
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
 		if a.Recursive {
 			return nil, os.RemoveAll(a.Path)
 		}
@@ -118,9 +346,12 @@ type upload struct {
 	cleaner                   interface{ Release(string) }
 	mu                        sync.Mutex
 	id, path, temp, hash, inc string
+	expectedRevision          string
 	f                         *os.File
 	size, offset              int64
-	overwrite, committed      bool
+	overwrite, force          bool
+	committed                 bool
+	file                      *api.FileInfo
 	expires                   time.Time
 }
 
@@ -139,7 +370,7 @@ func (u *upload) cleanupLocked() {
 }
 func (u *upload) cleanup() { u.mu.Lock(); defer u.mu.Unlock(); u.cleanupLocked() }
 func (u *upload) state() api.UploadState {
-	return api.UploadState{ID: u.id, Incarnation: u.inc, Offset: u.offset, Size: u.size, ExpiresAt: u.expires.UTC().Format(time.RFC3339), Committed: u.committed}
+	return api.UploadState{ID: u.id, Incarnation: u.inc, Offset: u.offset, Size: u.size, ExpiresAt: u.expires.UTC().Format(time.RFC3339), Committed: u.committed, File: u.file}
 }
 func validHash(s string) bool {
 	b, e := hex.DecodeString(s)
@@ -178,7 +409,7 @@ func (d *Engine) uploadOp(a api.Upload) (any, error) {
 			d.cleaner.Release(temp)
 			return nil, e
 		}
-		u := &upload{cleaner: d.cleaner, id: wire.ID(), path: a.Path, temp: f.Name(), f: f, size: a.Size, hash: a.SHA256, overwrite: a.Overwrite, inc: d.inc, expires: time.Now().Add(time.Duration(ttl) * time.Second)}
+		u := &upload{cleaner: d.cleaner, id: wire.ID(), path: a.Path, temp: f.Name(), f: f, size: a.Size, hash: a.SHA256, expectedRevision: a.ExpectedRevision, overwrite: a.Overwrite, force: a.Force, inc: d.inc, expires: time.Now().Add(time.Duration(ttl) * time.Second)}
 		d.uploads[u.id] = u
 		return u.state(), nil
 	}
@@ -243,12 +474,31 @@ func (d *Engine) uploadOp(a api.Upload) (any, error) {
 		if e := u.f.Sync(); e != nil {
 			return nil, e
 		}
+		d.fileMu.Lock()
+		defer d.fileMu.Unlock()
+		if !u.force && u.expectedRevision != "" {
+			if e := fileChanged(u.path, u.expectedRevision); e != nil {
+				return nil, e
+			}
+		}
+		rawInfo, e := u.f.Stat()
+		if e != nil {
+			return nil, e
+		}
+		info, e := fileInfo(u.temp, rawInfo, false)
+		if e != nil {
+			return nil, e
+		}
+		info.Name = filepath.Base(u.path)
+		info.Path = u.path
+		info.ContentHash = u.hash
 		if e := commitFile(u.temp, u.path, u.overwrite); e != nil {
 			return nil, e
 		}
 		u.f.Close()
 		u.f = nil
 		u.committed = true
+		u.file = &info
 		u.cleaner.Release(u.temp)
 		u.temp = ""
 		return u.state(), nil

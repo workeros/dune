@@ -282,6 +282,8 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		sub, mode string
 	}{
 		{"files", api.File{Action: "read", Path: "/tmp/file", Data: []byte("secret")}, "read", ""},
+		{"files", api.File{Action: "list_page", Path: "/tmp", Cursor: "opaque"}, "list_page", ""},
+		{"files", api.File{Action: "search", Path: "/tmp", Query: "secret"}, "search", ""},
 		{"upload", api.Upload{Action: "commit", ID: "upload", Data: []byte("secret")}, "commit", ""},
 		{"git", api.Git{Action: "stash", Mode: "list", Patch: "secret", Message: "secret"}, "stash", "list"},
 		{"git", api.Git{Action: "branch", Name: "feature"}, "branch", "create"},

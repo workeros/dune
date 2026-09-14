@@ -600,14 +600,20 @@ func (s *Server) call(w http.ResponseWriter, r *http.Request) {
 	case "acp.action", "acp.state", "machine.info", "agent.config", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history":
 	case "files":
 		var f api.File
-		if json.Unmarshal(request.Payload, &f) != nil || (f.Action != "list" && f.Action != "stat") {
-			writeError(w, 400, "UNSUPPORTED", "workbench file API is directory listing/stat only")
+		if json.Unmarshal(request.Payload, &f) != nil || !workbenchFileAction(f.Action) {
+			writeError(w, 400, "UNSUPPORTED", "unsupported workbench file action")
+			return
+		}
+	case "upload":
+		var u api.Upload
+		if json.Unmarshal(request.Payload, &u) != nil || !workbenchUploadAction(u.Action) {
+			writeError(w, 400, "UNSUPPORTED", "unsupported workbench upload action")
 			return
 		}
 	case "git":
 		var g api.Git
-		if json.Unmarshal(request.Payload, &g) != nil || (g.Action != "status" && g.Action != "diff") {
-			writeError(w, 400, "UNSUPPORTED", "workbench Git API is read-only status/diff")
+		if json.Unmarshal(request.Payload, &g) != nil || !workbenchGitAction(g.Action) {
+			writeError(w, 400, "UNSUPPORTED", "unsupported workbench Git action")
 			return
 		}
 	default:
@@ -627,13 +633,44 @@ func (s *Server) call(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
+func workbenchFileAction(action string) bool {
+	switch action {
+	case "stat", "list", "list_page", "search", "read", "write", "mkdir", "rename", "remove":
+		return true
+	default:
+		return false
+	}
+}
+
+func workbenchUploadAction(action string) bool {
+	switch action {
+	case "create", "query", "chunk", "commit", "cancel":
+		return true
+	default:
+		return false
+	}
+}
+
+func workbenchGitAction(action string) bool {
+	switch action {
+	case "status", "diff", "log", "show", "stage", "unstage", "discard", "commit", "amend", "branch", "checkout", "stash", "fetch", "pull", "push", "merge", "rebase", "conflicts":
+		return true
+	default:
+		return false
+	}
+}
+
 func operationError(w http.ResponseWriter, err error) {
 	code := "OPERATION_FAILED"
+	status := http.StatusUnprocessableEntity
 	var ae *api.Error
 	if errors.As(err, &ae) {
 		code = ae.Code
+		if ae.Code == "FILE_CHANGED" || ae.Code == "OFFSET_CONFLICT" {
+			status = http.StatusConflict
+		}
 	}
-	writeError(w, 422, code, err.Error())
+	writeError(w, status, code, err.Error())
 }
 
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
