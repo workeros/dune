@@ -27,6 +27,15 @@ type Machine struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+// AttachedRunnerFacts contains only the ownership and binding facts a trusted
+// host needs to apply its own product policy. Credentials and enrollment
+// material never leave Dune through this view.
+type AttachedRunnerFacts struct {
+	OwnerID   string
+	Runner    runner.Runner
+	CreatedBy identity.User
+}
+
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
@@ -300,6 +309,79 @@ func (s *Store) RevokeManaged(ctx context.Context, owner, runnerID string) (stri
 		return err
 	})
 	return machine.String, err
+}
+
+// AttachedRunner returns one active Attached Runner in an exact owner scope.
+// Pending is represented by a nil Runner.Binding.
+func (s *Store) AttachedRunner(ctx context.Context, ownerID, runnerID string) (AttachedRunnerFacts, error) {
+	var facts AttachedRunnerFacts
+	var binding runner.Binding
+	var machine sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT owner_id,id,name,kind,created_at,fabric_id,binding_revision,machine_id,created_by_id,created_by_namespace,created_by_subject FROM dune_runners WHERE owner_id=$1 AND id=$2 AND kind='attached' AND enabled=TRUE`, ownerID, runnerID).Scan(
+		&facts.OwnerID, &facts.Runner.ID, &facts.Runner.Name, &facts.Runner.Kind, &facts.Runner.CreatedAt,
+		&binding.FabricID, &binding.Revision, &machine,
+		&facts.CreatedBy.ID, &facts.CreatedBy.Namespace, &facts.CreatedBy.Subject,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AttachedRunnerFacts{}, ErrNotFound
+	}
+	if err != nil {
+		return AttachedRunnerFacts{}, err
+	}
+	if machine.Valid {
+		binding.RunnerID, binding.MachineID = facts.Runner.ID, machine.String
+		facts.Runner.Binding = &binding
+	}
+	return facts, nil
+}
+
+// HasActiveAttached reports whether an owner still has any active Attached
+// Runner. It is a bounded existence query for host-owned Tenant deletion rules.
+func (s *Store) HasActiveAttached(ctx context.Context, ownerID string) (bool, error) {
+	if ownerID == "" {
+		return false, ErrInvalidArgument
+	}
+	var found bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM dune_runners WHERE owner_id=$1 AND kind='attached' AND enabled=TRUE)`, ownerID).Scan(&found)
+	return found, err
+}
+
+// CancelAttachedEnrollment atomically invalidates a pending Attached command
+// and disables its preallocated logical Runner. If enrollment won the race, the
+// exact binding is preserved and ErrBindingChanged is returned.
+func (s *Store) CancelAttachedEnrollment(ctx context.Context, ownerID, runnerID string) error {
+	if ownerID == "" || runnerID == "" {
+		return ErrInvalidArgument
+	}
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		// Enroll locks the token before binding the Runner. Keep that lock order so
+		// either enrollment or cancellation wins atomically on every SQL backend.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1 AND runner_id=$2 AND kind='attached'`, ownerID, runnerID); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE dune_runners SET enabled=FALSE,credential_hash=NULL WHERE id=$1 AND owner_id=$2 AND kind='attached' AND machine_id IS NULL AND enabled=TRUE`, runnerID, ownerID)
+		if err != nil {
+			return err
+		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return err
+		} else if changed == 1 {
+			return nil
+		}
+		var kind string
+		var machine sql.NullString
+		var enabled bool
+		if err := tx.QueryRowContext(ctx, `SELECT kind,machine_id,enabled FROM dune_runners WHERE id=$1 AND owner_id=$2`, runnerID, ownerID).Scan(&kind, &machine, &enabled); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if kind == "attached" && enabled && machine.Valid {
+			return runner.ErrBindingChanged
+		}
+		return ErrNotFound
+	})
 }
 
 func (s *Store) EnrollmentIdentity(ctx context.Context, token string) (identity.User, string, string, error) {

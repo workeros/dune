@@ -112,6 +112,20 @@ Gateway 路由到 fabricd。`Prepare` 返回有界进度及最终 `ProfileResult
 只查询原尝试而不执行或重试。该入口不发布 HTTP/CLI/IPC API，不依赖浏览器
 Session，也不新增主体授权续期或撤销合同；调用前的主体有效性由宿主负责。
 
+`App.AttachedRunnerManager()` 提供另一条受信宿主边界：`Get` 返回 Dune
+权威的 owner、creator 和当前 binding 事实，`HasActive` 为 Tenant 删除规则提供
+有界存在性检查，`CancelEnrollment` 原子撤销尚未绑定的接入命令。宿主根据这些
+事实执行自己的产品授权；Dune 掌握 enrollment/Runner 事务与并发，若确认期间
+已经完成绑定则返回 `runner.ErrBindingChanged`，不会把取消升级为 detach。
+若提交结果无法确认，取消返回 `host.ErrAttachedResultUnknown`；宿主应先重新读取
+事实，不能自动重放取消操作。
+
+Provider 可用 `fabric.NewBootstrapPlan` 按目标 OS/architecture 生成 Dune connector
+安装计划。计划只包含下载、解压、enroll、启动 fabricd 和完成标记等 Dune 交付
+知识；远端命令执行与 `BootstrapCompletionPath` 的只读检查仍由 Provider 实现。
+`pkg/fabric/fake` 提供进程内、非生产的完整 Provider 测试实现，用于本地生命周期
+和合同测试。
+
 ## Connector 支撑命令
 
 以下命令服务网页安装链路，不是远程执行客户端：
