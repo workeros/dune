@@ -102,6 +102,83 @@ func policyFixture(t *testing.T, checker Checker, valid func() bool) (context.Co
 	return ctx, sdk
 }
 
+func TestEnvironmentProfilePreparation(t *testing.T) {
+	seen := make(chan Request, 1)
+	ctx, c := policyFixture(t, checkFunc(func(ctx context.Context, r Request) (Decision, error) {
+		select {
+		case seen <- r:
+		default:
+		}
+		return allow(r, MaxLease), nil
+	}), nil)
+	foundCapability := false
+	for _, capability := range c.Binding.Capabilities {
+		if capability == "profile.prepare" {
+			foundCapability = true
+			break
+		}
+	}
+	if !foundCapability {
+		t.Fatal("profile.prepare capability missing")
+	}
+	dir := t.TempDir()
+	p := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: dir, Env: map[string]string{"DUNE_PREPARE_TEST": "ready"}}
+	p.Setup.Steps = []api.Command{
+		{Run: `printf %s "$DUNE_PREPARE_TEST" > prepared`, Shell: "/bin/sh"},
+		{Argv: []string{"/bin/sh", "-c", "printf second > second-step"}},
+	}
+	result, err := c.Prepare(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != "environment" || result.Stage != "succeeded" || result.StepsCompleted != 2 {
+		t.Fatalf("unexpected Profile result: %+v", result)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "prepared"))
+	if err != nil || string(content) != "ready" {
+		t.Fatal("environment was not prepared", string(content), err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "second-step")); err != nil {
+		t.Fatal("later setup step did not run", err)
+	}
+	runtimes, err := c.List(ctx)
+	if err != nil || len(runtimes) != 0 {
+		t.Fatal("environment Profile created a Runtime", runtimes, err)
+	}
+	request := <-seen
+	if request.Operation != "profile.prepare" || request.Resource.Directory != dir || request.Resource.Adapter != "" {
+		t.Fatalf("unexpected access request: %+v", request)
+	}
+	failing := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: dir}
+	failing.Setup.Steps = []api.Command{
+		{Argv: []string{"/bin/sh", "-c", "exit 2"}},
+		{Argv: []string{"/bin/sh", "-c", "touch must-not-run"}},
+	}
+	if _, err := c.Prepare(ctx, failing); err == nil {
+		t.Fatal("failed environment preparation reported success")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "must-not-run")); !os.IsNotExist(err) {
+		t.Fatal("environment preparation continued after a failed step", err)
+	}
+}
+
+func TestProfileOperationRequiresMatchingKind(t *testing.T) {
+	environment := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: "/workspace"}
+	agent := api.Profile{Version: 1, Kind: "agent", WorkingDirectory: "/workspace", Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}}
+	for _, tc := range []struct {
+		operation string
+		profile   api.Profile
+	}{
+		{operation: "profile.prepare", profile: agent},
+		{operation: "profile.start", profile: environment},
+	} {
+		_, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.operation, Payload: api.Payload(tc.profile)})
+		if !errors.Is(err, ErrDenied) {
+			t.Fatalf("%s accepted kind %s: %v", tc.operation, tc.profile.Kind, err)
+		}
+	}
+}
+
 func TestPolicyExecutionAndReadOnlyStreams(t *testing.T) {
 	var mu sync.Mutex
 	var seen []Request

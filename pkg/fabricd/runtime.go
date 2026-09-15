@@ -435,7 +435,15 @@ func environment(extra map[string]string) []string {
 	}
 	return out
 }
+func (d *Engine) prepare(s *executionStream, m *pb.Message) {
+	d.profile(s, m, "environment")
+}
+
 func (d *Engine) start(s *executionStream, m *pb.Message) {
+	d.profile(s, m, "agent")
+}
+
+func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 	select {
 	case d.starts <- struct{}{}:
 
@@ -455,15 +463,28 @@ func (d *Engine) start(s *executionStream, m *pb.Message) {
 		s.Fail("INVALID_ARGUMENT", e)
 		return
 	}
+	if p.Kind != kind {
+		s.Fail("INVALID_ARGUMENT", fmt.Errorf("%s requires kind: %s", m.Operation, kind))
+		return
+	}
+	hash := requestHash(m)
 	d.mu.Lock()
-	if len(d.runtimes)+len(d.starts) > 64 {
+	if kind == "agent" && len(d.runtimes)+len(d.starts) > 64 {
 		d.mu.Unlock()
 		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("Runtime limit"))
 		return
 	}
-	if _, ok := d.cache[m.RequestId]; ok {
+	if cached := d.cache[m.RequestId]; cached != nil {
 		d.mu.Unlock()
-		s.Fail("RESULT_UNKNOWN", fmt.Errorf("profile request already admitted; query Runtime list"))
+		if cached.hash != hash {
+			s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("request ID has different Profile"))
+			return
+		}
+		detail := "profile request already admitted; result unavailable"
+		if kind == "agent" {
+			detail += "; query Runtime list"
+		}
+		s.Fail("RESULT_UNKNOWN", fmt.Errorf("%s", detail))
 		return
 	}
 	if !d.cacheRoomLocked() {
@@ -471,7 +492,7 @@ func (d *Engine) start(s *executionStream, m *pb.Message) {
 		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("request cache full"))
 		return
 	}
-	d.cache[m.RequestId] = &cached{at: time.Now()}
+	d.cache[m.RequestId] = &cached{hash: hash, at: time.Now()}
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
@@ -491,6 +512,14 @@ func (d *Engine) start(s *executionStream, m *pb.Message) {
 			return
 		}
 	}
+	if kind == "environment" {
+		_ = s.Send(&pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(api.ProfileResult{Kind: p.Kind, Stage: "succeeded", StepsCompleted: len(p.Setup.Steps)})})
+		return
+	}
+	d.startAgent(s, p, releaseSlot)
+}
+
+func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func()) {
 	r := &runtime{id: wire.ID(), inc: d.inc, adapter: p.Adapter, subs: map[*subscription]bool{}, done: make(chan struct{})}
 	argv, _ := p.Start.Args()
 	r.title = filepath.Base(argv[0])

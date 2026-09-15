@@ -47,6 +47,14 @@ type Profile struct {
 	ManagedACP   bool    `json:"managed_acp,omitempty" yaml:"managed_acp,omitempty"`
 }
 
+// ProfileResult reports successful completion of a non-interactive Profile.
+// Step output is delivered as bounded progress messages while the Profile runs.
+type ProfileResult struct {
+	Kind           string `json:"kind"`
+	Stage          string `json:"stage"`
+	StepsCompleted int    `json:"steps_completed"`
+}
+
 func (c Command) Args() ([]string, error) {
 	if (len(c.Argv) > 0) == (c.Run != "") {
 		return nil, fmt.Errorf("exactly one of argv/run required")
@@ -66,14 +74,11 @@ func (c Command) Args() ([]string, error) {
 	return []string{c.Shell, "-c", c.Run}, nil
 }
 func (p Profile) Validate() error {
-	if p.Version != 1 || p.Kind != "agent" || (p.Adapter != "pty" && p.Adapter != "acp") {
-		return fmt.Errorf("version: 1, kind: agent and adapter: pty/acp required")
+	if p.Version != 1 {
+		return fmt.Errorf("version: 1 required")
 	}
-	if p.ManagedACP && p.Adapter != "acp" {
-		return fmt.Errorf("managed_acp requires ACP adapter")
-	}
-	if p.HistoryLines < 0 || p.HistoryLines > 200000 || (p.Adapter != "pty" && p.HistoryLines != 0) {
-		return fmt.Errorf("history_lines must be 0 (default) or 1..200000, PTY only")
+	if p.Kind != "environment" && p.Kind != "agent" {
+		return fmt.Errorf("kind must be environment or agent")
 	}
 	if !filepath.IsAbs(p.WorkingDirectory) {
 		return fmt.Errorf("working_directory must be absolute")
@@ -86,10 +91,31 @@ func (p Profile) Validate() error {
 	if len(p.Setup.Steps) > 64 {
 		return fmt.Errorf("at most 64 setup steps")
 	}
-	for _, c := range append(p.Setup.Steps, p.Start) {
+	for _, c := range p.Setup.Steps {
 		if _, e := c.Args(); e != nil {
 			return e
 		}
+	}
+	if p.Kind == "environment" {
+		if len(p.Start.Argv) != 0 || p.Start.Run != "" || p.Start.Shell != "" || p.Start.Name != "" || p.Start.TimeoutSeconds != 0 {
+			return fmt.Errorf("environment Profile cannot include start")
+		}
+		if p.Adapter != "" || p.ManagedACP || p.HistoryLines != 0 {
+			return fmt.Errorf("environment Profile cannot include Agent adapter or history")
+		}
+		return nil
+	}
+	if p.Adapter != "pty" && p.Adapter != "acp" {
+		return fmt.Errorf("agent Profile requires adapter: pty or acp")
+	}
+	if p.ManagedACP && p.Adapter != "acp" {
+		return fmt.Errorf("managed_acp requires ACP adapter")
+	}
+	if p.HistoryLines < 0 || p.HistoryLines > 200000 || (p.Adapter != "pty" && p.HistoryLines != 0) {
+		return fmt.Errorf("history_lines must be 0 (default) or 1..200000, PTY only")
+	}
+	if _, e := p.Start.Args(); e != nil {
+		return e
 	}
 	return nil
 }

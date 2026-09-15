@@ -29,11 +29,14 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	var err error
 	switch m.Operation {
 	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "acp.state":
-	case "profile.start":
+	case "profile.prepare", "profile.start":
 		var p api.Profile
 		err = decode(&p)
 		if err == nil {
 			err = p.Validate()
+		}
+		if err == nil && ((m.Operation == "profile.prepare" && p.Kind != "environment") || (m.Operation == "profile.start" && p.Kind != "agent")) {
+			err = fmt.Errorf("Profile kind does not match operation")
 		}
 		r.Resource = Resource{Directory: p.WorkingDirectory, Adapter: p.Adapter, ManagedACP: p.ManagedACP}
 	case "runtime.attach":

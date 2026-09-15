@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.start", "acp.action", "acp.state", "agent.config", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "acp.action", "acp.state", "agent.config", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -102,6 +102,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		return
 	}
 	switch m.Operation {
+	case "profile.prepare":
+		d.prepare(s, m)
+		return
 	case "profile.start":
 		d.start(s, m)
 		return
@@ -113,7 +116,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		return
 	}
 	// Reserve before admission. Pending and completed entries cannot execute twice.
-	hash := sha256.Sum256(append([]byte(m.Operation+"\x00"+m.RuntimeId+"\x00"+m.RuntimeIncarnation+fmt.Sprint(m.RuntimeGeneration)), m.Payload...))
+	hash := requestHash(m)
 	d.mu.Lock()
 	if c := d.cache[m.RequestId]; c != nil {
 		saved := c.result
@@ -260,6 +263,11 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 	d.mu.Unlock()
 	_ = s.Send(res)
 }
+
+func requestHash(m *pb.Message) [32]byte {
+	return sha256.Sum256(append([]byte(m.Operation+"\x00"+m.RuntimeId+"\x00"+m.RuntimeIncarnation+fmt.Sprint(m.RuntimeGeneration)), m.Payload...))
+}
+
 func (d *Engine) expire(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()

@@ -104,7 +104,7 @@ ACP 的关闭顺序包含停止接纳、取消、排空更新、处理后代、f
 | 执行结果 | 工具/turn/Session 多层结算 | ExecResult、Runtime 和流事件；`written` 只是输入写入确认 [D1](#evidence-d1)[D3](#evidence-d3) |
 | 数据存储 | Harness 内容与事件存储 | 宿主 SQLite/PostgreSQL 元数据；开发机还有 AgentConfig、tmux 状态，不能笼统描述为“全仓库无持久化” [D5](#evidence-d5)[D7](#evidence-d7)[D8](#evidence-d8) |
 
-这里有两个文档与实现范围差异值得保留：底层设计中的 Profile 含 `environment|agent`，但当前 `api.Profile.Validate()` 只接收 `version=1`、`kind=agent`、`adapter=pty|acp`；不能用目标设计生成已经支持的 environment 接入示例。当前 fabricd 还在开发机保存 `agents.json`，与底层调研中“命名配置由上层负责”的目标分工应分开理解。本报告不据此重构现有实现。[D4](#evidence-d4)[D8](#evidence-d8)
+这里有一个文档与实现范围差异值得保留：当前实现已经支持 `kind=environment` 的 `profile.prepare` 和 `kind=agent` 的 `profile.start`，但 fabricd 还在开发机保存 `agents.json`，与底层调研中“命名配置由上层负责”的目标分工应分开理解。本报告不据此重构现有配置保存方式。[D4](#evidence-d4)[D8](#evidence-d8)
 
 ## 5. 组合路径与兼容性判断
 

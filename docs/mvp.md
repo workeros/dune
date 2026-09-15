@@ -147,7 +147,7 @@ Profile 可放在任意位置，不要求项目根目录存在 `dune.yaml`，不
 
 Profile 借鉴 GitHub Actions 的步骤表达和 Dockerfile 的环境描述，不实现 CI jobs/DAG、Dockerfile 解释器或镜像构建系统。
 
-已确认字段方向：`kind`、`working_directory`、`env`、`setup.steps[]`、`start`，Agent 使用 `pty` 或 `acp` adapter。step 支持 `name`、`argv`、`run`、`timeout_seconds`。
+已确认字段方向：`kind`、`working_directory`、`env`、`setup.steps[]`、`start`。Environment Profile 使用 `kind: environment`，只执行 setup；Agent Profile 使用 `kind: agent`，包含 start 并使用 `pty` 或 `acp` adapter。step 支持 `name`、`argv`、`run`、`timeout_seconds`。
 
 以下为字段形状示例，版本字段、shell 字段及完整校验规则在实现 schema 时定版：
 

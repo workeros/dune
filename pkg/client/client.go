@@ -162,8 +162,41 @@ func (c *Client) Exec(ctx context.Context, a api.Exec) (api.ExecResult, error) {
 	e := c.Call(ctx, "exec", a, &r)
 	return r, e
 }
+
+// Prepare executes an environment Profile without creating a Runtime.
+func (c *Client) Prepare(ctx context.Context, p api.Profile) (api.ProfileResult, error) {
+	var r api.ProfileResult
+	if p.Kind != "environment" {
+		return r, fmt.Errorf("profile.prepare requires kind: environment")
+	}
+	s, _, e := c.open(ctx, "profile.prepare", wire.ID(), p, nil)
+	if e != nil {
+		return r, e
+	}
+	defer s.Close()
+	for {
+		m, e := s.Recv()
+		if e != nil {
+			if ae, ok := e.(*api.Error); ok && ae.Code != "STREAM_INTERRUPTED" {
+				return r, e
+			}
+			return r, &api.Error{Code: "RESULT_UNKNOWN", Detail: e.Error()}
+		}
+		if m.Kind == "progress" {
+			continue
+		}
+		if m.Kind != "result" {
+			return r, fmt.Errorf("expected Profile result")
+		}
+		return r, wire.Decode(m, &r)
+	}
+}
+
 func (c *Client) Start(ctx context.Context, p api.Profile) (api.Runtime, *Stream, error) {
 	var r api.Runtime
+	if p.Kind != "agent" {
+		return r, nil, fmt.Errorf("profile.start requires kind: agent")
+	}
 	s, _, e := c.open(ctx, "profile.start", wire.ID(), p, nil)
 	if e != nil {
 		return r, nil, e

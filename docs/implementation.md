@@ -42,7 +42,7 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 `dune-mvp/2` 与旧版本不混用：Gateway、fabricd、Web 宿主和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 
-业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
+业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.prepare 依次发送 accepted、setup progress、Profile result 后结束；profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 
 Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`，daemon 调用 TCP CloseWrite，两方向都完成后返回 result。Yamux Close 用于取消/结束 stream。其他业务的 EOF 若未见 result/exit，SDK 返回 STREAM_INTERRUPTED；已提交 unary 调用丢失结果时为 RESULT_UNKNOWN，不自动重试。断开已受理的 Exec/Git 不回滚，也不保证立即取消；其超时仍有效。交互订阅断开不会停止 Agent。
 
@@ -50,7 +50,7 @@ Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`�
 
 配置字段：`gateway`、`listen`、`token`、`target`、`log_level`；仅显式 WSS 配置使用 `certificate` 和 `key`。SDK 客户端无需 `listen` 或私钥。log_level 目前保存设置，日志使用 Go 标准 logger，只有运行信息/错误；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。为兼容原有配置，显式选择 wss 时仍验证证书，init 会把连接地址加入证书 SAN。
 
-Profile 要求 `version: 1`、`kind: agent`、绝对 `working_directory`、`adapter: pty|acp`。`env` 合并当前 OS 环境；`setup.steps` 至多 64 步。Command 必须且只能提供 argv 或 run：argv 不展开 shell；run 必须同时给绝对 shell 路径（例如 `/bin/sh`）。`timeout_seconds` 范围 0..86400；setup/Exec 的 0 默认 300s，start 的 0 表示 Runtime 无时间限制。步骤顺序执行，失败返回步骤编号、名称、退出状态与有界输出，之后步骤不执行。没有自动回滚。
+Profile 要求 `version: 1`、`kind: environment|agent` 和绝对 `working_directory`。environment Profile 通过 `profile.prepare` 只执行 setup，不得包含 start、adapter、managed_acp 或终端历史设置，成功返回 `kind=environment`、`stage=succeeded` 和完成步骤数，不创建 Runtime。agent Profile 通过 `profile.start` 执行 setup 后启动 Agent，要求 `adapter: pty|acp` 和 start。两类 Profile 的 `env` 都合并当前 OS 环境，`setup.steps` 至多 64 步。Command 必须且只能提供 argv 或 run：argv 不展开 shell；run 必须同时给绝对 shell 路径（例如 `/bin/sh`）。`timeout_seconds` 范围 0..86400；setup/Exec 的 0 默认 300s，start 的 0 表示 Runtime 无时间限制。步骤顺序执行，失败返回步骤编号、名称、退出状态与有界输出，之后步骤不执行。没有自动回滚。
 
 ## Runtime 与进程
 
@@ -83,7 +83,7 @@ Gateway 两方向逐条读取、转发，无无界队列。protobuf 写入按 st
 
 这些上限共同约束并发缓冲总量；没有按文件大小缓存整份上传。包括 Yamux 窗口的最大内存随已限制的 session/stream 数有上界，但不是操作系统 RSS 硬配额。并发 e2e 使用 2 PTY + 2 ACP + 16MiB 上传 + 4MiB TCP，p95 验收阈值为 2s。不承诺协议级优先级或物理 TCP 故障隔离。
 
-request_id 由 SDK 随机生成。`CallID` 可显式复用 ID：缓存有效时同输入返回同结果，不同输入返回 IDEMPOTENCY_CONFLICT，尚在运行返回 RESULT_UNKNOWN。超过 60s 或 256 条缓存淘汰后，不承诺去重。Profile stream 不能回放，重复已受理 ID 报告未知且不重跑（缓存保留期间）；调用方查询 Runtime。不会自动重放输入或因服务重启重跑 Profile。
+request_id 由 SDK 随机生成。`CallID` 可显式复用 ID：缓存有效时同输入返回同结果，不同输入返回 IDEMPOTENCY_CONFLICT，尚在运行返回 RESULT_UNKNOWN。超过 60s 或 256 条缓存淘汰后，不承诺去重。Profile stream 不能回放，重复已受理 ID 报告未知且不重跑（缓存保留期间）；Agent Profile 的调用方可查询 Runtime，Environment Profile 的调用方需将未知结果交给上层协调，不能把“没有 Runtime”解释为未执行。不会自动重放输入或因服务重启重跑 Profile。
 
 ## Files 和完整上传
 
