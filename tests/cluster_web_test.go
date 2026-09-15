@@ -61,9 +61,9 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 			must(t, os.WriteFile(filepath.Join(instanceDir, name), data, 0600))
 		}
 		clusterFile := filepath.Join(instanceDir, "cluster.yaml")
-		writeYAML(clusterFile, map[string]any{"peer": map[string]string{"listen": peerAddress, "address": "https://" + peerAddress + "/api/v1/peer", "certificate": "cert.pem", "key": "key.pem", "ca": "ca.pem"}})
+		writeYAML(clusterFile, map[string]any{"peer": map[string]string{"listen": peerAddress, "address": "https://" + peerAddress + "/api/v1/ws/peer", "certificate": "cert.pem", "key": "key.pem", "ca": "ca.pem"}})
 		localFile := filepath.Join(instanceDir, "local.yaml")
-		must(t, config.Create(localFile, config.Config{Gateway: "ws://" + publicAddress + "/dune/api/v1/tunnel", Listen: publicAddress, Token: strings.Repeat("x", 32), Target: "unused-local-token"}))
+		must(t, config.Create(localFile, config.Config{Gateway: "ws://" + publicAddress + "/dune/api/v1/ws/tunnel", Listen: publicAddress, Token: strings.Repeat("x", 32), Target: "unused-local-token"}))
 		log, err := os.Create(filepath.Join(instanceDir, "web.log"))
 		must(t, err)
 		defer log.Close()

@@ -89,7 +89,7 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{urls: addresses, store: store, identity: service, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
 	s.gateway = core
-	s.mux.Handle("GET /api/v1/tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
+	s.mux.Handle("GET /api/v1/ws/tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		binding, handler, err := authorizer.Authorize(credential)
 		return binding, handler, err
 	}))
@@ -147,11 +147,11 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	s.mux.HandleFunc("DELETE /api/v1/machines/{machine}", s.revoke)
 	s.mux.HandleFunc("POST /api/v1/machines/{machine}/call", s.call)
 	s.mux.HandleFunc("POST /api/v1/machines/{machine}/sessions", s.start)
-	s.mux.HandleFunc("GET /api/v1/machines/{machine}/sessions/{runtime}/events", s.events)
+	s.mux.HandleFunc("GET /api/v1/ws/machines/{machine}/sessions/{runtime}/events", s.events)
 	s.mux.HandleFunc("DELETE /api/v1/runners/{runner}/binding", s.revokeRunner)
 	s.mux.HandleFunc("POST /api/v1/runners/{runner}/call", s.call)
 	s.mux.HandleFunc("POST /api/v1/runners/{runner}/sessions", s.start)
-	s.mux.HandleFunc("GET /api/v1/runners/{runner}/sessions/{runtime}/events", s.events)
+	s.mux.HandleFunc("GET /api/v1/ws/runners/{runner}/sessions/{runtime}/events", s.events)
 	if options.Assets != "" {
 		s.mux.Handle("GET /", http.FileServer(http.Dir(options.Assets)))
 	}

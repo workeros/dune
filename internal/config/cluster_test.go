@@ -31,7 +31,7 @@ func TestPrivateClusterConfiguration(t *testing.T) {
 		}
 	}
 	file := filepath.Join(dir, "cluster.yaml")
-	valid := "peer:\n  listen: 127.0.0.1:9443\n  address: https://127.0.0.1:9443/api/v1/peer\n  certificate: cert.pem\n  key: key.pem\n  ca: ca.pem\n"
+	valid := "peer:\n  listen: 127.0.0.1:9443\n  address: https://127.0.0.1:9443/api/v1/ws/peer\n  certificate: cert.pem\n  key: key.pem\n  ca: ca.pem\n"
 	write := func(source string) {
 		t.Helper()
 		if err := os.WriteFile(file, []byte(source), 0600); err != nil {

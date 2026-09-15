@@ -73,7 +73,7 @@ func newPeerFixture(t *testing.T, ownerHandler ConnectionHandler) *peerFixture {
 		return nil
 	}
 	var err error
-	f.owner, err = NewWithPeers(d, "https://owner.test/api/v1/peer", func(context.Context, string, Route) (net.Conn, error) {
+	f.owner, err = NewWithPeers(d, "https://owner.test/api/v1/ws/peer", func(context.Context, string, Route) (net.Conn, error) {
 		f.redials.Add(1)
 		return nil, errors.New("peer must not relay")
 	})
@@ -81,7 +81,7 @@ func newPeerFixture(t *testing.T, ownerHandler ConnectionHandler) *peerFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.owner.Close)
-	f.entry, err = NewWithPeers(d, "https://entry.test/api/v1/peer", func(_ context.Context, source string, destination Route) (net.Conn, error) {
+	f.entry, err = NewWithPeers(d, "https://entry.test/api/v1/ws/peer", func(_ context.Context, source string, destination Route) (net.Conn, error) {
 		f.dials.Add(1)
 		left, right := net.Pipe()
 		go func() {

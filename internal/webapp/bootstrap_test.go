@@ -29,7 +29,7 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 				t.Fatal(err)
 			}
 			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway,
-				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/api/v1/tunnel",
+				PublicURL: "https://example.test/tools/dune/", GatewayURL: "wss://machines.test/api/v1/ws/tunnel",
 			}, store, identity.NewLocal(store, !disabled))
 			if err != nil {
 				t.Fatal(err)
@@ -54,7 +54,7 @@ func TestStartupCapabilitiesAndRegistration(t *testing.T) {
 			want := map[string]any{
 				"login_methods":      []any{map[string]any{"kind": "password", "url": "https://example.test/tools/dune/api/v1/auth/login"}},
 				"local_registration": !disabled, "attached": true, "managed": false, "tenant_scoped": false,
-				"public_url": "https://example.test/tools/dune/", "gateway_url": "wss://machines.test/api/v1/tunnel",
+				"public_url": "https://example.test/tools/dune/", "gateway_url": "wss://machines.test/api/v1/ws/tunnel",
 			}
 			if response.Code != 200 || !reflect.DeepEqual(actual, want) || response.Header().Get("Cache-Control") != "no-store" || len(response.Result().Cookies()) != 0 {
 				t.Fatalf("anonymous startup information: %d %v", response.Code, actual)

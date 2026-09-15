@@ -35,7 +35,7 @@ type Transport struct {
 }
 
 // EndpointPath is the fixed private Gateway peer API endpoint.
-const EndpointPath = "/api/v1/peer"
+const EndpointPath = "/api/v1/ws/peer"
 
 func address(value string) (*url.URL, error) {
 	u, err := url.Parse(value)

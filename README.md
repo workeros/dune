@@ -11,7 +11,7 @@ Agent 交互；开发机上的 connector 主动连接 Gateway，并在本机运�
 ```sh
 make release
 ./bin/dune --config /absolute/dune.yaml init \
-  --listen 127.0.0.1:7443 --gateway ws://127.0.0.1:7443/api/v1/tunnel
+  --listen 127.0.0.1:7443 --gateway ws://127.0.0.1:7443/api/v1/ws/tunnel
 ./bin/dune --config /absolute/dune.yaml web \
   --data /absolute/private-dune-data \
   --assets web/dist --binaries bin \
@@ -23,7 +23,7 @@ connector 配置并安装用户级后台服务，不要求目标机器开放入�
 
 ## 生产部署
 
-生产环境由 Nginx 直接服务 `web/dist`，将 `/api/v1/`、`/api/v1/downloads/` 和 `/api/v1/tunnel`
+生产环境由 Nginx 直接服务 `web/dist`，将 `/api/v1/`、`/api/v1/downloads/` 和 `/api/v1/ws/`
 反向代理到不提供静态文件的 Dune Gateway/API 进程。启动后端时传空 assets：
 
 ```sh
@@ -34,13 +34,13 @@ connector 配置并安装用户级后台服务，不要求目标机器开放入�
   --url https://dune.example.com/
 ```
 
-最小 Nginx 路由如下；`/api/v1/tunnel` 必须保留 WebSocket upgrade，部署前缀存在时
+最小 Nginx 路由如下；`/api/v1/ws/` 必须保留 WebSocket upgrade，部署前缀存在时
 同样保留完整前缀，不使用 `StripPrefix`：
 
 ```nginx
 location /api/v1/       { proxy_pass http://dune_backend; }
 location /api/v1/downloads/ { proxy_pass http://dune_backend; }
-location /api/v1/tunnel {
+location ^~ /api/v1/ws/ {
     proxy_pass http://dune_backend;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;

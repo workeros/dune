@@ -67,7 +67,7 @@ func directoryClaim(t *testing.T, store *Store) gateway.RouteClaim {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return gateway.RouteClaim{Target: machine.ID, OwnerBootID: wire.ID(), OwnerAddress: "https://instance-a.test/api/v1/peer", Binding: api.Binding{Target: machine.ID, Version: api.Version, Incarnation: wire.ID(), Generation: 1, Capabilities: []string{"runtime.list"}}}
+	return gateway.RouteClaim{Target: machine.ID, OwnerBootID: wire.ID(), OwnerAddress: "https://instance-a.test/api/v1/ws/peer", Binding: api.Binding{Target: machine.ID, Version: api.Version, Incarnation: wire.ID(), Generation: 1, Capabilities: []string{"runtime.list"}}}
 }
 
 func TestPostgresConnectionDirectory(t *testing.T) {

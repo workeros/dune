@@ -148,7 +148,11 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 			t.Fatal("machine listing leaked ownership")
 		}
 		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events?incarnation=guessed&generation=1", ""}, {"DELETE", "", ""}} {
-			req := httptest.NewRequest(route.method, "/api/v1/machines/"+pair.other+route.suffix, bytes.NewBufferString(route.body))
+			prefix := "/api/v1/machines/"
+			if route.method == "GET" && strings.Contains(route.suffix, "/events") {
+				prefix = "/api/v1/ws/machines/"
+			}
+			req := httptest.NewRequest(route.method, prefix+pair.other+route.suffix, bytes.NewBufferString(route.body))
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 			req.Header.Set("Origin", app.urls.Origin)
 			req.Header.Set("X-Dune-Request", "1")

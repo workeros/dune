@@ -183,7 +183,7 @@ func TestPeerRequestBoundary(t *testing.T) {
 			case "duplicate":
 				r.Header.Add(targetHeader, "other-machine")
 			case "path":
-				r.URL.Path = "/api/v1/tunnel"
+				r.URL.Path = "/api/v1/ws/tunnel"
 			case "query":
 				r.URL.RawQuery = "target=other"
 			case "host":

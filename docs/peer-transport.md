@@ -48,7 +48,7 @@ Go 宿主通过 `host.Options.Database` 选择 PostgreSQL，并设置：
 
 ```go
 Cluster: &host.ClusterOptions{Peer: peer.Config{
-    Address:     "https://10.0.0.12:9443/api/v1/peer",
+    Address:     "https://10.0.0.12:9443/api/v1/ws/peer",
     Certificate: certificate,
     Roots:       clusterRoots,
 }}

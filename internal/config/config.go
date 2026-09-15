@@ -126,9 +126,9 @@ func InitWithGateway(path, listen, gateway string) error {
 	if gateway == "" {
 		host, _, _ := net.SplitHostPort(listen)
 		if net.ParseIP(host).IsUnspecified() {
-			return fmt.Errorf("wildcard listen requires --gateway ws://HOST:PORT/api/v1/tunnel")
+			return fmt.Errorf("wildcard listen requires --gateway ws://HOST:PORT/api/v1/ws/tunnel")
 		}
-		gateway = "ws://" + listen + "/api/v1/tunnel"
+		gateway = "ws://" + listen + "/api/v1/ws/tunnel"
 	}
 	endpoint, e := gatewayURL(gateway)
 	if e != nil {

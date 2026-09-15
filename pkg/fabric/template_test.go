@@ -74,6 +74,24 @@ func TestTemplateCatalogIsImmutableAndVersioned(t *testing.T) {
 	}
 }
 
+func TestTemplateCatalogPreservesEmptyFieldsAsArray(t *testing.T) {
+	catalog, err := NewCatalog([]Template{{FabricID: "sandbox", ID: "standard", Version: "v1", Name: "Standard", Fields: []Field{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := catalog.Template("sandbox", "standard", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"fields":[]`) {
+		t.Fatalf("empty fields encoded as null: %s", encoded)
+	}
+}
+
 func TestTemplateParametersRequireExactTypesAndRanges(t *testing.T) {
 	catalog, err := NewCatalog([]Template{templateFixture()})
 	if err != nil {

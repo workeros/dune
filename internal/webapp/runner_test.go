@@ -77,7 +77,11 @@ func TestBrowserRunnerBindingIsFixed(t *testing.T) {
 	}
 	route := func(binding runner.Binding, suffix string) string {
 		query := url.Values{"machine_id": {binding.MachineID}, "fabric_id": {binding.FabricID}, "revision": {fmt.Sprint(binding.Revision)}}
-		return "runners/" + binding.RunnerID + "/" + suffix + "?" + query.Encode()
+		prefix := "runners/"
+		if strings.HasSuffix(suffix, "/events") {
+			prefix = "ws/runners/"
+		}
+		return prefix + binding.RunnerID + "/" + suffix + "?" + query.Encode()
 	}
 	for _, suffix := range []string{"call", "sessions", "sessions/guessed/events", "binding"} {
 		method := "POST"
@@ -97,7 +101,8 @@ func TestBrowserRunnerBindingIsFixed(t *testing.T) {
 				t.Fatal("stale selector reached execution", suffix, out.Code, out.Body.String())
 			}
 		}
-		for _, bad := range []string{"runners/" + selected.ID + "/" + suffix, route(*selected.Binding, suffix) + "&revision=2"} {
+		missingSelector := strings.SplitN(route(*selected.Binding, suffix), "?", 2)[0]
+		for _, bad := range []string{missingSelector, route(*selected.Binding, suffix) + "&revision=2"} {
 			if out := request(method, bad, cookie); out.Code != 400 {
 				t.Fatal("missing or ambiguous selector accepted", suffix, out.Code)
 			}

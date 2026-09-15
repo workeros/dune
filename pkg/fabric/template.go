@@ -60,7 +60,7 @@ type Catalog struct {
 }
 
 func cloneTemplate(t Template) Template {
-	t.Fields = append([]Field(nil), t.Fields...)
+	t.Fields = append([]Field{}, t.Fields...)
 	for i := range t.Fields {
 		f := &t.Fields[i]
 		if f.Minimum != nil {

@@ -31,7 +31,14 @@ export function runnerPath(binding: Binding, suffix: string): string {
 export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; title?: string; working_directory?: string };
 export function runtimeKey(runtime: Runtime): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }
 export function eventPath(binding: Binding, runtime: Runtime): string {
-  return runnerPath(binding, `sessions/${encodeURIComponent(runtime.id)}/events`) + "&" + new URLSearchParams({ incarnation: runtime.incarnation, generation: String(runtime.generation) });
+  const query = new URLSearchParams({
+    machine_id: binding.machine_id,
+    fabric_id: binding.fabric_id,
+    revision: String(binding.revision),
+    incarnation: runtime.incarnation,
+    generation: String(runtime.generation),
+  });
+  return `/api/v1/ws/runners/${encodeURIComponent(binding.runner_id)}/sessions/${encodeURIComponent(runtime.id)}/events?${query}`;
 }
 export type AgentConfig = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; adapter: "pty" | "acp"; history_lines?: number };
 

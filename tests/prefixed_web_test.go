@@ -126,23 +126,23 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		remote.Config.Handler = remoteApp
 		remote.Start()
 		defer remote.Close()
-		ownerGateway = "ws" + strings.TrimPrefix(remoteSite, "http") + "api/v1/tunnel"
+		ownerGateway = "ws" + strings.TrimPrefix(remoteSite, "http") + "api/v1/ws/tunnel"
 		// Keep all user entry points on A. Only fabricd connects to owner B.
 		onlineSite = site
 	}
 	if mode.override {
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/v1/tunnel" {
+			if r.URL.Path != "/api/v1/ws/tunnel" {
 				http.NotFound(w, r)
 				return
 			}
 			r = r.Clone(r.Context())
-			r.URL.Path = "/tools/dune/api/v1/tunnel"
+			r.URL.Path = "/tools/dune/api/v1/ws/tunnel"
 			r.URL.RawPath = ""
 			app.ServeHTTP(w, r)
 		}))
 		defer proxy.Close()
-		options.GatewayURL = "ws" + strings.TrimPrefix(proxy.URL, "http") + "/api/v1/tunnel"
+		options.GatewayURL = "ws" + strings.TrimPrefix(proxy.URL, "http") + "/api/v1/ws/tunnel"
 	}
 	if mode.external {
 		address := server.Listener.Addr().String()
@@ -199,7 +199,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	expectedGateway := options.GatewayURL
 	if expectedGateway == "" {
-		expectedGateway = "ws" + strings.TrimPrefix(site, "http") + "api/v1/tunnel"
+		expectedGateway = "ws" + strings.TrimPrefix(site, "http") + "api/v1/ws/tunnel"
 	}
 	if machineConfig.Gateway != expectedGateway {
 		t.Fatalf("machine address = %s", machineConfig.Gateway)
@@ -275,7 +275,8 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	var runtime api.Runtime
 	do("POST", executionRoute("sessions"), profile(dir, "pty", "/bin/sh"), &runtime)
-	eventURL, err := url.Parse(site + executionRoute("sessions/"+runtime.ID+"/events"))
+	eventRoute := strings.Replace(executionRoute("sessions/"+runtime.ID+"/events"), "api/v1/", "api/v1/ws/", 1)
+	eventURL, err := url.Parse(site + eventRoute)
 	must(t, err)
 	query := eventURL.Query()
 	query.Set("incarnation", runtime.Incarnation)

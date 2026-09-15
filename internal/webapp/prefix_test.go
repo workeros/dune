@@ -32,7 +32,7 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 				t.Fatal(err)
 			}
 			origin := "https://example.test"
-			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/api/v1/tunnel", Assets: assets, Binaries: binaries}, store, identity.NewLocal(store, true))
+			app, err := newTestServer(context.Background(), Options{DialGateway: noGateway, PublicURL: origin + strings.TrimSuffix(prefix, "/"), GatewayURL: "wss://machines.test/api/v1/ws/tunnel", Assets: assets, Binaries: binaries}, store, identity.NewLocal(store, true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,7 +92,7 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 			}
 			body, _ := json.Marshal(map[string]string{"token": enrollment.Token, "os": "linux", "arch": "amd64"})
 			response = do("POST", prefix+"api/v1/enroll", string(body), "", nil)
-			if response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"gateway":"wss://machines.test/api/v1/tunnel"`)) {
+			if response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"gateway":"wss://machines.test/api/v1/ws/tunnel"`)) {
 				t.Fatalf("gateway override: %d %s", response.Code, response.Body.String())
 			}
 			response = do("POST", prefix+"api/v1/auth/logout", `{}`, origin, cookie)

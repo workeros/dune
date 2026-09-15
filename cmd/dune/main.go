@@ -39,13 +39,13 @@ func run() error {
 		return fmt.Errorf("a Web or connector command is required; use dune help")
 	}
 	if args[0] == "help" || args[0] == "version" {
-		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN\n  dune --config FILE service install|restart|stop|status [--name dune]")
+		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN\n  dune --config FILE service install|restart|stop|status [--name dune]")
 		return nil
 	}
 	if args[0] == "init" {
 		initFlags := flag.NewFlagSet("init", flag.ContinueOnError)
 		listen := initFlags.String("listen", "127.0.0.1:7443", "listen IP:port")
-		endpoint := initFlags.String("gateway", "", "reachable ws://HOST:PORT/api/v1/tunnel")
+		endpoint := initFlags.String("gateway", "", "reachable ws://HOST:PORT/api/v1/ws/tunnel")
 		if err := initFlags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -107,7 +107,7 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 	assets := flags.String("assets", "web/dist", "built React assets directory")
 	binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 	publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
-	gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + api/v1/tunnel")
+	gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + api/v1/ws/tunnel")
 	disableRegistration := flags.Bool("disable-registration", false, "disable local sign-up; existing accounts can still log in")
 	drainTimeout := flags.Duration("drain-timeout", 5*time.Second, "maximum graceful shutdown wait; zero closes immediately")
 	webListen := flags.String("web-listen", "", "optional extra loopback HTTP listener for local validation")

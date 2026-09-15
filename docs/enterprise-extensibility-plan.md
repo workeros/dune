@@ -36,6 +36,6 @@ SandDance 可以继续使用其 TAE provider 和 tenant binding registry 作为�
 
 ## 部署
 
-静态 Web 由 Nginx 服务；`/api/v1/`、`/api/v1/downloads/`、`/api/v1/tunnel` 代理到 Dune 后端；
+静态 Web 由 Nginx 服务；`/api/v1/`、`/api/v1/downloads/`、`/api/v1/ws/` 代理到 Dune 后端；
 peer mTLS listener 直接连接各实例。PostgreSQL route 租约允许 Gateway 自动接管，
 但活跃浏览器流会短暂断开，结果未知的请求不重放。

@@ -66,7 +66,7 @@ type Options struct {
 	// DialGateway optionally connects the workbench to this application's Gateway
 	// using the supplied short-lived credential. The returned connection belongs
 	// to Dune. It must honor context cancellation and must not replay requests.
-	// By default, Dune dials PublicURL + "api/v1/tunnel" using verified WS(S). A host can
+	// By default, Dune dials PublicURL + "api/v1/ws/tunnel" using verified WS(S). A host can
 	// provide a local network route or its TLS trust configuration here.
 	DialGateway func(context.Context, string) (net.Conn, error)
 	// ConsumeWebSocketTicket enables browser WebSocket authentication without
@@ -115,7 +115,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	dial := options.DialGateway
 	if dial == nil {
-		endpoint := strings.Replace(addresses.PublicURL, "http", "ws", 1) + "api/v1/tunnel"
+		endpoint := strings.Replace(addresses.PublicURL, "http", "ws", 1) + "api/v1/ws/tunnel"
 		dial = func(ctx context.Context, token string) (net.Conn, error) {
 			return ws.Dial(ctx, endpoint, token, &tls.Config{MinVersion: tls.VersionTLS12})
 		}
@@ -205,7 +205,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.health(w, r) {
 		return
 	}
-	a.serveHTTP(a.web, w, r, r.URL.Path == a.publicPath+"api/v1/tunnel")
+	a.serveHTTP(a.web, w, r, strings.HasPrefix(r.URL.Path, a.publicPath+"api/v1/ws/"))
 }
 
 func (a *App) serveHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request, connection bool) {
