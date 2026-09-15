@@ -55,6 +55,14 @@ func TestProfileValidateSizeLimit(t *testing.T) {
 	}
 }
 
+func TestProfileValidateStepNameLimit(t *testing.T) {
+	p := Profile{Version: 1, Kind: "environment", WorkingDirectory: "/workspace"}
+	p.Setup.Steps = []Command{{Name: strings.Repeat("n", MaxProfileStepNameBytes+1), Argv: []string{"/bin/true"}}}
+	if err := p.Validate(); err == nil {
+		t.Fatal("oversized setup step name accepted")
+	}
+}
+
 func TestErrorPayloadIsNotGenericJSON(t *testing.T) {
 	encoded, err := json.Marshal(&Error{Code: "SETUP_FAILED", Detail: "failed", Payload: json.RawMessage(`{"stdout":"private"}`)})
 	if err != nil || strings.Contains(string(encoded), "private") {

@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/tmux"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/runner"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 type checkFunc func(context.Context, Request) (Decision, error)
@@ -270,6 +272,75 @@ func TestEnvironmentProfileContinuesAfterWaitCancellation(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "completed-after-cancel")); err != nil {
 		t.Fatal("remote setup was cancelled with the wait", err)
+	}
+}
+
+func TestEnvironmentFailureStatusFitsProtocolFrame(t *testing.T) {
+	ctx, c := policyFixture(t, checkFunc(func(_ context.Context, r Request) (Decision, error) {
+		return allow(r, MaxLease), nil
+	}), nil)
+	p := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: t.TempDir()}
+	p.Setup.Steps = []api.Command{{
+		Name: strings.Repeat("n", api.MaxProfileStepNameBytes),
+		Argv: []string{"/bin/sh", "-c", "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2; exit 7"},
+	}}
+	_, err := c.PrepareID(ctx, "max-output-failure-attempt", p, nil)
+	var protocolError *api.Error
+	if !errors.As(err, &protocolError) || protocolError.Code != "SETUP_FAILED" || len(protocolError.Payload) == 0 {
+		t.Fatal("maximum-output failure did not arrive as a structured error", err)
+	}
+	var failureProgress api.ProfileProgress
+	if err := json.Unmarshal(protocolError.Payload, &failureProgress); err != nil {
+		t.Fatal(err)
+	}
+	if failureProgress.StepResult != nil || failureProgress.Failure == nil || failureProgress.Failure.StepResult == nil {
+		t.Fatal("failure progress did not keep exactly one output result")
+	}
+	result := failureProgress.Failure.StepResult
+	if len(result.Stdout) != api.MaxExecOutputBytes || len(result.Stderr) != api.MaxExecOutputBytes {
+		t.Fatal("maximum diagnostic output was not retained", len(result.Stdout), len(result.Stderr))
+	}
+	errorFrame := &pb.Message{Kind: "error", RequestId: failureProgress.ExecutionID, Code: protocolError.Code, Detail: protocolError.Detail, Payload: protocolError.Payload}
+	if size := proto.Size(errorFrame); size > wire.MaxMessage {
+		t.Fatal("failure progress exceeds protocol frame", size)
+	}
+	status, err := c.ProfileStatus(ctx, "max-output-failure-attempt")
+	if err != nil {
+		t.Fatal("failed status could not be queried", err)
+	}
+	if status.Progress.StepResult != nil || status.Progress.Failure != nil || status.Failure == nil || status.Failure.StepResult == nil {
+		t.Fatal("failure status did not keep exactly one output result")
+	}
+	statusFrame := &pb.Message{Kind: "result", RequestId: "status-request", Payload: api.Payload(status)}
+	if size := proto.Size(statusFrame); size > wire.MaxMessage {
+		t.Fatal("failure status exceeds protocol frame", size)
+	}
+}
+
+func TestAgentProfileSetupFailureIncludesDiagnostics(t *testing.T) {
+	ctx, c := policyFixture(t, checkFunc(func(_ context.Context, r Request) (Decision, error) {
+		return allow(r, MaxLease), nil
+	}), nil)
+	p := api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/true"}}}
+	p.Setup.Steps = []api.Command{{Name: "download", Argv: []string{"/bin/sh", "-c", "printf dependency-download-failed >&2; exit 9"}}}
+	_, stream, err := c.Start(ctx, p)
+	if stream != nil {
+		stream.Close()
+	}
+	var protocolError *api.Error
+	if !errors.As(err, &protocolError) || protocolError.Code != "SETUP_FAILED" || len(protocolError.Payload) == 0 {
+		t.Fatal("Agent setup failure lost structured diagnostics", err)
+	}
+	var progress api.ProfileProgress
+	if err := json.Unmarshal(protocolError.Payload, &progress); err != nil {
+		t.Fatal(err)
+	}
+	if progress.Stage != "failed" || progress.Step != 0 || progress.StepName != "download" || progress.StepResult != nil || progress.Failure == nil || progress.Failure.StepResult == nil || progress.Failure.StepResult.Stderr != "dependency-download-failed" {
+		t.Fatalf("Agent setup diagnostics incomplete: %+v", progress)
+	}
+	runtimes, err := c.List(ctx)
+	if err != nil || len(runtimes) != 0 {
+		t.Fatal("failed Agent setup created a Runtime", runtimes, err)
 	}
 }
 

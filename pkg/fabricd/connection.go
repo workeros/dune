@@ -49,7 +49,7 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	d.generation++
 	gen := d.generation
 	d.mu.Unlock()
-	b := api.Binding{Capabilities: capabilities, Limits: map[string]int{"message_bytes": wire.MaxMessage, "streams": wire.MaxStreams, "bulk": 4, "runtimes": 64, "uploads": 64, "dedup_entries": 256, "chunk_bytes": wire.ChunkSize, "profile_bytes": api.MaxProfileBytes, "profile_attempts": api.MaxProfileAttempts, "profile_status_seconds": api.ProfileStatusRetentionSeconds, "exec_output_bytes": api.MaxExecOutputBytes}}
+	b := api.Binding{Capabilities: capabilities, Limits: map[string]int{"message_bytes": wire.MaxMessage, "streams": wire.MaxStreams, "bulk": 4, "runtimes": 64, "uploads": 64, "dedup_entries": 256, "chunk_bytes": wire.ChunkSize, "profile_bytes": api.MaxProfileBytes, "profile_attempts": api.MaxProfileAttempts, "profile_status_seconds": api.ProfileStatusRetentionSeconds, "profile_step_name_bytes": api.MaxProfileStepNameBytes, "profile_failure_detail_bytes": api.MaxProfileFailureDetailBytes, "exec_output_bytes": api.MaxExecOutputBytes}}
 	input := wire.NewInputWindow()
 	challenge := wire.ID()
 	if err := input.Begin(challenge); err != nil {

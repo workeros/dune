@@ -530,19 +530,11 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 		}
 		res, e := d.exec(api.Exec{Command: step, WorkingDirectory: p.WorkingDirectory, Env: p.Env})
 		if e != nil || res.ExitCode != 0 || res.TimedOut {
-			detail := fmt.Sprintf("setup step %d (%s) failed: exit_code=%d timed_out=%t", i, step.Name, res.ExitCode, res.TimedOut)
-			if e != nil {
-				detail = fmt.Sprintf("setup step %d (%s) failed: %v", i, step.Name, e)
-			}
+			progress, failure := profileSetupFailure(m.RequestId, p.Kind, i, step.Name, res, e)
 			if kind == "environment" {
-				stepResult := res
-				failure := &api.ProfileFailure{Code: "SETUP_FAILED", Detail: detail, Step: i, StepName: step.Name, StepResult: &stepResult}
-				progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "failed", Step: i, StepName: step.Name, StepsCompleted: i, StepResult: &stepResult, Failure: failure}
 				d.updateProfileAttempt(m.RequestId, "failed", progress, nil, failure)
-				_ = s.Send(&pb.Message{Kind: "error", RequestId: m.RequestId, Code: failure.Code, Detail: failure.Detail, Payload: api.Payload(progress)})
-				return
 			}
-			s.Fail("SETUP_FAILED", fmt.Errorf("%s", detail))
+			_ = s.Send(profileFailureMessage(m.RequestId, progress, failure))
 			return
 		}
 		if kind == "environment" {
@@ -564,6 +556,63 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 	d.startAgent(s, p, releaseSlot)
 }
 
+func profileSetupFailure(executionID, kind string, step int, stepName string, result api.ExecResult, cause error) (api.ProfileProgress, *api.ProfileFailure) {
+	detail := fmt.Sprintf("setup step %d (%s) failed: exit_code=%d timed_out=%t", step, stepName, result.ExitCode, result.TimedOut)
+	if cause != nil {
+		detail = fmt.Sprintf("setup step %d (%s) failed: %v", step, stepName, cause)
+	}
+	detail = boundedProfileText(detail, api.MaxProfileFailureDetailBytes)
+	stepResult := result
+	failure := &api.ProfileFailure{Code: "SETUP_FAILED", Detail: detail, Step: step, StepName: stepName, StepResult: &stepResult}
+	progress := api.ProfileProgress{ExecutionID: executionID, Stage: "failed", Step: step, StepName: stepName, StepsCompleted: step, Failure: failure}
+	return fitProfileFailure(executionID, kind, progress, failure)
+}
+
+func fitProfileFailure(executionID, kind string, progress api.ProfileProgress, failure *api.ProfileFailure) (api.ProfileProgress, *api.ProfileFailure) {
+	for !profileFailureFits(executionID, kind, progress, failure) {
+		result := failure.StepResult
+		if result == nil || (result.Stdout == "" && result.Stderr == "") {
+			// Preserve a small structured error even if future response fields grow
+			// without acquiring their own bound.
+			failure = &api.ProfileFailure{Code: failure.Code, Detail: fmt.Sprintf("setup step %d failed", failure.Step), Step: failure.Step}
+			progress = api.ProfileProgress{ExecutionID: executionID, Stage: "failed", Step: failure.Step, StepsCompleted: failure.Step, Failure: failure}
+			return progress, failure
+		}
+		copy := *result
+		if len(copy.Stdout) >= len(copy.Stderr) && copy.Stdout != "" {
+			copy.Stdout = copy.Stdout[:len(copy.Stdout)/2]
+			copy.StdoutTruncated, copy.Truncated = true, true
+		} else {
+			copy.Stderr = copy.Stderr[:len(copy.Stderr)/2]
+			copy.StderrTruncated, copy.Truncated = true, true
+		}
+		failure.StepResult = &copy
+		progress.Failure = failure
+	}
+	return progress, failure
+}
+
+func profileFailureFits(requestID, kind string, progress api.ProfileProgress, failure *api.ProfileFailure) bool {
+	errorMessage := profileFailureMessage(requestID, progress, failure)
+	statusProgress := progress
+	statusProgress.StepResult = nil
+	statusProgress.Failure = nil
+	status := api.ProfileStatus{ExecutionID: progress.ExecutionID, Kind: kind, State: "failed", Progress: statusProgress, Failure: failure}
+	statusMessage := &pb.Message{Kind: "result", RequestId: requestID, Payload: api.Payload(status)}
+	return proto.Size(errorMessage) <= wire.MaxMessage && proto.Size(statusMessage) <= wire.MaxMessage
+}
+
+func profileFailureMessage(requestID string, progress api.ProfileProgress, failure *api.ProfileFailure) *pb.Message {
+	return &pb.Message{Kind: "error", RequestId: requestID, Code: failure.Code, Detail: failure.Detail, Payload: api.Payload(progress)}
+}
+
+func boundedProfileText(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
+}
+
 func (d *Engine) updateProfileAttempt(executionID, state string, progress api.ProfileProgress, result *api.ProfileResult, failure *api.ProfileFailure) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -572,6 +621,12 @@ func (d *Engine) updateProfileAttempt(executionID, state string, progress api.Pr
 		return
 	}
 	attempt.status.State = state
+	if failure != nil {
+		// Failure output lives only in Status.Failure. Keeping it in Progress as
+		// well would multiply escaped binary output in the status response.
+		progress.StepResult = nil
+		progress.Failure = nil
+	}
 	attempt.status.Progress = progress
 	attempt.status.Result = result
 	attempt.status.Failure = failure

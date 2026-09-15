@@ -54,7 +54,7 @@ Profile 要求 `version: 1`、`kind: environment|agent` 和绝对 `working_direc
 
 受信嵌入方在 `host.Open` 后通过 `App.RunnerExecutor()` 取得后台执行能力。`Prepare` 必须提供宿主已验证的 `identity.User`、owner、完整 `runner.Binding`、1..128 字节且无控制字符的稳定 execution ID，以及 `kind=environment` 的完整 Profile。Dune 在副作用前校验最多 1MiB 的 Profile，并重新读取当前 Runner 以检查归属、精确 machine/fabric/revision、可访问状态、`runner.connect` 与 `profile.prepare` 策略，再通过本实例 Gateway 或 mTLS peer 路由执行；不会新增本地文件、CLI、IPC 或 HTTP 执行入口。主体由可信进程内调用者背书，本接口不提供该主体的授权续期或撤销。
 
-`RunnerExecutor.Status` 和 SDK `ProfileStatus` 经相同主体、owner、binding 及 `profile.status` 策略查询原 execution ID。状态为 running、succeeded、failed 或 unknown；查询不触发执行。步骤结果分别携带 stdout/stderr，每项最多 128KiB，并分别标记截断；失败携带稳定 code、零基步骤序号和步骤名。Profile、步骤命令和原始输出不进入通用服务日志。
+`RunnerExecutor.Status` 和 SDK `ProfileStatus` 经相同主体、owner、binding 及 `profile.status` 策略查询原 execution ID。状态为 running、succeeded、failed 或 unknown；查询不触发执行。Environment 与 Agent 的 setup 失败都以结构化错误 payload 返回稳定 code、零基步骤序号、步骤名及 `ExecResult`。每个错误或状态响应只序列化一份 stdout/stderr；每项输出最多 128KiB 并分别标记截断，步骤名与失败详情各最多 4KiB，发送前还按完整 protobuf 编码检查 4MiB 帧上限，必要时进一步截断输出。Profile、步骤命令和原始输出不进入通用服务日志。
 
 ## Runtime 与进程
 
@@ -81,7 +81,7 @@ ACP stdout 逐行验证 JSON-RPC 2.0 对象、字符串/数字 ID、request/noti
 | upload/Ports bulk 并发 | 4（Ports 持续占一个） |
 | Runtime / upload 内存记录 | 各 64 |
 | unary 结果缓存 | 256 条，至多 60s，先到限制先淘汰 |
-| Environment Profile | JSON 最多 1MiB；内存尝试至多 256 条；终态至多保留 60s |
+| Environment Profile | JSON 最多 1MiB；步骤名/失败详情各最多 4KiB；内存尝试至多 256 条；终态至多保留 60s |
 | Exec/Git/Profile stdout/stderr | 每项 128KiB，超出持续排空并分别标记 truncated |
 
 Gateway 两方向逐条读取、转发，无无界队列。protobuf 写入按 stream 加锁，写超时 5s。订阅队列满允许至多 5s 等待，之后关闭并返回 SLOW_CONSUMER；无法再写错误帧时客户端得到 STREAM_INTERRUPTED。队列只存在于当前订阅，不是历史缓冲。

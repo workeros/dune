@@ -16,6 +16,8 @@ const (
 	MaxProfileAttempts            = 256
 	ProfileStatusRetentionSeconds = 60
 	MaxExecOutputBytes            = 128 * 1024
+	MaxProfileStepNameBytes       = 4 * 1024
+	MaxProfileFailureDetailBytes  = 4 * 1024
 )
 
 type Hello struct {
@@ -148,6 +150,9 @@ func (p Profile) Validate() error {
 		return fmt.Errorf("at most 64 setup steps")
 	}
 	for _, c := range p.Setup.Steps {
+		if len(c.Name) > MaxProfileStepNameBytes {
+			return fmt.Errorf("setup step name exceeds %d bytes", MaxProfileStepNameBytes)
+		}
 		if _, e := c.Args(); e != nil {
 			return e
 		}
