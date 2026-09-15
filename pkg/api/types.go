@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 const Version = "dune-mvp/2"
+
+const (
+	MaxProfileBytes               = 1 << 20
+	MaxProfileAttempts            = 256
+	ProfileStatusRetentionSeconds = 60
+	MaxExecOutputBytes            = 128 * 1024
+)
 
 type Hello struct {
 	Version string `json:"version"`
@@ -55,6 +63,50 @@ type ProfileResult struct {
 	StepsCompleted int    `json:"steps_completed"`
 }
 
+// ProfileFailure is the stable, bounded failure detail for one Profile attempt.
+// Step is zero-based and -1 when failure happened outside a setup step.
+type ProfileFailure struct {
+	Code       string      `json:"code"`
+	Detail     string      `json:"detail"`
+	Step       int         `json:"step"`
+	StepName   string      `json:"step_name,omitempty"`
+	StepResult *ExecResult `json:"step_result,omitempty"`
+}
+
+// ProfileProgress is emitted while a Profile attempt is executing. A nil
+// StepResult means the named step has started but has not completed.
+type ProfileProgress struct {
+	ExecutionID    string          `json:"execution_id"`
+	Stage          string          `json:"stage"`
+	Step           int             `json:"step"`
+	StepName       string          `json:"step_name,omitempty"`
+	StepsCompleted int             `json:"steps_completed"`
+	StepResult     *ExecResult     `json:"step_result,omitempty"`
+	Failure        *ProfileFailure `json:"failure,omitempty"`
+}
+
+// ProfileStatus is an in-memory observation of one Profile execution attempt.
+// State is running, succeeded, failed, or unknown.
+type ProfileStatus struct {
+	ExecutionID string          `json:"execution_id"`
+	Kind        string          `json:"kind,omitempty"`
+	State       string          `json:"state"`
+	Progress    ProfileProgress `json:"progress"`
+	Result      *ProfileResult  `json:"result,omitempty"`
+	Failure     *ProfileFailure `json:"failure,omitempty"`
+}
+
+type ProfileStatusRequest struct {
+	ExecutionID string `json:"execution_id"`
+}
+
+func ValidateExecutionID(id string) error {
+	if id == "" || len(id) > 128 || strings.ContainsFunc(id, unicode.IsControl) {
+		return fmt.Errorf("execution ID must be 1..128 bytes without control characters")
+	}
+	return nil
+}
+
 func (c Command) Args() ([]string, error) {
 	if (len(c.Argv) > 0) == (c.Run != "") {
 		return nil, fmt.Errorf("exactly one of argv/run required")
@@ -74,6 +126,10 @@ func (c Command) Args() ([]string, error) {
 	return []string{c.Shell, "-c", c.Run}, nil
 }
 func (p Profile) Validate() error {
+	encoded, err := json.Marshal(p)
+	if err != nil || len(encoded) > MaxProfileBytes {
+		return fmt.Errorf("Profile exceeds %d bytes", MaxProfileBytes)
+	}
 	if p.Version != 1 {
 		return fmt.Errorf("version: 1 required")
 	}
@@ -126,11 +182,13 @@ type Exec struct {
 	Env              map[string]string `json:"env,omitempty"`
 }
 type ExecResult struct {
-	Stdout    string `json:"stdout"`
-	Stderr    string `json:"stderr"`
-	ExitCode  int    `json:"exit_code"`
-	TimedOut  bool   `json:"timed_out"`
-	Truncated bool   `json:"truncated"`
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	ExitCode        int    `json:"exit_code"`
+	TimedOut        bool   `json:"timed_out"`
+	Truncated       bool   `json:"truncated"`
+	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
 	Title            string `json:"title,omitempty"`
@@ -259,8 +317,9 @@ type Port struct {
 	Port int `json:"port"`
 }
 type Error struct {
-	Code   string
-	Detail string
+	Code    string
+	Detail  string
+	Payload json.RawMessage `json:"-"`
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Detail }

@@ -94,7 +94,7 @@ func TestProfileValidationAndOutput(t *testing.T) {
 		t.Fatal("argv expanded")
 	}
 	r = h.exec("/bin/sh", "-c", "head -c 500000 /dev/zero")
-	if !r.Truncated || len(r.Stdout) != 128*1024 {
+	if !r.Truncated || !r.StdoutTruncated || r.StderrTruncated || len(r.Stdout) != api.MaxExecOutputBytes {
 		t.Fatal("unbounded or truncated incorrectly", len(r.Stdout))
 	}
 	p := profile(h.dir, "pty", "/bin/sh", "-c", "printf OLD; sleep 1; printf NEW; sleep 1")

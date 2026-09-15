@@ -39,6 +39,13 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 			err = fmt.Errorf("Profile kind does not match operation")
 		}
 		r.Resource = Resource{Directory: p.WorkingDirectory, Adapter: p.Adapter, ManagedACP: p.ManagedACP}
+	case "profile.status":
+		var p api.ProfileStatusRequest
+		err = decode(&p)
+		if err == nil {
+			err = api.ValidateExecutionID(p.ExecutionID)
+		}
+		r.Resource.ExecutionID = p.ExecutionID
 	case "runtime.attach":
 		var a api.Attach
 		err = decode(&a)
@@ -162,7 +169,7 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	if err != nil {
 		return r, ErrDenied
 	}
-	for _, s := range []string{r.Resource.Path, r.Resource.Destination, r.Resource.Directory, r.Resource.UploadID, r.Resource.ConfigID, r.Runtime.ID, r.Runtime.Incarnation} {
+	for _, s := range []string{r.Resource.Path, r.Resource.Destination, r.Resource.Directory, r.Resource.UploadID, r.Resource.ConfigID, r.Resource.ExecutionID, r.Runtime.ID, r.Runtime.Incarnation} {
 		if len(s) > 4096 || strings.ContainsRune(s, 0) {
 			return r, ErrDenied
 		}

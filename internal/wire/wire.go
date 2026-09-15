@@ -136,7 +136,7 @@ func Decode(m *pb.Message, v any) error {
 }
 func Error(m *pb.Message) error {
 	if m.Kind == "error" {
-		return &api.Error{Code: m.Code, Detail: m.Detail}
+		return &api.Error{Code: m.Code, Detail: m.Detail, Payload: append([]byte(nil), m.Payload...)}
 	}
 	return nil
 }

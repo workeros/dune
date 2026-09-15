@@ -111,23 +111,23 @@ func TestEnvironmentProfilePreparation(t *testing.T) {
 		}
 		return allow(r, MaxLease), nil
 	}), nil)
-	foundCapability := false
+	found := map[string]bool{}
 	for _, capability := range c.Binding.Capabilities {
-		if capability == "profile.prepare" {
-			foundCapability = true
-			break
-		}
+		found[capability] = true
 	}
-	if !foundCapability {
-		t.Fatal("profile.prepare capability missing")
+	if !found["profile.prepare"] || !found["profile.status"] {
+		t.Fatal("Profile capabilities missing", c.Binding.Capabilities)
 	}
 	dir := t.TempDir()
 	p := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: dir, Env: map[string]string{"DUNE_PREPARE_TEST": "ready"}}
 	p.Setup.Steps = []api.Command{
-		{Run: `printf %s "$DUNE_PREPARE_TEST" > prepared`, Shell: "/bin/sh"},
-		{Argv: []string{"/bin/sh", "-c", "printf second > second-step"}},
+		{Run: `printf x >> execution-count; printf %s "$DUNE_PREPARE_TEST" > prepared`, Shell: "/bin/sh"},
+		{Argv: []string{"/bin/sh", "-c", "printf second > second-step; printf event-output"}},
 	}
-	result, err := c.Prepare(ctx, p)
+	var progress []api.ProfileProgress
+	result, err := c.PrepareID(ctx, "successful-environment-attempt", p, func(event api.ProfileProgress) {
+		progress = append(progress, event)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +140,34 @@ func TestEnvironmentProfilePreparation(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "second-step")); err != nil {
 		t.Fatal("later setup step did not run", err)
+	}
+	if len(progress) != 6 || progress[0].Stage != "accepted" || progress[1].Stage != "setup_running" || progress[2].Stage != "setup_completed" || progress[4].StepResult == nil || progress[4].StepResult.Stdout != "event-output" || progress[5].Stage != "succeeded" {
+		t.Fatalf("unexpected Profile progress: %+v", progress)
+	}
+	status, err := c.ProfileStatus(ctx, "successful-environment-attempt")
+	if err != nil || status.State != "succeeded" || status.Result == nil || status.Result.StepsCompleted != 2 {
+		t.Fatalf("unexpected successful status: %+v %v", status, err)
+	}
+	if _, err := c.PrepareID(ctx, "successful-environment-attempt", p, nil); err == nil {
+		t.Fatal("duplicate execution did not require status query")
+	} else {
+		var protocol *api.Error
+		if !errors.As(err, &protocol) || protocol.Code != "RESULT_UNKNOWN" {
+			t.Fatal("duplicate execution did not report unknown", err)
+		}
+	}
+	if content, err := os.ReadFile(filepath.Join(dir, "execution-count")); err != nil || string(content) != "x" {
+		t.Fatal("same execution ID repeated setup", string(content), err)
+	}
+	different := p
+	different.Env = map[string]string{"DUNE_PREPARE_TEST": "different"}
+	if _, err := c.PrepareID(ctx, "successful-environment-attempt", different, nil); err == nil {
+		t.Fatal("execution ID accepted a different Profile")
+	} else {
+		var protocol *api.Error
+		if !errors.As(err, &protocol) || protocol.Code != "IDEMPOTENCY_CONFLICT" {
+			t.Fatal("different Profile did not conflict", err)
+		}
 	}
 	runtimes, err := c.List(ctx)
 	if err != nil || len(runtimes) != 0 {
@@ -154,11 +182,94 @@ func TestEnvironmentProfilePreparation(t *testing.T) {
 		{Argv: []string{"/bin/sh", "-c", "exit 2"}},
 		{Argv: []string{"/bin/sh", "-c", "touch must-not-run"}},
 	}
-	if _, err := c.Prepare(ctx, failing); err == nil {
+	var failedProgress []api.ProfileProgress
+	if _, err := c.PrepareID(ctx, "failed-environment-attempt", failing, func(event api.ProfileProgress) {
+		failedProgress = append(failedProgress, event)
+	}); err == nil {
 		t.Fatal("failed environment preparation reported success")
+	} else {
+		var protocol *api.Error
+		if !errors.As(err, &protocol) || protocol.Code != "SETUP_FAILED" || len(protocol.Payload) == 0 {
+			t.Fatal("setup failure lost stable detail", err)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "must-not-run")); !os.IsNotExist(err) {
 		t.Fatal("environment preparation continued after a failed step", err)
+	}
+	if len(failedProgress) != 3 || failedProgress[0].Stage != "accepted" || failedProgress[2].Stage != "failed" || failedProgress[2].Failure == nil || failedProgress[2].Failure.Step != 0 {
+		t.Fatalf("unexpected failed progress: %+v", failedProgress)
+	}
+	status, err = c.ProfileStatus(ctx, "failed-environment-attempt")
+	if err != nil || status.State != "failed" || status.Failure == nil || status.Failure.Code != "SETUP_FAILED" || status.Failure.Step != 0 {
+		t.Fatalf("unexpected failed status: %+v %v", status, err)
+	}
+	status, err = c.ProfileStatus(ctx, "missing-environment-attempt")
+	if err != nil || status.State != "unknown" {
+		t.Fatalf("missing attempt did not report unknown: %+v %v", status, err)
+	}
+	timed := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: dir}
+	timed.Setup.Steps = []api.Command{
+		{Argv: []string{"/bin/sh", "-c", "sleep 2"}, TimeoutSeconds: 1},
+		{Argv: []string{"/bin/sh", "-c", "touch must-not-run-after-timeout"}},
+	}
+	if _, err := c.PrepareID(ctx, "timed-out-environment-attempt", timed, nil); err == nil {
+		t.Fatal("timed out setup reported success")
+	}
+	status, err = c.ProfileStatus(ctx, "timed-out-environment-attempt")
+	if err != nil || status.State != "failed" || status.Failure == nil || status.Failure.StepResult == nil || !status.Failure.StepResult.TimedOut {
+		t.Fatalf("timed out setup lost failure status: %+v %v", status, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "must-not-run-after-timeout")); !os.IsNotExist(err) {
+		t.Fatal("environment preparation continued after timeout", err)
+	}
+}
+
+func TestEnvironmentProfileContinuesAfterWaitCancellation(t *testing.T) {
+	ctx, c := policyFixture(t, checkFunc(func(_ context.Context, r Request) (Decision, error) {
+		return allow(r, MaxLease), nil
+	}), nil)
+	dir := t.TempDir()
+	p := api.Profile{Version: 1, Kind: "environment", WorkingDirectory: dir}
+	p.Setup.Steps = []api.Command{{Argv: []string{"/bin/sh", "-c", "sleep 0.3; touch completed-after-cancel"}}}
+	waitCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	var progress []api.ProfileProgress
+	if _, err := c.PrepareID(waitCtx, "cancelled-wait-attempt", p, func(event api.ProfileProgress) {
+		progress = append(progress, event)
+	}); err == nil {
+		t.Fatal("cancelled wait reported success")
+	} else {
+		var protocol *api.Error
+		if !errors.As(err, &protocol) || protocol.Code != "RESULT_UNKNOWN" {
+			t.Fatal("cancelled wait did not report unknown", err)
+		}
+	}
+	if len(progress) == 0 || progress[len(progress)-1].Stage != "unknown" {
+		t.Fatal("cancelled wait did not emit unknown progress", progress)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	seenRunning := false
+	for {
+		status, err := c.ProfileStatus(ctx, "cancelled-wait-attempt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State == "succeeded" {
+			break
+		}
+		if status.State == "running" {
+			seenRunning = true
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("remote attempt did not finish after wait cancellation", status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !seenRunning {
+		t.Fatal("status query never observed the running attempt")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "completed-after-cancel")); err != nil {
+		t.Fatal("remote setup was cancelled with the wait", err)
 	}
 }
 
@@ -367,6 +478,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"git", api.Git{Action: "branch"}, "branch", "list"},
 		{"acp.action", map[string]string{"action": "permission", "prompt": "secret"}, "permission", ""},
 		{"agent.config", api.AgentConfigRequest{Action: "save", Config: &api.AgentConfig{ID: "config", Command: "secret"}}, "save", ""},
+		{"profile.status", api.ProfileStatusRequest{ExecutionID: "attempt-1"}, "", ""},
 	}
 	for _, tc := range cases {
 		r, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
@@ -377,6 +489,10 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		if strings.Contains(string(data), "secret") {
 			t.Fatal("request content exposed")
 		}
+	}
+	statusRequest, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: "profile.status", Payload: api.Payload(api.ProfileStatusRequest{ExecutionID: "attempt-1"})})
+	if err != nil || statusRequest.Resource.ExecutionID != "attempt-1" {
+		t.Fatal("Profile status execution ID not mapped", err)
 	}
 	for _, tc := range []struct{ op, body string }{{"new.operation", "{}"}, {"files", `{"action":"new"}`}, {"git", `{"action":"stash","mode":"unknown"}`}, {"upload", `{"action":"begin"}`}, {"acp.action", `{"action":"arbitrary-rpc"}`}} {
 		if _, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: []byte(tc.body)}); !errors.Is(err, ErrDenied) {

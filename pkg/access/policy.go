@@ -55,6 +55,7 @@ type Resource struct {
 	Directory       string
 	UploadID        string
 	ConfigID        string
+	ExecutionID     string
 	Port            int
 	Adapter         string
 	ManagedACP      bool

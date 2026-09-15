@@ -105,6 +105,13 @@ peer listener。企业宿主可注入：
 - `Options.Cluster`：PostgreSQL route 目录与 peer 传输。
 - `Options.Observer`：去敏结构化事件。
 
+`App.RunnerExecutor()` 提供受信宿主进程内的 Environment Profile 执行入口。
+宿主传入已验证主体、owner、完整 Runner binding、稳定 execution ID 和完整
+`api.Profile`；Dune 复核归属、绑定、Runner 状态与 `AccessChecker` 后，经现有
+Gateway 路由到 fabricd。`Prepare` 返回有界进度及最终 `ProfileResult`，`Status`
+只查询原尝试而不执行或重试。该入口不发布 HTTP/CLI/IPC API，不依赖浏览器
+Session，也不新增主体授权续期或撤销合同；调用前的主体有效性由宿主负责。
+
 ## Connector 支撑命令
 
 以下命令服务网页安装链路，不是远程执行客户端：

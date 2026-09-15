@@ -27,6 +27,7 @@ const maxSeenPeerNonces = 4096
 type ConnectionAccess struct {
 	Session, PrincipalID, PrincipalKind, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
 	BindingRevision, ExpiresAt                                                                   int64
+	Background                                                                                   bool
 }
 
 func (r ConnectionAccess) Scope() access.Scope {

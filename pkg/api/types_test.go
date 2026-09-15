@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestProfileValidateKinds(t *testing.T) {
 	environment := Profile{Version: 1, Kind: "environment", WorkingDirectory: "/workspace"}
@@ -28,5 +32,32 @@ func TestProfileValidateKinds(t *testing.T) {
 	agent.Start = Command{}
 	if err := agent.Validate(); err == nil {
 		t.Fatal("agent Profile accepted a missing start command")
+	}
+}
+
+func TestValidateExecutionID(t *testing.T) {
+	for _, valid := range []string{"attempt-1", "01J8YABCDEF0123456789ABCDE"} {
+		if err := ValidateExecutionID(valid); err != nil {
+			t.Fatal("valid execution ID rejected", valid, err)
+		}
+	}
+	for _, invalid := range []string{"", "line\nbreak", string(make([]byte, 129))} {
+		if err := ValidateExecutionID(invalid); err == nil {
+			t.Fatal("invalid execution ID accepted", len(invalid))
+		}
+	}
+}
+
+func TestProfileValidateSizeLimit(t *testing.T) {
+	p := Profile{Version: 1, Kind: "environment", WorkingDirectory: "/workspace", Env: map[string]string{"TOO_LARGE": strings.Repeat("x", MaxProfileBytes)}}
+	if err := p.Validate(); err == nil {
+		t.Fatal("oversized Profile accepted")
+	}
+}
+
+func TestErrorPayloadIsNotGenericJSON(t *testing.T) {
+	encoded, err := json.Marshal(&Error{Code: "SETUP_FAILED", Detail: "failed", Payload: json.RawMessage(`{"stdout":"private"}`)})
+	if err != nil || strings.Contains(string(encoded), "private") {
+		t.Fatal("private protocol error payload was serialized", string(encoded), err)
 	}
 }

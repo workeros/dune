@@ -133,9 +133,15 @@ func (l *Service) validAccess(record ConnectionAccess) func() bool {
 		}
 		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
 		defer cancel()
-		user, err := l.sessions.Authenticate(ctx, record.Session)
-		if err != nil || user.ID != record.PrincipalID || user.Kind != record.PrincipalKind || user.Namespace != record.Namespace || user.Subject != record.Subject {
-			return false
+		if record.Background {
+			if record.Session != "" {
+				return false
+			}
+		} else {
+			user, err := l.sessions.Authenticate(ctx, record.Session)
+			if err != nil || user.ID != record.PrincipalID || user.Kind != record.PrincipalKind || user.Namespace != record.Namespace || user.Subject != record.Subject {
+				return false
+			}
 		}
 		valid, err := l.bindings.CheckRunnerAccess(ctx, record)
 		return err == nil && valid

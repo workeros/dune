@@ -469,6 +469,17 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 	}
 	hash := requestHash(m)
 	d.mu.Lock()
+	if kind == "environment" {
+		if attempt := d.attempts[m.RequestId]; attempt != nil {
+			d.mu.Unlock()
+			if attempt.hash != hash {
+				s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("execution ID has different Profile"))
+				return
+			}
+			s.Fail("RESULT_UNKNOWN", fmt.Errorf("Profile execution already admitted; query profile.status"))
+			return
+		}
+	}
 	if kind == "agent" && len(d.runtimes)+len(d.starts) > 64 {
 		d.mu.Unlock()
 		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("Runtime limit"))
@@ -492,31 +503,79 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("request cache full"))
 		return
 	}
+	if kind == "environment" && !d.attemptRoomLocked() {
+		d.mu.Unlock()
+		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("Profile attempt capacity, retry with a new execution ID after a completed attempt expires"))
+		return
+	}
 	d.cache[m.RequestId] = &cached{hash: hash, at: time.Now()}
+	if kind == "environment" {
+		progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "accepted", Step: -1}
+		d.attempts[m.RequestId] = &profileAttempt{hash: hash, status: api.ProfileStatus{ExecutionID: m.RequestId, Kind: p.Kind, State: "running", Progress: progress}, at: time.Now()}
+	}
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
 		d.cache[m.RequestId].result = &pb.Message{Kind: "error", Code: "RESULT_UNKNOWN", Detail: "profile already executed; no stream replay"}
 		d.mu.Unlock()
 	}()
-	if s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId}) != nil {
+	if err := s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId}); err != nil && kind != "environment" {
 		return
 	}
 	for i, step := range p.Setup.Steps {
+		if kind == "environment" {
+			progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "setup_running", Step: i, StepName: step.Name, StepsCompleted: i}
+			d.updateProfileAttempt(m.RequestId, "running", progress, nil, nil)
+			_ = s.Send(&pb.Message{Kind: "progress", RequestId: m.RequestId, Payload: api.Payload(progress)})
+		}
 		res, e := d.exec(api.Exec{Command: step, WorkingDirectory: p.WorkingDirectory, Env: p.Env})
 		if e != nil || res.ExitCode != 0 || res.TimedOut {
-			s.Fail("SETUP_FAILED", fmt.Errorf("setup step %d (%s): %v %+v", i, step.Name, e, res))
+			detail := fmt.Sprintf("setup step %d (%s) failed: exit_code=%d timed_out=%t", i, step.Name, res.ExitCode, res.TimedOut)
+			if e != nil {
+				detail = fmt.Sprintf("setup step %d (%s) failed: %v", i, step.Name, e)
+			}
+			if kind == "environment" {
+				stepResult := res
+				failure := &api.ProfileFailure{Code: "SETUP_FAILED", Detail: detail, Step: i, StepName: step.Name, StepResult: &stepResult}
+				progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "failed", Step: i, StepName: step.Name, StepsCompleted: i, StepResult: &stepResult, Failure: failure}
+				d.updateProfileAttempt(m.RequestId, "failed", progress, nil, failure)
+				_ = s.Send(&pb.Message{Kind: "error", RequestId: m.RequestId, Code: failure.Code, Detail: failure.Detail, Payload: api.Payload(progress)})
+				return
+			}
+			s.Fail("SETUP_FAILED", fmt.Errorf("%s", detail))
 			return
 		}
-		if s.Send(&pb.Message{Kind: "progress", Payload: api.Payload(map[string]any{"step": i, "name": step.Name, "result": res})}) != nil {
+		if kind == "environment" {
+			stepResult := res
+			progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "setup_completed", Step: i, StepName: step.Name, StepsCompleted: i + 1, StepResult: &stepResult}
+			d.updateProfileAttempt(m.RequestId, "running", progress, nil, nil)
+			_ = s.Send(&pb.Message{Kind: "progress", RequestId: m.RequestId, Payload: api.Payload(progress)})
+		} else if s.Send(&pb.Message{Kind: "progress", Payload: api.Payload(map[string]any{"step": i, "name": step.Name, "result": res})}) != nil {
 			return
 		}
 	}
 	if kind == "environment" {
-		_ = s.Send(&pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(api.ProfileResult{Kind: p.Kind, Stage: "succeeded", StepsCompleted: len(p.Setup.Steps)})})
+		result := &api.ProfileResult{Kind: p.Kind, Stage: "succeeded", StepsCompleted: len(p.Setup.Steps)}
+		progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "succeeded", Step: -1, StepsCompleted: result.StepsCompleted}
+		d.updateProfileAttempt(m.RequestId, "succeeded", progress, result, nil)
+		_ = s.Send(&pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(result)})
 		return
 	}
 	d.startAgent(s, p, releaseSlot)
+}
+
+func (d *Engine) updateProfileAttempt(executionID, state string, progress api.ProfileProgress, result *api.ProfileResult, failure *api.ProfileFailure) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	attempt := d.attempts[executionID]
+	if attempt == nil {
+		return
+	}
+	attempt.status.State = state
+	attempt.status.Progress = progress
+	attempt.status.Result = result
+	attempt.status.Failure = failure
+	attempt.at = time.Now()
 }
 
 func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func()) {
@@ -749,7 +808,7 @@ func (b *bounded) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(p)
-	keep := 128*1024 - b.b.Len()
+	keep := api.MaxExecOutputBytes - b.b.Len()
 	if keep < len(p) {
 		b.truncated = true
 		p = p[:keep]
@@ -795,7 +854,9 @@ func (d *Engine) exec(a api.Exec) (api.ExecResult, error) {
 	wg.Wait()
 	out.Stdout = stdout.b.String()
 	out.Stderr = stderr.b.String()
-	out.Truncated = stdout.truncated || stderr.truncated
+	out.StdoutTruncated = stdout.truncated
+	out.StderrTruncated = stderr.truncated
+	out.Truncated = out.StdoutTruncated || out.StderrTruncated
 	out.ExitCode = p.Exit
 	return out, nil
 }

@@ -16,11 +16,16 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "acp.action", "acp.state", "agent.config", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.config", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
 	result *pb.Message
+	at     time.Time
+}
+type profileAttempt struct {
+	hash   [32]byte
+	status api.ProfileStatus
 	at     time.Time
 }
 type Engine struct {
@@ -32,6 +37,7 @@ type Engine struct {
 	runtimes   map[string]*runtime
 	uploads    map[string]*upload
 	cache      map[string]*cached
+	attempts   map[string]*profileAttempt
 	bulk       chan struct{}
 	fileMu     sync.Mutex
 	gitMu      sync.Mutex
@@ -47,7 +53,7 @@ type Engine struct {
 
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
-	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, bulk: make(chan struct{}, 4), ctx: ctx}
+	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), ctx: ctx}
 }
 
 // Close stops the connector and owned ACP processes and releases its state lock.
@@ -173,6 +179,15 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 	case "runtime.list":
 		result = d.list()
+	case "profile.status":
+		var request api.ProfileStatusRequest
+		e = wire.Decode(m, &request)
+		if e == nil {
+			e = api.ValidateExecutionID(request.ExecutionID)
+		}
+		if e == nil {
+			result = d.profileStatus(request.ExecutionID)
+		}
 	case "machine.info":
 		home, err := os.UserHomeDir()
 		e = err
@@ -282,6 +297,11 @@ func (d *Engine) expire(ctx context.Context) {
 					delete(d.cache, id)
 				}
 			}
+			for id, attempt := range d.attempts {
+				if attempt.status.State != "running" && now.Sub(attempt.at) > api.ProfileStatusRetentionSeconds*time.Second {
+					delete(d.attempts, id)
+				}
+			}
 			for id, u := range d.uploads {
 				u.mu.Lock()
 				if now.After(u.expires) {
@@ -293,6 +313,62 @@ func (d *Engine) expire(ctx context.Context) {
 			d.mu.Unlock()
 		}
 	}
+}
+
+func (d *Engine) profileStatus(executionID string) api.ProfileStatus {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	attempt := d.attempts[executionID]
+	if attempt == nil {
+		return api.ProfileStatus{ExecutionID: executionID, State: "unknown", Progress: api.ProfileProgress{ExecutionID: executionID, Stage: "unknown", Step: -1}}
+	}
+	return cloneProfileStatus(attempt.status)
+}
+
+func cloneProfileStatus(status api.ProfileStatus) api.ProfileStatus {
+	if status.Progress.StepResult != nil {
+		result := *status.Progress.StepResult
+		status.Progress.StepResult = &result
+	}
+	if status.Progress.Failure != nil {
+		failure := *status.Progress.Failure
+		if failure.StepResult != nil {
+			result := *failure.StepResult
+			failure.StepResult = &result
+		}
+		status.Progress.Failure = &failure
+	}
+	if status.Result != nil {
+		result := *status.Result
+		status.Result = &result
+	}
+	if status.Failure != nil {
+		failure := *status.Failure
+		if failure.StepResult != nil {
+			result := *failure.StepResult
+			failure.StepResult = &result
+		}
+		status.Failure = &failure
+	}
+	return status
+}
+
+func (d *Engine) attemptRoomLocked() bool {
+	if len(d.attempts) < api.MaxProfileAttempts {
+		return true
+	}
+	id := ""
+	var oldest time.Time
+	for key, attempt := range d.attempts {
+		if attempt.status.State != "running" && (id == "" || attempt.at.Before(oldest)) {
+			id, oldest = key, attempt.at
+		}
+	}
+	if id == "" {
+		return false
+	}
+	delete(d.attempts, id)
+	return true
 }
 
 // Completed results have a maximum 60s/256-entry retention, whichever ends first.

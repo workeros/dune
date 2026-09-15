@@ -3,6 +3,8 @@ package wire
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
 	"google.golang.org/protobuf/proto"
@@ -11,6 +13,18 @@ import (
 	"testing"
 	"time"
 )
+
+func TestErrorPreservesPrivatePayload(t *testing.T) {
+	m := &pb.Message{Kind: "error", Code: "SETUP_FAILED", Detail: "step failed", Payload: []byte(`{"stage":"failed"}`)}
+	var protocol *api.Error
+	if err := Error(m); !errors.As(err, &protocol) || string(protocol.Payload) != string(m.Payload) {
+		t.Fatal("error payload was not preserved", err)
+	}
+	m.Payload[0] = 'x'
+	if string(protocol.Payload) != `{"stage":"failed"}` {
+		t.Fatal("error payload aliases the wire message")
+	}
+}
 
 type fragments struct{ io.Reader }
 

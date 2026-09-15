@@ -30,9 +30,9 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 应用访问处理器从 `Stream.PeerRoute()` 取得固定 owner 的副本，在批准操作并构造该请求的访问上下文后调用 `ForwardPeer(context)`。普通 `Forward()` 对远端路由拒绝。`access_context` 仅允许出现在 peer stream 的首请求，必须为 1–16384 字节；SDK 伪造、后续消息替换及缺失上下文在准入前拒绝。目标实例的处理器必须独立验证用户、原请求和当前授权；core 不解析用户与 Runner，peer 身份本身不构成用户授权。上下文只到 owner，后者转发给 fabricd 前移除该字段，并设置自己的有界输入 grant。
 
-默认访问模块通过 `authorization.Service.WithPeers(bootID)` 装配用户委派。入口在原会话、绑定及操作获准后，把短期随机凭据及原会话引用、两端启动身份、请求摘要、授权决定 ID 和有界操作属性保存在当前进程的有界内存中。摘要包括原请求 ID、全部业务字节、Runtime 身份、执行连接身份和 epoch；不保存命令、文件内容或原始 bearer。凭据最多三十秒、每会话最多六十四个未消费项，进程重启即失效，不进入 SQL，也不需要用户上下文签名密钥。
+默认访问模块通过 `authorization.Service.WithPeers(bootID)` 装配用户委派。浏览器入口在原会话、绑定及操作获准后，携带原会话引用；受信宿主的进程内后台入口携带明确的后台标记和已验证主体，不伪造浏览器 Session。两者都携带两端启动身份、请求摘要、授权决定 ID 和有界操作属性。摘要包括原请求 ID、全部业务字节、Runtime 身份、执行连接身份和 epoch；不保存命令、文件内容或原始 bearer。peer 访问上下文最多三十秒、单次使用，进程重启即失效，不进入 SQL，也不需要用户上下文签名密钥。
 
-目标实例的访问模块只接受 mTLS peer 传来的原始企业 Session，并按已认证的 peer 身份、目标、身份源及实际请求摘要单次消费对应的内存凭据，然后重新调用权威 `identity.Service`、复核 Runner/Fabric/owner/绑定修订，并独立执行自己的 AccessChecker。原决定 ID 只记录入口的授权依据，不替代目标的当前决定。请求不匹配不会消费其他请求的凭据；消费结果不做跨实例确认或自动重试。凭据到期限制新请求准入，已建立流继续按原身份与操作检查；目标侧每秒检查撤销，并维持原有独立授权期限、只读和后续输入检查。此实现没有第二套用户身份或权限存储。
+目标实例的访问模块只接受 mTLS peer 传来的访问上下文，并按已认证的 peer 身份、目标、身份源及实际请求摘要单次验证。浏览器请求重新调用权威 `identity.Service`；后台请求只接受可信 Dune 副本转来的后台标记。两类请求都复核 Runner/Fabric/owner/绑定修订，并独立执行自己的 AccessChecker。原决定 ID 只记录入口的授权依据，不替代目标的当前决定。上下文不匹配时拒绝，消费结果不做跨实例确认或自动重试。后台入口不新增主体授权续期或撤销来源；宿主负责在调用前提供当前有效的主体，Dune 继续执行已有的 Runner 状态、精确绑定和操作策略检查。
 
 `pkg/transport/peer` 提供独立的双向 TLS 1.3 / WebSocket 入口。应用配置专用集群 CA、同时允许 serverAuth/clientAuth 且匹配本实例广告地址的叶证书；模块验证链、期限、用途和私钥匹配，复制证书及信任配置。CA 认证可信集群成员，受保护的 HTTP 协商核对原 owner 启动身份，后续 core hello 继续核对完整归属。Handler 独立验证实际 TLS 客户端链，不接受证书转发头、普通 bearer、Cookie 或 Origin；普通 tunnel 仍拒绝 peer 角色。
 
@@ -42,7 +42,7 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 `dune-mvp/2` 与旧版本不混用：Gateway、fabricd、Web 宿主和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 
-业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.prepare 依次发送 accepted、setup progress、Profile result 后结束；profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
+业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.prepare 依次发送 accepted、逐步 setup progress、Profile result 后结束；SDK 将 accepted、步骤开始、步骤完成、失败和整体成功作为类型化 `ProfileProgress` 交给调用方。profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 
 Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`，daemon 调用 TCP CloseWrite，两方向都完成后返回 result。Yamux Close 用于取消/结束 stream。其他业务的 EOF 若未见 result/exit，SDK 返回 STREAM_INTERRUPTED；已提交 unary 调用丢失结果时为 RESULT_UNKNOWN，不自动重试。断开已受理的 Exec/Git 不回滚，也不保证立即取消；其超时仍有效。交互订阅断开不会停止 Agent。
 
@@ -51,6 +51,10 @@ Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`�
 配置字段：`gateway`、`listen`、`token`、`target`、`log_level`；仅显式 WSS 配置使用 `certificate` 和 `key`。SDK 客户端无需 `listen` 或私钥。log_level 目前保存设置，日志使用 Go 标准 logger，只有运行信息/错误；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。为兼容原有配置，显式选择 wss 时仍验证证书，init 会把连接地址加入证书 SAN。
 
 Profile 要求 `version: 1`、`kind: environment|agent` 和绝对 `working_directory`。environment Profile 通过 `profile.prepare` 只执行 setup，不得包含 start、adapter、managed_acp 或终端历史设置，成功返回 `kind=environment`、`stage=succeeded` 和完成步骤数，不创建 Runtime。agent Profile 通过 `profile.start` 执行 setup 后启动 Agent，要求 `adapter: pty|acp` 和 start。两类 Profile 的 `env` 都合并当前 OS 环境，`setup.steps` 至多 64 步。Command 必须且只能提供 argv 或 run：argv 不展开 shell；run 必须同时给绝对 shell 路径（例如 `/bin/sh`）。`timeout_seconds` 范围 0..86400；setup/Exec 的 0 默认 300s，start 的 0 表示 Runtime 无时间限制。步骤顺序执行，失败返回步骤编号、名称、退出状态与有界输出，之后步骤不执行。没有自动回滚。
+
+受信嵌入方在 `host.Open` 后通过 `App.RunnerExecutor()` 取得后台执行能力。`Prepare` 必须提供宿主已验证的 `identity.User`、owner、完整 `runner.Binding`、1..128 字节且无控制字符的稳定 execution ID，以及 `kind=environment` 的完整 Profile。Dune 在副作用前校验最多 1MiB 的 Profile，并重新读取当前 Runner 以检查归属、精确 machine/fabric/revision、可访问状态、`runner.connect` 与 `profile.prepare` 策略，再通过本实例 Gateway 或 mTLS peer 路由执行；不会新增本地文件、CLI、IPC 或 HTTP 执行入口。主体由可信进程内调用者背书，本接口不提供该主体的授权续期或撤销。
+
+`RunnerExecutor.Status` 和 SDK `ProfileStatus` 经相同主体、owner、binding 及 `profile.status` 策略查询原 execution ID。状态为 running、succeeded、failed 或 unknown；查询不触发执行。步骤结果分别携带 stdout/stderr，每项最多 128KiB，并分别标记截断；失败携带稳定 code、零基步骤序号和步骤名。Profile、步骤命令和原始输出不进入通用服务日志。
 
 ## Runtime 与进程
 
@@ -77,13 +81,14 @@ ACP stdout 逐行验证 JSON-RPC 2.0 对象、字符串/数字 ID、request/noti
 | upload/Ports bulk 并发 | 4（Ports 持续占一个） |
 | Runtime / upload 内存记录 | 各 64 |
 | unary 结果缓存 | 256 条，至多 60s，先到限制先淘汰 |
-| Exec/Git stdout/stderr | 每项 128KiB，超出持续排空并标记 truncated |
+| Environment Profile | JSON 最多 1MiB；内存尝试至多 256 条；终态至多保留 60s |
+| Exec/Git/Profile stdout/stderr | 每项 128KiB，超出持续排空并分别标记 truncated |
 
 Gateway 两方向逐条读取、转发，无无界队列。protobuf 写入按 stream 加锁，写超时 5s。订阅队列满允许至多 5s 等待，之后关闭并返回 SLOW_CONSUMER；无法再写错误帧时客户端得到 STREAM_INTERRUPTED。队列只存在于当前订阅，不是历史缓冲。
 
 这些上限共同约束并发缓冲总量；没有按文件大小缓存整份上传。包括 Yamux 窗口的最大内存随已限制的 session/stream 数有上界，但不是操作系统 RSS 硬配额。并发 e2e 使用 2 PTY + 2 ACP + 16MiB 上传 + 4MiB TCP，p95 验收阈值为 2s。不承诺协议级优先级或物理 TCP 故障隔离。
 
-request_id 由 SDK 随机生成。`CallID` 可显式复用 ID：缓存有效时同输入返回同结果，不同输入返回 IDEMPOTENCY_CONFLICT，尚在运行返回 RESULT_UNKNOWN。超过 60s 或 256 条缓存淘汰后，不承诺去重。Profile stream 不能回放，重复已受理 ID 报告未知且不重跑（缓存保留期间）；Agent Profile 的调用方可查询 Runtime，Environment Profile 的调用方需将未知结果交给上层协调，不能把“没有 Runtime”解释为未执行。不会自动重放输入或因服务重启重跑 Profile。
+普通 request_id 由 SDK 随机生成。`CallID` 可显式复用 ID：缓存有效时同输入返回同结果，不同输入返回 IDEMPOTENCY_CONFLICT，尚在运行返回 RESULT_UNKNOWN。`PrepareID` 接受宿主稳定的 execution ID；去重范围是单个 fabricd 进程，ID 在该进程内全局使用。同一 ID、同一 Profile 在内存尝试记录有效时不会重复执行，而是返回 RESULT_UNKNOWN 并要求查询，同一 ID、不同 Profile 返回 IDEMPOTENCY_CONFLICT。Environment 尝试在 fabricd 内存中最多 256 条，running 不淘汰，终态保留至多 60s；fabricd 重启或终态淘汰后查询返回 unknown，不表示从未执行。取消等待、网络中断或应用等待超时只令调用方得到 RESULT_UNKNOWN，不作为远端已停止的证明，也不会自动重发 Profile。宿主决定是否重新执行、持久记录或回收环境。
 
 ## Files 和完整上传
 

@@ -88,6 +88,7 @@ type App struct {
 	core         *gateway.Gateway
 	publicPath   string
 	store        *metadata.Store
+	authorizer   *authorization.Service
 	peer         *peer.Transport
 	peerHandler  http.Handler
 	observer     *observationRecorder
@@ -195,7 +196,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, authorizer: authorizer, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil

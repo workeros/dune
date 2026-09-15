@@ -165,31 +165,97 @@ func (c *Client) Exec(ctx context.Context, a api.Exec) (api.ExecResult, error) {
 
 // Prepare executes an environment Profile without creating a Runtime.
 func (c *Client) Prepare(ctx context.Context, p api.Profile) (api.ProfileResult, error) {
+	return c.PrepareID(ctx, wire.ID(), p, nil)
+}
+
+// PrepareID executes an environment Profile using a caller-stable execution ID.
+// onProgress is called synchronously in stream order and must return promptly.
+// Cancelling ctx stops waiting but does not assert that remote execution stopped.
+func (c *Client) PrepareID(ctx context.Context, executionID string, p api.Profile, onProgress func(api.ProfileProgress)) (api.ProfileResult, error) {
 	var r api.ProfileResult
-	if p.Kind != "environment" {
-		return r, fmt.Errorf("profile.prepare requires kind: environment")
+	if err := api.ValidateExecutionID(executionID); err != nil {
+		return r, &api.Error{Code: "INVALID_ARGUMENT", Detail: err.Error()}
 	}
-	s, _, e := c.open(ctx, "profile.prepare", wire.ID(), p, nil)
+	if p.Kind != "environment" {
+		err := &api.Error{Code: "INVALID_ARGUMENT", Detail: "profile.prepare requires kind: environment"}
+		emitProfileFailure(executionID, err, onProgress)
+		return r, err
+	}
+	if err := p.Validate(); err != nil {
+		invalid := &api.Error{Code: "INVALID_ARGUMENT", Detail: err.Error()}
+		emitProfileFailure(executionID, invalid, onProgress)
+		return r, invalid
+	}
+	s, _, e := c.open(ctx, "profile.prepare", executionID, p, nil)
 	if e != nil {
+		if ae, ok := e.(*api.Error); ok && (ae.Code == "STREAM_INTERRUPTED" || ae.Code == "RESULT_UNKNOWN") {
+			unknown := &api.Error{Code: "RESULT_UNKNOWN", Detail: ae.Detail}
+			if onProgress != nil {
+				onProgress(api.ProfileProgress{ExecutionID: executionID, Stage: "unknown", Step: -1, Failure: &api.ProfileFailure{Code: unknown.Code, Detail: unknown.Detail, Step: -1}})
+			}
+			return r, unknown
+		}
 		return r, e
 	}
 	defer s.Close()
+	if onProgress != nil {
+		onProgress(api.ProfileProgress{ExecutionID: executionID, Stage: "accepted", Step: -1})
+	}
 	for {
 		m, e := s.Recv()
 		if e != nil {
 			if ae, ok := e.(*api.Error); ok && ae.Code != "STREAM_INTERRUPTED" {
+				var progress api.ProfileProgress
+				if len(ae.Payload) != 0 && json.Unmarshal(ae.Payload, &progress) == nil && progress.ExecutionID == executionID && onProgress != nil {
+					onProgress(progress)
+				}
 				return r, e
 			}
-			return r, &api.Error{Code: "RESULT_UNKNOWN", Detail: e.Error()}
+			unknown := &api.Error{Code: "RESULT_UNKNOWN", Detail: e.Error()}
+			if onProgress != nil {
+				onProgress(api.ProfileProgress{ExecutionID: executionID, Stage: "unknown", Step: -1, Failure: &api.ProfileFailure{Code: unknown.Code, Detail: unknown.Detail, Step: -1}})
+			}
+			return r, unknown
 		}
 		if m.Kind == "progress" {
+			var progress api.ProfileProgress
+			if err := wire.Decode(m, &progress); err != nil || progress.ExecutionID != executionID {
+				return r, fmt.Errorf("invalid Profile progress")
+			}
+			if onProgress != nil {
+				onProgress(progress)
+			}
 			continue
 		}
 		if m.Kind != "result" {
 			return r, fmt.Errorf("expected Profile result")
 		}
-		return r, wire.Decode(m, &r)
+		if err := wire.Decode(m, &r); err != nil {
+			return r, err
+		}
+		if onProgress != nil {
+			onProgress(api.ProfileProgress{ExecutionID: executionID, Stage: "succeeded", Step: -1, StepsCompleted: r.StepsCompleted})
+		}
+		return r, nil
 	}
+}
+
+func emitProfileFailure(executionID string, err *api.Error, onProgress func(api.ProfileProgress)) {
+	if onProgress == nil {
+		return
+	}
+	failure := &api.ProfileFailure{Code: err.Code, Detail: err.Detail, Step: -1}
+	onProgress(api.ProfileProgress{ExecutionID: executionID, Stage: "failed", Step: -1, Failure: failure})
+}
+
+// ProfileStatus queries an attempt without executing or retrying it.
+func (c *Client) ProfileStatus(ctx context.Context, executionID string) (api.ProfileStatus, error) {
+	var out api.ProfileStatus
+	if err := api.ValidateExecutionID(executionID); err != nil {
+		return out, &api.Error{Code: "INVALID_ARGUMENT", Detail: err.Error()}
+	}
+	err := c.Call(ctx, "profile.status", api.ProfileStatusRequest{ExecutionID: executionID}, &out)
+	return out, err
 }
 
 func (c *Client) Start(ctx context.Context, p api.Profile) (api.Runtime, *Stream, error) {

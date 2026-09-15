@@ -17,7 +17,8 @@ import (
 
 // PeerAccess is carried only inside the mutually authenticated peer stream.
 // It is short-lived and single-use at the owner. The owner revalidates the
-// enterprise/local session, current Runner state and policy independently.
+// browser session when present, plus current Runner state and policy. A
+// background marker is accepted only from another authenticated Dune peer.
 type PeerAccess struct {
 	Nonce, SourceBootID, OwnerBootID, Target, Namespace, RequestDigest string
 	ExpiresAt                                                          int64
