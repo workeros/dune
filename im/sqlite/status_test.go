@@ -63,4 +63,20 @@ func TestBindingStatsCountDurableUnknownStates(t *testing.T) {
 	if err != nil || other != (channel.BindingStats{}) {
 		t.Fatalf("stats leaked across bindings: %+v %v", other, err)
 	}
+	issues, err := store.ListIssues(ctx, "bot", 10)
+	if err != nil || len(issues.Events) != 1 || len(issues.Conversations) != 1 || len(issues.Deliveries) != 1 {
+		t.Fatalf("durable issues: %+v %v", issues, err)
+	}
+	if issues.Events[0].EventID != "event" || issues.Events[0].State != "unknown" || issues.Events[0].Attempts != 1 ||
+		issues.Conversations[0].Key != key || issues.Conversations[0].CurrentEventID != "event" ||
+		issues.Deliveries[0].ID != "delivery" || issues.Deliveries[0].Phase != "unknown" || issues.Deliveries[0].Operation != "send" {
+		t.Fatalf("issue identity or pending operation missing: %+v", issues)
+	}
+	otherIssues, err := store.ListIssues(ctx, "another-bot", 10)
+	if err != nil || len(otherIssues.Events)+len(otherIssues.Conversations)+len(otherIssues.Deliveries) != 0 {
+		t.Fatalf("issues leaked across bindings: %+v %v", otherIssues, err)
+	}
+	if _, err := store.ListIssues(ctx, "bot", 101); err == nil {
+		t.Fatal("unbounded issue lookup accepted")
+	}
 }

@@ -20,6 +20,7 @@ type ServiceStore interface {
 	channel.ConversationStore
 	channel.DeliveryStore
 	channel.StatusStore
+	channel.IssueStore
 }
 
 type CredentialResolver interface {
@@ -95,6 +96,19 @@ func (s *Service) Status(ctx context.Context, tenantID, bindingID string) (Bindi
 	}
 	s.mu.RUnlock()
 	return status, nil
+}
+
+// Issues returns bounded, read-only recovery context for a Tenant-owned bot.
+// It deliberately cannot authorize or perform a replay of an uncertain turn.
+func (s *Service) Issues(ctx context.Context, tenantID, bindingID string, perCategoryLimit int) (channel.BindingIssues, error) {
+	binding, found, err := s.store.GetBinding(ctx, tenantID, bindingID)
+	if err != nil {
+		return channel.BindingIssues{}, err
+	}
+	if !found || binding.Provider != Kind {
+		return channel.BindingIssues{}, errors.New("Feishu Binding not found in Tenant")
+	}
+	return s.store.ListIssues(ctx, bindingID, perCategoryLimit)
 }
 
 func NewService(store ServiceStore, credentials CredentialResolver, agents channel.AgentBackend) (*Service, error) {

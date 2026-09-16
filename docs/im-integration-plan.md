@@ -81,7 +81,7 @@ Registry 按 `Provider.Kind()` 注册实现，不把未来平台写进封闭枚�
 
 `Send` 用于最终回复；可选 `StreamingChannel` 表示 Provider 能在同一条回复上连续更新。`OutboundMessage` 携带稳定 `DeliveryID` 和已路由的 `SessionKey`；`ReplyStream.Update` 接收当前**累计全文**，由单个会话处理器串行调用。公共 `DeliveryStore` 为三种回复模式原子预留 `(BindingID, DeliveryID)` 并对版本做 CAS，记录会话、回复地址、模式、阶段、待处理操作和结果未知状态；公共 `DeliveryManager` 与存储边界共同约束 `reserved → pending → active/complete/unknown`，不可变更会话、回复地址、模式或 Provider 状态版本，也不能跳过持久意图。Provider 自己定义带版本的 `provider_state`：飞书保存 CardKit card ID、message ID、sequence 与已确认正文，其他平台不承担 CardKit 字段或流式能力。任何外部投递操作先持久化意图；结果未知时先核查，不自动重建或重发。公共 AgentBackend 将输出归一为 `Delta`、`Final`、`Error` 事件；是否有可靠增量输出是 AgentBackend 的能力，不由飞书 Provider 推断。
 
-公共 Registry 按 Provider Kind 解析实现；飞书 `Service` 提供 Tenant 多 Binding 启停、配置同步与只读 `Status`。状态区分 callback handler 已就绪、WebSocket 连接中/已连接/重连中/失败和持久队列的 queued/claimed/submitting/failed/unknown 数量；`callback_ready` 不证明公网可达。SQLite Inbox 对每个 Binding 的待处理事件设容量上限（默认 10000）、单事件大小上限（默认 256 KiB）和领取次数上限（默认 5 次）；领取失败或领取租约过期达到上限时转为可观测的 `failed`，不再立即重试。队列满时已存事件仍幂等确认，新事件返回错误供平台重投。入站队列与同 session 串行性由持久存储和租约保证，跨 session 可并行；多实例部署时需要共享存储，不能只依赖本进程 mutex。
+公共 Registry 按 Provider Kind 解析实现；飞书 `Service` 提供 Tenant 多 Binding 启停、配置同步与只读 `Status`、`Issues`。状态区分 callback handler 已就绪、WebSocket 连接中/已连接/重连中/失败和持久队列的 queued/claimed/submitting/failed/unknown 数量；`callback_ready` 不证明公网可达。`Issues` 按 Tenant 限定 Binding，分别有界列出待核查的入站事件、会话和投递，包含稳定 ID、阶段、操作与错误，但不含原始入站正文或凭据；它不负责确认结果或重放。SQLite Inbox 对每个 Binding 的待处理事件设容量上限（默认 10000）、单事件大小上限（默认 256 KiB）和领取次数上限（默认 5 次）；领取失败或领取租约过期达到上限时转为可观测的 `failed`，不再立即重试。队列满时已存事件仍幂等确认，新事件返回错误供平台重投。入站队列与同 session 串行性由持久存储和租约保证，跨 session 可并行；多实例部署时需要共享存储，不能只依赖本进程 mutex。
 
 ## 飞书配置与两种入口
 

@@ -160,6 +160,12 @@ func TestLoadTenantSynchronizesMultipleBotsAndDisablesOne(t *testing.T) {
 	if err != nil || status.TransportState != "callback_ready" || status.Stats.Queued != 0 {
 		t.Fatalf("initial callback status: %+v %v", status, err)
 	}
+	if _, err := service.Issues(ctx, "another-tenant", "bot-a", 10); err == nil {
+		t.Fatal("another Tenant inspected this bot's recovery state")
+	}
+	if issues, err := service.Issues(ctx, "tenant-a", "bot-a", 10); err != nil || len(issues.Events)+len(issues.Conversations)+len(issues.Deliveries) != 0 {
+		t.Fatalf("initial recovery issues: %+v %v", issues, err)
+	}
 	for _, binding := range bindings {
 		if _, err := service.LookupBinding(ctx, binding.ID); err != nil {
 			t.Fatalf("%s inactive: %v", binding.ID, err)
