@@ -128,7 +128,10 @@ fabricd 的一个小型 cleanup 子进程仅在内存记录其创建的上传临
 | show | directory、可选 ref |
 | stage / unstage / discard | paths 或 patch 二选一；discard 作用于工作区 |
 | commit / amend | message；amend 可空 message 保留原文 |
-| branch | 无 name 时列分支；name 创建，可带起点 ref |
+| branch | 无 name 时列本地和远端分支，返回 branches（完整 ref、短名、类别、commit、符号引用目标、是否当前分支）；name 创建，可带起点 ref |
+| head | 返回 head（完整分支 ref、commit、detached、unborn）；尚无提交的分支仍返回 ref |
+| remotes | 返回已配置 remote 的名称列表 |
+| operation | 返回 operation：none、merge 或 rebase；与冲突文件是否已解决无关 |
 | checkout | ref；或 create=true + name，可带起点 ref |
 | stash | mode=push/list/apply/pop/drop，可带 message/ref/paths（按操作） |
 | fetch / pull / push | 可选 remote/ref；pull 使用 merge、不开编辑器 |

@@ -83,7 +83,7 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		r.Suboperation = a.Action
 		r.Mode = a.Mode
 		r.Resource.Directory = a.Directory
-		if !oneOf(a.Action, "status", "diff", "log", "show", "stage", "unstage", "discard", "commit", "amend", "branch", "checkout", "stash", "fetch", "pull", "push", "merge", "rebase", "conflicts") {
+		if !oneOf(a.Action, "status", "diff", "log", "show", "stage", "unstage", "discard", "commit", "amend", "branch", "head", "remotes", "operation", "checkout", "stash", "fetch", "pull", "push", "merge", "rebase", "conflicts") {
 			return r, ErrDenied
 		}
 		switch a.Action {

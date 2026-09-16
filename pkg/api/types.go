@@ -313,10 +313,28 @@ type GitEntry struct {
 	Path     string `json:"path"`
 	Original string `json:"original,omitempty"`
 }
+type GitBranch struct {
+	Ref            string `json:"ref"`
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	Commit         string `json:"commit"`
+	SymbolicTarget string `json:"symbolic_target,omitempty"`
+	Current        bool   `json:"current"`
+}
+type GitHead struct {
+	Ref      string `json:"ref,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+	Detached bool   `json:"detached"`
+	Unborn   bool   `json:"unborn"`
+}
 type GitResult struct {
 	ExecResult
-	Entries   []GitEntry `json:"entries,omitempty"`
-	Conflicts []string   `json:"conflicts,omitempty"`
+	Entries   []GitEntry  `json:"entries,omitempty"`
+	Branches  []GitBranch `json:"branches,omitempty"`
+	Head      *GitHead    `json:"head,omitempty"`
+	Remotes   []string    `json:"remotes,omitempty"`
+	Operation string      `json:"operation,omitempty"`
+	Conflicts []string    `json:"conflicts,omitempty"`
 }
 type Port struct {
 	Port int `json:"port"`

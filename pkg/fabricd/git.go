@@ -2,9 +2,11 @@ package fabricd
 
 import (
 	"fmt"
-	"github.com/aiomni/dune/pkg/api"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/aiomni/dune/pkg/api"
 )
 
 func gitArgs(a api.Git) ([]string, error) {
@@ -103,13 +105,21 @@ func gitArgs(a api.Git) ([]string, error) {
 			add("-m", a.Message)
 		}
 	case "branch":
-		add("branch")
-		if a.Name != "" {
+		if a.Name == "" {
+			add("for-each-ref", "--format=%(refname)%09%(refname:lstrip=2)%09%(objectname)%09%(symref)%09%(HEAD)", "refs/heads", "refs/remotes")
+		} else {
+			add("branch")
 			add(a.Name)
 			if a.Ref != "" {
 				add(a.Ref)
 			}
 		}
+	case "head":
+		add("status", "--porcelain=v2", "--branch", "--untracked-files=no")
+	case "remotes":
+		add("remote")
+	case "operation":
+		add("rev-parse", "--absolute-git-dir")
 	case "checkout":
 		add("checkout")
 		if a.Create {
@@ -220,6 +230,9 @@ func (d *Engine) git(a api.Git) (any, error) {
 		return nil, e
 	}
 	out := api.GitResult{ExecResult: r}
+	if r.ExitCode != 0 {
+		return out, nil
+	}
 	if a.Action == "status" {
 		entries := strings.Split(strings.TrimSuffix(r.Stdout, "\x00"), "\x00")
 		for i := 0; i < len(entries); i++ {
@@ -233,6 +246,81 @@ func (d *Engine) git(a api.Git) (any, error) {
 				item.Original = entries[i]
 			}
 			out.Entries = append(out.Entries, item)
+		}
+	}
+	if a.Action == "branch" && a.Name == "" {
+		lines := strings.Split(strings.TrimSuffix(r.Stdout, "\n"), "\n")
+		if r.StdoutTruncated {
+			lines = lines[:len(lines)-1]
+		}
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			fields := strings.Split(line, "\t")
+			if len(fields) != 5 {
+				return nil, fmt.Errorf("invalid Git branch output")
+			}
+			kind := "local"
+			if strings.HasPrefix(fields[0], "refs/remotes/") {
+				kind = "remote"
+			}
+			out.Branches = append(out.Branches, api.GitBranch{Ref: fields[0], Name: fields[1], Kind: kind, Commit: fields[2], SymbolicTarget: fields[3], Current: fields[4] == "*"})
+		}
+	}
+	if a.Action == "head" {
+		head := &api.GitHead{}
+		for _, line := range strings.Split(r.Stdout, "\n") {
+			switch {
+			case strings.HasPrefix(line, "# branch.oid "):
+				head.Commit = strings.TrimPrefix(line, "# branch.oid ")
+				if head.Commit == "(initial)" {
+					head.Commit = ""
+					head.Unborn = true
+				}
+			case strings.HasPrefix(line, "# branch.head "):
+				name := strings.TrimPrefix(line, "# branch.head ")
+				if name == "(detached)" {
+					head.Detached = true
+				} else {
+					head.Ref = "refs/heads/" + name
+				}
+			}
+		}
+		if head.Ref == "" && !head.Detached {
+			return nil, fmt.Errorf("missing Git HEAD in status output")
+		}
+		out.Head = head
+	}
+	if a.Action == "remotes" && r.Stdout != "" {
+		out.Remotes = strings.Split(strings.TrimSuffix(r.Stdout, "\n"), "\n")
+	}
+	if a.Action == "operation" {
+		gitDir := strings.TrimSpace(r.Stdout)
+		if !filepath.IsAbs(gitDir) {
+			return nil, fmt.Errorf("invalid Git directory")
+		}
+		present := func(name string) (bool, error) {
+			_, err := os.Stat(filepath.Join(gitDir, name))
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return err == nil, err
+		}
+		out.Operation = "none"
+		for _, name := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
+			found, err := present(name)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				if name == "MERGE_HEAD" {
+					out.Operation = "merge"
+				} else {
+					out.Operation = "rebase"
+				}
+				break
+			}
 		}
 	}
 	if a.Action == "conflicts" && r.Stdout != "" {

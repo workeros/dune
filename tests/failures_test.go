@@ -142,6 +142,15 @@ func TestGitConflicts(t *testing.T) {
 			t.Fatal(r)
 		}
 	}
+	if head := g(api.Git{Action: "head"}, true).Head; head == nil || head.Ref != "refs/heads/main" || !head.Unborn || head.Commit != "" || head.Detached {
+		t.Fatal("unborn HEAD", head)
+	}
+	if branches := g(api.Git{Action: "branch"}, true).Branches; len(branches) != 0 {
+		t.Fatal("unborn branch should not be a ref", branches)
+	}
+	if operation := g(api.Git{Action: "operation"}, true).Operation; operation != "none" {
+		t.Fatal("unexpected operation", operation)
+	}
 	write := func(s string) { must(t, os.WriteFile(filepath.Join(h.dir, "conflict"), []byte(s+"\n"), 0600)) }
 	commit := func(msg string) {
 		g(api.Git{Action: "stage", Paths: []string{"conflict"}}, true)
@@ -149,6 +158,30 @@ func TestGitConflicts(t *testing.T) {
 	}
 	write("base")
 	commit("base")
+	if r := h.exec("git", "remote", "add", "origin", h.dir); r.ExitCode != 0 {
+		t.Fatal(r)
+	}
+	if r := h.exec("git", "fetch", "origin"); r.ExitCode != 0 {
+		t.Fatal(r)
+	}
+	if remotes := g(api.Git{Action: "remotes"}, true).Remotes; len(remotes) != 1 || remotes[0] != "origin" {
+		t.Fatal("remote list", remotes)
+	}
+	branches := g(api.Git{Action: "branch"}, true).Branches
+	byRef := make(map[string]api.GitBranch, len(branches))
+	for _, branch := range branches {
+		byRef[branch.Ref] = branch
+	}
+	local, remote := byRef["refs/heads/main"], byRef["refs/remotes/origin/main"]
+	if local.Name != "main" || local.Kind != "local" || !local.Current || local.Commit == "" || remote.Name != "origin/main" || remote.Kind != "remote" || remote.Commit != local.Commit {
+		t.Fatal("local and remote branches", branches)
+	}
+	if alias, ok := byRef["refs/remotes/origin/HEAD"]; ok && (alias.Name != "origin/HEAD" || alias.SymbolicTarget != "refs/remotes/origin/main") {
+		t.Fatal("remote HEAD alias", alias)
+	}
+	if head := g(api.Git{Action: "head"}, true).Head; head == nil || head.Ref != "refs/heads/main" || head.Commit == "" || head.Unborn || head.Detached {
+		t.Fatal("attached HEAD", head)
+	}
 	g(api.Git{Action: "branch", Name: "feature"}, true)
 	write("main")
 	commit("main")
@@ -158,6 +191,9 @@ func TestGitConflicts(t *testing.T) {
 	g(api.Git{Action: "checkout", Ref: "main"}, true)
 	for _, mode := range []string{"abort", "continue"} {
 		g(api.Git{Action: "merge", Ref: "feature"}, false)
+		if operation := g(api.Git{Action: "operation"}, true).Operation; operation != "merge" {
+			t.Fatal("merge operation", operation)
+		}
 		r := g(api.Git{Action: "conflicts"}, true)
 		if len(r.Conflicts) != 1 || r.Conflicts[0] != "conflict" {
 			t.Fatal(r)
@@ -165,6 +201,9 @@ func TestGitConflicts(t *testing.T) {
 		if mode == "continue" {
 			write("resolved")
 			g(api.Git{Action: "stage", Paths: []string{"conflict"}}, true)
+			if operation := g(api.Git{Action: "operation"}, true).Operation; operation != "merge" {
+				t.Fatal("merge after conflict resolution", operation)
+			}
 		}
 		g(api.Git{Action: "merge", Mode: mode}, true)
 	}
@@ -174,12 +213,27 @@ func TestGitConflicts(t *testing.T) {
 	commit("new feature")
 	for _, mode := range []string{"abort", "continue"} {
 		g(api.Git{Action: "rebase", Ref: "main"}, false)
+		if operation := g(api.Git{Action: "operation"}, true).Operation; operation != "rebase" {
+			t.Fatal("rebase operation", operation)
+		}
 		g(api.Git{Action: "conflicts"}, true)
 		if mode == "continue" {
 			write("rebased")
 			g(api.Git{Action: "stage", Paths: []string{"conflict"}}, true)
+			if operation := g(api.Git{Action: "operation"}, true).Operation; operation != "rebase" {
+				t.Fatal("rebase after conflict resolution", operation)
+			}
 		}
 		g(api.Git{Action: "rebase", Mode: mode}, true)
+	}
+	if operation := g(api.Git{Action: "operation"}, true).Operation; operation != "none" {
+		t.Fatal("operation after resolution", operation)
+	}
+	if r := h.exec("git", "checkout", "--detach"); r.ExitCode != 0 {
+		t.Fatal(r)
+	}
+	if head := g(api.Git{Action: "head"}, true).Head; head == nil || !head.Detached || head.Ref != "" || head.Commit == "" || head.Unborn {
+		t.Fatal("detached HEAD", head)
 	}
 	if r := g(api.Git{Action: "status"}, true); strings.Contains(r.Stdout, "UU") {
 		t.Fatal(r)
