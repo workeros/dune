@@ -273,6 +273,14 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		query := url.Values{"machine_id": {b.MachineID}, "fabric_id": {b.FabricID}, "revision": {fmt.Sprint(b.Revision)}}
 		return "api/v1/runners/" + selected.ID + "/" + suffix + "?" + query.Encode()
 	}
+	var executed api.ExecResult
+	do("POST", executionRoute("call"), map[string]any{
+		"operation": "exec",
+		"payload":   api.Exec{Command: api.Command{Argv: []string{"/bin/sh", "-c", "printf web-call-exec"}}, WorkingDirectory: dir},
+	}, &executed)
+	if executed.ExitCode != 0 || executed.Stdout != "web-call-exec" {
+		t.Fatalf("Web call did not forward exec: %+v", executed)
+	}
 	var runtime api.Runtime
 	do("POST", executionRoute("sessions"), profile(dir, "pty", "/bin/sh"), &runtime)
 	eventRoute := strings.Replace(executionRoute("sessions/"+runtime.ID+"/events"), "api/v1/", "api/v1/ws/", 1)

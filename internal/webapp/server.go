@@ -596,30 +596,6 @@ func (s *Server) call(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	switch request.Operation {
-	case "acp.action", "acp.state", "machine.info", "agent.config", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history":
-	case "files":
-		var f api.File
-		if json.Unmarshal(request.Payload, &f) != nil || !workbenchFileAction(f.Action) {
-			writeError(w, 400, "UNSUPPORTED", "unsupported workbench file action")
-			return
-		}
-	case "upload":
-		var u api.Upload
-		if json.Unmarshal(request.Payload, &u) != nil || !workbenchUploadAction(u.Action) {
-			writeError(w, 400, "UNSUPPORTED", "unsupported workbench upload action")
-			return
-		}
-	case "git":
-		var g api.Git
-		if json.Unmarshal(request.Payload, &g) != nil || !workbenchGitAction(g.Action) {
-			writeError(w, 400, "UNSUPPORTED", "unsupported workbench Git action")
-			return
-		}
-	default:
-		writeError(w, 400, "UNSUPPORTED", "unsupported workbench operation")
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	var out json.RawMessage
@@ -631,33 +607,6 @@ func (s *Server) call(w http.ResponseWriter, r *http.Request) {
 		out = json.RawMessage("null")
 	}
 	writeJSON(w, 200, out)
-}
-
-func workbenchFileAction(action string) bool {
-	switch action {
-	case "stat", "list", "list_page", "search", "read", "write", "mkdir", "rename", "remove":
-		return true
-	default:
-		return false
-	}
-}
-
-func workbenchUploadAction(action string) bool {
-	switch action {
-	case "create", "query", "chunk", "commit", "cancel":
-		return true
-	default:
-		return false
-	}
-}
-
-func workbenchGitAction(action string) bool {
-	switch action {
-	case "status", "diff", "log", "show", "stage", "unstage", "discard", "commit", "amend", "branch", "checkout", "stash", "fetch", "pull", "push", "merge", "rebase", "conflicts":
-		return true
-	default:
-		return false
-	}
 }
 
 func operationError(w http.ResponseWriter, err error) {
