@@ -68,6 +68,28 @@ func localDirectEvent(eventID, messageID, sender, text string) []byte {
 	return event
 }
 
+func localGroupEvent(eventID, messageID, sender, rootID, threadID string, mentionBot bool) []byte {
+	content, _ := json.Marshal(map[string]string{"text": "question " + messageID})
+	message := map[string]any{
+		"message_id": messageID, "chat_id": "oc_group", "chat_type": "group", "message_type": "text", "content": string(content),
+	}
+	if rootID != "" {
+		message["root_id"] = rootID
+	}
+	if threadID != "" {
+		message["thread_id"] = threadID
+	}
+	if mentionBot {
+		message["mentions"] = []any{map[string]any{"id": map[string]string{"open_id": "ou_this_bot"}, "mentioned_type": "bot"}}
+	}
+	event, _ := json.Marshal(map[string]any{
+		"schema": "2.0",
+		"header": map[string]string{"event_id": eventID, "event_type": "im.message.receive_v1", "app_id": testAppID, "token": testToken},
+		"event":  map[string]any{"sender": map[string]any{"sender_id": map[string]string{"open_id": sender}, "sender_type": "user"}, "message": message},
+	})
+	return event
+}
+
 func TestCallbackRunWorkerSeparatesUsersAndReusesDirectSession(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
@@ -238,5 +260,121 @@ func TestExternalStopCancelsRunWorkers(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("external Stop did not cancel Run workers")
+	}
+}
+
+func TestCallbackRunWorkerKeepsGroupThreadAcrossMembers(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
+	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
+		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
+	agents := &localAgentBackend{starts: map[string]int{}, attaches: map[string]int{}}
+	service, err := NewService(store, &testCredentialResolver{data: secret}, agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop(context.Background())
+	if err := service.Activate(ctx, binding); err != nil {
+		t.Fatal(err)
+	}
+	type sentReply struct {
+		path string
+		body map[string]any
+	}
+	replies := make(chan sentReply, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+		case "/open-apis/bot/v3/info":
+			_, _ = io.WriteString(w, `{"code":0,"bot":{"open_id":"ou_this_bot"}}`)
+		default:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode group reply: %v", err)
+			}
+			replies <- sentReply{path: r.URL.Path, body: body}
+			_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_bot_reply"}}`)
+		}
+	}))
+	defer server.Close()
+	service.bindings[binding.ID].channel.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+	handler, err := service.CallbackHandler("tenant-a", binding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- service.Run(runCtx, 1, func(err error) { t.Errorf("worker: %v", err) }) }()
+	events := []struct {
+		id, message, sender, root, thread string
+		mention                           bool
+	}{
+		{"event-root", "om_root", "ou_alice", "", "", true},
+		{"event-child", "om_child", "ou_bob", "om_root", "omt_topic", false},
+		{"event-new", "om_new", "ou_bob", "", "", true},
+	}
+	for _, event := range events {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, serviceSignedCallback(t, localGroupEvent(event.id, event.message, event.sender, event.root, event.thread, event.mention), testEncryptKey))
+		if response.Code != http.StatusOK {
+			t.Fatalf("callback %s: status=%d body=%q", event.id, response.Code, response.Body.String())
+		}
+		select {
+		case reply := <-replies:
+			if reply.path != "/open-apis/im/v1/messages/"+event.message+"/reply" || reply.body["reply_in_thread"] != true || reply.body["uuid"] == "" {
+				t.Fatalf("reply escaped group topic: %+v", reply)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no group reply for %s", event.id)
+		}
+	}
+	rootKey := channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a", ChatID: "oc_group", SubjectID: "om_root"}
+	newKey := channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a", ChatID: "oc_group", SubjectID: "om_new"}
+	for _, key := range []channel.SessionKey{rootKey, newKey} {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			session, state, found, err := store.Get(ctx, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found && state == channel.ConversationReady {
+				if key == rootKey && session.ProviderThreadRef != "omt_topic" {
+					t.Fatalf("thread reference was not bound to canonical root: %+v", session)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("group session %s did not become ready: found=%t state=%s", key.SubjectID, found, state)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	agents.mu.Lock()
+	rootStarts, rootAttaches := agents.starts[rootKey.String()], agents.attaches[rootKey.String()]
+	newStarts, newAttaches := agents.starts[newKey.String()], agents.attaches[newKey.String()]
+	agents.mu.Unlock()
+	if rootStarts != 1 || rootAttaches != 1 || newStarts != 1 || newAttaches != 0 {
+		t.Fatalf("group topic lifecycle: root=%d/%d new=%d/%d", rootStarts, rootAttaches, newStarts, newAttaches)
+	}
+	cancel()
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("group worker did not stop")
 	}
 }
