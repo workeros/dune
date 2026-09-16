@@ -37,6 +37,7 @@ type Service struct {
 	mu          sync.RWMutex
 	bindings    map[string]*runningBinding
 	closed      bool
+	running     bool
 	wg          sync.WaitGroup
 }
 
@@ -331,21 +332,37 @@ func (s *Service) Run(ctx context.Context, workers int, onError func(error)) err
 	if workers < 1 || workers > 16 {
 		return errors.New("Feishu worker count must be 1..16")
 	}
+	s.mu.Lock()
+	if s.closed || s.running {
+		s.mu.Unlock()
+		return errors.New("Feishu service is closed or already running")
+	}
+	s.running = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}()
+	runCtx, cancelRun := context.WithCancel(ctx)
+	stopOnServiceClose := context.AfterFunc(s.lifetime, cancelRun)
+	defer stopOnServiceClose()
+	defer cancelRun()
 	processor := channel.Processor{Work: s.store, Conversations: s.store, Deliveries: s.store, Bindings: s, Agents: s.agents}
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for ctx.Err() == nil {
-				found, err := processor.ProcessOne(ctx)
-				if err != nil && onError != nil && ctx.Err() == nil {
+			for runCtx.Err() == nil {
+				found, err := processor.ProcessOne(runCtx)
+				if err != nil && onError != nil && runCtx.Err() == nil {
 					onError(err)
 				}
 				if err != nil || !found {
 					timer := time.NewTimer(250 * time.Millisecond)
 					select {
-					case <-ctx.Done():
+					case <-runCtx.Done():
 						timer.Stop()
 					case <-timer.C:
 					}
@@ -353,7 +370,7 @@ func (s *Service) Run(ctx context.Context, workers int, onError func(error)) err
 			}
 		}()
 	}
-	<-ctx.Done()
+	<-runCtx.Done()
 	stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stopErr := s.Stop(stopCtx)
