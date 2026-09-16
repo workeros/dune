@@ -163,6 +163,9 @@ func TestLoadTenantSynchronizesMultipleBotsAndDisablesOne(t *testing.T) {
 	if _, err := service.Issues(ctx, "another-tenant", "bot-a", 10); err == nil {
 		t.Fatal("another Tenant inspected this bot's recovery state")
 	}
+	if err := service.ReconcileConfirmedDelivery(ctx, "another-tenant", channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a", ChatID: "chat", SubjectID: "user"}, "event"); err == nil {
+		t.Fatal("another Tenant reconciled this bot's recovery state")
+	}
 	if issues, err := service.Issues(ctx, "tenant-a", "bot-a", 10); err != nil || len(issues.Events)+len(issues.Conversations)+len(issues.Deliveries) != 0 {
 		t.Fatalf("initial recovery issues: %+v %v", issues, err)
 	}

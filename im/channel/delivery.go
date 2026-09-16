@@ -2,9 +2,18 @@ package channel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 )
+
+// TurnDeliveryID names exactly one outbound response for a durably accepted
+// event. Recovery uses the same mapping without re-running the Agent turn.
+func TurnDeliveryID(bindingID, eventID string) string {
+	digest := sha256.Sum256([]byte(bindingID + "\x00" + eventID))
+	return "im-" + hex.EncodeToString(digest[:])
+}
 
 // Delivery is one Agent turn's outbound response. Pending and unknown phases
 // require reconciliation before any external operation can be replayed.

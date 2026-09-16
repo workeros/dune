@@ -21,6 +21,7 @@ type ServiceStore interface {
 	channel.DeliveryStore
 	channel.StatusStore
 	channel.IssueStore
+	channel.RecoveryStore
 }
 
 type CredentialResolver interface {
@@ -110,6 +111,23 @@ func (s *Service) Issues(ctx context.Context, tenantID, bindingID string, perCat
 		return channel.BindingIssues{}, errors.New("Feishu Binding not found in Tenant")
 	}
 	return s.store.ListIssues(ctx, bindingID, perCategoryLimit)
+}
+
+// ReconcileConfirmedDelivery clears only the unknown bookkeeping left after
+// this turn's delivery was durably confirmed complete. It never resends a
+// message or Agent prompt, and it remains Tenant-scoped.
+func (s *Service) ReconcileConfirmedDelivery(ctx context.Context, tenantID string, key channel.SessionKey, eventID string) error {
+	if tenantID == "" || key.TenantID != tenantID || key.BindingID == "" {
+		return errors.New("Feishu recovery scope does not match Tenant or Binding")
+	}
+	binding, found, err := s.store.GetBinding(ctx, tenantID, key.BindingID)
+	if err != nil {
+		return err
+	}
+	if !found || binding.Provider != Kind {
+		return errors.New("Feishu Binding not found in Tenant")
+	}
+	return s.store.ReconcileConfirmedDelivery(ctx, key, eventID)
 }
 
 func NewService(store ServiceStore, credentials CredentialResolver, agents channel.AgentBackend) (*Service, error) {

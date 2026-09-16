@@ -2,8 +2,6 @@ package channel
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -161,7 +159,7 @@ func (p Processor) executeTurn(ctx context.Context, item WorkItem, active Active
 	if err != nil {
 		return err
 	}
-	delivery := turnDeliveryID(item.Message)
+	delivery := TurnDeliveryID(item.Message.BindingID, item.Message.EventID)
 	const contextLostNotice = "⚠️ 上下文未恢复，已创建新会话。\n\n"
 	visiblePrefix := ""
 	if backendSession.ContextLost {
@@ -259,9 +257,4 @@ func (p Processor) unknownSession(ctx context.Context, lease ConversationLease, 
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	return p.Conversations.UnknownTurn(cleanupCtx, lease, cause.Error())
-}
-
-func turnDeliveryID(message InboundMessage) string {
-	digest := sha256.Sum256([]byte(message.BindingID + "\x00" + message.EventID))
-	return "im-" + hex.EncodeToString(digest[:])
 }
