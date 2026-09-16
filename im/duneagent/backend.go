@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aiomni/dune/im/channel"
@@ -49,6 +50,11 @@ func (b Backend) Capabilities(ctx context.Context, session channel.ConversationS
 	}
 	if config.Adapter != "acp" {
 		return channel.AgentCapabilities{Adapter: config.Adapter}, nil
+	}
+	profile := config.Profile(session.Target.WorkingDirectory)
+	profile.ManagedACP = true
+	if err := profile.Validate(); err != nil {
+		return channel.AgentCapabilities{}, fmt.Errorf("invalid managed ACP Profile: %w", err)
 	}
 	return channel.AgentCapabilities{Adapter: "acp", AssistantDeltas: true, ReliableFinal: true}, nil
 }
@@ -226,6 +232,16 @@ func toRuntime(handle channel.RuntimeHandle) api.Runtime {
 }
 
 var _ channel.AgentBackend = Backend{}
+var _ channel.AgentInputValidator = Backend{}
+
+// fabricd rejects prompts longer than 64 KiB before sending them to ACP.
+// Preflight this bound so the durable inbox stays retryable, not unknown.
+func (Backend) ValidateInput(input string) error {
+	if strings.TrimSpace(input) == "" || len(input) > 64*1024 {
+		return errors.New("IM ACP prompt must contain 1..65536 bytes of non-whitespace text")
+	}
+	return nil
+}
 
 // NormalizeAssistantUpdate accepts only visible answer text. Thinking, tool
 // events and user echoes never become card deltas or final reply content.

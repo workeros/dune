@@ -122,6 +122,12 @@ func (*fakeAgentBackend) Stop(context.Context, channel.ConversationSession, chan
 	return nil
 }
 
+type rejectingInputBackend struct{ *fakeAgentBackend }
+
+func (rejectingInputBackend) ValidateInput(string) error {
+	return errors.New("deterministic prompt validation failure")
+}
+
 func testProcessor(t *testing.T, streaming bool) (channel.Processor, *sqlite.Store, *fakeAgentBackend, *fakeReplyChannel) {
 	t.Helper()
 	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "im.db"))
@@ -162,6 +168,29 @@ func TestProcessorIsolatesPrivateUsersAndReusesTheirOwnSessions(t *testing.T) {
 		if err != nil || !found || delivery.Phase != "complete" || delivery.Mode != "final_text" || string(delivery.ProviderState) != `{"message_id":"test"}` {
 			t.Fatalf("final reply not durably completed: %+v found=%t err=%v", delivery, found, err)
 		}
+	}
+}
+
+func TestProcessorRejectsDeterministicInputBeforeSubmissionBarrier(t *testing.T) {
+	ctx := context.Background()
+	processor, store, backend, replies := testProcessor(t, false)
+	processor.Agents = rejectingInputBackend{backend}
+	message := channel.InboundMessage{BindingID: "bot-a", EventID: "invalid-input", MessageID: "invalid-input", ChatKind: channel.ChatDirect, ChatID: "p2p", SenderID: "user", Text: "invalid"}
+	if err := store.Insert(ctx, message); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := processor.ProcessOne(ctx); !found || err == nil {
+		t.Fatalf("deterministically invalid prompt was accepted: found=%t err=%v", found, err)
+	}
+	if backend.starts != 0 || len(backend.prompts) != 0 || len(replies.sends) != 0 {
+		t.Fatalf("invalid prompt caused an external operation: starts=%d prompts=%v replies=%v", backend.starts, backend.prompts, replies.sends)
+	}
+	key := channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a", ChatID: "p2p", SubjectID: "user"}
+	if _, state, found, err := store.Get(ctx, key); err != nil || !found || state != channel.ConversationReady {
+		t.Fatalf("invalid input made the session unknown: found=%t state=%s err=%v", found, state, err)
+	}
+	if item, found, err := store.Claim(ctx, time.Minute); err != nil || !found || item.Message.EventID != message.EventID {
+		t.Fatalf("preflight failure crossed the submission barrier: item=%+v found=%t err=%v", item, found, err)
 	}
 }
 

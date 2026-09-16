@@ -117,6 +117,11 @@ func (p Processor) processClaimed(ctx context.Context, item WorkItem, active Act
 			return errors.Join(errors.New("IM channel lacks streaming card support"), p.Conversations.ReleaseLease(ctx, lease), p.Work.ReleaseClaim(ctx, item))
 		}
 	}
+	if validator, ok := p.Agents.(AgentInputValidator); ok {
+		if err := validator.ValidateInput(item.Message.Text); err != nil {
+			return errors.Join(err, p.Conversations.ReleaseLease(ctx, lease), p.Work.ReleaseClaim(ctx, item))
+		}
+	}
 	// Persist the session barrier first. If the process dies during any later
 	// remote operation, another worker sees running and cannot take over.
 	if err := p.Conversations.BeginTurn(ctx, lease, item.Message.EventID); err != nil {

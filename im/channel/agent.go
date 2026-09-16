@@ -38,3 +38,10 @@ type AgentBackend interface {
 	Prompt(context.Context, ConversationSession, AgentSession, string, func(AgentEvent) error) (string, error)
 	Stop(context.Context, ConversationSession, AgentSession) error
 }
+
+// AgentInputValidator is optional. It rejects deterministic input errors
+// before the inbox crosses the prompt-submission barrier. It must not perform
+// any external side effect or submit an Agent request.
+type AgentInputValidator interface {
+	ValidateInput(string) error
+}

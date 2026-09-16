@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aiomni/dune/im/channel"
@@ -120,6 +121,26 @@ func TestBackendRejectsWrongTenantOrRunnerScope(t *testing.T) {
 	backend.Scopes = fakeScopes{scope: host.AgentScope{OwnerID: "tenant-a", RunnerID: "other-runner"}}
 	if _, err := backend.Start(context.Background(), conversation); err == nil {
 		t.Fatal("different Runner Agent scope accepted")
+	}
+}
+
+func TestCapabilitiesRejectsInvalidProfileBeforePromptSubmission(t *testing.T) {
+	backend, conversation, connection := testBackend()
+	conversation.Target.WorkingDirectory = "relative/path"
+	if _, err := backend.Capabilities(context.Background(), conversation); err == nil || connection.starts != 0 {
+		t.Fatalf("invalid Agent working directory reached runtime start: starts=%d err=%v", connection.starts, err)
+	}
+}
+
+func TestACPInputPreflightMatchesFabricdLimit(t *testing.T) {
+	backend := Backend{}
+	for _, input := range []string{"", " \n ", strings.Repeat("x", 64*1024+1)} {
+		if err := backend.ValidateInput(input); err == nil {
+			t.Fatalf("invalid prompt length %d accepted", len(input))
+		}
+	}
+	if err := backend.ValidateInput(strings.Repeat("x", 64*1024)); err != nil {
+		t.Fatalf("maximum valid prompt rejected: %v", err)
 	}
 }
 

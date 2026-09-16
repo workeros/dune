@@ -16,7 +16,10 @@ import (
 const maxAnswerBytes = 1 << 20
 
 func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSession, session channel.AgentSession, input string, emit func(channel.AgentEvent) error) (string, error) {
-	if strings.TrimSpace(input) == "" || emit == nil {
+	if err := b.ValidateInput(input); err != nil {
+		return "", err
+	}
+	if emit == nil {
 		return "", errors.New("IM ACP prompt and event receiver are required")
 	}
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
