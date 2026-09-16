@@ -86,3 +86,67 @@ func TestReconcileConfirmedDeliveryCompletesUnknownTurnWithoutReplay(t *testing.
 		t.Fatalf("reconciled session remained locked: %+v acquired=%t err=%v", nextLease, acquired, err)
 	}
 }
+
+func TestReconcileCompletedInboxRequiresExpiredWorkerLease(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	message := channel.InboundMessage{BindingID: "bot", EventID: "event-2", MessageID: "message-2", ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
+	if err := store.Insert(ctx, message); err != nil {
+		t.Fatal(err)
+	}
+	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("acquire: %t %v", acquired, err)
+	}
+	if err := store.BeginTurn(ctx, lease, message.EventID); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := store.Claim(ctx, time.Minute)
+	if err != nil || !found {
+		t.Fatalf("claim: %t %v", found, err)
+	}
+	if err := store.BeginSubmission(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	manager := channel.DeliveryManager{Store: store}
+	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: channel.TurnDeliveryID("bot", message.EventID), Session: key, Mode: "final_text", ProviderStateVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err = manager.Intent(ctx, delivery, "send", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Confirm(ctx, delivery, true, []byte(`{"message_id":"om_answer"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReconcileConfirmedDelivery(ctx, key, message.EventID); err == nil {
+		t.Fatal("live worker's completed event was reconciled before its lease expired")
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE im_conversations SET lease_until = 0 WHERE key_hash = ?`, key.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReconcileConfirmedDelivery(ctx, key, message.EventID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishTurn(ctx, lease); err == nil {
+		t.Fatal("stale worker finished a reconciled turn")
+	}
+	if _, state, found, err := store.Get(ctx, key); err != nil || !found || state != channel.ConversationReady {
+		t.Fatalf("reconciled completed inbox: state=%s found=%t err=%v", state, found, err)
+	}
+	if _, found, err := store.Claim(ctx, time.Minute); err != nil || found {
+		t.Fatalf("completed event was replayed: found=%t err=%v", found, err)
+	}
+}

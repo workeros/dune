@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/aiomni/dune/im/channel"
 )
 
-// ReconcileConfirmedDelivery atomically finishes an unknown event and its
-// conversation only when the matching delivery is already durably complete.
-// There is no remote call or replay in this path.
+// ReconcileConfirmedDelivery atomically finishes bookkeeping after a matching
+// delivery is durably complete. A still-running conversation requires an
+// expired lease so this cannot interrupt an active worker. There is no remote
+// call or replay in this path.
 func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.SessionKey, eventID string) error {
 	if !validSessionKey(key) || eventID == "" {
 		return errors.New("IM recovery requires a complete session and event ID")
@@ -25,20 +27,24 @@ func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.Sess
 	if err := tx.QueryRowContext(ctx, `SELECT state FROM im_inbox WHERE binding_id = ? AND event_id = ?`, key.BindingID, eventID).Scan(&inboxState); err != nil {
 		return err
 	}
-	if inboxState != "unknown" {
-		return errors.New("IM event is not fenced as unknown")
+	if inboxState != "unknown" && inboxState != "complete" {
+		return errors.New("IM event is neither unknown nor complete")
 	}
 	var keyJSON []byte
 	var conversationState, currentEventID string
-	if err := tx.QueryRowContext(ctx, `SELECT key_json, state, current_event_id FROM im_conversations WHERE key_hash = ? AND binding_id = ? AND chat_id = ?`, key.String(), key.BindingID, key.ChatID).Scan(&keyJSON, &conversationState, &currentEventID); err != nil {
+	var leaseUntil int64
+	if err := tx.QueryRowContext(ctx, `SELECT key_json, state, current_event_id, lease_until FROM im_conversations WHERE key_hash = ? AND binding_id = ? AND chat_id = ?`, key.String(), key.BindingID, key.ChatID).Scan(&keyJSON, &conversationState, &currentEventID, &leaseUntil); err != nil {
 		return err
 	}
 	var storedKey channel.SessionKey
 	if err := json.Unmarshal(keyJSON, &storedKey); err != nil {
 		return err
 	}
-	if storedKey != key || conversationState != "unknown" || currentEventID != eventID {
-		return errors.New("IM unknown conversation does not match the event")
+	if storedKey != key || currentEventID != eventID || (conversationState != "unknown" && conversationState != "running") {
+		return errors.New("IM unfinished conversation does not match the event")
+	}
+	if conversationState == "running" && leaseUntil >= time.Now().UnixNano() {
+		return errors.New("IM conversation worker lease is still live")
 	}
 	deliveryID := channel.TurnDeliveryID(key.BindingID, eventID)
 	var deliveryJSON []byte
@@ -55,12 +61,14 @@ func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.Sess
 	if delivery.ID != deliveryID || delivery.Session != key || delivery.Phase != "complete" || delivery.Operation != "" {
 		return errors.New("IM matching delivery is not confirmed complete")
 	}
-	if err := updateRecoveryRow(ctx, tx, `UPDATE im_inbox SET state = 'complete', failure = '', claim_token = '', lease_until = 0
-		WHERE binding_id = ? AND event_id = ? AND state = 'unknown'`, key.BindingID, eventID); err != nil {
-		return err
+	if inboxState == "unknown" {
+		if err := updateRecoveryRow(ctx, tx, `UPDATE im_inbox SET state = 'complete', failure = '', claim_token = '', lease_until = 0
+			WHERE binding_id = ? AND event_id = ? AND state = 'unknown'`, key.BindingID, eventID); err != nil {
+			return err
+		}
 	}
 	if err := updateRecoveryRow(ctx, tx, `UPDATE im_conversations SET state = 'ready', current_event_id = '', failure = '', lease_token = '', lease_until = 0
-		WHERE key_hash = ? AND state = 'unknown' AND current_event_id = ?`, key.String(), eventID); err != nil {
+		WHERE key_hash = ? AND state = ? AND current_event_id = ? AND lease_until = ?`, key.String(), conversationState, eventID, leaseUntil); err != nil {
 		return err
 	}
 	return tx.Commit()

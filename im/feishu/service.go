@@ -113,9 +113,10 @@ func (s *Service) Issues(ctx context.Context, tenantID, bindingID string, perCat
 	return s.store.ListIssues(ctx, bindingID, perCategoryLimit)
 }
 
-// ReconcileConfirmedDelivery clears only the unknown bookkeeping left after
-// this turn's delivery was durably confirmed complete. It never resends a
-// message or Agent prompt, and it remains Tenant-scoped.
+// ReconcileConfirmedDelivery clears unfinished bookkeeping left after this
+// turn's delivery was durably confirmed complete. A running turn also needs
+// an expired worker lease. It never resends a message or Agent prompt and
+// remains Tenant-scoped.
 func (s *Service) ReconcileConfirmedDelivery(ctx context.Context, tenantID string, key channel.SessionKey, eventID string) error {
 	if tenantID == "" || key.TenantID != tenantID || key.BindingID == "" {
 		return errors.New("Feishu recovery scope does not match Tenant or Binding")

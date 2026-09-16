@@ -2,10 +2,10 @@ package channel
 
 import "context"
 
-// RecoveryStore only clears a fenced unknown turn when its own durable
-// delivery is already confirmed complete. It never submits or replays an
-// Agent prompt or a provider operation. Other outcomes require separate
-// external investigation and remain unknown.
+// RecoveryStore clears unfinished bookkeeping only when the turn's own
+// durable delivery is already confirmed complete. A still-running turn also
+// requires its worker lease to expire. It never submits or replays an Agent
+// prompt or provider operation. Other outcomes require external investigation.
 type RecoveryStore interface {
 	ReconcileConfirmedDelivery(context.Context, SessionKey, string) error
 }
