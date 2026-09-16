@@ -106,7 +106,8 @@ func (g *Gateway) Disconnect(target string) <-chan struct{} {
 
 // Drop closes current sessions for target without permanently blocking a
 // future connector. It is used after a Managed provider has accepted pause;
-// durable suspension in metadata prevents reconnect until resume.
+// durable suspension in metadata still blocks user execution while allowing
+// the machine credential to reconnect for online observation.
 func (g *Gateway) Drop(target string) {
 	g.mu.Lock()
 	var sessions []*yamux.Session

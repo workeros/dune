@@ -240,9 +240,12 @@ type Observation struct {
 
 type PauseResumeCall struct {
 	RunnerID, FabricID, ResourceRef string
-	BindingRevision                 int64
-	ProviderBindingID               string
-	ProviderBindingRevision         int64
+	// BootstrapActionID identifies the original connector installation when
+	// resuming a resource. It is not the resume operation's action ID.
+	BootstrapActionID       string
+	BindingRevision         int64
+	ProviderBindingID       string
+	ProviderBindingRevision int64
 }
 
 // PauseResumeProvider applies one resource lifecycle mutation. Dune records
