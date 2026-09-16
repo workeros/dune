@@ -170,7 +170,9 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 			if screen.HistoryLimit != 50000 || screen.HistoryLines < 50 || !strings.Contains(screen.Content, "offline-079") {
 				t.Fatalf("native screen/history lost: %+v", screen)
 			}
+			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "close"}, nil, &rt))
 			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "older"}, nil, &rt))
+			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "close"}, nil, &rt))
 			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "close"}, nil, &rt))
 			view, err := client.Attach(ctx, rt, true)
 			must(t, err)

@@ -270,7 +270,7 @@ func (r *Session) History(action string) error {
 	case "newer":
 		args = []string{"send-keys", "-X", "-t", r.pane(), "page-down"}
 	case "close":
-		args = []string{"send-keys", "-X", "-t", r.pane(), "cancel"}
+		args = []string{"copy-mode", "-q", "-t", r.pane()}
 	default:
 		return fmt.Errorf("history action must be older, newer or close")
 	}

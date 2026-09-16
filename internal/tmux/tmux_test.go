@@ -110,6 +110,55 @@ func TestNativeHistoryAndExit(t *testing.T) {
 	}
 }
 
+func TestHistoryCloseIsIdempotent(t *testing.T) {
+	s := server(t)
+	r := session(t, s, "e", `printf 'READY\n'; while IFS= read -r line; do printf 'reply:%s\n' "$line"; done`, []string{"PATH=/usr/bin:/bin"})
+	await(t, func() bool { c, e := r.Capture(); return e == nil && strings.Contains(c.Content, "READY") })
+
+	// Closing history is a no-op when the pane is not in copy mode.
+	if err := r.History("close"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.History("older"); err != nil {
+		t.Fatal(err)
+	}
+	mode, err := s.run("display-message", "-p", "-t", r.pane(), "#{pane_in_mode}")
+	if err != nil || strings.TrimSpace(mode) != "1" {
+		t.Fatal(mode, err)
+	}
+	if err = r.History("close"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.History("close"); err != nil {
+		t.Fatal(err)
+	}
+	mode, err = s.run("display-message", "-p", "-t", r.pane(), "#{pane_in_mode}")
+	if err != nil || strings.TrimSpace(mode) != "0" {
+		t.Fatal(mode, err)
+	}
+
+	view, err := r.Attach(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	go io.Copy(io.Discard, view)
+	if err = view.Write([]byte("still-running\n")); err != nil {
+		t.Fatal(err)
+	}
+	await(t, func() bool {
+		c, e := r.Capture()
+		return e == nil && strings.Contains(c.Content, "reply:still-running")
+	})
+
+	if err = r.Destroy(); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.History("close"); err == nil {
+		t.Fatal("closing history for a missing session succeeded")
+	}
+}
+
 func TestAlternateScreenResizeAndReattach(t *testing.T) {
 	s := server(t)
 	r := session(t, s, "d", `printf 'MAIN中文\n'; read -r a; printf '\033[?1049h\033[HAPP中文'; read -r a; printf '\033[?1049l'; sleep 120`, []string{"PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"})
