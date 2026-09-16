@@ -35,6 +35,7 @@ func TestConnectorStartProcessLifecycle(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("connector start supports Linux and macOS")
 	}
+	t.Setenv("COLUMNS", "80")
 	root := t.TempDir()
 	actionID := "original bootstrap"
 	installFakeConnector(t, root, actionID)
@@ -73,7 +74,7 @@ func TestConnectorStartProcessLifecycle(t *testing.T) {
 		t.Fatalf("connector did not restart after process loss: %v", second)
 	}
 	for name, expected := range map[string]string{
-		"bootstrap.complete": actionID + " test-version\n",
+		"bootstrap.complete": actionID + "\ntest-version\n",
 		"config.yaml":        "test-config\n",
 		"sessions/keep":      "persistent-data\n",
 	} {
@@ -99,7 +100,8 @@ func TestConnectorStartRejectsInvalidInstallationAndExit(t *testing.T) {
 		{name: "missing marker", remove: "bootstrap.complete", want: "bootstrap marker missing"},
 		{name: "missing config", remove: "config.yaml", want: "config missing"},
 		{name: "missing executable", remove: "dune", want: "executable missing"},
-		{name: "wrong bootstrap", marker: "another action test-version\n", want: "identity mismatch"},
+		{name: "wrong bootstrap", marker: "another action\ntest-version\n", want: "identity mismatch"},
+		{name: "missing version", marker: "original-bootstrap\n", want: "marker has no version"},
 		{name: "immediate exit", config: "exit\n", want: "exited during startup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,9 +151,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("building fake connector: %v: %s", err, output)
 	}
-	if err := os.WriteFile(filepath.Join(root, "bootstrap.complete"), []byte(actionID+" test-version\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBootstrapMarkerFromPlan(t, root, actionID)
 	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("test-config\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +160,30 @@ func main() {
 	}
 	if err := os.WriteFile(filepath.Join(root, "sessions", "keep"), []byte("persistent-data\n"), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func writeBootstrapMarkerFromPlan(t *testing.T, root, actionID string) {
+	t.Helper()
+	call := bootstrapCall()
+	call.Action.ID = actionID
+	call.Version = "test-version"
+	plan, err := NewBootstrapPlan(call, BootstrapPlatform{OS: runtime.GOOS, Arch: runtime.GOARCH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var markerCommands []string
+	for _, line := range strings.Split(plan.Script, "\n") {
+		if strings.Contains(line, "bootstrap.complete.tmp") {
+			markerCommands = append(markerCommands, line)
+		}
+	}
+	if len(markerCommands) != 2 {
+		t.Fatalf("bootstrap marker commands changed: %v", markerCommands)
+	}
+	script := "set -eu\nroot=" + shellQuote(root) + "\n" + strings.Join(markerCommands, "\n")
+	if output, err := exec.Command("/bin/sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("writing bootstrap marker: %v: %s", err, output)
 	}
 }
 
