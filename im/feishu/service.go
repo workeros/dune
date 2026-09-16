@@ -222,6 +222,17 @@ func (s *Service) Activate(ctx context.Context, binding channel.BotBinding) erro
 	// Only persisted configuration is authoritative. The caller identifies a
 	// revision, but must not be able to substitute credentials or Agent target.
 	binding = stored
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return errors.New("Feishu service is closed")
+	}
+	previous := s.bindings[binding.ID]
+	if previous != nil && previous.binding.TenantID == binding.TenantID && previous.binding.Revision == binding.Revision && previous.err == nil {
+		s.mu.RUnlock()
+		return nil // repeated Tenant sync must not churn a healthy transport
+	}
+	s.mu.RUnlock()
 	credentials, err := s.credentials.ResolveCredentials(ctx, binding)
 	if err != nil {
 		return fmt.Errorf("resolve Feishu credentials: %w", err)
@@ -243,11 +254,16 @@ func (s *Service) Activate(ctx context.Context, binding channel.BotBinding) erro
 		cancel()
 		return errors.New("Feishu service is closed")
 	}
-	previous := s.bindings[binding.ID]
+	previous = s.bindings[binding.ID]
 	if previous != nil && previous.binding.TenantID != binding.TenantID {
 		s.mu.Unlock()
 		cancel()
 		return errors.New("Feishu Binding ID already belongs to another Tenant")
+	}
+	if previous != nil && previous.binding.Revision == binding.Revision && previous.err == nil {
+		s.mu.Unlock()
+		cancel()
+		return nil // another activation won while credentials were resolved
 	}
 	if previous != nil && previous.binding.Revision > binding.Revision {
 		s.mu.Unlock()

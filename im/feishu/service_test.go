@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +156,22 @@ func TestLoadTenantSynchronizesMultipleBotsAndDisablesOne(t *testing.T) {
 	defer service.Stop(ctx)
 	if err := service.LoadTenant(ctx, "tenant-a"); err != nil {
 		t.Fatal(err)
+	}
+	firstA, firstB := service.bindings["bot-a"], service.bindings["bot-b"]
+	if err := service.LoadTenant(ctx, "tenant-a"); err != nil {
+		t.Fatal(err)
+	}
+	if service.bindings["bot-a"] != firstA || service.bindings["bot-b"] != firstB {
+		t.Fatal("unchanged Tenant sync restarted healthy Feishu channels")
+	}
+	service.mu.Lock()
+	firstB.err = errors.New("WebSocket transport failed")
+	service.mu.Unlock()
+	if err := service.Activate(ctx, bindings[1]); err != nil {
+		t.Fatal(err)
+	}
+	if service.bindings["bot-b"] == firstB {
+		t.Fatal("failed channel was not replaced on same-revision activation")
 	}
 	status, err := service.Status(ctx, "tenant-a", "bot-a")
 	if err != nil || status.TransportState != "callback_ready" || status.Stats.Queued != 0 {
