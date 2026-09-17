@@ -5,6 +5,7 @@ export default {
   context: fileURLToPath(new URL(".", import.meta.url)),
   entry: "./src/main.tsx",
   target: "web",
+  lazyCompilation: false,
   experiments: { css: true },
   output: { path: fileURLToPath(new URL("./dist", import.meta.url)), clean: true, publicPath: "auto", filename: "[name].[contenthash:16].js", cssFilename: "[name].[contenthash:16].css" },
   resolve: { extensions: [".tsx", ".ts", ".js"], alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },

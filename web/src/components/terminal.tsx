@@ -6,11 +6,13 @@ import historyIcon from "@iconify-icons/ri/history-line";
 import { Button } from "./ui/button";
 import { socketURL, call, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
 
-export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: Runtime }) {
+export function TerminalPane({ binding, runtime, focused = true }: { binding: Binding; runtime: Runtime; focused?: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<XTerm | undefined>(undefined);
   const [status, setStatus] = useState("连接中"), [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
+  const focusedRef = useRef(focused); focusedRef.current = focused;
+  useEffect(() => { if (focused && (document.activeElement === document.body || (document.activeElement && container.current?.contains(document.activeElement)))) terminal.current?.focus(); }, [focused]);
   useEffect(() => {
     if (!container.current) return;
     const term = new XTerm({ fontFamily: '"SFMono-Regular",Consolas,monospace', fontSize: 14, lineHeight: 1.2, scrollback: 0, cursorBlink: true, theme: { background: "#202923", foreground: "#f1eedf", cursor: "#ef887e", selectionBackground: "#607363" } });
@@ -26,7 +28,7 @@ export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: 
       const url = socketURL(eventPath(binding, runtime));
 
       socket = new WebSocket(url);
-      socket.onopen = () => { retry = 300; setConnected(true); setStatus("已连接"); setError(""); term.reset(); resize(); term.focus(); };
+      socket.onopen = () => { retry = 300; setConnected(true); setStatus("已连接"); setError(""); term.reset(); resize(); if (focusedRef.current && (!document.activeElement || document.activeElement === document.body || container.current?.contains(document.activeElement))) term.focus(); };
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data) as { type: string; data?: string; binary?: boolean; payload?: number; error?: string };

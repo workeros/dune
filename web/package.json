@@ -7,15 +7,16 @@
     "dev": "rspack serve --mode development",
     "build": "rspack build --mode production",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/components/*.test.mjs"
+    "test": "node --test src/components/*.test.mjs src/workbench/*.test.mjs",
+    "e2e": "playwright test"
   },
   "dependencies": {
-    "@iconify/react": "^6.0.0",
     "@iconify-icons/ri": "^1.2.10",
+    "@iconify/react": "^6.0.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.3",
-    "@xterm/xterm": "^5.5.0",
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "react": "^19.1.1",
@@ -23,6 +24,7 @@
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@rspack/cli": "^1.5.2",
     "@rspack/core": "^1.5.2",
     "@rspack/dev-server": "^1.1.4",
