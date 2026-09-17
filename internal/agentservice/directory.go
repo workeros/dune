@@ -116,14 +116,25 @@ func (s *Service) Get(ctx context.Context, scope agents.Scope, value string) (ag
 		return agents.Agent{}, err
 	}
 	defer closeConnection()
-	runtime, err := connection.Get(ctx, runtimeFor(ref.Target))
+	runtime, err := currentRuntime(ctx, connection, ref)
 	if err != nil {
 		return agents.Agent{}, err
 	}
-	if ref.NativeID != "" && (runtime.NativeSession == nil || runtime.NativeSession.ID != ref.NativeID || runtime.NativeSession.Cwd != ref.NativeCwd) {
-		return agents.Agent{}, &api.Error{Code: "STALE_SESSION", Detail: "native session changed; discover the current Agent before continuing"}
-	}
 	return s.describe(ctx, scope, resource.Runner, runtime), nil
+}
+
+func currentRuntime(ctx context.Context, connection *client.Client, ref agentReference) (api.Runtime, error) {
+	runtime, err := connection.Get(ctx, runtimeFor(ref.Target))
+	if err != nil {
+		return runtime, err
+	}
+	if runtime.Adapter != ref.Target.Runtime.Adapter {
+		return api.Runtime{}, &api.Error{Code: "STALE_RUNTIME", Detail: "Runtime adapter does not match the selected Agent"}
+	}
+	if ref.NativeID != "" && (runtime.NativeSession == nil || runtime.NativeSession.ID != ref.NativeID || runtime.NativeSession.Cwd != ref.NativeCwd) {
+		return api.Runtime{}, &api.Error{Code: "STALE_SESSION", Detail: "native session changed; discover the current Agent before continuing"}
+	}
+	return runtime, nil
 }
 
 func (s *Service) connect(ctx context.Context, scope agents.Scope, target workbench.AgentTarget, operation string) (authorization.Resource, *client.Client, func(), error) {

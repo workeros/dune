@@ -204,6 +204,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		AgentLauncher:  app.AgentLauncher(),
 		AgentDirectory: app.AgentDirectory(),
+		AgentMessenger: app.AgentMessenger(),
 		Assets:         options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway:            dial,

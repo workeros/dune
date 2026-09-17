@@ -41,3 +41,9 @@ func (c *Client) PTYSendKeys(ctx context.Context, runtime api.Runtime, request a
 	err := c.CallID(ctx, "pty.keys", wire.ID(), request, &operation, &runtime)
 	return operation, err
 }
+
+func (c *Client) CaptureTerminal(ctx context.Context, runtime api.Runtime) (api.TerminalSnapshot, error) {
+	var snapshot api.TerminalSnapshot
+	err := c.CallID(ctx, "runtime.capture", wire.ID(), struct{}{}, &snapshot, &runtime)
+	return snapshot, err
+}

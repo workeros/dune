@@ -38,13 +38,6 @@ type runtimeMetadata struct {
 	api.Runtime
 	HasTimeout bool `json:"has_timeout,omitempty"`
 }
-type Capture struct {
-	Content      string `json:"content"`
-	Rows         int    `json:"rows"`
-	Cols         int    `json:"cols"`
-	HistoryLines int    `json:"history_lines"`
-	HistoryLimit int    `json:"history_limit"`
-}
 type Pane struct {
 	Dead           bool
 	ExitCode, PID  int
@@ -324,8 +317,8 @@ func (r *Session) Destroy() error {
 	}
 	return err
 }
-func (r *Session) Capture() (Capture, error) {
-	var c Capture
+func (r *Session) Capture() (api.TerminalSnapshot, error) {
+	var c api.TerminalSnapshot
 	out, err := r.Server.run("display-message", "-p", "-t", r.pane(), "#{pane_height} #{pane_width} #{history_size} #{history_limit}")
 	if err != nil {
 		return c, err

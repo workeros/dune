@@ -76,3 +76,13 @@ type PTYKeys struct {
 	Keys  []string `json:"keys"`
 	Agent string   `json:"agent"`
 }
+
+// TerminalSnapshot contains the current screen only. History counts describe
+// native scrollback; Content is not the history or a per-prompt transcript.
+type TerminalSnapshot struct {
+	Content      string `json:"content"`
+	Rows         int    `json:"rows"`
+	Cols         int    `json:"cols"`
+	HistoryLines int    `json:"history_lines"`
+	HistoryLimit int    `json:"history_limit"`
+}

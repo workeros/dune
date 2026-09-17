@@ -20,7 +20,7 @@
 - [x] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
 - [x] Tenant / Owner Agent 发现服务：分页、固定 Agent 引用、SDK / Gateway 读取与原生确认采集；两产品已挂载共享 HTTP 路由。
 - [x] 两产品共享 Agent 发现列表：按 Runner 分页、部分失败保留、拒绝访问断开、原生切换更新布局索引且不重连。
-- [ ] Tenant Agent 服务：发现、启动、投递、等待、读取，复用 SDK / Gateway 路由。
+- [x] Tenant Agent 服务：发现、启动、投递、操作 / 活动等待、ACP 输出 / PTY 快照读取，复用 SDK / Gateway 路由。
 - [ ] MCP 接入：工具合同、会话凭据、跨 Tenant 拒绝、凭据脱敏。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
 - [ ] 两产品协作交互：pending、操作进度、输出不完整与引用失效提示。
@@ -63,3 +63,5 @@
 - 工作台共享发现：Dune 类型检查、前端单元测试、十项原有浏览器场景、新增分页 / 原生切换 / 部分故障场景及生产构建通过。SandDance 类型检查通过；全量 143 项浏览器场景首次 141 项通过，新增场景的连接次数断言修正为等待 StrictMode 初始化完成，另一个文件编辑场景受 Monaco 开发错误浮层干扰；两类相关的七项场景重跑全部通过，生产构建通过。两端使用真实浏览器与 HTTP / WebSocket 夹具，不代表真实 Agent 互操作验收。
 
 - ACP 原生目标补齐：prompt 同时固定 ID / cwd，入队和出队都拒绝目录变化；新增同 ID 切换目录场景和全部 ACPQueue race、api / client 回归、相关 vet 通过。
+
+- 共享通信服务：[AgentMessenger](agent-messaging.md) 和两产品 HTTP 入口就绪，引用不绑定宿主实例，prompt 可选等待失败保留操作引用。agentservice / tmux / agents / api / client / host / webapp / fabricd 回归、通信与发现定向 race、相关 vet 全部通过；SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 回归及 app vet 通过。真实本地 Gateway/fabricd 验证两连接统一排队、输出隔离、原生切换、PTY 字节投递和跨 Tenant 拒绝；尚未验证多 Pod 故障及真实厂商 MCP 互操作。

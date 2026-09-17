@@ -53,10 +53,17 @@ func TestFakeACPChild(t *testing.T) {
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
+	sessionID := "fake-acp-session"
 	for scanner.Scan() {
 		var request struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params struct {
+				SessionID string `json:"sessionId"`
+				Prompt    []struct {
+					Text string `json:"text"`
+				} `json:"prompt"`
+			} `json:"params"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &request) != nil || len(request.ID) == 0 {
 			continue
@@ -65,11 +72,26 @@ func TestFakeACPChild(t *testing.T) {
 		case "initialize":
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}`+"\n", request.ID)
 		case "session/new":
+			sessionID = "fake-acp-session"
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-acp-session"}}`+"\n", request.ID)
 		case "session/load":
+			sessionID = request.Params.SessionID
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{}}`+"\n", request.ID)
 		case "session/prompt":
-			fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-acp-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fake answer"}}}}`)
+			answer := "fake answer"
+			if gate := os.Getenv("DUNE_HOST_FAKE_ACP_GATE"); gate != "" && len(request.Params.Prompt) > 0 {
+				answer = request.Params.Prompt[0].Text
+				if answer == "first" {
+					deadline := time.Now().Add(8 * time.Second)
+					for time.Now().Before(deadline) {
+						if _, err := os.Stat(gate); err == nil {
+							break
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+				}
+			}
+			fmt.Fprintln(os.Stdout, string(api.Payload(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": sessionID, "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": answer}}}})))
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}`+"\n", request.ID)
 		}
 	}
