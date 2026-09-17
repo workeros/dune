@@ -59,13 +59,17 @@ location / { root /srv/dune/web/dist; try_files $uri /index.html; }
 
 ## 数据与身份
 
-Dune 只维护五种逻辑数据：
+Dune 服务端维护以下逻辑数据，Runner 不保存 Profile 配置库：
 
 | 部署 | 表 |
 | --- | --- |
-| 本地 SQLite | `dune_users`、`dune_sessions`、`dune_runners`、`dune_enrollments` |
-| 本地登录 PostgreSQL | 上述四张 + `dune_routes` |
-| SandDance 企业 PostgreSQL | `dune_runners`、`dune_enrollments`、`dune_routes` |
+| 本地 SQLite | `dune_users`、`dune_sessions`、`dune_runners`、`dune_enrollments`、`dune_profiles`、`dune_profile_revisions` |
+| 本地登录 PostgreSQL | 上述六张 + `dune_routes` |
+| SandDance 企业 PostgreSQL | `dune_runners`、`dune_enrollments`、`dune_routes`、`dune_profiles`、`dune_profile_revisions` |
+
+`pkg/profiles` 提供宿主可复用的完整 Profile 存储、不可变修订和并发修改检查。
+个人 Web 通过服务端管理配置；SandDance 保留空间权限与执行编排，复用同一实现。
+接口、数据库归属和接入方式见 [Profile 存储](docs/profile-storage.md)。
 
 SQLite 由单实例独占。PostgreSQL 的 `dune_routes` 保存短期 owner 租约和单调
 epoch，允许多个 Gateway 在旧 owner 失租后自动接管。接管会短暂断开浏览器流，

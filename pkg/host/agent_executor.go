@@ -3,7 +3,6 @@ package host
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"sync"
 
@@ -48,7 +47,6 @@ type AgentState struct {
 // the Gateway, Dune access policy and fabricd's Runtime identity checks.
 // Close must be called to release host draining and network resources.
 type AgentConnection interface {
-	AgentConfig(context.Context, string) (api.AgentConfig, error)
 	Start(context.Context, api.Profile) (api.Runtime, error)
 	Get(context.Context, api.Runtime) (api.Runtime, error)
 	Observe(context.Context, api.Runtime) (AgentSubscription, error)
@@ -94,7 +92,7 @@ func (e *agentExecutor) Open(ctx context.Context, scope AgentScope) (AgentConnec
 		finish()
 		return nil, err
 	}
-	for _, required := range []string{"agent.config", "profile.start", "runtime.get", "runtime.attach", "runtime.stop", "acp.state"} {
+	for _, required := range []string{"profile.start", "runtime.get", "runtime.attach", "runtime.stop", "acp.state"} {
 		if !slices.Contains(sdk.Binding.Capabilities, required) {
 			closeClient()
 			finish()
@@ -117,22 +115,6 @@ func (c *agentConnection) Close() error {
 		c.finish()
 	})
 	return nil
-}
-
-func (c *agentConnection) AgentConfig(ctx context.Context, id string) (api.AgentConfig, error) {
-	if id == "" {
-		return api.AgentConfig{}, errors.New("AgentConfig ID is required")
-	}
-	var configs []api.AgentConfig
-	if err := c.sdk.Call(ctx, "agent.config", api.AgentConfigRequest{Action: "list"}, &configs); err != nil {
-		return api.AgentConfig{}, err
-	}
-	for _, config := range configs {
-		if config.ID == id {
-			return config, nil
-		}
-	}
-	return api.AgentConfig{}, fmt.Errorf("AgentConfig %q is not present on this Runner", id)
 }
 
 func (c *agentConnection) Start(ctx context.Context, profile api.Profile) (api.Runtime, error) {

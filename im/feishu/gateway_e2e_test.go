@@ -103,7 +103,14 @@ func (m *gatewayManagedFixture) BindRunnerAccess(access managed.RunnerAccess) er
 	return nil
 }
 
-type gatewayScopeFixture struct{ scope host.AgentScope }
+type gatewayScopeFixture struct {
+	scope   host.AgentScope
+	profile api.Profile
+}
+
+func (f gatewayScopeFixture) ResolveAgentProfile(context.Context, channel.ConversationSession) (api.Profile, error) {
+	return f.profile, nil
+}
 
 func (f gatewayScopeFixture) ResolveAgentScope(_ context.Context, conversation channel.ConversationSession) (host.AgentScope, error) {
 	if conversation.Key.TenantID != "tenant-a" || conversation.Target.RunnerID != f.scope.RunnerID {
@@ -158,12 +165,7 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 	if err := os.Mkdir(stateDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	// Seed a Runner-local saved configuration before fabricd opens its state.
-	config := api.AgentConfig{ID: "im-test-agent", Name: "Local test ACP", Command: os.Args[0], Adapter: "acp", Env: map[string]string{"DUNE_IM_TEST_ACP": "1"}}
-	data, _ := json.Marshal(map[string]api.AgentConfig{config.ID: config})
-	if err := os.WriteFile(filepath.Join(stateDir, "agents.json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	profile := api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "acp", Start: api.Command{Argv: []string{os.Args[0]}}, Env: map[string]string{"DUNE_IM_TEST_ACP": "1"}}
 	engine, err := fabricd.Open(ctx, stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -200,8 +202,8 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	backend := duneagent.Backend{Executor: app.AgentExecutor(), Scopes: gatewayScopeFixture{scope: scope}}
-	return backend, channel.AgentTarget{RunnerID: scope.RunnerID, AgentConfigID: config.ID, WorkingDirectory: t.TempDir()}
+	backend := duneagent.Backend{Executor: app.AgentExecutor(), Scopes: gatewayScopeFixture{scope: scope}, Profiles: gatewayScopeFixture{profile: profile}}
+	return backend, channel.AgentTarget{RunnerID: scope.RunnerID, ProfileID: "im-test-agent", ProfileRevision: 1, WorkingDirectory: t.TempDir()}
 }
 
 func TestDuneGatewaySessionIsolationAttachAndLoad(t *testing.T) {

@@ -31,7 +31,7 @@ func TestWebSocketACKFollowsDurableAcceptance(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveWebSocket, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func testWebSocketGroupEventReachesAgentAndThreadReply(t *testing.T, mode string
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveWebSocket, ReplyMode: mode})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

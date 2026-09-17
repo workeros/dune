@@ -48,7 +48,7 @@ func TestFeishuThreadAnchorAndLocalRef(t *testing.T) {
 	if err != nil || root != reply || ref != "omt_thread" {
 		t.Fatalf("thread reply: %+v %q %v", reply, ref, err)
 	}
-	target := channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}
+	target := channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}
 	if _, err := store.Ensure(ctx, root, target, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}

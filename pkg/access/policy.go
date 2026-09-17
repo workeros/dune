@@ -57,7 +57,6 @@ type Resource struct {
 	Destination     string
 	Directory       string
 	UploadID        string
-	ConfigID        string
 	ExecutionID     string
 	Port            int
 	Adapter         string

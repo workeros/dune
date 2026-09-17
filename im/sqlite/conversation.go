@@ -16,7 +16,7 @@ func validSessionKey(key channel.SessionKey) bool {
 }
 
 func (s *Store) Ensure(ctx context.Context, key channel.SessionKey, target channel.AgentTarget, address channel.ReplyAddress, threadRef string) (channel.ConversationSession, error) {
-	if !validSessionKey(key) || target.RunnerID == "" || target.AgentConfigID == "" {
+	if !validSessionKey(key) || target.RunnerID == "" || target.ProfileID == "" || target.ProfileRevision < 1 {
 		return channel.ConversationSession{}, errors.New("IM conversation key or Agent target is incomplete")
 	}
 	keyJSON, err := json.Marshal(key)

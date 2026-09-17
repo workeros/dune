@@ -119,7 +119,7 @@ func TestServiceUsesStoredBindingAndMountedCallbackFollowsRotation(t *testing.T)
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret-a", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a"}, Enabled: true})
+		Config: config, CredentialRef: "secret-a", Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "agent-a", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +131,13 @@ func TestServiceUsesStoredBindingAndMountedCallbackFollowsRotation(t *testing.T)
 	}
 	defer service.Stop(ctx)
 	forged := binding
-	forged.Target.AgentConfigID = "agent-forged"
+	forged.Target.ProfileID = "agent-forged"
 	forged.Config, _ = json.Marshal(Config{AppID: "cli_forged", ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalCard})
 	if err := service.Activate(ctx, forged); err != nil {
 		t.Fatal(err)
 	}
 	active, err := service.LookupBinding(ctx, binding.ID)
-	if err != nil || active.Binding.Target.AgentConfigID != "agent-a" || active.ReplyMode != ReplyFinalText {
+	if err != nil || active.Binding.Target.ProfileID != "agent-a" || active.ReplyMode != ReplyFinalText {
 		t.Fatalf("unpersisted configuration was activated: %+v %v", active, err)
 	}
 	handler, err := service.CallbackHandler("tenant-a", binding.ID)
@@ -190,7 +190,7 @@ func TestLoadTenantSynchronizesMultipleBotsAndDisablesOne(t *testing.T) {
 	var bindings []channel.BotBinding
 	for _, id := range []string{"bot-a", "bot-b"} {
 		binding, err := store.Put(ctx, channel.BotBinding{ID: id, TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-			Config: config, CredentialRef: "shared-ref", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: id}, Enabled: true})
+			Config: config, CredentialRef: "shared-ref", Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: id, ProfileRevision: 1}, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +301,7 @@ func TestSlowCallbackCannotBlockServiceStop(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestTenantCanMixWebSocketAndCallbackBindings(t *testing.T) {
 		{id: "bot-callback", config: callbackConfig},
 	} {
 		if _, err := store.Put(ctx, channel.BotBinding{ID: item.id, TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-			Config: item.config, CredentialRef: item.id, Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: item.id}, Enabled: true}); err != nil {
+			Config: item.config, CredentialRef: item.id, Target: channel.AgentTarget{RunnerID: "runner", ProfileID: item.id, ProfileRevision: 1}, Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -528,7 +528,7 @@ func TestActivateDoesNotExposeStoppedBindingAfterReplacementStopFailure(t *testi
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestTimedOutBindingTeardownCanBeRetried(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +670,7 @@ func TestActivateFailureDoesNotKeepOldReceiverConnected(t *testing.T) {
 			defer store.Close()
 			config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 			binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-				Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+				Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -727,7 +727,7 @@ func TestLoadTenantDeactivatesRemovedBotDespiteAnotherActivationFailure(t *testi
 	bindings := make(map[string]channel.BotBinding)
 	for _, id := range []string{"bot-a", "bot-b"} {
 		binding, err := store.Put(ctx, channel.BotBinding{ID: id, TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-			Config: valid, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+			Config: valid, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -771,7 +771,7 @@ func TestLoadTenantDeactivatesRemovedBotDespiteAnotherActivationFailure(t *testi
 		t.Fatalf("stale event reached the inbox: %+v %v", stats, err)
 	}
 	if _, err := store.Put(ctx, channel.BotBinding{ID: "bot-c", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: valid, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true}); err != nil {
+		Config: valid, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.LoadTenant(ctx, "tenant-a"); err == nil {
@@ -798,7 +798,7 @@ func TestLoadTenantFailureDoesNotStopConcurrentlyActivatedNewerRevision(t *testi
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,7 +870,7 @@ func TestActivateRejectsBindingChangedDuringCredentialResolution(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -940,7 +940,7 @@ func TestActivateHealthyBindingRechecksRevisionAfterAgentValidation(t *testing.T
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1007,7 +1007,7 @@ func TestStreamingCardRejectsNonACPBeforeBindingActivation(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyStreaming})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1040,7 +1040,7 @@ func TestStreamingCardRejectsNonACPBeforeBindingActivation(t *testing.T) {
 	}
 	agents.caps = channel.AgentCapabilities{Adapter: "pty"}
 	if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-		t.Fatalf("changed AgentConfig left an incompatible streaming bot active: %v", err)
+		t.Fatalf("changed Agent Profile left an incompatible streaming bot active: %v", err)
 	}
 	if _, err := service.CallbackHandler("tenant-a", binding.ID); err == nil {
 		t.Fatal("incompatible streaming bot retained a callback receiver")
@@ -1058,7 +1058,7 @@ func TestFinalModesValidateReliableACPBeforeBindingActivation(t *testing.T) {
 			defer store.Close()
 			config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: mode})
 			binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-				Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+				Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1082,7 +1082,7 @@ func TestFinalModesValidateReliableACPBeforeBindingActivation(t *testing.T) {
 			}
 			agents.caps = channel.AgentCapabilities{Adapter: "pty"}
 			if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-				t.Fatalf("changed AgentConfig left incompatible final bot active: %v", err)
+				t.Fatalf("changed Agent Profile left incompatible final bot active: %v", err)
 			}
 		})
 	}

@@ -14,6 +14,8 @@ var localTables = []struct{ name, columns string }{
 	{"dune_sessions", "hash,user_id,expires_at,auth_version"},
 	{"dune_runners", "id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,enabled,suspended,created_at"},
 	{"dune_enrollments", "hash,owner_id,issued_to_id,issued_to_kind,namespace,subject,name,runner_id,kind,fabric_id,expires_at"},
+	{"dune_profiles", "id,owner_id,kind,revision,created_by_type,created_by_subject,created_at,updated_at"},
+	{"dune_profile_revisions", "profile_id,revision,name,description,profile,created_at"},
 }
 
 func TestLocalSQLiteSchemaIsExactlyFourTables(t *testing.T) {
@@ -45,7 +47,7 @@ func TestPostgresLogicalTableCounts(t *testing.T) {
 		name     string
 		external bool
 		want     int
-	}{{"local", false, 5}, {"enterprise", true, 3}} {
+	}{{"local", false, 7}, {"enterprise", true, 5}} {
 		t.Run(test.name, func(t *testing.T) {
 			config, _, _ := postgresConfig(t)
 			s, err := Open(context.Background(), config, OpenOptions{ExternalIdentity: test.external})

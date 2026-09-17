@@ -11,7 +11,7 @@
 
 Dune 提供远程开发环境的控制协议、SDK、Gateway 和环境内的 daemon，供个人工具、家庭共享产品、企业平台及其他上层系统集成执行与实时交互能力。
 
-Dune 是可集成的开源底层组件。Dune 不管理 Runner、Tenant、Fabric 或云资源，不维护业务数据库，不持久化 Profile 和交互历史，不提供用户界面。
+本文定义 Dune 的协议与执行核心：Gateway / SDK / fabricd 不管理 Runner、Tenant、Fabric 或云资源，不维护业务数据库，不持久化 Profile 配置库。仓库中的服务端产品层另外提供 Web、元数据和 `pkg/profiles`；这些能力不进入 Runner。
 
 上层可以围绕 Runner 组织开发环境，也可以使用设备、项目或任务等产品对象。Dune 不要求调用方建立这些业务对象后才能使用协议。
 
@@ -39,7 +39,7 @@ SDK 不包含 Runner/Fabric 的资源管理服务。上层可以基于 SDK 封�
 - 任务状态、GitHub/IM 等事件、审批交互、Agent 编排和成果交付。
 - 业务数据存储、工作台 UI、插件视图宿主和产品导航。
 
-Dune 不实现配置 CRUD、资源生命周期 reconcile、调度器、业务队列、持久操作账本或用户内容审计。Profile 的解析执行属于 daemon，不能因配置存储在上层而要求上层先将其展开成命令。
+协议与执行核心不实现配置 CRUD、资源生命周期 reconcile、调度器、业务队列、持久操作账本或用户内容审计。Profile 的解析执行属于 daemon，不能因配置存储在上层而要求上层先将其展开成命令。
 
 ## 2. 分层架构与部署
 
@@ -365,7 +365,7 @@ Profile 失败、Agent 退出或连接丢失由 Dune 返回执行事实；是否
 | Runner/Tenant/Fabric CRUD 与关联 | 上层产品 |
 | Managed/Attached 分配、回收及 reconcile | 上层 Fabric/Provider |
 | manual/deadline/delayed/exit 资源保留策略 | 上层策略，不由 Dune 解释 Agent 完成 |
-| Profile 配置库与修订管理 | 上层保存；完整 Profile 仍由 daemon 解析执行 |
+| Profile 配置库与修订管理 | 服务端可复用 `pkg/profiles`；完整 Profile 仍由 daemon 解析执行 |
 | SQLite/PostgreSQL、runtime 元数据表 | 从 Dune 核心移除 |
 | 持久 ownership journal 与跨重启去重 | 移除；以内存句柄和新 incarnation 明确边界 |
 | Runner closed 后永不恢复 | 不再约束上层；停止/销毁分开，恢复同身份、克隆新身份 |

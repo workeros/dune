@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -320,8 +321,14 @@ func TestPeerIdentityMustMatchAuthenticatedTransport(t *testing.T) {
 			_, _, err := wire.Handshake(s, &pb.Message{Kind: "hello", Target: "machine", Incarnation: f.binding.Incarnation, ConnectionGeneration: f.binding.Generation,
 				RouteEpoch: f.binding.RouteEpoch, Payload: api.Payload(api.Hello{Version: api.Version, Role: RolePeer, PeerOwner: f.owner.BootID(), PeerSource: wire.ID()})})
 			var failure *api.Error
-			if !errors.As(err, &failure) || failure.Code != "HANDSHAKE" {
-				t.Fatal("unauthenticated peer accepted", err)
+			// The rejected connection closes immediately; Yamux can deliver the
+			// session shutdown before the final HANDSHAKE error frame.
+			rejected := errors.As(err, &failure) && failure.Code == "HANDSHAKE"
+			if !rejected && !errors.Is(err, yamux.ErrSessionShutdown) && !errors.Is(err, io.EOF) {
+				t.Fatal("unauthenticated peer was not rejected", err)
+			}
+			if f.daemon.NumStreams() != 1 {
+				t.Fatal("unauthenticated peer reached fabricd")
 			}
 		})
 	}

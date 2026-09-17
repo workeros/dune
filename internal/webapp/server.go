@@ -112,6 +112,13 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	}
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/v1/me", s.me)
+	if !options.TenantScoped {
+		s.mux.HandleFunc("GET /api/v1/profiles", s.listProfiles)
+		s.mux.HandleFunc("GET /api/v1/profiles/{profile}", s.getProfile)
+		s.mux.HandleFunc("POST /api/v1/profiles", s.saveProfile)
+		s.mux.HandleFunc("PUT /api/v1/profiles/{profile}", s.saveProfile)
+		s.mux.HandleFunc("DELETE /api/v1/profiles/{profile}", s.deleteProfile)
+	}
 	s.mux.HandleFunc("GET /api/v1/runners", s.runners)
 	s.mux.HandleFunc("GET /api/v1/runners/{runner}", s.runner)
 	if options.Managed != nil {

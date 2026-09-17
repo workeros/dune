@@ -214,7 +214,7 @@ func testProcessor(t *testing.T, streaming bool) (channel.Processor, *sqlite.Sto
 	t.Cleanup(func() { _ = store.Close() })
 	backend := &fakeAgentBackend{caps: channel.AgentCapabilities{Adapter: "acp", AssistantDeltas: true, ReliableFinal: true}}
 	replies := &fakeReplyChannel{}
-	binding := channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Enabled: true, Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a"}}
+	binding := channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Enabled: true, Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "agent-a", ProfileRevision: 1}}
 	processor := channel.Processor{Work: store, Conversations: store, Deliveries: store, Agents: backend,
 		Bindings: fakeActiveBindings{active: channel.ActiveBinding{Binding: binding, Channel: replies,
 			Subjects: fakeRoots{}, Admission: fakeAdmission{botID: "bot-open-id"}, Streaming: streaming}},
@@ -276,7 +276,7 @@ func TestProcessorBusyConversationPreservesFIFOWithoutFailingQueuedEvents(t *tes
 	backend := &fakeAgentBackend{caps: channel.AgentCapabilities{Adapter: "acp", AssistantDeltas: true, ReliableFinal: true}}
 	replies := &fakeReplyChannel{}
 	binding := channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Enabled: true,
-		Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}}
+		Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}}
 	processor := channel.Processor{Work: store, Conversations: store, Deliveries: store,
 		Bindings:   fakeActiveBindings{active: channel.ActiveBinding{Binding: binding, Channel: replies}},
 		ClaimLease: time.Minute, SessionLease: time.Minute}
@@ -449,7 +449,7 @@ func TestProcessorDoesNotRunQueuedEventUnderNewBindingRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding.Target.AgentConfigID = "new-agent"
+	binding.Target.ProfileID = "new-agent"
 	binding, err = store.Put(ctx, binding)
 	if err != nil {
 		t.Fatal(err)
@@ -504,7 +504,7 @@ func TestProcessorKeepsEstablishedAgentTargetAfterBindingRotation(t *testing.T) 
 	if err != nil || !exists || before.Runtime.ID == "" {
 		t.Fatalf("first turn did not establish Runtime: %+v exists=%t err=%v", before, exists, err)
 	}
-	binding.Target.AgentConfigID = "replacement-agent"
+	binding.Target.ProfileID = "replacement-agent"
 	binding, err = store.Put(ctx, binding)
 	if err != nil {
 		t.Fatal(err)
@@ -586,7 +586,7 @@ func TestProcessorFencesBindingRotationAtSubmissionBarrier(t *testing.T) {
 	processor.Bindings = fakeActiveBindings{active: active}
 	var newBinding channel.BotBinding
 	processor.Agents = rotatingBackend{fakeAgentBackend: backend, rotate: func() error {
-		binding.Target.AgentConfigID = "new-agent"
+		binding.Target.ProfileID = "new-agent"
 		newBinding, err = store.Put(ctx, binding)
 		return err
 	}}
@@ -618,7 +618,7 @@ func TestProcessorFencesBindingRotationAtSubmissionBarrier(t *testing.T) {
 	if found, err := processor.ProcessOne(ctx); err != nil || !found || backend.starts != 1 {
 		t.Fatalf("current revision did not start Agent: found=%t starts=%d err=%v", found, backend.starts, err)
 	}
-	if session, _, found, err := store.Get(ctx, key); err != nil || !found || session.Target.AgentConfigID != "new-agent" {
+	if session, _, found, err := store.Get(ctx, key); err != nil || !found || session.Target.ProfileID != "new-agent" {
 		t.Fatalf("empty session retained stale Agent target: %+v found=%t err=%v", session, found, err)
 	}
 }

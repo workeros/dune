@@ -190,7 +190,7 @@ func TestConversationThreadRefScopeAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	target := channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}
+	target := channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}
 	for _, binding := range []string{"bot-a", "bot-b"} {
 		key := channel.SessionKey{TenantID: "tenant", BindingID: binding, ChatID: "chat", SubjectID: "om-root"}
 		if _, err := store.Ensure(ctx, key, target, channel.ReplyAddress{}, "omt-1"); err != nil {

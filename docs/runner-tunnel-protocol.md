@@ -285,7 +285,7 @@ adapter: pty | acp
 - SDK 负责 schema 校验和传输，daemon 负责解析、校验身份与路径、顺序执行 setup，并在成功后执行 start。
 - `environment` 只执行环境准备；`agent` 执行 Agent 准备与启动，并创建 `kind=agent` runtime。
 - revision 由上层保存；daemon 计算完整执行输入的摘要用于本次校验和内存去重。
-- Dune 不实现 Profile CRUD、修订版数据库、Secret 数据库或跨重启的 setup 台账。
+- 隧道与 fabricd 不实现 Profile CRUD、修订版数据库、Secret 数据库或跨重启的 setup 台账。配置库由服务端 `pkg/profiles` 提供。
 - 上层解析和授权所需 Secret 后随本次调用提供；Secret 只在当前执行所需内存和明确的子进程环境内使用。
 - Profile 不得覆盖 Gateway、Tunnel 或 daemon 凭证，不能扩大受信执行身份或能力上限。
 - setup 顺序执行、遇错停止；实时返回 `validating`、`setup_running`、`start_running`、`succeeded`、`failed` 等明确阶段和结果。
@@ -439,7 +439,7 @@ Gateway 不把路由错误转成 Runner 生命周期状态；这属于上层的�
 
 ## 17. 数据、日志与清理边界
 
-Dune 不保存业务数据、Profile 数据库、配置台账、ownership journal 或内容历史。
+Gateway / fabricd 不保存业务数据、Profile 数据库、配置台账、ownership journal 或内容历史。服务端 Profile 存储见 `docs/profile-storage.md`。
 
 当前执行所需的内存状态可以包括连接表、作用域绑定、进程句柄、租约、Profile 输入、短期去重和有界 replay；必须有容量限制及适用的过期策略。
 

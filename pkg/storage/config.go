@@ -1,6 +1,6 @@
 // Package storage configures Dune's supported metadata backends. Applications
-// select one backend; domain stores and transactions are created together by
-// Dune and cannot be replaced independently.
+// select one backend for host metadata. The reusable pkg/profiles store can also
+// borrow a SQL pool owned by an embedding application.
 package storage
 
 import (

@@ -23,6 +23,12 @@ func (f fakeScopes) ResolveAgentScope(context.Context, channel.ConversationSessi
 	return f.scope, nil
 }
 
+type fakeProfiles struct{ profile api.Profile }
+
+func (f fakeProfiles) ResolveAgentProfile(context.Context, channel.ConversationSession) (api.Profile, error) {
+	return f.profile, nil
+}
+
 type fakeExecutor struct{ connection *fakeConnection }
 
 func (f fakeExecutor) Open(context.Context, host.AgentScope) (host.AgentConnection, error) {
@@ -59,7 +65,6 @@ func (s *blockingSubscription) Close() error {
 }
 
 type fakeConnection struct {
-	config       api.AgentConfig
 	runtime      api.Runtime
 	state        host.AgentState
 	subscription host.AgentSubscription
@@ -71,12 +76,6 @@ type fakeConnection struct {
 	stops        int
 }
 
-func (f *fakeConnection) AgentConfig(_ context.Context, id string) (api.AgentConfig, error) {
-	if id != f.config.ID {
-		return api.AgentConfig{}, errors.New("not found")
-	}
-	return f.config, nil
-}
 func (f *fakeConnection) Start(_ context.Context, profile api.Profile) (api.Runtime, error) {
 	f.profile = profile
 	f.starts++
@@ -112,12 +111,13 @@ func (*fakeConnection) Close() error { return nil }
 
 func testBackend() (Backend, channel.ConversationSession, *fakeConnection) {
 	connection := &fakeConnection{
-		config:  api.AgentConfig{ID: "agent-a", Adapter: "acp", Command: "/bin/echo", Args: []string{"--acp"}},
 		runtime: api.Runtime{ID: "runtime-a", Incarnation: "inc-a", Generation: 2, Adapter: "acp", State: "running"},
 		state:   host.AgentState{Ready: true, Revision: 3},
 	}
-	conversation := channel.ConversationSession{Key: channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a"}, Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a", WorkingDirectory: "/tmp/im-test"}}
-	backend := Backend{Executor: fakeExecutor{connection: connection}, Scopes: fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", RunnerID: "runner-a"}}}
+	conversation := channel.ConversationSession{Key: channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a"}, Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "agent-a", ProfileRevision: 1, WorkingDirectory: "/tmp/im-test"}}
+	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: "/tmp", Start: api.Command{Argv: []string{"/bin/echo", "--acp"}}, Env: map[string]string{"TEAM": "infra"}}
+	profile.Setup.Steps = []api.Command{{Argv: []string{"prepare-agent"}}}
+	backend := Backend{Executor: fakeExecutor{connection: connection}, Scopes: fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", RunnerID: "runner-a"}}, Profiles: fakeProfiles{profile: profile}}
 	return backend, conversation, connection
 }
 
@@ -133,6 +133,11 @@ func TestStartCreatesManagedACPRuntimeAndSession(t *testing.T) {
 	}
 	if !connection.profile.ManagedACP || connection.profile.WorkingDirectory != conversation.Target.WorkingDirectory || session.Runtime.ID != "runtime-a" || session.ACPSessionID != "acp-session-a" || len(connection.actions) != 1 || connection.actions[0].Action != "new" {
 		t.Fatalf("incorrect managed ACP start: profile=%+v session=%+v actions=%v", connection.profile, session, connection.actions)
+	}
+	selected := backend.Profiles.(fakeProfiles).profile
+	selected.WorkingDirectory, selected.ManagedACP = conversation.Target.WorkingDirectory, true
+	if !reflect.DeepEqual(connection.profile, selected) {
+		t.Fatalf("Profile setup, start or environment changed: got %+v want %+v", connection.profile, selected)
 	}
 }
 

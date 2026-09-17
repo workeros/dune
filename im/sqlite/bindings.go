@@ -12,7 +12,7 @@ import (
 
 func (s *Store) Put(ctx context.Context, binding channel.BotBinding) (channel.BotBinding, error) {
 	if binding.ID == "" || binding.TenantID == "" || binding.Provider == "" || binding.CredentialRef == "" ||
-		binding.ConfigVersion < 1 || binding.Target.RunnerID == "" || binding.Target.AgentConfigID == "" ||
+		binding.ConfigVersion < 1 || binding.Target.RunnerID == "" || binding.Target.ProfileID == "" || binding.Target.ProfileRevision < 1 ||
 		binding.Revision < 0 || !json.Valid(binding.Config) {
 		return channel.BotBinding{}, errors.New("IM bot binding is incomplete or invalid")
 	}

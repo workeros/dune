@@ -17,10 +17,13 @@ PostgreSQL 使用 transaction advisory lock 串行化并发首次启动。每次
 | 本地浏览器会话 | `dune_sessions` | token 哈希、用户、有效期、认证版本 |
 | Runner 与机器绑定 | `dune_runners` | owner、类型、binding revision、机器凭据、enabled、Managed suspended |
 | 一次性安装材料 | `dune_enrollments` | token 哈希、短期身份 scope、Runner/Fabric、有效期 |
+| Profile 身份 | `dune_profiles` | owner、类型、当前修订、创建主体与时间 |
+| Profile 修订 | `dune_profile_revisions` | 不可变的完整 Profile、名称、描述与保存时间 |
 | PostgreSQL owner 目录 | `dune_routes` | machine、owner boot/address、binding、epoch、租约 |
 
-本地 SQLite 有前四张表；本地登录 PostgreSQL 有五张；使用企业身份的
-PostgreSQL 省略本地用户与 Session，只保留后三张。索引不是额外逻辑表。
+本地 SQLite 有六张表；本地登录 PostgreSQL 有七张；使用企业身份的
+PostgreSQL 省略本地用户与 Session，保留其余五张。索引不是额外逻辑表。
+`pkg/profiles` 也可复用宿主已有数据库；空间权限由宿主校验，详见 [Profile 存储](profile-storage.md)。
 
 浏览器访问票据和 peer nonce 保存在 Gateway 内存，分页游标编码为无权限的
 位置值。Managed operation、provider action、renewal 等状态属于外部

@@ -21,13 +21,13 @@ func TestConversationRetargetsOnlyBeforeAgentStartAndPersistsRuntime(t *testing.
 		t.Fatal(err)
 	}
 	key := directKey("user-a")
-	target := channel.AgentTarget{RunnerID: "runner-1", AgentConfigID: "agent-1", WorkingDirectory: "/work/a"}
+	target := channel.AgentTarget{RunnerID: "runner-1", ProfileID: "agent-1", ProfileRevision: 1, WorkingDirectory: "/work/a"}
 	address := channel.ReplyAddress{Provider: "feishu", Version: 1}
 	session, err := store.Ensure(ctx, key, target, address, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := channel.AgentTarget{RunnerID: "runner-2", AgentConfigID: "agent-2"}
+	changed := channel.AgentTarget{RunnerID: "runner-2", ProfileID: "agent-2", ProfileRevision: 1}
 	again, err := store.Ensure(ctx, key, changed, address, "")
 	if err != nil || again.Target != changed || again.Revision <= session.Revision {
 		t.Fatalf("empty conversation did not adopt the current target: %+v err=%v", again, err)
@@ -83,7 +83,7 @@ func TestConversationLeaseNeverTakesOverRunningOrUnknownTurn(t *testing.T) {
 	}
 	defer second.Close()
 	key := directKey("user-a")
-	if _, err := first.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := first.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := first.Acquire(ctx, key, time.Minute)
@@ -121,7 +121,7 @@ func TestExpiredReadyLeaseCanBeFenced(t *testing.T) {
 	}
 	defer store.Close()
 	key := directKey("user-a")
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	stale, acquired, err := store.Acquire(ctx, key, time.Minute)

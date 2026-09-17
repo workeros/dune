@@ -213,28 +213,6 @@ type Attach struct {
 	Observe bool `json:"observe"`
 }
 
-// AgentConfig is stored only on the developer machine. Saving it validates the
-// command shape, not whether the executable is installed or logged in.
-type AgentConfig struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Command      string            `json:"command"`
-	Args         []string          `json:"args"`
-	Env          map[string]string `json:"env"`
-	Adapter      string            `json:"adapter"`
-	HistoryLines int               `json:"history_lines,omitempty"`
-}
-type AgentConfigRequest struct {
-	Action string       `json:"action"`
-	ID     string       `json:"id,omitempty"`
-	Config *AgentConfig `json:"config,omitempty"`
-}
-
-func (a AgentConfig) Profile(cwd string) Profile {
-	return Profile{Version: 1, Kind: "agent", WorkingDirectory: cwd, Env: a.Env, Adapter: a.Adapter,
-		HistoryLines: a.HistoryLines, Start: Command{Argv: append([]string{a.Command}, a.Args...)}}
-}
-
 type Resize struct {
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`

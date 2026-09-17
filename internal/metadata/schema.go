@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
+
+	"github.com/aiomni/dune/pkg/profiles"
 )
 
 // Dune initializes only fresh schemas. There is intentionally no migration,
@@ -32,11 +34,13 @@ type schemaQueryer interface {
 }
 
 var schemaColumns = map[string][]string{
-	"dune_users":       {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
-	"dune_sessions":    {"hash", "user_id", "expires_at", "auth_version"},
-	"dune_runners":     {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
-	"dune_enrollments": {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
-	"dune_routes":      {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
+	"dune_profiles":          {"id", "owner_id", "kind", "revision", "created_by_type", "created_by_subject", "created_at", "updated_at"},
+	"dune_profile_revisions": {"profile_id", "revision", "name", "description", "profile", "created_at"},
+	"dune_users":             {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
+	"dune_sessions":          {"hash", "user_id", "expires_at", "auth_version"},
+	"dune_runners":           {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
+	"dune_enrollments":       {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
+	"dune_routes":            {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
 }
 
 func (s *Store) schemaExists(ctx context.Context, queryer schemaQueryer) (bool, error) {
@@ -64,6 +68,9 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 			return err
 		}
 		if !exists {
+			if err := profiles.CreateSchema(ctx, tx); err != nil {
+				return err
+			}
 			statements := make([]string, 0, len(localIdentitySchema)+len(executionSchema)+len(postgresSchema))
 			if s.localIdentity {
 				statements = append(statements, localIdentitySchema...)
@@ -83,7 +90,7 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 }
 
 func (s *Store) expectedTables() []string {
-	tables := []string{"dune_enrollments", "dune_runners"}
+	tables := []string{"dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions"}
 	if s.localIdentity {
 		tables = append(tables, "dune_sessions", "dune_users")
 	}

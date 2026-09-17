@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.config", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -45,7 +45,6 @@ type Engine struct {
 	ctx         context.Context
 	tmux        *tmux.Server
 	stateDir    string
-	profileMu   sync.Mutex
 	cancel      context.CancelFunc
 	closeOnce   sync.Once
 	active      sync.WaitGroup
@@ -194,12 +193,6 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		home, err := os.UserHomeDir()
 		e = err
 		result = map[string]string{"home": home, "os": goruntime.GOOS, "arch": goruntime.GOARCH}
-	case "agent.config":
-		var req api.AgentConfigRequest
-		e = wire.Decode(m, &req)
-		if e == nil {
-			result, e = d.agentConfig(req)
-		}
 	case "runtime.forget":
 		var r *runtime
 		r, e = d.lookup(m)

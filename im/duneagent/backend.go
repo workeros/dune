@@ -22,9 +22,16 @@ type ScopeResolver interface {
 	ResolveAgentScope(context.Context, channel.ConversationSession) (host.AgentScope, error)
 }
 
+// ProfileResolver loads the target's immutable Profile revision from the embedding
+// application after scope authorization. It must enforce tenant ownership.
+type ProfileResolver interface {
+	ResolveAgentProfile(context.Context, channel.ConversationSession) (api.Profile, error)
+}
+
 type Backend struct {
 	Executor host.AgentExecutor
 	Scopes   ScopeResolver
+	Profiles ProfileResolver
 }
 
 func (b Backend) open(ctx context.Context, session channel.ConversationSession) (host.AgentConnection, error) {
@@ -47,17 +54,8 @@ func (b Backend) Capabilities(ctx context.Context, session channel.ConversationS
 		return channel.AgentCapabilities{}, err
 	}
 	defer connection.Close()
-	config, err := connection.AgentConfig(ctx, session.Target.AgentConfigID)
-	if err != nil {
+	if _, err := b.profile(ctx, session); err != nil {
 		return channel.AgentCapabilities{}, err
-	}
-	if config.Adapter != "acp" {
-		return channel.AgentCapabilities{Adapter: config.Adapter}, nil
-	}
-	profile := config.Profile(session.Target.WorkingDirectory)
-	profile.ManagedACP = true
-	if err := profile.Validate(); err != nil {
-		return channel.AgentCapabilities{}, fmt.Errorf("invalid managed ACP Profile: %w", err)
 	}
 	return channel.AgentCapabilities{Adapter: "acp", AssistantDeltas: true, ReliableFinal: true}, nil
 }
@@ -68,7 +66,7 @@ func (b Backend) Start(ctx context.Context, session channel.ConversationSession)
 		return channel.AgentSession{}, err
 	}
 	defer connection.Close()
-	runtime, err := startRuntime(ctx, connection, session)
+	runtime, err := b.startRuntime(ctx, connection, session)
 	if err != nil {
 		return channel.AgentSession{}, err
 	}
@@ -86,16 +84,30 @@ func (b Backend) Start(ctx context.Context, session channel.ConversationSession)
 	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: sessionID}, nil
 }
 
-func startRuntime(ctx context.Context, connection host.AgentConnection, session channel.ConversationSession) (api.Runtime, error) {
-	config, err := connection.AgentConfig(ctx, session.Target.AgentConfigID)
+func (b Backend) profile(ctx context.Context, session channel.ConversationSession) (api.Profile, error) {
+	if b.Profiles == nil || session.Target.ProfileID == "" || session.Target.ProfileRevision < 1 {
+		return api.Profile{}, errors.New("IM Agent Profile and positive revision are required")
+	}
+	profile, err := b.Profiles.ResolveAgentProfile(ctx, session)
+	if err != nil {
+		return api.Profile{}, err
+	}
+	if profile.Kind != "agent" || profile.Adapter != "acp" {
+		return api.Profile{}, errors.New("IM Agent Profile must use ACP")
+	}
+	profile.WorkingDirectory = session.Target.WorkingDirectory
+	profile.ManagedACP = true
+	if err := profile.Validate(); err != nil {
+		return api.Profile{}, fmt.Errorf("invalid managed ACP Profile: %w", err)
+	}
+	return profile, nil
+}
+
+func (b Backend) startRuntime(ctx context.Context, connection host.AgentConnection, session channel.ConversationSession) (api.Runtime, error) {
+	profile, err := b.profile(ctx, session)
 	if err != nil {
 		return api.Runtime{}, err
 	}
-	if config.Adapter != "acp" {
-		return api.Runtime{}, errors.New("IM AgentConfig must use ACP")
-	}
-	profile := config.Profile(session.Target.WorkingDirectory)
-	profile.ManagedACP = true
 	runtime, err := connection.Start(ctx, profile)
 	if err != nil {
 		return api.Runtime{}, fmt.Errorf("start Dune ACP Runtime (outcome may be unknown): %w", err)
@@ -130,7 +142,7 @@ func (b Backend) Attach(ctx context.Context, session channel.ConversationSession
 	if err != nil {
 		var apiErr *api.Error
 		if errors.As(err, &apiErr) && apiErr.Code == "STALE_RUNTIME" {
-			return recoverSession(ctx, connection, session, existing)
+			return b.recoverSession(ctx, connection, session, existing)
 		}
 		return channel.AgentSession{}, fmt.Errorf("find Dune Runtime for ACP attach (outcome may be unknown): %w", err)
 	}
@@ -138,7 +150,7 @@ func (b Backend) Attach(ctx context.Context, session channel.ConversationSession
 		return channel.AgentSession{}, errors.New("IM ACP Runtime identity changed")
 	}
 	if current.State == "exited" {
-		return recoverSession(ctx, connection, session, existing)
+		return b.recoverSession(ctx, connection, session, existing)
 	}
 	if current.State != "running" {
 		return channel.AgentSession{}, fmt.Errorf("IM ACP Runtime has unexpected state %q", current.State)
@@ -153,11 +165,11 @@ func (b Backend) Attach(ctx context.Context, session channel.ConversationSession
 	return existing, nil
 }
 
-func recoverSession(ctx context.Context, connection host.AgentConnection, conversation channel.ConversationSession, existing channel.AgentSession) (channel.AgentSession, error) {
+func (b Backend) recoverSession(ctx context.Context, connection host.AgentConnection, conversation channel.ConversationSession, existing channel.AgentSession) (channel.AgentSession, error) {
 	if existing.ACPSessionID == "" {
 		return channel.AgentSession{}, errors.New("previous ACP session ID is missing; cannot recover context")
 	}
-	runtime, err := startRuntime(ctx, connection, conversation)
+	runtime, err := b.startRuntime(ctx, connection, conversation)
 	if err != nil {
 		return channel.AgentSession{}, err
 	}

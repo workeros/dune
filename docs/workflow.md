@@ -47,8 +47,8 @@ DUNE_TEST_POSTGRES='postgres://…' go test ./internal/metadata ./pkg/fabricd ./
 
 重点检查：
 
-- 本地登录 schema 只有 users、sessions、runners、enrollments、routes；
-- 企业 identity 模式只有 runners、enrollments、routes；
+- 本地登录 schema 包含 users、sessions、runners、enrollments、routes、profiles、profile_revisions；
+- 企业 identity 模式包含 runners、enrollments、routes、profiles、profile_revisions；
 - route 并发竞争只有一个 owner，失租后以更高 epoch 接管；
 - 旧 owner 的发布、续租和释放均被拒绝；
 - peer owner 重新验证 Session、Runner binding 与策略；

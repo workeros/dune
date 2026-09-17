@@ -123,19 +123,6 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 				return r, ErrDenied
 			}
 		}
-	case "agent.config":
-		var a api.AgentConfigRequest
-		err = decode(&a)
-		r.Suboperation = a.Action
-		if a.Action == "delete" {
-			r.Resource.ConfigID = a.ID
-		}
-		if a.Action == "save" && a.Config != nil {
-			r.Resource.ConfigID = a.Config.ID
-		}
-		if !oneOf(a.Action, "list", "save", "delete") {
-			return r, ErrDenied
-		}
 	case "runtime.history":
 		var a struct{ Action string }
 		err = decode(&a)
@@ -169,7 +156,7 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	if err != nil {
 		return r, ErrDenied
 	}
-	for _, s := range []string{r.Resource.Path, r.Resource.Destination, r.Resource.Directory, r.Resource.UploadID, r.Resource.ConfigID, r.Resource.ExecutionID, r.Runtime.ID, r.Runtime.Incarnation} {
+	for _, s := range []string{r.Resource.Path, r.Resource.Destination, r.Resource.Directory, r.Resource.UploadID, r.Resource.ExecutionID, r.Runtime.ID, r.Runtime.Incarnation} {
 		if len(s) > 4096 || strings.ContainsRune(s, 0) {
 			return r, ErrDenied
 		}

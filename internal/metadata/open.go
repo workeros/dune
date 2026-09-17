@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aiomni/dune/pkg/profiles"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -197,3 +198,6 @@ func (s *Store) transaction(ctx context.Context, change func(*sql.Tx) error) err
 	}
 	return nil
 }
+
+// Profiles uses the host database and never contacts a Runner.
+func (s *Store) Profiles() *profiles.Store { return profiles.NewStore(s.db) }

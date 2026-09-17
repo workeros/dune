@@ -65,7 +65,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			if shared != "" && r.PrincipalID == shared && r.PrincipalID != r.OwnerID && (r.Operation == "profile.start" || r.Operation == "exec") {
 				sharedExecution.Store(true)
 			}
-			allowed = allowed && !policyRevoked.Load() && !(r.Operation == "files" && r.Suboperation == "write") && !(r.Operation == "agent.config" && r.Suboperation == "save")
+			allowed = allowed && !policyRevoked.Load() && !(r.Operation == "files" && r.Suboperation == "write")
 			return access.Decision{Allowed: allowed, Reason: "ENTERPRISE_POLICY", ID: r.RequestID, ValidUntil: time.Now().Add(time.Second)}, nil
 		})
 		defer func() {
@@ -371,7 +371,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 	}
 	if mode.enterprise {
-		body, err := json.Marshal(map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "save", Config: &api.AgentConfig{Name: "denied", Command: "/bin/sh", Adapter: "pty"}}})
+		body, err := json.Marshal(map[string]any{"operation": "files", "payload": api.File{Action: "write", Path: "/tmp/dune-forbidden-profile-test", Data: []byte("denied")}})
 		must(t, err)
 		request, err := http.NewRequestWithContext(ctx, "POST", site+executionRoute("call"), bytes.NewReader(body))
 		must(t, err)
@@ -385,11 +385,6 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		response.Body.Close()
 		if response.StatusCode != 422 || failure.Code != "ACCESS_DENIED" {
 			t.Fatal("Web write bypassed enterprise checker", response.StatusCode, failure.Code)
-		}
-		var configs []api.AgentConfig
-		do("POST", executionRoute("call"), map[string]any{"operation": "agent.config", "payload": api.AgentConfigRequest{Action: "list"}}, &configs)
-		if len(configs) != 0 {
-			t.Fatal("denied Web write saved configuration")
 		}
 		policyRevoked.Store(true)
 		awaitRevocation()

@@ -7,6 +7,7 @@ export function socketURL(path: string): URL {
 export class APIError extends Error { constructor(message: string, public status: number, public code: string) { super(message); } }
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(siteURL(path), { credentials: "same-origin", ...options, headers: { "Content-Type": "application/json", "X-Dune-Request": "1", ...options.headers } });
+  if (response.status === 204 && response.ok) return undefined as T;
   let body: unknown;
   try { body = await response.json(); } catch { throw new APIError(`服务返回了无效响应（${response.status}）`, response.status, "INVALID_RESPONSE"); }
   if (!response.ok) { const error = body as { error?: string; code?: string }; throw new APIError(error.code === "BINDING_CHANGED" ? "环境绑定已变化，请刷新列表并重新选择环境。" : error.code === "STALE_RUNTIME" ? "会话执行身份已变化，请重新选择会话。" : error.error ?? "请求失败", response.status, error.code ?? "FAILED"); }
@@ -39,7 +40,9 @@ export function eventPath(binding: Binding, runtime: Runtime): string {
   });
   return `/api/v1/ws/runners/${encodeURIComponent(binding.runner_id)}/sessions/${encodeURIComponent(runtime.id)}/events?${query}`;
 }
-export type AgentConfig = { id: string; name: string; command: string; args: string[]; env: Record<string, string>; adapter: "pty" | "acp"; history_lines?: number };
+export type ProfileCommand = { name?: string; argv?: string[]; run?: string; shell?: string; timeout_seconds?: number };
+export type Profile = { version: 1; kind: "environment" | "agent"; working_directory: string; env?: Record<string, string>; setup: { steps: ProfileCommand[] | null }; start: ProfileCommand; adapter: "pty" | "acp" | ""; history_lines?: number; managed_acp?: boolean };
+export type ProfileRecord = { id: string; owner_id: string; name: string; description: string; revision: number; profile: Profile; created_by: { type: string; subject: string }; created_at: string; updated_at: string };
 
 export type ManagedField = { name: string; label: string; type: "string" | "integer" | "boolean"; required: boolean; minimum?: string; maximum?: string; max_length?: number; choices?: string[] };
 export type ManagedUnavailableReason = "maintenance" | "capacity" | "configuration" | "unreachable" | "unknown";

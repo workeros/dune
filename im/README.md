@@ -28,7 +28,7 @@ go mod tidy
 正式发布需先发布含 `host.AgentExecutor` 的 Dune 主 module，再更新 IM 对它的实际版本依赖，
 最后发布 `im/` 子模块标签。当前没有对已发布版本或外部 `go get` 可用性的承诺。
 
-宿主提供已有的 `*host.App`、`feishu.CredentialResolver` 和 `duneagent.ScopeResolver`。
+宿主提供已有的 `*host.App`、`feishu.CredentialResolver` 、`duneagent.ScopeResolver` 和 `duneagent.ProfileResolver`。
 装配顺序如下；错误均由宿主处理，`Run` 是阻塞工作循环：
 
 ```go
@@ -41,6 +41,7 @@ defer store.Close()
 agents := duneagent.Backend{
     Executor: app.AgentExecutor(),
     Scopes:   scopes,
+    Profiles: profiles,
 }
 service, err := feishu.NewService(store, credentials, agents)
 if err != nil {
@@ -76,6 +77,12 @@ HTTP 服务、Tenant 发现、路由挂载和错误记录由宿主拥有。一�
 worker；不要为同一队列建立只认识部分 Binding 的多个 Service。集群宿主应实现相同原子语义的共享存储。
 
 `CredentialResolver.ResolveCredentials` 根据持久 Binding 的 `CredentialRef` 返回飞书凭据 JSON。
+`ProfileResolver.ResolveAgentProfile` 由宿主按会话目标的 `profile_id` 和
+`profile_revision` 读取同一 Tenant 内的不可变 Agent Profile。`Backend.Profiles`
+必须提供该实现；启动和失效 Runtime 恢复都使用完整 Profile，保留 setup、start、
+环境变量和超时，只覆盖绑定工作目录并启用 managed ACP。宿主可使用 Dune `pkg/profiles.Store.Get` 读取固定修订，再应用业务环境变量与授权规则。
+Runner 不保存 AgentConfig。绑定与已有会话固定修订；Profile 更新不会隐式改变已接受目标。
+
 `ScopeResolver.ResolveAgentScope` 根据会话的 Tenant 和目标快照核验 Runner 授权，返回 Dune Owner、
 同一 Runner 和受信任 actor；IM Tenant 与 Dune Owner 可以使用不同 ID 空间。
 消息发送者不能决定 actor、Runner 或工作目录。Dune host 还会校验实际 Runner 归属和操作权限。
@@ -95,8 +102,8 @@ worker；不要为同一队列建立只认识部分 Binding 的多个 Service。
 ```
 
 上述 JSON 放入 `BotBinding.Config`，`ConfigVersion=1`；`Provider="feishu"`。
-另设 `TenantID`、`CredentialRef`、`Enabled` 和 `Target`：Runner ID、该 Runner 上保存的 ACP
-AgentConfig ID、绝对工作目录。凭据 JSON 包含 `app_secret`、`encrypt_key`、`verification_token`，
+另设 `TenantID`、`CredentialRef`、`Enabled` 和 `Target`：Runner ID、宿主空间中的 ACP
+Profile ID、正整数 Profile revision、绝对工作目录。凭据 JSON 包含 `app_secret`、`encrypt_key`、`verification_token`，
 通过 resolver 提供，不存入展示用 Config。
 
 - `site` 为 `feishu`（默认）或 `lark`。

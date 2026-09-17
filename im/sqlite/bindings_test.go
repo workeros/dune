@@ -21,7 +21,7 @@ func TestTenantCanBindMultipleBotsWithoutMovingOrOverwritingAnotherTenant(t *tes
 		return channel.BotBinding{
 			ID: id, TenantID: tenant, Provider: "feishu", ConfigVersion: 1,
 			Config: json.RawMessage(`{"app_id":"cli_example"}`), CredentialRef: "secret:" + id,
-			Target: channel.AgentTarget{RunnerID: "runner-1", AgentConfigID: "agent-1"}, Enabled: true,
+			Target: channel.AgentTarget{RunnerID: "runner-1", ProfileID: "agent-1", ProfileRevision: 1}, Enabled: true,
 		}
 	}
 	botA, err := store.Put(ctx, newBinding("bot-a", "tenant-a"))
@@ -64,7 +64,7 @@ func TestBindingGuardedInboxRejectsOldRevisionIncludingDuplicateEvent(t *testing
 	}
 	defer store.Close()
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot", TenantID: "tenant", Provider: "feishu", ConfigVersion: 1,
-		Config: json.RawMessage(`{"app_id":"cli_example"}`), CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, Enabled: true})
+		Config: json.RawMessage(`{"app_id":"cli_example"}`), CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

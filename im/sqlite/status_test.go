@@ -19,7 +19,7 @@ func TestBindingStatsCountDurableUnknownStates(t *testing.T) {
 	}
 	defer store.Close()
 	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)

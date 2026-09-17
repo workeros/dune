@@ -551,7 +551,6 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"git", api.Git{Action: "remotes"}, "remotes", ""},
 		{"git", api.Git{Action: "operation"}, "operation", ""},
 		{"acp.action", map[string]string{"action": "permission", "prompt": "secret"}, "permission", ""},
-		{"agent.config", api.AgentConfigRequest{Action: "save", Config: &api.AgentConfig{ID: "config", Command: "secret"}}, "save", ""},
 		{"profile.status", api.ProfileStatusRequest{ExecutionID: "attempt-1"}, "", ""},
 	}
 	for _, tc := range cases {

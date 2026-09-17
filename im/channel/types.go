@@ -23,7 +23,8 @@ type BotBinding struct {
 
 type AgentTarget struct {
 	RunnerID         string `json:"runner_id"`
-	AgentConfigID    string `json:"agent_config_id"`
+	ProfileID        string `json:"profile_id"`
+	ProfileRevision  int64  `json:"profile_revision"`
 	WorkingDirectory string `json:"working_directory"`
 }
 

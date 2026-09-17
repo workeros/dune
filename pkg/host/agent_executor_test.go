@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/profiles"
 )
 
 func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
@@ -22,9 +23,6 @@ func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
 	connection, err := f.app.AgentExecutor().Open(context.Background(), scope)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := connection.AgentConfig(context.Background(), "missing-agent"); err == nil {
-		t.Fatal("missing Runner-local AgentConfig was reported present")
 	}
 	if _, err := connection.Start(context.Background(), api.Profile{Version: 1, Kind: "agent", Adapter: "pty"}); err == nil {
 		t.Fatal("non-managed ACP Agent started through IM executor")
@@ -86,18 +84,16 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	config := api.AgentConfig{Name: "Fake ACP", Command: os.Args[0], Args: []string{"-test.run=^TestFakeACPChild$"}, Adapter: "acp", Env: map[string]string{"DUNE_HOST_FAKE_ACP_CHILD": "1"}}
-	var saved api.AgentConfig
-	if err := connection.(*agentConnection).sdk.Call(ctx, "agent.config", api.AgentConfigRequest{Action: "save", Config: &config}, &saved); err != nil {
+	profile := api.Profile{Version: 1, Kind: "agent", WorkingDirectory: f.workspace, Adapter: "acp", ManagedACP: true, Start: api.Command{Argv: []string{os.Args[0], "-test.run=^TestFakeACPChild$"}}, Env: map[string]string{"DUNE_HOST_FAKE_ACP_CHILD": "1"}}
+	saved, err := f.app.store.Profiles().Create(ctx, profiles.Record{OwnerID: f.owner, Name: "Fake ACP", Profile: profile, CreatedBy: profiles.Actor{Type: "user", Subject: f.principal.ID}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := connection.AgentConfig(ctx, saved.ID)
-	if err != nil || loaded.ID != saved.ID {
-		t.Fatalf("AgentConfig not resolved on selected Runner: %+v %v", loaded, err)
+	loaded, err := f.app.store.Profiles().Get(ctx, f.owner, profiles.Selection{ID: saved.ID, Revision: saved.Revision})
+	if err != nil {
+		t.Fatal(err)
 	}
-	profile := loaded.Profile(f.workspace)
-	profile.ManagedACP = true
-	runtime, err := connection.Start(ctx, profile)
+	runtime, err := connection.Start(ctx, loaded.Profile)
 	if err != nil {
 		t.Fatal(err)
 	}

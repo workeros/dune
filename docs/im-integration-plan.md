@@ -5,7 +5,7 @@
 ## 目标与边界
 
 - 在 Dune 仓库中提供可单独引入的 Go module，实现 IM Provider 接口、统一消息处理、会话路由和飞书 Provider。Dune 主 module 不反向依赖 IM module。
-- 一个 Tenant 可绑定多个机器人；每个机器人绑定一个指定 Runner 上保存的 AgentConfig，并指定工作目录。不同机器人即使指向同一 AgentConfig，也不共享会话。
+- 一个 Tenant 可绑定多个机器人；每个机器人绑定一个指定 Runner 和宿主管理的 ACP Agent Profile 修订，并指定工作目录。不同机器人即使指向同一 Agent Profile，也不共享会话。
 - 飞书机器人同时支持 WebSocket 长连接和公网事件回调，由每个机器人绑定选择接收方式；两种入口汇入同一处理链。
 - 同一机器人的私聊按发送者分别保持 Agent session。群聊按话题保持 Agent session；同一话题内的不同成员共享该 session，机器人始终在话题中回复。
 - 首版处理文本入站消息，出站支持可配置的流式卡片、最终消息卡片和最终文本回复。流式卡片仅支持 ACP；首版不实现 `allowed_open_ids` 白名单、卡片按钮交互、媒体、主动推送或跨平台身份合并。后续 Provider 可以增加企业微信、钉钉、QQ、微信、Telegram 等。
@@ -43,12 +43,13 @@ type BotBinding struct {
 
 type AgentTarget struct {
     RunnerID         string
-    AgentConfigID    string
+    ProfileID        string
+    ProfileRevision  int64
     WorkingDirectory string
 }
 ```
 
-每个 Binding 只选择一个 AgentTarget；不要求 AgentConfigID 在不同 Binding 间唯一。`WorkingDirectory` 必须单列，因为当前 `api.AgentConfig` 不含工作目录，转换为 `api.Profile` 时才补入。更新 Binding/AgentConfig 对新建 Agent session 生效；尚未启动 Runtime 的空会话可在下一次路由时采用当前目标，已有 Runtime/ACP session 的会话则保留目标快照，变更目标时须显式停用或迁移，不能悄悄把已有 Agent 会话转给新目标。
+每个 Binding 选择一个 AgentTarget，固定宿主空间中的 Profile ID、正整数修订和执行目录。完整 Profile 由宿主按 Tenant 授权解析；工作目录允许覆盖 Profile 默认值。更新 Profile 不改变已接受的绑定修订；尚未启动 Runtime 的空会话可在下一次路由时采用当前绑定目标，已有 Runtime/ACP session 的会话保留原目标。
 
 Provider 的最小扩展点：
 
@@ -113,7 +114,7 @@ type FeishuCredentials struct {
 
 ### 回复模式
 
-`ReplyMode` 是每个 BotBinding 的飞书配置，默认 `final_text`；配置加载时验证合法值。首版三种模式在激活前都验证 AgentBackend 支持 ACP 和可靠最终状态，`streaming_card` 另需有序 assistant delta；最终回复模式不要求增量。若 AgentConfig 变为 PTY，即使 Binding revision 未变，下一次同步也必须停用不兼容的机器人；不能先接收事件再失败，也不按失败情况悄悄切换模式。三种模式使用相同的私聊/群话题 `ReplyAddress`：
+`ReplyMode` 是每个 BotBinding 的飞书配置，默认 `final_text`；配置加载时验证合法值。首版三种模式在激活前都验证 AgentBackend 支持 ACP 和可靠最终状态，`streaming_card` 另需有序 assistant delta；最终回复模式不要求增量。若所选 Profile 修订不可访问或不是 ACP，下一次同步必须拒绝激活机器人；不能先接收事件再失败，也不按失败情况悄悄切换模式。三种模式使用相同的私聊/群话题 `ReplyAddress`：
 
 | 模式 | 发送时机与行为 | Agent 要求 |
 | --- | --- | --- |
@@ -153,13 +154,13 @@ type FeishuCredentials struct {
 
 现状：[RunnerExecutor](../pkg/host/executor.go)只支持 Environment 的 `Prepare/Status`；[托管 ACP 控制器](../pkg/fabricd/acp.go)在一个 Runtime 中只持有一个当前 ACP session。现在新增的 `host.AgentExecutor` 为 IM 提供经过 `BackgroundRunner` 授权、仍经 Gateway 的后台连接；每个 conversation 仍须有独立 Runtime，不复用单一 Runtime 服务所有用户。
 
-`im/duneagent` 通过一个窄 `AgentBackend` 接口获取目标 AgentConfig、生成 `Profile(kind=agent, adapter=acp, managed_acp=true)`、启动/附着 Runtime，并执行 ACP `new/load/prompt/state`。一个 IM conversation 对应一个独立的 Runtime/ACP session；该 session 的消息串行提交。Profile 合法性在提交屏障前检查；可选 `AgentInputValidator` 在同一边界预检确定性的输入错误，Dune ACP 适配器按 fabricd 的 64 KiB prompt 上限检查，避免把已知拒绝误记成结果未知。ACP 的更新事件只将 `agent_message_chunk`/`agent_message` 文本映射为有序正文 delta，思考、工具和用户消息被过滤；`stopReason`/完成状态结束本回合，流式卡片不能仅凭 PTY 静默判断“已完成”。回合上下文取消时主动关闭 ACP 观察订阅，使阻塞中的 `Recv` 退出；这只中断本地观察，不等于取消或确认 Agent 的远端执行结果。`Start`、`Attach`、`Input/Prompt`、`Stop` 分别表示启动、重连观察/控制、提交新回合和显式销毁；断开连接不等于 Stop。Dune 的 `runtime.stop` 响应先确认停止请求，ACP 子进程的退出状态随后发布；`duneagent.Stop` 因此在单次停止请求后，最多等待 15 秒通过只读 Get 确认精确 Runtime 已退出或明确失效，才返回成功。查询失败或超时保持结果未知，不重复发出 Stop。当前适配器对仍存活且身份匹配的 Runtime 执行 Attach；仅在旧 Runtime 明确返回 `STALE_RUNTIME` 或已退出时新启 Runtime，若 Agent 广告 `loadSession` 则加载原 ACP session；否则新建 session，并在同一回复提示上下文未恢复。网络错误等不确定查询不触发自动重建。
+`im/duneagent` 通过一个窄 `AgentBackend` 接口通过宿主 `ProfileResolver` 获取目标的不可变完整 Agent Profile、校验 `kind=agent, adapter=acp` 并设置 `managed_acp=true`、启动/附着 Runtime，并执行 ACP `new/load/prompt/state`。一个 IM conversation 对应一个独立的 Runtime/ACP session；该 session 的消息串行提交。Profile 合法性在提交屏障前检查；可选 `AgentInputValidator` 在同一边界预检确定性的输入错误，Dune ACP 适配器按 fabricd 的 64 KiB prompt 上限检查，避免把已知拒绝误记成结果未知。ACP 的更新事件只将 `agent_message_chunk`/`agent_message` 文本映射为有序正文 delta，思考、工具和用户消息被过滤；`stopReason`/完成状态结束本回合，流式卡片不能仅凭 PTY 静默判断“已完成”。回合上下文取消时主动关闭 ACP 观察订阅，使阻塞中的 `Recv` 退出；这只中断本地观察，不等于取消或确认 Agent 的远端执行结果。`Start`、`Attach`、`Input/Prompt`、`Stop` 分别表示启动、重连观察/控制、提交新回合和显式销毁；断开连接不等于 Stop。Dune 的 `runtime.stop` 响应先确认停止请求，ACP 子进程的退出状态随后发布；`duneagent.Stop` 因此在单次停止请求后，最多等待 15 秒通过只读 Get 确认精确 Runtime 已退出或明确失效，才返回成功。查询失败或超时保持结果未知，不重复发出 Stop。当前适配器对仍存活且身份匹配的 Runtime 执行 Attach；仅在旧 Runtime 明确返回 `STALE_RUNTIME` 或已退出时新启 Runtime，若 Agent 广告 `loadSession` 则加载原 ACP session；否则新建 session，并在同一回复提示上下文未恢复。网络错误等不确定查询不触发自动重建。
 
 后台入口由接入方以已授权的 Tenant/Runner 作用域调用；不要求飞书发送者拥有 Dune Web 身份，也不伪造 `identity.User`。宿主提供的是绑定所属的受信任 actor，绝非事件发送者身份；Dune host 根据 RunnerID 读取当前 Runner Binding，再检查 Runner 归属、当前 binding/incarnation/generation 和操作权限。当前 `host.AgentExecutor` 已按此路径实现并通过本地假 ACP 子进程穿过 Gateway 的测试；接入方提供实际受信任 actor 的装配不属于本次交付。
 
 IM 的 `TenantID` 与 Dune 的 `OwnerID` 是不同边界的标识，不要求字符串相同。接入方实现的受信任 `ScopeResolver` 必须根据持久 BotBinding/会话目标核验 Tenant 对 Runner 的授权，并返回映射后的 Dune `OwnerID`、同一个 `RunnerID` 与受信任 actor；`duneagent` 拒绝空 Owner 或不匹配的 Runner，Dune host 继续校验 Runner 实际归属及 actor 权限。飞书消息发送者不能提供或改写这些值。
 
-会话记录保存 session key、目标快照、当前 Runtime 身份、ACP session ID、回复地址版本及处理状态。进程仍存活时优先 Attach；进程已失效时，只有 Agent 声明并成功执行 ACP `session/load` 才能恢复原对话。否则明确建立新 session 并告知用户上下文未恢复，不假定 Dune 内存状态可跨重启恢复。AgentConfig 共享不等于文件隔离；若 SandDance 需要用户间文件隔离，应给不同用户分配独立工作目录或 Runner。
+会话记录保存 session key、目标快照、当前 Runtime 身份、ACP session ID、回复地址版本及处理状态。进程仍存活时优先 Attach；进程已失效时，只有 Agent 声明并成功执行 ACP `session/load` 才能恢复原对话。否则明确建立新 session 并告知用户上下文未恢复，不假定 Dune 内存状态可跨重启恢复。Agent Profile 共享不等于文件隔离；若 SandDance 需要用户间文件隔离，应给不同用户分配独立工作目录或 Runner。
 
 ## 可靠性与状态归属
 
@@ -176,11 +177,11 @@ Dune IM module 定义 `BindingStore`、`CredentialResolver`、`ConversationStore
 
 路由得到规范化 `SessionKey` 后，`WorkQueue.PrepareRoute` 将其哈希持久绑定到 Inbox 事件，并检查同会话中更早的未完成事件；后续事件必须等待前序回合，不能越过暂时延后的消息。当会话租约被另一 worker 占用，或更早的同会话事件尚未完成时，`WorkQueue.DeferClaim` 将当前事件短暂延后并退还这次领取尝试，不把正常等待计入失败重试上限；SQLite 使用 `im_inbox.session_hash` 和 `available_at` 保持同会话入队顺序。前序结果未知时后续消息继续等待；若其投递已确认且经 `ReconcileConfirmedDelivery` 完成，后续消息才能 Attach 原会话继续处理。真正的预提交处理错误仍走有界 `ReleaseClaim`。同群不同话题的 session key 不同，首条消息进入 `submitting` 后仍可并行推进。
 
-独立 module 现在提供 `im/sqlite` 作为单宿主持久化基础，最终仅有 `im_bindings`、`im_inbox`、`im_conversations`、`im_deliveries` 四张表：Tenant 作用域内多 BotBinding 的版本化存储、Inbox 事件去重/领取/提交边界、会话及其 Agent 目标快照/Runtime 标识、跨 worker 的会话租约、可空话题引用和通用投递状态 CAS。闲置租约过期可以接管；`running` 或 `unknown` 回合不会自动接管。公共 `channel.Processor` 已通过假 Agent/Channel 测试验证私聊隔离、群话题续聊、ACP 增量驱动卡片、未知 prompt 不重放，以及 Binding 换版后已启动的会话继续 Attach 原 Runtime/AgentTarget、不偷换 AgentConfig；飞书新话题入场通过 bot/v3/info 查询当前机器人 Open ID 后匹配结构化 @。飞书 Service 的本地假 API 整链测试覆盖签名回调、持久入队、Run worker、两个私聊用户隔离与同用户 Attach 续聊，也覆盖群顶层 `@` 入场、另一成员同 thread 续聊、新话题隔离和各轮 `reply_in_thread` 回复；回调验收矩阵现已连接完整的回调入队 → Processor → duneagent → 受信任 host → Gateway → fabricd → 本地假 ACP 子进程 → 假飞书 API，覆盖 3 种回复模式 × 私聊/群话题，核实 assistant 正文与思考过滤、每轮投递持久完成、流式卡片按原话题创建/更新/关闭且仅发一条消息。这些测试仍不能替代飞书平台验收。`im/duneagent` 已接到受信任 host 入口并通过模拟 ACP 协议事件测试覆盖 Attach 与失效 Runtime 恢复；host 入口另以本地假 ACP 子进程验证 Gateway 上的 new/prompt/load。另以实际 ACP 子进程验证两个私聊会话的独立 Runtime、Attach 续聊、Stop 退出确认及新进程通过 `session/load` 保持原会话历史。已实现“投递持久完成而收尾未知”这一确定结果的核查恢复；其他无法证明结果的回合继续隔离而不自动重放。真实 Agent 行为和真实飞书平台仍未验收。后续接入方可复用 SQLite 或提供满足相同接口的共享存储。
+独立 module 现在提供 `im/sqlite` 作为单宿主持久化基础，最终仅有 `im_bindings`、`im_inbox`、`im_conversations`、`im_deliveries` 四张表：Tenant 作用域内多 BotBinding 的版本化存储、Inbox 事件去重/领取/提交边界、会话及其 Agent 目标快照/Runtime 标识、跨 worker 的会话租约、可空话题引用和通用投递状态 CAS。闲置租约过期可以接管；`running` 或 `unknown` 回合不会自动接管。公共 `channel.Processor` 已通过假 Agent/Channel 测试验证私聊隔离、群话题续聊、ACP 增量驱动卡片、未知 prompt 不重放，以及 Binding 换版后已启动的会话继续 Attach 原 Runtime/AgentTarget、不偷换 Profile 修订；飞书新话题入场通过 bot/v3/info 查询当前机器人 Open ID 后匹配结构化 @。飞书 Service 的本地假 API 整链测试覆盖签名回调、持久入队、Run worker、两个私聊用户隔离与同用户 Attach 续聊，也覆盖群顶层 `@` 入场、另一成员同 thread 续聊、新话题隔离和各轮 `reply_in_thread` 回复；回调验收矩阵现已连接完整的回调入队 → Processor → duneagent → 受信任 host → Gateway → fabricd → 本地假 ACP 子进程 → 假飞书 API，覆盖 3 种回复模式 × 私聊/群话题，核实 assistant 正文与思考过滤、每轮投递持久完成、流式卡片按原话题创建/更新/关闭且仅发一条消息。这些测试仍不能替代飞书平台验收。`im/duneagent` 已接到受信任 host 入口并通过模拟 ACP 协议事件测试覆盖 Attach 与失效 Runtime 恢复；host 入口另以本地假 ACP 子进程验证 Gateway 上的 new/prompt/load。另以实际 ACP 子进程验证两个私聊会话的独立 Runtime、Attach 续聊、Stop 退出确认及新进程通过 `session/load` 保持原会话历史。已实现“投递持久完成而收尾未知”这一确定结果的核查恢复；其他无法证明结果的回合继续隔离而不自动重放。真实 Agent 行为和真实飞书平台仍未验收。后续接入方可复用 SQLite 或提供满足相同接口的共享存储。
 
 ## 交付顺序与验收
 
-同 Tenant 双机器人回调整链测试使用不同 App ID、App Secret、Encrypt Key、Verification Token、AgentConfig 和最终回复模式；即使两条消息来自同一用户并共享 EventID，也分别形成独立会话、投递记录和正确的文本/卡片 API 调用。该测试只覆盖本地假飞书 API，不代替真实多应用授权验收。
+同 Tenant 双机器人回调整链测试使用不同 App ID、App Secret、Encrypt Key、Verification Token、Agent Profile 和最终回复模式；即使两条消息来自同一用户并共享 EventID，也分别形成独立会话、投递记录和正确的文本/卡片 API 调用。该测试只覆盖本地假飞书 API，不代替真实多应用授权验收。
 
 本地 WebSocket 假网关测试会经过底层 SDK 的 bootstrap、连接、事件帧分发和响应帧：持久入队成功返回 200、队列满返回 500、同一事件重投仍可幂等 ACK、同 ID 不同载荷的冲突事件返回 500；另有 WebSocket 群顶层 `@` 消息 → Inbox → 话题会话 → 假 Agent → 假飞书 API 的整链测试，分别覆盖三种回复模式，确认回复仍设置 `reply_in_thread=true`、流式卡片原生创建/更新/关闭且投递持久完成。同 Tenant 混合 WebSocket 与回调机器人的测试验证两种入口可同时激活，并在停用、重新激活和凭据轮换长连接机器人时保持回调机器人可用；轮换后旧 Channel 已停止，新 Channel 使用新凭据。停用长连接时先让 SDK 正常关闭，再取消其上下文，避免把正常停用误报为 `context canceled`；整体 Service.Stop 也覆盖这一路径。另有 SQLite 子进程退出后由新进程打开同一数据库的测试，验证进入 `submitting` 的回合不会重放；已确认投递而 Inbox 仍为 `submitting` 的收尾恢复由重开数据库的测试覆盖。CardKit 未知更新也通过 SQLite 关闭重开测试确认保持隔离，不自动新建卡片或重发消息。这些测试只证明本地持久化和协议边界，不替代飞书平台上的长连接、重连及话题验证。
 

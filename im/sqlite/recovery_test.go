@@ -23,7 +23,7 @@ func TestReconcileConfirmedDeliveryCompletesUnknownTurnWithoutReplay(t *testing.
 		t.Fatal(err)
 	}
 	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
@@ -102,7 +102,7 @@ func TestReconcileRejectedDeliveryRecordsKnownFailureWithoutReplay(t *testing.T)
 		t.Fatal(err)
 	}
 	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
@@ -170,7 +170,7 @@ func TestReconcileCompletedInboxRequiresExpiredWorkerLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
@@ -234,7 +234,7 @@ func TestReconcileSubmittingInboxAfterReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
@@ -360,7 +360,7 @@ func TestClosedFailureNoticeDoesNotProveAgentTurnCompleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", AgentConfigID: "agent"}, channel.ReplyAddress{}, ""); err != nil {
+	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)

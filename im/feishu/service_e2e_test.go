@@ -111,7 +111,7 @@ func TestTenantBotsKeepCredentialsTargetsSessionsAndReplyModesSeparate(t *testin
 		secret, _ := json.Marshal(Credentials{AppSecret: bot.secret, EncryptKey: bot.encryptKey, VerificationToken: bot.token})
 		secrets[bot.id] = secret
 		if _, err := store.Put(ctx, channel.BotBinding{ID: bot.id, TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-			Config: config, CredentialRef: bot.id, Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: bot.agentID}, Enabled: true}); err != nil {
+			Config: config, CredentialRef: bot.id, Target: channel.AgentTarget{RunnerID: "runner", ProfileID: bot.agentID, ProfileRevision: 1}, Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -188,7 +188,7 @@ func TestTenantBotsKeepCredentialsTargetsSessionsAndReplyModesSeparate(t *testin
 	for _, bot := range bots {
 		key := channel.SessionKey{TenantID: "tenant-a", BindingID: bot.id, ChatID: "oc_direct", SubjectID: "ou_alice"}
 		session, state, found, err := store.Get(ctx, key)
-		if err != nil || !found || state != channel.ConversationReady || session.Target.AgentConfigID != bot.agentID || agents.starts[key.String()] != 1 {
+		if err != nil || !found || state != channel.ConversationReady || session.Target.ProfileID != bot.agentID || agents.starts[key.String()] != 1 {
 			t.Fatalf("%s session crossed a Binding: session=%+v state=%s found=%t starts=%d err=%v", bot.id, session, state, found, agents.starts[key.String()], err)
 		}
 		delivery, found, err := store.GetDelivery(ctx, bot.id, channel.TurnDeliveryID(bot.id, "shared-event"))
@@ -365,7 +365,7 @@ func TestCallbackRedeliveryAcrossBindingRevisionDoesNotRunOldAgentTurn(t *testin
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "old-agent"}, Enabled: true})
+		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "old-agent", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +389,7 @@ func TestCallbackRedeliveryAcrossBindingRevisionDoesNotRunOldAgentTurn(t *testin
 	if first.Code != http.StatusOK {
 		t.Fatalf("old revision was not durably accepted: %d", first.Code)
 	}
-	binding.Target.AgentConfigID = "new-agent"
+	binding.Target.ProfileID = "new-agent"
 	binding, err = store.Put(ctx, binding)
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +423,7 @@ func TestCallbackRunWorkerSeparatesUsersAndReusesDirectSession(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a"}, Enabled: true})
+		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "agent-a", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestCallbackRunWorkerKeepsGroupThreadAcrossMembers(t *testing.T) {
 	defer store.Close()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a"}, Enabled: true})
+		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "agent-a", ProfileRevision: 1}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
