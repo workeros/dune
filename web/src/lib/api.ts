@@ -18,7 +18,6 @@ export function call<T>(binding: Binding, operation: string, payload: unknown = 
 }
 export const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 export type User = { id: string; email: string };
-export type Tenant = { id: string; name: string; created_by: { type: string; subject: string }; created_at: string };
 export type StartupInfo = { login_methods: { kind: string; url: string }[]; local_registration: boolean; attached: boolean; managed: boolean; tenant_scoped: boolean; public_url: string; gateway_url: string };
 export type Binding = { runner_id: string; fabric_id: string; machine_id: string; revision: number };
 export type Runner = { id: string; name: string; kind: string; tenant_id?: string; binding?: Binding; os?: string; arch?: string; online: boolean };
@@ -28,7 +27,7 @@ export function runnerPath(binding: Binding, suffix: string): string {
   const query = new URLSearchParams({ machine_id: binding.machine_id, fabric_id: binding.fabric_id, revision: String(binding.revision) });
   return `/api/v1/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
 }
-export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; title?: string; working_directory?: string };
+export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };
 export function runtimeKey(runtime: Runtime): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }
 export function eventPath(binding: Binding, runtime: Runtime): string {
   const query = new URLSearchParams({

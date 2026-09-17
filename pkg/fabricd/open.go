@@ -57,7 +57,13 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 	}
 	for _, session := range sessions {
 		m := session.Runtime
-		d.runtimes[m.ID] = &runtime{id: m.ID, inc: m.Incarnation, title: m.Title, cwd: m.WorkingDirectory, adapter: "pty", tmux: session, subs: map[*subscription]bool{}, done: make(chan struct{})}
+		r := &runtime{id: m.ID, inc: m.Incarnation, title: m.Title, cwd: m.WorkingDirectory, adapter: "pty", tmux: session, subs: map[*subscription]bool{}, done: make(chan struct{})}
+		state, err := session.TimeoutState()
+		if err != nil {
+			return nil, err
+		}
+		r.readTimeoutState(state)
+		d.runtimes[m.ID] = r
 	}
 	d.cleaner, err = process.NewCleaner()
 	if err != nil {
@@ -68,9 +74,9 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 	return d, nil
 }
 
-// RunHelper dispatches the dedicated child commands used to clean process groups
-// and temporary uploads after connector death. Hosts call it with os.Args[1:]
-// before parsing their own flags and exit with code when handled is true.
+// RunHelper dispatches the private child commands for process cleanup, temporary
+// uploads, and persistent PTY deadlines. Hosts call it with os.Args[1:] before
+// parsing their own flags and exit with code when handled is true.
 func RunHelper(args []string) (code int, handled bool) {
 	if len(args) == 0 {
 		return 0, false
@@ -78,6 +84,8 @@ func RunHelper(args []string) (code int, handled bool) {
 	switch args[0] {
 	case "_cleanup":
 		return process.CleanupGuard(), true
+	case "_pty_guard":
+		return process.PTYGuard(args[1:]), true
 	case "_guard":
 		return process.Guard(args[1:]), true
 	default:

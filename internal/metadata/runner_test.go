@@ -30,7 +30,7 @@ func TestRunnerBindingSnapshot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			token, _, err := s.IssueEnrollment(ctx, user.ID, "Selected environment")
+			_, token, _, err := s.IssueEnrollment(ctx, user.ID, "Selected environment")
 			if err != nil {
 				t.Fatal(err)
 			}

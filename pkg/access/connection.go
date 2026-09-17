@@ -13,7 +13,8 @@ import (
 )
 
 // Grant is constructed by the application, never from a protocol request.
-// A nil Valid is an explicit static grant for standalone deployments.
+// Policy owns current user validity when supplied. Without Policy, a nil Valid
+// is an explicit static grant for standalone deployments.
 type Grant struct {
 	Target string
 	Role   string
@@ -59,7 +60,7 @@ func (c *connection) Connected(ctx context.Context, conn *gateway.Connection) er
 	if err := c.grant.check(); err != nil {
 		return err
 	}
-	if c.grant.Valid != nil {
+	if c.grant.Valid != nil && c.grant.Policy == nil {
 		go c.grant.watch(ctx, conn.Cancel)
 	}
 	return nil
@@ -82,31 +83,18 @@ func (g Grant) watch(ctx context.Context, cancel func(error)) {
 }
 
 // Open authenticates one peer-delivered user stream using a grant reconstructed
-// by the application. It requires a real user policy and ongoing validity check;
+// by the application. It requires a real user policy with ongoing action checks;
 // it does not let a peer connection's identity become a standalone user grant.
 func (g Grant) Open(ctx context.Context, request *pb.Message, stream *gateway.Stream) (gateway.StreamHandler, error) {
-	if g.Role != gateway.RoleSDK || g.Policy == nil || g.Valid == nil {
+	if g.Role != gateway.RoleSDK || g.Policy == nil {
 		return nil, ErrDenied
 	}
 	_, handler, err := g.Bind()
 	if err != nil {
 		return nil, err
 	}
-	checked, err := handler.Open(ctx, request, stream)
-	if err != nil {
-		return nil, err
-	}
-	life, cancel := context.WithCancel(stream.Context())
-	go g.watch(life, stream.Cancel)
-	return &scopedStream{StreamHandler: checked, cancel: cancel}, nil
+	return handler.Open(ctx, request, stream)
 }
-
-type scopedStream struct {
-	gateway.StreamHandler
-	cancel context.CancelFunc
-}
-
-func (s *scopedStream) Closed(err error) { s.cancel(); s.StreamHandler.Closed(err) }
 
 func (c *connection) Open(ctx context.Context, request *pb.Message, stream *gateway.Stream) (gateway.StreamHandler, error) {
 	if err := ctx.Err(); err != nil {

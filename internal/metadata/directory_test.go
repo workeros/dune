@@ -59,7 +59,7 @@ func (t lostAckTx) Commit() error {
 
 func directoryClaim(t *testing.T, store *Store) gateway.RouteClaim {
 	t.Helper()
-	token, _, err := store.IssueEnrollment(context.Background(), "route-owner", "route target")
+	_, token, _, err := store.IssueEnrollment(context.Background(), "route-owner", "route target")
 	if err != nil {
 		t.Fatal(err)
 	}

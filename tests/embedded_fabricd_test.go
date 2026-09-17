@@ -93,7 +93,7 @@ func TestExternalFabricdHost(t *testing.T) {
 	data := []byte("external upload")
 	digest := sha256.Sum256(data)
 	path := filepath.Join(dir, "uploaded")
-	upload, err := client.Upload(ctx, api.Upload{Action: "create", Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])})
+	upload, err := client.Upload(ctx, api.Upload{Action: "create", Intent: "create", Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])})
 	must(t, err)
 	_, err = client.Upload(ctx, api.Upload{Action: "chunk", ID: upload.ID, Data: data})
 	must(t, err)

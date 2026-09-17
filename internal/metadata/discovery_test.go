@@ -113,7 +113,7 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 			if err != nil || len(owned.Items) != 4 {
 				t.Fatal("default owner discovery", owned, err)
 			}
-			if _, err := ownerService.Client(ctx, cookie, "machine-"+catalogID(0)); !errors.Is(err, authorization.ErrNotFound) {
+			if _, err := ownerService.ClientRunner(ctx, cookie, runner.Binding{RunnerID: catalogID(0), MachineID: "machine-" + catalogID(0), FabricID: "attached", Revision: 1}); !errors.Is(err, authorization.ErrNotFound) {
 				t.Fatal("owner accepted another user's machine", err)
 			}
 		})
@@ -132,7 +132,7 @@ func TestAuthorizedWritesRecheckSessionAndBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := s.IssueEnrollmentForSession(ctx, user, "runner", tokenHash(cookie))
+	_, token, _, err := s.IssueEnrollmentForSession(ctx, user, "runner", tokenHash(cookie))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestAuthorizedWritesRecheckSessionAndBinding(t *testing.T) {
 	if err := s.SetUserEnabled(ctx, user.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.IssueEnrollmentForSession(ctx, user, "stale", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
+	if _, _, _, err := s.IssueEnrollmentForSession(ctx, user, "stale", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
 		t.Fatal("stale session enrolled", err)
 	}
 	if err := s.RevokeAuthorized(ctx, user, tokenHash(cookie), selected); !errors.Is(err, identity.ErrUnauthorized) {
@@ -184,7 +184,7 @@ func TestEnrollmentPolicyIsRechecked(t *testing.T) {
 	service := authorization.New(ctx, local, s, discoveryCheck(func(_ context.Context, r access.Request) (access.Decision, error) {
 		return discoveryDecision(r, allowed), nil
 	}))
-	token, _, err := service.IssueEnrollment(ctx, cookie, "policy-controlled")
+	_, token, _, err := service.IssueEnrollment(ctx, cookie, "policy-controlled")
 	if err != nil {
 		t.Fatal(err)
 	}

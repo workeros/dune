@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/daemon"
 	internalgateway "github.com/aiomni/dune/internal/gateway"
+	"github.com/aiomni/dune/internal/install"
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/fabricd"
@@ -39,7 +41,7 @@ func run() error {
 		return fmt.Errorf("a Web or connector command is required; use dune help")
 	}
 	if args[0] == "help" || args[0] == "version" {
-		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN\n  dune --config FILE service install|restart|stop|status [--name dune]")
+		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN --runner-id ID\n  dune --config FILE repair|upgrade [--root DIR]\n  dune --config FILE service install|restart|stop|status [--name dune]")
 		return nil
 	}
 	if args[0] == "init" {
@@ -61,11 +63,12 @@ func run() error {
 		enrollFlags := flag.NewFlagSet("enroll", flag.ContinueOnError)
 		site := enrollFlags.String("site", "", "Dune HTTP(S) site URL, including its deployment prefix")
 		token := enrollFlags.String("token", "", "one-time machine binding token")
+		runnerID := enrollFlags.String("runner-id", "", "stable pending Runner identifier from the install command")
 		certificate := enrollFlags.String("certificate", "", "optional custom trust certificate")
 		if err := enrollFlags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return webapp.EnrollMachine(context.Background(), *configPath, *site, *token, *certificate)
+		return webapp.EnrollMachine(context.Background(), *configPath, *site, *token, *certificate, *runnerID)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -75,6 +78,15 @@ func run() error {
 		return fmt.Errorf("%w; initialize with dune init", err)
 	}
 	switch args[0] {
+	case "repair", "upgrade":
+		installFlags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		home, _ := os.UserHomeDir()
+		root := installFlags.String("root", home+"/.local/share/dune", "owned installation directory")
+		name := installFlags.String("name", "dune", "per-user service name")
+		if err := installFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		return install.Run(ctx, args[0], *configPath, *root, *name)
 	case "gateway":
 		return internalgateway.Run(ctx, machineConfig)
 	case "service":
@@ -82,6 +94,8 @@ func run() error {
 			return fmt.Errorf("service install|restart|stop|status [--name dune]")
 		}
 		serviceFlags := flag.NewFlagSet("service", flag.ContinueOnError)
+		readyFile := serviceFlags.String("ready-file", "", "private startup receipt path")
+		readyNonce := serviceFlags.String("ready-nonce", "", "private startup nonce")
 		name := serviceFlags.String("name", "dune", "per-user service name")
 		if err := serviceFlags.Parse(args[2:]); err != nil {
 			return err
@@ -89,9 +103,15 @@ func run() error {
 		if machineConfig.SessionDir == "" {
 			return fmt.Errorf("background connector requires session_dir; use dune enroll first")
 		}
-		return service.Run(args[1], *configPath, *name)
+		return service.Run(args[1], *configPath, *name, *readyFile, *readyNonce)
 	case "fabricd":
-		return daemon.Run(ctx, machineConfig)
+		daemonFlags := flag.NewFlagSet("fabricd", flag.ContinueOnError)
+		readyFile := daemonFlags.String("ready-file", "", "private startup receipt path")
+		readyNonce := daemonFlags.String("ready-nonce", "", "private startup nonce")
+		if err := daemonFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		return daemon.Run(ctx, machineConfig, *readyFile, *readyNonce)
 	case "web":
 		return runWebCommand(ctx, machineConfig, args[1:])
 	default:
@@ -108,6 +128,7 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 	binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 	publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
 	gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + api/v1/ws/tunnel")
+	trustedProxies := flags.String("trusted-proxies", "", "comma-separated trusted proxy CIDRs for login source limits")
 	disableRegistration := flags.Bool("disable-registration", false, "disable local sign-up; existing accounts can still log in")
 	drainTimeout := flags.Duration("drain-timeout", 5*time.Second, "maximum graceful shutdown wait; zero closes immediately")
 	webListen := flags.String("web-listen", "", "optional extra loopback HTTP listener for local validation")
@@ -115,6 +136,9 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 		return err
 	}
 	options := host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
+	if *trustedProxies != "" {
+		options.TrustedProxies = strings.Split(*trustedProxies, ",")
+	}
 	if *databaseFile != "" {
 		dataSet := false
 		flags.Visit(func(f *flag.Flag) {

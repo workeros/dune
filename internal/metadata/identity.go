@@ -73,16 +73,18 @@ func (s *Store) CreateSession(ctx context.Context, id, hash string, expires int6
 	})
 }
 
-func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (identity.User, error) {
-	var user identity.User
+func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (identity.Authentication, error) {
+	var authenticated identity.Authentication
+	var expires int64
 	if !s.localIdentity {
-		return user, identity.ErrUnauthorized
+		return authenticated, identity.ErrUnauthorized
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT u.id,u.email FROM dune_sessions s JOIN dune_users u ON u.id=s.user_id WHERE s.hash=$1 AND s.expires_at>$2 AND u.enabled=TRUE AND s.auth_version=u.auth_version`, hash, now).Scan(&user.ID, &user.Email)
+	err := s.db.QueryRowContext(ctx, `SELECT u.id,u.email,s.expires_at FROM dune_sessions s JOIN dune_users u ON u.id=s.user_id WHERE s.hash=$1 AND s.expires_at>$2 AND u.enabled=TRUE AND s.auth_version=u.auth_version`, hash, now).Scan(&authenticated.User.ID, &authenticated.User.Email, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrUnauthorized
 	}
-	return user, err
+	authenticated.ExpiresAt = time.Unix(expires, 0)
+	return authenticated, err
 }
 
 func (s *Store) DeleteSession(ctx context.Context, hash string) error {
@@ -122,8 +124,10 @@ func (s *Store) SetUserEnabled(ctx context.Context, id string, enabled bool) err
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_sessions WHERE user_id=$1`, id); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1`, id)
-		return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1`, id); err != nil {
+			return err
+		}
+		return disableUnenrollableAttached(ctx, tx, id)
 	})
 }
 

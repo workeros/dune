@@ -87,6 +87,12 @@ func (c Config) Validate() error {
 	if c.SessionDir != "" && !filepath.IsAbs(c.SessionDir) {
 		return fmt.Errorf("session_dir must be absolute")
 	}
+	if c.Certificate != "" && !filepath.IsAbs(c.Certificate) {
+		return fmt.Errorf("certificate must be absolute")
+	}
+	if c.Key != "" && !filepath.IsAbs(c.Key) {
+		return fmt.Errorf("key must be absolute")
+	}
 	return nil
 }
 func (c Config) ValidateServer() error {
@@ -191,13 +197,35 @@ func writeConfig(path string, c Config) error {
 	if e != nil {
 		return e
 	}
-	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, e := os.CreateTemp(filepath.Dir(path), ".config-*")
 	if e != nil {
 		return e
 	}
+	defer os.Remove(f.Name())
 	defer f.Close()
-	_, e = f.Write(b)
-	return e
+	if e = f.Chmod(0600); e != nil {
+		return e
+	}
+	if _, e = f.Write(b); e != nil {
+		return e
+	}
+	if e = f.Sync(); e != nil {
+		return e
+	}
+	if e = f.Close(); e != nil {
+		return e
+	}
+	// Link publishes the fully written file atomically and cannot clobber an
+	// existing target, including a dangling symlink.
+	if e = os.Link(f.Name(), path); e != nil {
+		return e
+	}
+	dir, e := os.Open(filepath.Dir(path))
+	if e != nil {
+		return e
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 // Create writes a new machine configuration without overwriting an existing one.

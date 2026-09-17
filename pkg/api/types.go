@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -196,14 +197,17 @@ type ExecResult struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
-	Title            string `json:"title,omitempty"`
-	WorkingDirectory string `json:"working_directory,omitempty"`
-	ID               string `json:"id"`
-	Incarnation      string `json:"incarnation"`
-	Generation       uint64 `json:"generation"`
-	Adapter          string `json:"adapter"`
-	State            string `json:"state"`
-	ExitCode         *int   `json:"exit_code,omitempty"`
+	Title            string     `json:"title,omitempty"`
+	WorkingDirectory string     `json:"working_directory,omitempty"`
+	ID               string     `json:"id"`
+	Incarnation      string     `json:"incarnation"`
+	Generation       uint64     `json:"generation"`
+	Adapter          string     `json:"adapter"`
+	State            string     `json:"state"`
+	ExitCode         *int       `json:"exit_code,omitempty"`
+	StopReason       string     `json:"stop_reason,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	DeadlineAt       *time.Time `json:"deadline_at,omitempty"`
 }
 type Attach struct {
 	Observe bool `json:"observe"`
@@ -236,19 +240,20 @@ type Resize struct {
 	Cols uint16 `json:"cols"`
 }
 type File struct {
-	Action           string `json:"action"`
-	Path             string `json:"path"`
-	Destination      string `json:"destination,omitempty"`
-	Data             []byte `json:"data,omitempty"`
-	Offset           int64  `json:"offset,omitempty"`
-	Length           int    `json:"length,omitempty"`
-	Cursor           string `json:"cursor,omitempty"`
-	Limit            int    `json:"limit,omitempty"`
-	Query            string `json:"query,omitempty"`
-	ExpectedRevision string `json:"expected_revision,omitempty"`
-	Overwrite        bool   `json:"overwrite,omitempty"`
-	Force            bool   `json:"force,omitempty"`
-	Recursive        bool   `json:"recursive,omitempty"`
+	Action           string         `json:"action"`
+	Path             string         `json:"path"`
+	Destination      string         `json:"destination,omitempty"`
+	Data             []byte         `json:"data,omitempty"`
+	Offset           int64          `json:"offset,omitempty"`
+	Length           int            `json:"length,omitempty"`
+	Cursor           string         `json:"cursor,omitempty"`
+	Limit            int            `json:"limit,omitempty"`
+	Search           *SearchOptions `json:"search,omitempty"`
+	Intent           string         `json:"intent,omitempty"`
+	WithRevision     bool           `json:"with_revision,omitempty"`
+	ExpectedRevision string         `json:"expected_revision,omitempty"`
+	Overwrite        bool           `json:"overwrite,omitempty"`
+	Recursive        bool           `json:"recursive,omitempty"`
 }
 type FileInfo struct {
 	Name        string `json:"name"`
@@ -258,7 +263,7 @@ type FileInfo struct {
 	IsDir       bool   `json:"is_dir"`
 	ModifiedAt  string `json:"modified_at"`
 	ContentHash string `json:"content_hash,omitempty"`
-	Revision    string `json:"revision"`
+	Revision    string `json:"revision,omitempty"`
 }
 type FilePage struct {
 	Items      []FileInfo `json:"items"`
@@ -280,8 +285,7 @@ type Upload struct {
 	Data             []byte `json:"data,omitempty"`
 	ChunkSHA256      string `json:"chunk_sha256,omitempty"`
 	ExpectedRevision string `json:"expected_revision,omitempty"`
-	Overwrite        bool   `json:"overwrite,omitempty"`
-	Force            bool   `json:"force,omitempty"`
+	Intent           string `json:"intent,omitempty"`
 	TTLSeconds       int    `json:"ttl_seconds,omitempty"`
 }
 type UploadState struct {

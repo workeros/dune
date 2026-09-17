@@ -13,6 +13,7 @@ replace github.com/aiomni/dune => ..
 
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fasthttp/websocket v1.5.12 // indirect

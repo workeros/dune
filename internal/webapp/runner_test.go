@@ -31,7 +31,7 @@ func TestBrowserRunnerBindingIsFixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := store.IssueEnrollment(ctx, user.ID, "selected environment")
+	_, token, _, err := store.IssueEnrollment(ctx, user.ID, "selected environment")
 	if err != nil {
 		t.Fatal(err)
 	}

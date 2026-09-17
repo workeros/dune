@@ -9,6 +9,7 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
@@ -34,7 +35,7 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		token, _, err := store.IssueEnrollment(context.Background(), c.user.ID, "machine")
+		_, token, _, err := store.IssueEnrollment(context.Background(), c.user.ID, "machine")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -42,7 +43,7 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c.grant, err = access.Client(ctx, c.cookie, c.machine.ID)
+		c.grant, err = access.ClientRunner(ctx, c.cookie, runner.Binding{RunnerID: c.machine.RunnerID, MachineID: c.machine.ID, FabricID: "attached", Revision: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,12 +67,12 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 		if _, _, err := access.Authorize(c.cookie); !errors.Is(err, identity.ErrUnauthorized) {
 			t.Fatal("browser cookie accepted as tunnel credential")
 		}
-		if _, err := access.Client(ctx, c.credential, c.machine.ID); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := access.ClientRunner(ctx, c.credential, runner.Binding{RunnerID: c.machine.RunnerID, MachineID: c.machine.ID, FabricID: "attached", Revision: 1}); !errors.Is(err, identity.ErrUnauthorized) {
 			t.Fatal("machine credential accepted as user")
 		}
 	}
 	a, b := connections[0], connections[1]
-	if _, err := access.Client(ctx, a.cookie, b.machine.ID); !errors.Is(err, authorization.ErrNotFound) {
+	if _, err := access.ClientRunner(ctx, a.cookie, runner.Binding{RunnerID: b.machine.RunnerID, MachineID: b.machine.ID, FabricID: "attached", Revision: 1}); !errors.Is(err, authorization.ErrNotFound) {
 		t.Fatal("cross-account target accepted")
 	}
 	if err := local.Logout(ctx, a.cookie); err != nil {

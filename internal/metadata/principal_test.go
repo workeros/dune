@@ -35,7 +35,7 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pending, _, err := s.IssueEnrollment(ctx, user.ID, "running machine")
+			_, pending, _, err := s.IssueEnrollment(ctx, user.ID, "running machine")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -43,7 +43,7 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pending, _, err = s.IssueEnrollment(ctx, user.ID, "pending install")
+			_, pending, _, err = s.IssueEnrollment(ctx, user.ID, "pending install")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			if _, _, err := local.Login(ctx, user.Email, "suspend-test-password"); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("suspended password accepted", err)
 			}
-			if _, _, err := s.IssueEnrollmentForSession(ctx, user, "new machine", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, _, err := s.IssueEnrollmentForSession(ctx, user, "new machine", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("suspended user created enrollment", err)
 			}
 			if id, err := other.MachineCredential(ctx, credential); err != nil || id != machine.ID {

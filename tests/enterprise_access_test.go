@@ -14,6 +14,6 @@ func (f enterpriseCheck) Check(ctx context.Context, r access.Request) (access.De
 }
 func TestEnterpriseSharedExecutionAndRevocation(t *testing.T) {
 	t.Run("sqlite", func(t *testing.T) {
-		testPrefixedWorkbench(t, workbenchCase{enterprise: true, runnerEntry: true})
+		testPrefixedWorkbench(t, workbenchCase{enterprise: true})
 	})
 }

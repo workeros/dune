@@ -31,7 +31,7 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Close()
-	for _, path := range []string{"/api/v1/me", "/api/v1/machines"} {
+	for _, path := range []string{"/api/v1/me", "/api/v1/runners"} {
 		response := httptest.NewRecorder()
 		app.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
 		if response.Code != http.StatusUnauthorized {
@@ -59,14 +59,14 @@ func TestHTTPRoutesWithStaticAssets(t *testing.T) {
 		t.Fatal("incorrect login cookie")
 	}
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest("GET", "/api/v1/machines", nil)
+	request = httptest.NewRequest("GET", "/api/v1/runners", nil)
 	request.AddCookie(cookies[0])
 	app.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatal("signed-in machine listing failed")
 	}
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest("DELETE", "/api/v1/machines/guessed-id", nil)
+	request = httptest.NewRequest("DELETE", "/api/v1/runners/guessed-id", nil)
 	request.AddCookie(cookies[0])
 	request.Header.Set("X-Dune-Request", "1")
 	request.Header.Set("Origin", "https://attacker.example")
@@ -123,7 +123,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bind, _, err := store.IssueEnrollment(context.Background(), a.ID, "machine-a")
+	_, bind, _, err := store.IssueEnrollment(context.Background(), a.ID, "machine-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bind, _, err = store.IssueEnrollment(context.Background(), b.ID, "machine-b")
+	_, bind, _, err = store.IssueEnrollment(context.Background(), b.ID, "machine-b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,27 +139,36 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pair := range []struct{ token, own, other string }{{at, ma.ID, mb.ID}, {bt, mb.ID, ma.ID}} {
-		req := httptest.NewRequest("GET", "/api/v1/machines", nil)
+	for _, pair := range []struct {
+		token      string
+		own, other Machine
+	}{{at, ma, mb}, {bt, mb, ma}} {
+		req := httptest.NewRequest("GET", "/api/v1/runners", nil)
 		req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 		out := httptest.NewRecorder()
 		app.ServeHTTP(out, req)
-		if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte(pair.own)) || bytes.Contains(out.Body.Bytes(), []byte(pair.other)) {
+		if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte(pair.own.ID)) || bytes.Contains(out.Body.Bytes(), []byte(pair.other.ID)) {
 			t.Fatal("machine listing leaked ownership")
 		}
-		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events?incarnation=guessed&generation=1", ""}, {"DELETE", "", ""}} {
-			prefix := "/api/v1/machines/"
+		for _, route := range []struct{ method, suffix, body string }{{"POST", "/call", `{"operation":"runtime.list"}`}, {"POST", "/call", `{"operation":"git","payload":{"action":"diff"}}`}, {"POST", "/sessions", `{}`}, {"GET", "/sessions/guessed/events?incarnation=guessed&generation=1", ""}, {"DELETE", "/binding", ""}} {
+			prefix := "/api/v1/runners/"
 			if route.method == "GET" && strings.Contains(route.suffix, "/events") {
-				prefix = "/api/v1/ws/machines/"
+				prefix = "/api/v1/ws/runners/"
 			}
-			req := httptest.NewRequest(route.method, prefix+pair.other+route.suffix, bytes.NewBufferString(route.body))
+			suffix := route.suffix
+			separator := "?"
+			if strings.Contains(suffix, "?") {
+				separator = "&"
+			}
+			suffix += separator + fmt.Sprintf("machine_id=%s&fabric_id=attached&revision=1", pair.other.ID)
+			req := httptest.NewRequest(route.method, prefix+pair.other.RunnerID+suffix, bytes.NewBufferString(route.body))
 			req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
 			req.Header.Set("Origin", app.urls.Origin)
 			req.Header.Set("X-Dune-Request", "1")
 			req.Header.Set("Content-Type", "application/json")
 			out := httptest.NewRecorder()
 			app.ServeHTTP(out, req)
-			if out.Code != 404 {
+			if out.Code != 404 && !(route.method == "DELETE" && out.Code == 403) {
 				t.Fatalf("cross-account %s %s: %d", route.method, route.suffix, out.Code)
 			}
 		}
@@ -206,7 +215,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	if err = app.identity.Logout(context.Background(), at); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest("GET", "/api/v1/machines", nil)
+	req := httptest.NewRequest("GET", "/api/v1/runners", nil)
 	req.AddCookie(&http.Cookie{Name: cookieName, Value: at})
 	out := httptest.NewRecorder()
 	app.ServeHTTP(out, req)

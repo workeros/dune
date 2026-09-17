@@ -34,17 +34,17 @@ func (*browserIdentityFixture) Namespace() string { return "sanddance" }
 func (*browserIdentityFixture) LoginMethods(publicURL string) []identity.LoginMethod {
 	return []identity.LoginMethod{{Kind: "enterprise", URL: "https://identity.example.test/login?return=" + publicURL}}
 }
-func (p *browserIdentityFixture) Authenticate(ctx context.Context, token string) (identity.User, error) {
+func (p *browserIdentityFixture) Authenticate(ctx context.Context, token string) (identity.Authentication, error) {
 	if err := ctx.Err(); err != nil {
-		return identity.User{}, err
+		return identity.Authentication{}, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	user, ok := p.valid[token]
 	if !ok {
-		return identity.User{}, identity.ErrUnauthorized
+		return identity.Authentication{}, identity.ErrUnauthorized
 	}
-	return user, nil
+	return identity.Authentication{User: user, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 func (p *browserIdentityFixture) Logout(ctx context.Context, token string) error {
 	if err := ctx.Err(); err != nil {

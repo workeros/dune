@@ -47,7 +47,7 @@ func peerDigest(m *pb.Message) (string, error) {
 
 func (l *Service) delegate(record ConnectionAccess) func(context.Context, gateway.Route, *pb.Message, access.Request, access.Decision) ([]byte, error) {
 	return func(ctx context.Context, route gateway.Route, message *pb.Message, request access.Request, decision access.Decision) ([]byte, error) {
-		if l.ctx.Err() != nil || record.Scope() != request.Scope || route.Target != record.Target || route.Epoch != message.RouteEpoch || !wire.ValidID(route.OwnerBootID) || route.OwnerBootID == l.bootID || !l.validAccess(record)() {
+		if l.ctx.Err() != nil || record.Scope() != request.Scope || route.Target != record.Target || route.Epoch != message.RouteEpoch || !wire.ValidID(route.OwnerBootID) || route.OwnerBootID == l.bootID {
 			return nil, identity.ErrUnauthorized
 		}
 		digest, err := peerDigest(message)
@@ -104,11 +104,10 @@ func (p *peerConnection) Open(ctx context.Context, message *pb.Message, flow *ga
 	l.peerSeen[value.Nonce] = time.Unix(value.ExpiresAt, 0)
 	l.mu.Unlock()
 	request, err := access.Describe(value.Connection.Scope(), message)
-	if err != nil || request != value.Request || !l.validAccess(value.Connection)() {
+	if err != nil || request != value.Request {
 		return nil, identity.ErrUnauthorized
 	}
-	if _, err := l.evaluate(ctx, request); err != nil {
-		return nil, err
-	}
-	return (access.Grant{Target: p.target, Role: gateway.RoleSDK, Valid: l.validAccess(value.Connection), Policy: &access.Policy{Scope: value.Connection.Scope(), Checker: l.checker, Observer: l.observer}}).Open(ctx, message, flow)
+	// The stream policy independently refreshes identity, Runner and host policy
+	// at this owner before Forward; the peer envelope is never an allow cache.
+	return (access.Grant{Target: p.target, Role: gateway.RoleSDK, Policy: l.streamPolicy(value.Connection)}).Open(ctx, message, flow)
 }

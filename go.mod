@@ -3,11 +3,13 @@ module github.com/aiomni/dune
 go 1.26.0
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/creack/pty v1.1.24
 	github.com/fasthttp/websocket v1.5.12
 	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/valyala/fasthttp v1.62.0
+	golang.org/x/sys v0.47.0
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0
@@ -30,7 +32,6 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

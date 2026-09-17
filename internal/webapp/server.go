@@ -2,6 +2,7 @@ package webapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -39,10 +41,12 @@ func (s *Server) setSession(w http.ResponseWriter, token string, lifetime time.D
 }
 
 type Options struct {
-	Binaries   string
-	Assets     string
-	PublicURL  string
-	GatewayURL string
+	// TrustedProxies contains CIDRs allowed to supply X-Forwarded-For.
+	TrustedProxies []string
+	Binaries       string
+	Assets         string
+	PublicURL      string
+	GatewayURL     string
 	// DialGateway establishes the authenticated byte connection; the server
 	// owns the returned connection and performs the execution protocol handshake.
 	DialGateway func(context.Context, string) (net.Conn, error)
@@ -54,7 +58,6 @@ type Options struct {
 	// ConsumeWebSocketTicket exchanges a one-time browser subprotocol ticket
 	// for the session token used by the normal Dune identity/access path.
 	ConsumeWebSocketTicket func(context.Context, string, string, runner.Binding, api.Runtime) (string, error)
-	CanDetachAttached      func(context.Context, publicidentity.User, string, string) (bool, error)
 }
 
 type authRate struct {
@@ -63,18 +66,19 @@ type authRate struct {
 }
 
 type Server struct {
-	store     *metadata.Store
-	identity  publicidentity.Service
-	access    *authorization.Service
-	urls      deployment.URLs
-	gateway   *gateway.Gateway
-	options   Options
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	rates     map[string]authRate
-	hashSlots chan struct{}
-	mux       *http.ServeMux
+	trustedProxies []netip.Prefix
+	store          *metadata.Store
+	identity       publicidentity.Service
+	access         *authorization.Service
+	urls           deployment.URLs
+	gateway        *gateway.Gateway
+	options        Options
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	rates          map[string]authRate
+	hashSlots      chan struct{}
+	mux            *http.ServeMux
 }
 
 func NewServer(parent context.Context, options Options, store *metadata.Store, service publicidentity.Service, authorizer *authorization.Service, core *gateway.Gateway) (*Server, error) {
@@ -88,6 +92,14 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	options.PublicURL = addresses.PublicURL
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{urls: addresses, store: store, identity: service, access: authorizer, options: options, ctx: ctx, cancel: cancel, rates: map[string]authRate{}, hashSlots: make(chan struct{}, 4), mux: http.NewServeMux()}
+	for _, cidr := range options.TrustedProxies {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", cidr, err)
+		}
+		s.trustedProxies = append(s.trustedProxies, prefix)
+	}
 	s.gateway = core
 	s.mux.Handle("GET /api/v1/ws/tunnel", tunnel.NewHandler(ctx, s.gateway, func(credential string) (gateway.BindingContext, gateway.ConnectionHandler, error) {
 		binding, handler, err := authorizer.Authorize(credential)
@@ -115,7 +127,7 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	s.mux.HandleFunc("GET /api/v1/downloads/{binary}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("binary")
 		switch name {
-		case "dune-linux-amd64.tar.gz", "dune-linux-arm64.tar.gz", "dune-darwin-amd64.tar.gz", "dune-darwin-arm64.tar.gz":
+		case "dune-linux-amd64.tar.gz", "dune-linux-arm64.tar.gz", "dune-darwin-amd64.tar.gz", "dune-darwin-arm64.tar.gz", "dune-linux-amd64.tar.gz.sha256", "dune-linux-arm64.tar.gz.sha256", "dune-darwin-amd64.tar.gz.sha256", "dune-darwin-arm64.tar.gz.sha256":
 		default:
 			http.NotFound(w, r)
 			return
@@ -130,11 +142,11 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	s.mux.HandleFunc("GET /api/v1/install.sh", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = io.WriteString(w, attachedInstallScript)
+		_, _ = io.WriteString(w, installScript)
 	})
-	s.mux.HandleFunc("GET /api/v1/machines", s.machines)
 	if !options.DisableAttached && !options.TenantScoped {
 		s.mux.HandleFunc("POST /api/v1/enrollments", s.enrollment)
+		s.mux.HandleFunc("DELETE /api/v1/enrollments/{runner}", s.cancelEnrollment)
 	}
 	if !options.DisableAttached && options.TenantScoped {
 		s.mux.HandleFunc("POST /api/v1/tenants/{tenant}/enrollments", s.tenantEnrollment)
@@ -144,10 +156,6 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 		s.mux.HandleFunc("GET /api/v1/tenants/{tenant}/runners", s.tenantRunners)
 	}
 	s.mux.HandleFunc("POST /api/v1/enroll", s.enroll)
-	s.mux.HandleFunc("DELETE /api/v1/machines/{machine}", s.revoke)
-	s.mux.HandleFunc("POST /api/v1/machines/{machine}/call", s.call)
-	s.mux.HandleFunc("POST /api/v1/machines/{machine}/sessions", s.start)
-	s.mux.HandleFunc("GET /api/v1/ws/machines/{machine}/sessions/{runtime}/events", s.events)
 	s.mux.HandleFunc("DELETE /api/v1/runners/{runner}/binding", s.revokeRunner)
 	s.mux.HandleFunc("POST /api/v1/runners/{runner}/call", s.call)
 	s.mux.HandleFunc("POST /api/v1/runners/{runner}/sessions", s.start)
@@ -235,9 +243,9 @@ func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, boo
 		token = cookie.Value
 	}
 	if token != "" {
-		if user, err := s.identity.Authenticate(r.Context(), token); err == nil {
-			return user, token, true
-		} else if !errors.Is(err, identity.ErrUnauthorized) {
+		if authenticated, err := s.identity.Authenticate(r.Context(), token); err == nil && authenticated.Valid() && r.Context().Err() == nil {
+			return authenticated.User, token, true
+		} else if err != nil && !errors.Is(err, identity.ErrUnauthorized) {
 			writeError(w, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "identity service unavailable")
 			return User{}, "", false
 		}
@@ -246,35 +254,50 @@ func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, boo
 	return User{}, "", false
 }
 
-func (s *Server) authAllowed(w http.ResponseWriter, r *http.Request) bool {
-	return s.authAllowedFor(w, r, "login", 20)
+func (s *Server) authAllowed(w http.ResponseWriter, r *http.Request, email string) bool {
+	account := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email)))))
+	return s.authAllowedKeys(w, []string{"login:source:" + s.clientIP(r), "login:account:" + account}, 20)
 }
 func (s *Server) authAllowedFor(w http.ResponseWriter, r *http.Request, group string, limit int) bool {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	ip = group + ":" + ip
+	return s.authAllowedKeys(w, []string{group + ":" + s.clientIP(r)}, limit)
+}
+func (s *Server) authAllowedKeys(w http.ResponseWriter, keys []string, limit int) bool {
 	now := time.Now()
 	s.mu.Lock()
-	rate := s.rates[ip]
-	if !now.Before(rate.Until) {
-		rate = authRate{Until: now.Add(time.Minute)}
-	}
 	if len(s.rates) >= 10000 {
 		for key, old := range s.rates {
-			if now.After(old.Until) {
+			if !now.Before(old.Until) {
 				delete(s.rates, key)
 			}
 		}
 	}
-	allow := rate.Count < limit && len(s.rates) < 10000
-	rate.Count++
+	allow := true
+	for _, key := range keys {
+		rate, exists := s.rates[key]
+		if !now.Before(rate.Until) {
+			rate = authRate{Until: now.Add(time.Minute)}
+		}
+		if rate.Count >= limit || (!exists && len(s.rates) >= 10000) {
+			allow = false
+			break
+		}
+	}
 	if allow {
-		s.rates[ip] = rate
+		for _, key := range keys {
+			rate := s.rates[key]
+			if !now.Before(rate.Until) {
+				rate = authRate{Until: now.Add(time.Minute)}
+			}
+			rate.Count++
+			s.rates[key] = rate
+		}
 	}
 	s.mu.Unlock()
 	if !allow {
 		writeError(w, 429, "RATE_LIMIT", "too many authentication attempts; retry in a minute")
 		return false
 	}
+
 	select {
 	case s.hashSlots <- struct{}{}:
 		return true
@@ -290,10 +313,6 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 		writeError(w, 403, "LOCAL_LOGIN_DISABLED", "此站点使用企业登录。")
 		return
 	}
-	if !s.authAllowed(w, r) {
-		return
-	}
-	defer func() { <-s.hashSlots }()
 	var request struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -301,6 +320,10 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 	if !readJSON(w, r, &request) {
 		return
 	}
+	if !s.authAllowed(w, r, request.Email) {
+		return
+	}
+	defer func() { <-s.hashSlots }()
 	var user User
 	var token string
 	var err error
@@ -336,40 +359,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.user(w, r)
-	if !ok {
-		return
-	}
-	query, ok := pageQuery(w, r)
-	if !ok {
-		return
-	}
-	page, err := s.access.Discover(r.Context(), user, query, true)
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	online, err := s.online(r.Context(), page.Items)
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	type machineView struct {
-		Machine
-		Online bool `json:"online"`
-	}
-	out := struct {
-		Items      []machineView `json:"items"`
-		NextCursor string        `json:"next_cursor,omitempty"`
-	}{Items: []machineView{}, NextCursor: page.NextCursor}
-	for _, resource := range page.Items {
-		b := resource.Runner.Binding
-		out.Items = append(out.Items, machineView{Machine: Machine{ID: b.MachineID, RunnerID: resource.Runner.ID, Name: resource.Runner.Name, OS: resource.OS, Arch: resource.Arch, CreatedAt: resource.Runner.CreatedAt}, Online: online[b.MachineID]})
-	}
-	writeJSON(w, 200, out)
-}
-
 func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 	_, cookie, ok := s.user(w, r)
 	if !ok {
@@ -381,14 +370,14 @@ func (s *Server) enrollment(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &request) {
 		return
 	}
-	token, expires, err := s.access.IssueEnrollment(r.Context(), cookie, request.Name)
+	logical, token, expires, err := s.access.IssueEnrollment(r.Context(), cookie, request.Name)
 	if err != nil {
 		writeMetadataError(w, err)
 		return
 	}
 	endpoint := strings.TrimSuffix(s.urls.PublicURL, "/")
-	writeJSON(w, 200, map[string]any{"token": token, "expires_at": expires, "endpoint": endpoint,
-		"command": fmt.Sprintf("curl --fail --show-error --proto '=http,https' %s -o dune-install.sh && sh dune-install.sh %s %s", shellQuote(endpoint+"/install.sh"), shellQuote(endpoint), shellQuote(token))})
+	writeJSON(w, 200, map[string]any{"runner": logical, "token": token, "expires_at": expires, "endpoint": endpoint,
+		"command": installCommand(endpoint, token, logical.ID)})
 }
 
 func (s *Server) tenantEnrollment(w http.ResponseWriter, r *http.Request) {
@@ -409,34 +398,8 @@ func (s *Server) tenantEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	endpoint := strings.TrimSuffix(s.urls.PublicURL, "/")
 	writeJSON(w, http.StatusCreated, map[string]any{"runner": logical, "token": token, "expires_at": expires, "endpoint": endpoint,
-		"command": fmt.Sprintf("curl --fail --show-error --proto '=https' %s -o sanddance-install.sh && sh sanddance-install.sh %s %s", shellQuote(endpoint+"/api/v1/install.sh"), shellQuote(endpoint), shellQuote(token))})
+		"command": installCommand(endpoint, token, logical.ID)})
 }
-
-const attachedInstallScript = `#!/bin/sh
-set -eu
-site=${1:?usage: sh sanddance-install.sh SITE ONE_TIME_TOKEN}
-site=${site%/}
-token=${2:?one-time token required}
-case "$site" in https://*) ;; *) echo 'HTTPS SandDance site required' >&2; exit 1;; esac
-case "$(uname -s)" in Linux) platform=linux;; Darwin) platform=darwin;; *) echo 'Linux or macOS required' >&2; exit 1;; esac
-case "$(uname -m)" in x86_64|amd64) arch=amd64;; arm64|aarch64) arch=arm64;; *) echo 'amd64 or arm64 required' >&2; exit 1;; esac
-umask 077
-install_dir=${DUNE_INSTALL_DIR:-"$HOME/.local/share/dune"}
-config_file=${DUNE_CONFIG:-"$HOME/.config/dune/config.yaml"}
-mkdir -p "$install_dir" "$(dirname "$config_file")"
-work_dir=$(mktemp -d "$install_dir/.sanddance-install-XXXXXX")
-trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
-curl --fail --silent --show-error --proto '=https' "$site/api/v1/downloads/dune-$platform-$arch.tar.gz" -o "$work_dir/dune.tar.gz"
-tar -xzf "$work_dir/dune.tar.gz" -C "$work_dir"
-chmod 700 "$work_dir/dune" "$work_dir/tmux"
-"$work_dir/dune" --config "$config_file" enroll --site "$site" --token "$token"
-mv "$work_dir/dune" "$install_dir/dune"
-mv "$work_dir/tmux" "$install_dir/tmux"
-mkdir -p "$install_dir/licenses"
-cp -R "$work_dir/licenses/." "$install_dir/licenses/"
-"$install_dir/dune" --config "$config_file" service install --name dune
-printf 'SandDance Devbox attached. Config: %s\n' "$config_file"
-`
 
 func (s *Server) tenantRunners(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := s.user(w, r)
@@ -468,7 +431,7 @@ func (s *Server) tenantRunners(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) detachTenantRunner(w http.ResponseWriter, r *http.Request) {
-	user, cookie, ok := s.user(w, r)
+	_, cookie, ok := s.user(w, r)
 	if !ok {
 		return
 	}
@@ -476,25 +439,7 @@ func (s *Server) detachTenantRunner(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	resource, _, err := s.access.Resource(r.Context(), user, binding.RunnerID, false, "runner.unbind")
-	if err != nil || resource.OwnerID != r.PathValue("tenant") || resource.Runner.Kind != "attached" || resource.Runner.Binding == nil || *resource.Runner.Binding != binding {
-		writeMetadataError(w, authorization.ErrNotFound)
-		return
-	}
-	if s.options.CanDetachAttached == nil {
-		writeError(w, http.StatusForbidden, "FORBIDDEN", "attached Runner detach policy is unavailable")
-		return
-	}
-	allowed, err := s.options.CanDetachAttached(r.Context(), user, resource.OwnerID, resource.Runner.ID)
-	if err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	if !allowed {
-		writeError(w, http.StatusForbidden, "FORBIDDEN", "only the creator or a Tenant owner/admin can detach this Runner")
-		return
-	}
-	if err := s.access.RevokeRunner(r.Context(), cookie, binding); err != nil {
+	if err := s.access.RevokeTenantRunner(r.Context(), cookie, r.PathValue("tenant"), binding); err != nil {
 		writeMetadataError(w, err)
 		return
 	}
@@ -505,10 +450,6 @@ func (s *Server) detachTenantRunner(w http.ResponseWriter, r *http.Request) {
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
-	if !s.authAllowed(w, r) {
-		return
-	}
-	defer func() { <-s.hashSlots }()
 	var request struct {
 		Token string `json:"token"`
 		OS    string `json:"os"`
@@ -532,58 +473,36 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"machine": machine, "credential": credential, "gateway": s.urls.GatewayURL})
 }
 
-func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
+func (s *Server) executionClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, bool) {
 	_, cookie, ok := s.user(w, r)
 	if !ok {
-		return
+		return nil, false
 	}
-	machineID := r.PathValue("machine")
-	if err := s.access.Revoke(r.Context(), cookie, machineID); err != nil {
-		writeMetadataError(w, err)
-		return
-	}
-	s.gateway.Disconnect(machineID)
-	writeJSON(w, 200, map[string]bool{"ok": true})
-}
-
-func (s *Server) executionClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, func() bool, bool) {
-	_, cookie, ok := s.user(w, r)
+	binding, ok := selectedBinding(w, r)
 	if !ok {
-		return nil, nil, false
+		return nil, false
 	}
-	machineID := r.PathValue("machine")
-	var grant *authorization.ClientGrant
-	var err error
-	if r.PathValue("runner") != "" {
-		binding, ok := selectedBinding(w, r)
-		if !ok {
-			return nil, nil, false
-		}
-		machineID = binding.MachineID
-		grant, err = s.access.ClientRunner(r.Context(), cookie, binding)
-	} else {
-		grant, err = s.access.Client(r.Context(), cookie, machineID)
-	}
+	grant, err := s.access.ClientRunner(r.Context(), cookie, binding)
 	if err != nil {
 		writeMetadataError(w, err)
-		return nil, nil, false
+		return nil, false
 	}
 	defer grant.Close()
 	conn, err := s.options.DialGateway(r.Context(), grant.Token())
 	if err != nil {
 		writeError(w, 503, "OFFLINE", err.Error())
-		return nil, nil, false
+		return nil, false
 	}
-	client, err := sdk.Connect(r.Context(), conn, machineID)
+	client, err := sdk.Connect(r.Context(), conn, binding.MachineID)
 	if err != nil {
 		writeError(w, 503, "OFFLINE", err.Error())
-		return nil, nil, false
+		return nil, false
 	}
-	return client, grant.Valid, true
+	return client, true
 }
 
 func (s *Server) call(w http.ResponseWriter, r *http.Request) {
-	client, _, ok := s.executionClient(w, r)
+	client, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}
@@ -623,7 +542,7 @@ func operationError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
-	client, _, ok := s.executionClient(w, r)
+	client, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}
@@ -691,7 +610,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		request.Header.Set("X-Jwt-Token", token)
 		r = request
 	}
-	client, valid, ok := s.executionClient(w, r)
+	client, ok := s.executionClient(w, r)
 	if !ok {
 		return
 	}
@@ -750,10 +669,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := wc.ReadJSON(&input); err != nil {
 				inputDone <- err
-				return
-			}
-			if !valid() {
-				inputDone <- identity.ErrUnauthorized
 				return
 			}
 			var err error
@@ -817,10 +732,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			if !valid() {
-				_ = write(browserEvent{Type: "error", Code: "UNAUTHORIZED", Error: "access revoked"})
-				return
-			}
 			m := frame.message
 			event := browserEvent{Type: m.Kind, Payload: m.Payload, Data: string(m.Data), RequestID: m.RequestId, Code: m.Code, Error: m.Detail}
 			if runtime.Adapter == "pty" && m.Kind == "data" {
@@ -841,9 +752,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			_ = write(browserEvent{Type: "error", Code: "STREAM_INTERRUPTED", Error: err.Error()})
 			return
 		case <-ping.C:
-			if !valid() {
-				return
-			}
 			if err := wc.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
 				return
 			}

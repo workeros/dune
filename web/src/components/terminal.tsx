@@ -19,7 +19,7 @@ export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: 
     let socket: WebSocket | undefined, disposed = false, exited = false, retry = 300;
     let reconnect: ReturnType<typeof setTimeout> | undefined;
     const send = (value: unknown) => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); };
-    const resize = () => { const size = fit.proposeDimensions(); if (!size) return; const cols = Math.min(400, Math.max(2, size.cols)), rows = Math.min(200, Math.max(2, size.rows)); term.resize(cols, rows); send({ type: "resize", cols, rows }); };
+    const resize = () => { if (disposed || !container.current?.clientWidth || !container.current.clientHeight) return; const size = fit.proposeDimensions(); if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return; const cols = Math.min(400, Math.max(2, Math.floor(size.cols))), rows = Math.min(200, Math.max(2, Math.floor(size.rows))); term.resize(cols, rows); send({ type: "resize", cols, rows }); };
     const connect = () => {
       if (disposed) return;
       setStatus("连接中");
@@ -53,7 +53,7 @@ export function TerminalPane({ binding, runtime }: { binding: Binding; runtime: 
     catch (e) { setError(errorText(e)); }
   };
   return <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl">
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-foreground/20 px-4 py-2 text-xs"><span role="status">{status}</span><div className="flex gap-1"><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("older")}><Icon icon={historyIcon} />历史 / 更早一页</Button><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("newer")}>更新一页</Button><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("close")}>返回终端</Button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-foreground/20 px-4 py-2 text-xs"><span role="status">{runtime.stop_reason === "timed_out" ? "已超时 · 可浏览保留历史" : status}</span><div className="flex gap-1"><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("older")}><Icon icon={historyIcon} />历史 / 更早一页</Button><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("newer")}>更新一页</Button><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("close")}>返回终端</Button></div></div>
     <p className="bg-secondary px-4 py-2 text-xs">使用滚轮或 Page Up / Page Down 浏览历史，按 Esc 返回终端。</p>
     {error && <div className="error-box m-2" role="alert">{error}</div>}
     <div ref={container} className="terminal-container" aria-label="远端终端" />

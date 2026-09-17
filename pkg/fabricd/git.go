@@ -5,9 +5,56 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/aiomni/dune/pkg/api"
 )
+
+// Git worktrees share refs and therefore share the common-directory lock.
+// Entries exist only while an operation holds or waits for a lock.
+type gitRepositoryLocks struct {
+	mu      sync.Mutex
+	entries map[string]*gitRepositoryLock
+}
+type gitRepositoryLock struct {
+	mu    sync.Mutex
+	users int
+}
+
+func (locks *gitRepositoryLocks) acquire(key string) func() {
+	locks.mu.Lock()
+	if locks.entries == nil {
+		locks.entries = make(map[string]*gitRepositoryLock)
+	}
+	entry := locks.entries[key]
+	if entry == nil {
+		entry = &gitRepositoryLock{}
+		locks.entries[key] = entry
+	}
+	entry.users++
+	locks.mu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		locks.mu.Lock()
+		entry.users--
+		if entry.users == 0 {
+			delete(locks.entries, key)
+		}
+		locks.mu.Unlock()
+	}
+}
+
+func (d *Engine) gitCommonDirectory(directory string) (string, error) {
+	result, err := d.exec(api.Exec{Command: api.Command{Argv: []string{"git", "rev-parse", "--path-format=absolute", "--git-common-dir"}, TimeoutSeconds: 10}, WorkingDirectory: directory, Env: gitEnv()})
+	if err != nil {
+		return "", err
+	}
+	if result.ExitCode != 0 || result.StdoutTruncated {
+		return "", fmt.Errorf("cannot identify Git common directory: %s", result.Stderr)
+	}
+	return filepath.EvalSymlinks(strings.TrimSuffix(result.Stdout, "\n"))
+}
 
 func gitArgs(a api.Git) ([]string, error) {
 	if a.Patch != "" && (a.Action != "stage" && a.Action != "unstage" && a.Action != "discard" || len(a.Paths) > 0) {
@@ -199,8 +246,12 @@ func (d *Engine) git(a api.Git) (any, error) {
 	if a.Directory == "" {
 		return nil, fmt.Errorf("directory required")
 	}
-	d.gitMu.Lock()
-	defer d.gitMu.Unlock()
+	common, e := d.gitCommonDirectory(a.Directory)
+	if e != nil {
+		return nil, e
+	}
+	release := d.gitLocks.acquire(common)
+	defer release()
 	if a.Patch != "" {
 		if len(a.Patch) > 256*1024 {
 			return nil, fmt.Errorf("patch too large")

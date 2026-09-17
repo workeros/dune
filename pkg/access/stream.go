@@ -30,12 +30,33 @@ func newLease(d Decision) *lease {
 	return &lease{decision: d, refreshAt: time.Now().Add(time.Until(d.ValidUntil) / 2)}
 }
 
+// checkAction refreshes all constraints before establishing a new action lease.
+// No callback is evaluated per data frame; the stream watchdog and Message both
+// enforce this same deadline, including when a callback returns too late.
+func (g Grant) checkAction(ctx context.Context, request Request) (Decision, error) {
+	started := time.Now()
+	if err := g.check(); err != nil {
+		return Decision{}, err
+	}
+	decision, err := g.Policy.check(ctx, request)
+	if err != nil {
+		return Decision{}, err
+	}
+	if deadline := started.Add(StreamLeaseLimit); deadline.Before(decision.ValidUntil) {
+		decision.ValidUntil = deadline
+	}
+	if ctx.Err() != nil || !time.Now().Before(decision.ValidUntil) {
+		return Decision{}, ErrDenied
+	}
+	return decision, nil
+}
+
 func (c *connection) openChecked(ctx context.Context, m *pb.Message, flow *gateway.Stream) (gateway.StreamHandler, error) {
 	r, err := Describe(c.grant.Policy.Scope, m)
 	if err != nil {
 		return nil, err
 	}
-	d, err := c.grant.Policy.check(ctx, r)
+	d, err := c.grant.checkAction(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +93,10 @@ func (c *connection) openChecked(ctx context.Context, m *pb.Message, flow *gatew
 // a distinct decision; terminal data never enters the cache or checker.
 func (s *checkedStream) ensure(ctx context.Context, r Request) error {
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return ErrDenied
+	}
 	cached := s.leases[r]
 	s.mu.Unlock()
 	if cached != nil {
@@ -80,7 +105,7 @@ func (s *checkedStream) ensure(ctx context.Context, r Request) error {
 		}
 		return nil
 	}
-	d, err := s.grant.Policy.check(ctx, r)
+	d, err := s.grant.checkAction(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -96,9 +121,6 @@ func (s *checkedStream) ensure(ctx context.Context, r Request) error {
 
 func (s *checkedStream) Message(ctx context.Context, direction gateway.Direction, m *pb.Message) error {
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := s.grant.check(); err != nil {
 		return err
 	}
 	if err := s.ensure(ctx, s.base); err != nil {
@@ -145,7 +167,7 @@ func (s *checkedStream) watch() {
 	for {
 		s.mu.Lock()
 		now := time.Now()
-		next := now.Add(MaxLease)
+		next := now.Add(StreamLeaseLimit)
 		expired := false
 		for key, value := range s.leases {
 			if !now.Before(value.decision.ValidUntil) {
@@ -184,7 +206,7 @@ func (s *checkedStream) watch() {
 func (s *checkedStream) refresh(key Request, previous *lease) {
 	ctx, cancel := context.WithDeadline(s.ctx, previous.decision.ValidUntil)
 	defer cancel()
-	d, err := s.grant.Policy.check(ctx, key)
+	d, err := s.grant.checkAction(ctx, key)
 	if err != nil {
 		s.flow.Cancel(ErrDenied)
 		s.cancel()
@@ -196,7 +218,14 @@ func (s *checkedStream) refresh(key Request, previous *lease) {
 		return
 	}
 	if s.leases[key] == previous {
-		s.leases[key] = newLease(d)
+		renewed := newLease(d)
+		// A fixed credential/policy expiry can validate again without extending
+		// the lease. Wait for that deadline instead of repeatedly halving the
+		// remaining interval into a burst of authoritative calls.
+		if !d.ValidUntil.After(previous.decision.ValidUntil) {
+			renewed.refreshAt = d.ValidUntil
+		}
+		s.leases[key] = renewed
 		s.notify()
 	}
 }

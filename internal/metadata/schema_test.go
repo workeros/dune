@@ -58,7 +58,7 @@ func TestSchemaInitializationIsAtomic(t *testing.T) {
 			if err := s.initializeSchema(ctx); err != nil {
 				t.Fatal(err)
 			}
-			token, _, err := s.IssueEnrollment(ctx, "owner", "runner")
+			_, token, _, err := s.IssueEnrollment(ctx, "owner", "runner")
 			if err != nil {
 				t.Fatal(err)
 			}

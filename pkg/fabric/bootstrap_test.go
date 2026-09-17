@@ -7,7 +7,7 @@ import (
 
 func bootstrapCall() BootstrapCall {
 	return BootstrapCall{
-		Action:          Action{ID: "bootstrap-action-1", ResourceRef: "sandbox-resource-1"},
+		Action:          Action{ID: "bootstrap-action-1", RunnerID: "runner-1", ResourceRef: "sandbox-resource-1"},
 		EnrollmentToken: strings.Repeat("a", 64),
 		Endpoint:        "https://DUNE.example.test/base",
 		GatewayURL:      "wss://gateway.example.test/base/api/v1/ws/tunnel",
@@ -29,6 +29,9 @@ func TestBootstrapPlanSelectsPlatformAndKeepsProviderTransportOut(t *testing.T) 
 		" enroll --site 'https://dune.example.test/base/' --token '",
 		" fabricd >\"$root/fabricd.log\"",
 		"bootstrap.complete.tmp",
+		"--runner-id 'runner-1'",
+		".tar.gz.sha256",
+		"configuration already exists",
 		"'bootstrap-action-1' 'fabricd-v2'",
 	} {
 		if !strings.Contains(plan.Script, expected) {

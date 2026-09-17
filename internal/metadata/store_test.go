@@ -77,7 +77,7 @@ func TestBusinessTransactions(t *testing.T) {
 			if _, err := s.ReadAccount(ctx, failed.Email); !errors.Is(err, identity.ErrUnauthorized) {
 				t.Fatal("failed registration left an account")
 			}
-			token, _, err := s.IssueEnrollment(ctx, user.ID, "machine")
+			_, token, _, err := s.IssueEnrollment(ctx, user.ID, "machine")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -49,23 +49,27 @@ func validRunnerName(name string) (string, error) {
 	return name, nil
 }
 
-// IssueEnrollment is retained for trusted local callers and tests. Browser code
-// uses IssueEnrollmentForSession so local session revocation races are closed.
-func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (string, int64, error) {
-	return s.issueEnrollment(ctx, identity.User{ID: userID}, userID, name, "", "", "attached")
+// IssueEnrollment is for trusted local callers. Browser code uses
+// IssueEnrollmentForSession to recheck local session revocation in the transaction.
+func (s *Store) IssueEnrollment(ctx context.Context, userID, name string) (runner.Runner, string, int64, error) {
+	return s.issueAttachedEnrollment(ctx, identity.User{ID: userID}, userID, name, "")
 }
 
-func (s *Store) IssueEnrollmentForSession(ctx context.Context, user identity.User, name, sessionHash string) (string, int64, error) {
+func (s *Store) IssueEnrollmentForSession(ctx context.Context, user identity.User, name, sessionHash string) (runner.Runner, string, int64, error) {
 	if user.ID == "" || sessionHash == "" {
-		return "", 0, identity.ErrUnauthorized
+		return runner.Runner{}, "", 0, identity.ErrUnauthorized
 	}
-	return s.issueEnrollment(ctx, user, user.ID, name, sessionHash, "", "attached")
+	return s.issueAttachedEnrollment(ctx, user, user.ID, name, sessionHash)
 }
 
 func (s *Store) IssueTenantEnrollment(ctx context.Context, user identity.User, ownerID, name, sessionHash string) (runner.Runner, string, int64, error) {
 	if user.ID == "" || ownerID == "" || ownerID == user.ID || sessionHash == "" {
 		return runner.Runner{}, "", 0, identity.ErrUnauthorized
 	}
+	return s.issueAttachedEnrollment(ctx, user, ownerID, name, sessionHash)
+}
+
+func (s *Store) issueAttachedEnrollment(ctx context.Context, user identity.User, ownerID, name, sessionHash string) (runner.Runner, string, int64, error) {
 	name, err := validRunnerName(name)
 	if err != nil {
 		return runner.Runner{}, "", 0, err
@@ -89,7 +93,7 @@ func (s *Store) IssueManagedEnrollment(ctx context.Context, user identity.User, 
 }
 
 func (s *Store) issueEnrollment(ctx context.Context, user identity.User, ownerID, name, sessionHash, runnerID, mode string) (string, int64, error) {
-	if ownerID == "" {
+	if ownerID == "" || runnerID == "" {
 		return "", 0, ErrInvalidArgument
 	}
 	name, err := validRunnerName(name)
@@ -111,6 +115,9 @@ func (s *Store) issueEnrollment(ctx context.Context, user identity.User, ownerID
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1 AND expires_at<=$2`, ownerID, time.Now().Unix()); err != nil {
 			return err
 		}
+		if err := disableUnenrollableAttached(ctx, tx, ownerID); err != nil {
+			return err
+		}
 		tenantOwned := ownerID != user.ID
 		if !tenantOwned {
 			var count int
@@ -121,27 +128,33 @@ func (s *Store) issueEnrollment(ctx context.Context, user identity.User, ownerID
 				return fmt.Errorf("%w: at most five pending binding commands", ErrInvalidArgument)
 			}
 		}
-		if runnerID != "" {
-			if !tenantOwned {
-				var runners int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_runners WHERE owner_id=$1 AND enabled=TRUE`, ownerID).Scan(&runners); err != nil {
-					return err
-				}
-				if runners >= 32 {
-					return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
-				}
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9)`, runnerID, ownerID, user.ID, user.Namespace, user.Subject, name, kind, fabricID, time.Now().Unix()); err != nil {
+		if !tenantOwned {
+			var runners int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_runners WHERE owner_id=$1 AND enabled=TRUE`, ownerID).Scan(&runners); err != nil {
 				return err
 			}
+			if runners >= 32 {
+				return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
+			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,owner_id,issued_to_id,issued_to_kind,namespace,subject,name,runner_id,kind,fabric_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9,$10,$11)`, tokenHash(token), ownerID, user.ID, user.Kind, user.Namespace, user.Subject, name, runnerID, kind, fabricID, expires)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9)`, runnerID, ownerID, user.ID, user.Namespace, user.Subject, name, kind, fabricID, time.Now().Unix()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO dune_enrollments(hash,owner_id,issued_to_id,issued_to_kind,namespace,subject,name,runner_id,kind,fabric_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, tokenHash(token), ownerID, user.ID, user.Kind, user.Namespace, user.Subject, name, runnerID, kind, fabricID, expires)
 		return err
 	})
 	if err != nil {
 		return "", 0, err
 	}
 	return token, expires, nil
+}
+
+// Tokens are removed before locking their pending Runners, matching Enroll's
+// lock order. Expired or revoked commands must not leave usable-looking entries
+// that permanently consume a personal Runner quota.
+func disableUnenrollableAttached(ctx context.Context, tx *sql.Tx, ownerID string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE dune_runners SET enabled=FALSE WHERE owner_id=$1 AND kind='attached' AND machine_id IS NULL AND enabled=TRUE AND NOT EXISTS (SELECT 1 FROM dune_enrollments e WHERE e.runner_id=dune_runners.id)`, ownerID)
+	return err
 }
 
 func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine, string, error) {
@@ -154,14 +167,13 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 	credential := wire.ID() + wire.ID()
 	machine := Machine{ID: wire.ID(), OS: osName, Arch: arch, CreatedAt: time.Now().Unix()}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		query := `SELECT owner_id,issued_to_id,issued_to_kind,namespace,subject,name,COALESCE(runner_id,''),kind,fabric_id,expires_at FROM dune_enrollments WHERE hash=$1`
+		query := `SELECT owner_id,name,runner_id,kind,fabric_id,expires_at FROM dune_enrollments WHERE hash=$1`
 		if s.postgres {
 			query += ` FOR UPDATE`
 		}
-		var owner, issuedToID, namespace, subject, kind, fabricID string
+		var owner, kind, fabricID string
 		var expires int64
-		var issuedToKind string
-		if err := tx.QueryRowContext(ctx, query, tokenHash(token)).Scan(&owner, &issuedToID, &issuedToKind, &namespace, &subject, &machine.Name, &machine.RunnerID, &kind, &fabricID, &expires); err != nil {
+		if err := tx.QueryRowContext(ctx, query, tokenHash(token)).Scan(&owner, &machine.Name, &machine.RunnerID, &kind, &fabricID, &expires); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return identity.ErrUnauthorized
 			}
@@ -170,28 +182,15 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 		if expires <= time.Now().Unix() {
 			return identity.ErrUnauthorized
 		}
-		if machine.RunnerID == "" {
-			var count int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dune_runners WHERE owner_id=$1 AND enabled=TRUE`, owner).Scan(&count); err != nil {
-				return err
-			}
-			if count >= 32 {
-				return fmt.Errorf("%w: runner limit reached", ErrInvalidArgument)
-			}
-			machine.RunnerID = wire.ID()
-			if _, err := tx.ExecContext(ctx, `INSERT INTO dune_runners(id,owner_id,created_by_id,created_by_namespace,created_by_subject,name,kind,fabric_id,binding_revision,machine_id,credential_hash,os,arch,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$12,$13)`, machine.RunnerID, owner, issuedToID, namespace, subject, machine.Name, kind, fabricID, machine.ID, tokenHash(credential), osName, arch, machine.CreatedAt); err != nil {
-				return err
-			}
-		} else {
-			result, err := tx.ExecContext(ctx, `UPDATE dune_runners SET machine_id=$2,credential_hash=$3,os=$4,arch=$5 WHERE id=$1 AND owner_id=$6 AND kind=$7 AND fabric_id=$8 AND machine_id IS NULL AND enabled=TRUE`, machine.RunnerID, machine.ID, tokenHash(credential), osName, arch, owner, kind, fabricID)
-			if err != nil {
-				return err
-			}
-			if n, _ := result.RowsAffected(); n != 1 {
-				return identity.ErrUnauthorized
-			}
+
+		result, err := tx.ExecContext(ctx, `UPDATE dune_runners SET machine_id=$2,credential_hash=$3,os=$4,arch=$5 WHERE id=$1 AND owner_id=$6 AND kind=$7 AND fabric_id=$8 AND machine_id IS NULL AND enabled=TRUE`, machine.RunnerID, machine.ID, tokenHash(credential), osName, arch, owner, kind, fabricID)
+		if err != nil {
+			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE hash=$1 AND expires_at>$2`, tokenHash(token), time.Now().Unix())
+		if n, _ := result.RowsAffected(); n != 1 {
+			return identity.ErrUnauthorized
+		}
+		result, err = tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE hash=$1 AND expires_at>$2`, tokenHash(token), time.Now().Unix())
 		if err != nil {
 			return err
 		}
@@ -350,10 +349,26 @@ func (s *Store) HasActiveAttached(ctx context.Context, ownerID string) (bool, er
 // and disables its preallocated logical Runner. If enrollment won the race, the
 // exact binding is preserved and ErrBindingChanged is returned.
 func (s *Store) CancelAttachedEnrollment(ctx context.Context, ownerID, runnerID string) error {
+	return s.cancelAttachedEnrollment(ctx, ownerID, runnerID, "")
+}
+
+func (s *Store) CancelEnrollmentForSession(ctx context.Context, user identity.User, runnerID, sessionHash string) error {
+	if user.ID == "" || sessionHash == "" {
+		return identity.ErrUnauthorized
+	}
+	return s.cancelAttachedEnrollment(ctx, user.ID, runnerID, sessionHash)
+}
+
+func (s *Store) cancelAttachedEnrollment(ctx context.Context, ownerID, runnerID, sessionHash string) error {
 	if ownerID == "" || runnerID == "" {
 		return ErrInvalidArgument
 	}
 	return s.transaction(ctx, func(tx *sql.Tx) error {
+		if sessionHash != "" {
+			if err := s.checkLocalSession(ctx, tx, ownerID, sessionHash); err != nil {
+				return err
+			}
+		}
 		// Enroll locks the token before binding the Runner. Keep that lock order so
 		// either enrollment or cancellation wins atomically on every SQL backend.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_enrollments WHERE owner_id=$1 AND runner_id=$2 AND kind='attached'`, ownerID, runnerID); err != nil {

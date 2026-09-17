@@ -46,6 +46,9 @@ type runtime struct {
 	subs             map[*subscription]bool
 	exit             *int
 	failure          string
+	stopReason       string
+	startedAt        *time.Time
+	deadlineAt       *time.Time
 	tmux             *tmux.Session
 	done             chan struct{}
 	acp              *acpController
@@ -90,7 +93,23 @@ func (r *runtime) info() api.Runtime {
 	if r.exit != nil {
 		state = "exited"
 	}
-	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, Title: r.title, WorkingDirectory: r.cwd}
+	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd}
+}
+
+// The timeout helper owns these facts. fabricd only publishes its record; it
+// does not reconstruct a deadline or restart a timer when the engine reopens.
+func (r *runtime) readTimeoutState(state *process.PTYState) {
+	if state == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.startedAt, r.deadlineAt = &state.StartedAt, &state.DeadlineAt
+	r.stopReason = state.StopReason
+	if r.exit == nil && state.ExitCode != nil {
+		r.exit = state.ExitCode
+		close(r.done)
+	}
 }
 func (r *runtime) stop() error {
 	if r.tmux != nil {
@@ -103,6 +122,7 @@ func (r *runtime) stop() error {
 		if r.exit == nil {
 			code := -1
 			r.exit = &code
+			r.stopReason = "stopped"
 			close(r.done)
 		}
 		return nil
@@ -136,6 +156,9 @@ func (r *runtime) finish(code int) {
 		return
 	}
 	r.exit = &code
+	if r.stopReason == "" {
+		r.stopReason = "exited"
+	}
 	if r.done != nil {
 		close(r.done)
 	}
@@ -640,27 +663,24 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 	r.cwd = p.WorkingDirectory
 	if p.Adapter == "pty" {
 		r.inc = wire.ID()
-		session, err := d.tmux.Create(r.info(), argv, environment(p.Env), p.HistoryLines)
+		session, err := d.tmux.Create(r.info(), argv, environment(p.Env), p.HistoryLines, time.Duration(p.Start.TimeoutSeconds)*time.Second)
 		if err != nil {
 			s.Fail("START_FAILED", err)
 			return
 		}
 		r.tmux = session
+		state, err := session.TimeoutState()
+		if err != nil {
+			_ = session.Destroy()
+			s.Fail("START_FAILED", err)
+			return
+		}
+		r.readTimeoutState(state)
 		sub, _ := r.subscribe(true)
 		d.mu.Lock()
 		d.runtimes[r.id] = r
 		releaseSlot()
 		d.mu.Unlock()
-		if p.Start.TimeoutSeconds > 0 {
-			go func() {
-				select {
-				case <-r.done:
-				case <-d.ctx.Done():
-				case <-time.After(time.Duration(p.Start.TimeoutSeconds) * time.Second):
-					_ = d.stop(r)
-				}
-			}()
-		}
 		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info())}) != nil {
 			r.mu.Lock()
 			delete(r.subs, sub)

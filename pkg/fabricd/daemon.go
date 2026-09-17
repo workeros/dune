@@ -29,31 +29,32 @@ type profileAttempt struct {
 	at     time.Time
 }
 type Engine struct {
-	cleaner    *process.Cleaner
-	starts     chan struct{}
-	mu         sync.Mutex
-	inc        string
-	generation uint64
-	runtimes   map[string]*runtime
-	uploads    map[string]*upload
-	cache      map[string]*cached
-	attempts   map[string]*profileAttempt
-	bulk       chan struct{}
-	fileMu     sync.Mutex
-	gitMu      sync.Mutex
-	ctx        context.Context
-	tmux       *tmux.Server
-	stateDir   string
-	profileMu  sync.Mutex
-	cancel     context.CancelFunc
-	closeOnce  sync.Once
-	active     sync.WaitGroup
-	lock       *os.File
+	cleaner     *process.Cleaner
+	starts      chan struct{}
+	mu          sync.Mutex
+	inc         string
+	generation  uint64
+	runtimes    map[string]*runtime
+	uploads     map[string]*upload
+	cache       map[string]*cached
+	attempts    map[string]*profileAttempt
+	bulk        chan struct{}
+	searchSlots chan struct{}
+	fileMu      sync.Mutex
+	gitLocks    gitRepositoryLocks
+	ctx         context.Context
+	tmux        *tmux.Server
+	stateDir    string
+	profileMu   sync.Mutex
+	cancel      context.CancelFunc
+	closeOnce   sync.Once
+	active      sync.WaitGroup
+	lock        *os.File
 }
 
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
-	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), ctx: ctx}
+	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), ctx: ctx}
 }
 
 // Close stops the connector and owned ACP processes and releases its state lock.
@@ -153,6 +154,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		return
 	}
 	var result any
+	searchRequest := false
 	switch m.Operation {
 	case "exec":
 		var a api.Exec
@@ -249,7 +251,16 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		var a api.File
 		e = wire.Decode(m, &a)
 		if e == nil {
-			result, e = d.files(a)
+			if a.Action == "search" {
+				searchRequest = true
+				ctx, cancel := context.WithCancel(s.ctx)
+				// Only this read-only unary operation is canceled by requester disconnect.
+				go func() { _, _ = s.Recv(); cancel() }()
+				result, e = d.filesContext(ctx, a)
+				cancel()
+			} else {
+				result, e = d.files(a)
+			}
 		}
 	case "upload":
 		var a api.Upload
@@ -274,7 +285,12 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 	}
 	d.mu.Lock()
-	d.cache[m.RequestId].result = res
+	if searchRequest {
+		// Retain idempotency without holding up to 256 large search responses.
+		d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "search response is not retained; start a new search"}
+	} else {
+		d.cache[m.RequestId].result = res
+	}
 	d.mu.Unlock()
 	_ = s.Send(res)
 }
