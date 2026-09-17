@@ -19,13 +19,14 @@ import (
 	"github.com/aiomni/dune/pkg/workbench"
 )
 
-type Dial func(context.Context, agents.Scope, runner.Binding) (*client.Client, func(), error)
+type Dial func(context.Context, agents.Scope, runner.Binding, string) (*client.Client, func(), error)
 
 type Service struct {
 	Store       *metadata.Store
 	Access      *authorization.Service
 	Dial        Dial
 	Environment agents.EnvironmentResolver
+	Online      func(context.Context, []string) (map[string]bool, error)
 }
 
 func invalid(detail string) error { return &api.Error{Code: "INVALID_ARGUMENT", Detail: detail} }
@@ -56,7 +57,7 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 			return result, err
 		}
 	}
-	connection, closeConnection, err := s.Dial(ctx, scope, request.Binding)
+	connection, closeConnection, err := s.Dial(ctx, scope, request.Binding, "profile.start")
 	if err != nil {
 		return result, err
 	}

@@ -96,6 +96,7 @@ type App struct {
 	store            *metadata.Store
 	authorizer       *authorization.Service
 	agentEnvironment agents.EnvironmentResolver
+	agentOnline      func(context.Context, []string) (map[string]bool, error)
 	peer             *peer.Transport
 	peerHandler      http.Handler
 	observer         *observationRecorder
@@ -190,9 +191,20 @@ func Open(parent context.Context, options Options) (*App, error) {
 		}
 	}
 	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app.agentOnline = online
+	if app.agentOnline == nil {
+		app.agentOnline = func(_ context.Context, ids []string) (map[string]bool, error) {
+			present := make(map[string]bool, len(ids))
+			for _, id := range ids {
+				present[id] = core.Online(id)
+			}
+			return present, nil
+		}
+	}
 	web, err := webapp.NewServer(ctx, webapp.Options{
-		AgentLauncher: app.AgentLauncher(),
-		Assets:        options.Assets, Binaries: options.Binaries,
+		AgentLauncher:  app.AgentLauncher(),
+		AgentDirectory: app.AgentDirectory(),
+		Assets:         options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway:            dial,
 		Online:                 online,

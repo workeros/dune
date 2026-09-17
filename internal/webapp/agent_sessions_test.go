@@ -20,6 +20,60 @@ func (f launchFunc) Start(ctx context.Context, scope agents.Scope, request agent
 	return f(ctx, scope, request)
 }
 
+type directoryFixture struct {
+	list func(agents.Scope, runner.Query) (agents.DirectoryPage, error)
+	get  func(agents.Scope, string) (agents.Agent, error)
+}
+
+func (f directoryFixture) List(_ context.Context, scope agents.Scope, query runner.Query) (agents.DirectoryPage, error) {
+	return f.list(scope, query)
+}
+func (f directoryFixture) Get(_ context.Context, scope agents.Scope, ref string) (agents.Agent, error) {
+	return f.get(scope, ref)
+}
+
+func TestAgentDirectoryHTTPAuthenticatesBeforeDiscovery(t *testing.T) {
+	for _, tenant := range []bool{false, true} {
+		t.Run(map[bool]string{false: "personal", true: "tenant"}[tenant], func(t *testing.T) {
+			f := newWorkbenchFixture(t, tenant)
+			calls := 0
+			f.server.options.AgentDirectory = directoryFixture{
+				list: func(scope agents.Scope, query runner.Query) (agents.DirectoryPage, error) {
+					calls++
+					if scope.OwnerID != f.owner || scope.Principal.ID != f.users[0].ID || query.Limit != 1 {
+						t.Fatal("untrusted directory scope")
+					}
+					return agents.DirectoryPage{Items: []agents.Agent{{Ref: "known-agent"}}}, nil
+				},
+				get: func(scope agents.Scope, ref string) (agents.Agent, error) {
+					calls++
+					if scope.OwnerID != f.owner || scope.Principal.ID != f.users[0].ID || ref != "known-agent" {
+						t.Fatal("untrusted Agent scope")
+					}
+					return agents.Agent{}, &api.Error{Code: "STALE_SESSION", Detail: "native session changed"}
+				},
+			}
+			if out := f.request(t, "GET", "/agents?limit=1", 0, nil); out.Code != http.StatusOK || !bytes.Contains(out.Body.Bytes(), []byte("known-agent")) {
+				t.Fatal(out.Code, out.Body.String())
+			}
+			if out := f.request(t, "POST", "/agents/get", 0, map[string]string{"agent_ref": "known-agent"}); out.Code != http.StatusUnprocessableEntity || !bytes.Contains(out.Body.Bytes(), []byte("STALE_SESSION")) {
+				t.Fatal(out.Code, out.Body.String())
+			}
+			if out := f.request(t, "GET", "/agents", -1, nil); out.Code != http.StatusUnauthorized || calls != 2 {
+				t.Fatal("anonymous discovery reached the service", out.Code, calls)
+			}
+			if tenant {
+				if out := f.request(t, "POST", "/agents/get", 2, map[string]string{"agent_ref": "known-agent"}); out.Code != http.StatusForbidden || calls != 2 {
+					t.Fatal("cross-Tenant discovery reached the service", out.Code, calls)
+				}
+			}
+			if out := f.request(t, "POST", "/agents/get", 0, map[string]string{"agent_ref": "known-agent", "owner_id": "other"}); out.Code != http.StatusBadRequest || calls != 2 {
+				t.Fatal("payload overrode directory scope", out.Code, calls)
+			}
+		})
+	}
+}
+
 func TestAgentSessionHTTPScopesAndOmitsPrivateSnapshots(t *testing.T) {
 	for _, tenant := range []bool{false, true} {
 		t.Run(map[bool]string{false: "personal", true: "tenant"}[tenant], func(t *testing.T) {

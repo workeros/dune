@@ -1,6 +1,6 @@
 # Agent 恢复索引
 
-数据库基础由 `pkg/agents` 和 `internal/metadata/agent_sessions.go` 提供；原生采集、启动编排和 UI 随后接入。这里不保存 prompt、操作输出或待办任务。
+数据库基础由 `pkg/agents` 和 `internal/metadata/agent_sessions.go` 提供；统一启动保存快照，AgentDirectory 采集原生确认。这里不保存 prompt、操作输出或待办任务。
 
 `dune_agent_sessions` 按 Owner / Tenant 保存一份不可变 `launch` 和可修订的 `state`。启动前提交实际 Profile、cwd、原 Runner binding、存储身份、恢复适配器及来源 Profile 修订。读取恢复配置不依赖 Profile 表，Profile 修改或删除不会改变旧会话。恢复适配器负责从原配置构造 resume 命令，不能重复运行 setup / 首条任务。启动后注入的一次性 MCP 凭据不属于快照。
 
@@ -30,4 +30,4 @@
 
 原生 cwd 与进程启动 cwd 分开保存：`native.cwd` 用于 session/load，快照中的工作目录仍用于重新启动进程。摘要显示原生 cwd，二者不同时不冒用原项目目录 ID。`selected` 表示此记录是数据库中关联到 Runtime 的当前选择，不表示 Runtime 在线。两产品发现列表只使用 selected 记录关联项目；历史记录仍可用于显式继续。
 
-本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法；宿主自动采集、恢复编排及页面的“继续”入口随服务功能接入。
+本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；工作台发现迁移、恢复编排及页面的“继续”入口仍待接入。

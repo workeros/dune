@@ -37,4 +37,4 @@
 
 两产品的 `GET {prefix}/agent-sessions` 和 `GET {prefix}/agent-sessions/{id}` 返回 Owner / Tenant 内的恢复摘要；列表使用 `limit` / `cursor` 分页，不返回启动命令或环境。工作台把摘要与完整执行身份匹配，将 `session_record_id` 和项目关联保存到 pane，新 worktree 不会在刷新后丢失项目归类。索引读取失败会单独显示错误，不以索引代替 Runtime 存活检查。
 
-页面对部分成功保留现场：已创建 worktree 时切换为该目录；确认 Runtime 已启动时直接打开会话并显示索引错误。超时或断线不自动重发启动。此入口目前保存启动信息，原生 ID 采集与显式继续仍待后续功能。
+页面对部分成功保留现场：已创建 worktree 时切换为该目录；确认 Runtime 已启动时直接打开会话并显示索引错误。超时或断线不自动重发启动。此入口保存启动信息，原生 ID 由 AgentDirectory 读取 fabricd 确认后采集；显式继续仍待后续功能。

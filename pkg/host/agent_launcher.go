@@ -21,10 +21,13 @@ func (l *agentLauncher) Start(ctx context.Context, scope agents.Scope, request a
 		return agents.LaunchResult{}, err
 	}
 	defer finish()
-	service := agentservice.Service{Store: l.app.store, Access: l.app.authorizer, Environment: l.app.agentEnvironment,
-		Dial: func(ctx context.Context, scope agents.Scope, binding runner.Binding) (*client.Client, func(), error) {
-			return (&runnerExecutor{app: l.app}).connect(ctx, scope.Principal, scope.OwnerID, binding, "profile.start")
+	return l.app.agentService().Start(ctx, scope, request)
+}
+
+func (a *App) agentService() *agentservice.Service {
+	return &agentservice.Service{Store: a.store, Access: a.authorizer, Environment: a.agentEnvironment, Online: a.agentOnline,
+		Dial: func(ctx context.Context, scope agents.Scope, binding runner.Binding, operation string) (*client.Client, func(), error) {
+			return (&runnerExecutor{app: a}).connect(ctx, scope.Principal, scope.OwnerID, binding, operation)
 		},
 	}
-	return service.Start(ctx, scope, request)
 }
