@@ -46,7 +46,7 @@ func await(t *testing.T, check func() bool) {
 func TestPersistenceAndEnvironmentIsolation(t *testing.T) {
 	s := server(t)
 	value := "a ' quote; $(touch SHOULD_NOT_EXIST)\n中文"
-	r := session(t, s, "a", `printf '%s\n' "$DUNE_TEST"; echo PID=$$; printf "TERM=%s\n" "$TERM"; sleep 120`, []string{"PATH=/usr/bin:/bin", "DUNE_TEST=" + value})
+	r := session(t, s, "a", `printf '%s\n' "$DUNE_TEST"; echo PID=$$; printf "TERM=%s\n" "$TERM"; sleep 120`, []string{"PATH=/usr/bin:/bin", "DUNE_TEST=" + value, "TERM=dumb"})
 	await(t, func() bool { c, e := r.Capture(); return e == nil && strings.Contains(c.Content, "PID=") })
 	c, _ := r.Capture()
 	if !strings.Contains(c.Content, "SHOULD_NOT_EXIST") || !strings.Contains(c.Content, "TERM=xterm-256color") {

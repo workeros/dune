@@ -227,7 +227,7 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, options CreateOpti
 	// inheritance from the long-lived server's original environment.
 	words := []string{"exec", "/usr/bin/env", "-i", quote("TERM=xterm-256color")}
 	for _, v := range env {
-		if strings.HasPrefix(v, "TMUX=") || strings.HasPrefix(v, "TMUX_PANE=") || strings.HasPrefix(v, "PWD=") {
+		if strings.HasPrefix(v, "TERM=") || strings.HasPrefix(v, "TMUX=") || strings.HasPrefix(v, "TMUX_PANE=") || strings.HasPrefix(v, "PWD=") {
 			continue
 		}
 		words = append(words, quote(v))
