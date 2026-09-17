@@ -5,6 +5,7 @@ package agents
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 	"unicode"
@@ -41,6 +42,7 @@ type RecoveryAdapter struct {
 // of history listing support and may be false even when an ID was observed.
 type NativeSession struct {
 	ID              string `json:"id"`
+	Cwd             string `json:"cwd"`
 	AgentVersion    string `json:"agent_version,omitempty"`
 	Source          string `json:"source"`
 	ResumeSupported bool   `json:"resume_supported"`
@@ -56,6 +58,9 @@ type Session struct {
 	// Launch is deliberately omitted even when this type is accidentally
 	// serialized. APIs construct a summary without commands or environment.
 	Launch LaunchSnapshot `json:"-"`
+	// Selected means the database still associates this record with its last
+	// Runtime's selected native session. It does not assert process liveness.
+	Selected bool `json:"-"`
 	SessionState
 }
 
@@ -117,7 +122,7 @@ func (s LaunchSnapshot) Validate() error {
 }
 
 func (s NativeSession) Validate() error {
-	if !validText(s.ID, 4096) || !validText(s.Source, 128) || len(s.AgentVersion) > 256 || len(s.Reason) > 4096 {
+	if !validText(s.ID, 4096) || !path.IsAbs(s.Cwd) || !validText(s.Cwd, 4096) || !validText(s.Source, 128) || len(s.AgentVersion) > 256 || len(s.Reason) > 4096 {
 		return fmt.Errorf("native session requires a confirmed ID and bounded capture metadata")
 	}
 	if !s.ResumeSupported && !validText(s.Reason, 4096) {

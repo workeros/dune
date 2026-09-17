@@ -21,3 +21,13 @@
 恢复期间保留原 `last_runtime`；只有新 Runtime 确认加载同一原生 ID 后才替换。新 attempt 的 operation 引用完全独立，旧队列不恢复。已知失败允许用户再次明确发起；未知失败保持屏障。提交回执丢失也不授予启动权，即使另一连接可读到已提交的 attempt。
 
 仅保存最近一次 attempt 的 ID、状态和基准修订号，用于重复点击与迟到回调检查；没有租约、选主、后台任务接管或消息重放。
+
+## Runtime 与原生会话切换
+
+`dune_agent_runtime_sessions` 是每个完整执行目标的一条数据库索引：原启动记录 / attempt、当前记录和最后确认序号。它不保存消息、不授予执行权。Runtime 回执和初始关联在同一事务提交；两个宿主同时采集时仅锁定这条索引，队列仍在 fabricd。
+
+`ObserveAgentSession` 只接受宿主从 fabricd 取得的确认。首次确认绑定启动记录；后续切换到不同 ID / cwd 时创建独立恢复记录，复用不可变的实际进程配置。再次 load 同一 ID / cwd 复用原记录。迟到确认可以补存历史，但不会倒退当前选择；同一序号对应不同会话时整个事务失败。恢复期间则必须确认原 ID 和 cwd，不能把意外创建的新会话当作恢复成功。
+
+原生 cwd 与进程启动 cwd 分开保存：`native.cwd` 用于 session/load，快照中的工作目录仍用于重新启动进程。摘要显示原生 cwd，二者不同时不冒用原项目目录 ID。`selected` 表示此记录是数据库中关联到 Runtime 的当前选择，不表示 Runtime 在线。两产品发现列表只使用 selected 记录关联项目；历史记录仍可用于显式继续。
+
+本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法；宿主自动采集、恢复编排及页面的“继续”入口随服务功能接入。

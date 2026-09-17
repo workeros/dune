@@ -25,6 +25,7 @@ test("starts from a fixed project Profile in a new worktree and restores its pro
   expect(leaves(state.view.root)[0].pane.project_id).toBe("project-0");
   expect(leaves(state.view.root)[0].pane.directory_id).toBeUndefined();
   await expect(page.getByRole("navigation", { name: "Agent 列表" }).getByRole("button", { name: "打开 New acp · Runner one" })).toBeVisible();
+  state.sessions.push({ ...state.sessions[0], id: "historical-native", selected: false, project_id: state.projects[1].id });
   const context = await browser.newContext();
   const second = await context.newPage(); await mockWorkbench(second, state); await second.goto("/");
   await second.getByRole("button", { name: "Project A", exact: true }).click();

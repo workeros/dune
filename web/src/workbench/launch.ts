@@ -1,7 +1,7 @@
 import type { AgentRuntime, Binding, Profile } from "../lib/api";
 
 export type AgentSession = {
-  id: string; revision: number; binding: Binding; project_id?: string; directory_id?: string;
+  id: string; revision: number; selected: boolean; binding: Binding; project_id?: string; directory_id?: string;
   working_directory: string; adapter: "pty" | "acp"; agent_type: string;
   status: "pending_capture" | "available" | "unavailable" | "unknown"; reason?: string;
   last_runtime?: Pick<AgentRuntime, "id" | "incarnation" | "generation" | "adapter">;

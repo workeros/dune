@@ -40,6 +40,7 @@ type WorktreeLocation struct {
 // Summary intentionally contains no commands, environment, credential values or
 // Profile contents. A saved record does not imply its Runtime is still alive.
 type Summary struct {
+	Selected         bool                `json:"selected"`
 	ID               string              `json:"id"`
 	Revision         int64               `json:"revision"`
 	Binding          runner.Binding      `json:"binding"`
@@ -53,10 +54,17 @@ type Summary struct {
 }
 
 func (s Session) Summary() Summary {
-	return Summary{ID: s.ID, Revision: s.Revision, Binding: s.Launch.Binding,
-		ProjectID: s.Launch.ProjectID, DirectoryID: s.Launch.DirectoryID,
+	cwd, directory := s.Launch.Profile.WorkingDirectory, s.Launch.DirectoryID
+	if s.Native != nil {
+		cwd = s.Native.Cwd
+		if cwd != s.Launch.Profile.WorkingDirectory {
+			directory = ""
+		}
+	}
+	return Summary{ID: s.ID, Revision: s.Revision, Binding: s.Launch.Binding, Selected: s.Selected,
+		ProjectID: s.Launch.ProjectID, DirectoryID: directory,
 		AgentType: s.Launch.AgentType, Adapter: s.Launch.Profile.Adapter,
-		WorkingDirectory: s.Launch.Profile.WorkingDirectory, SourceProfile: s.Launch.SourceProfile,
+		WorkingDirectory: cwd, SourceProfile: s.Launch.SourceProfile,
 		SessionState: s.SessionState}
 }
 

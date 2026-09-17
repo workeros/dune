@@ -14,7 +14,7 @@ export function useAgents(runners: Runner[]) {
     const sessions = new Map<string, AgentSession>();
     try {
       for (const session of await listAll<AgentSession>("/api/v1/agent-sessions")) {
-        if (session.last_runtime) sessions.set(targetKey(targetFor(session.binding, session.last_runtime)), session);
+        if (session.selected && session.last_runtime) sessions.set(targetKey(targetFor(session.binding, session.last_runtime)), session);
       }
     } catch (cause) { errors.sessions = `会话索引暂不可用：${errorText(cause)}`; }
     await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {

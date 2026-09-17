@@ -60,7 +60,7 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
         const binding = state.runners.find((item) => item.id === runner[1])!.binding!;
         const profile = body.custom ?? state.profiles.find((item) => item.id === body.profile?.id)?.profile;
         const runtime: AgentRuntime = { id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
-        const session: AgentSession = { id: `record-${state.starts}`, revision: 2, binding, project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, working_directory: runtime.working_directory!, adapter: runtime.adapter, agent_type: "fixture", status: "pending_capture", last_runtime: state.launchFailure === "start" ? undefined : runtime };
+        const session: AgentSession = { id: `record-${state.starts}`, revision: 2, selected: state.launchFailure !== "start", binding, project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, working_directory: runtime.working_directory!, adapter: runtime.adapter, agent_type: "fixture", status: "pending_capture", last_runtime: state.launchFailure === "start" ? undefined : runtime };
         const result: LaunchResult = { session, worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
         if (state.launchFailure !== "start") { result.runtime = runtime; state.runtimes[runner[1]].push(runtime); }
         state.sessions.push(session);

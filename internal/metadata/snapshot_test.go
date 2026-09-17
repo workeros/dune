@@ -10,6 +10,7 @@ import (
 )
 
 var localTables = []struct{ name, columns string }{
+	{"dune_agent_runtime_sessions", "owner_id,target,source_id,source_attempt,session_id,sequence"},
 	{"dune_agent_sessions", "id,owner_id,revision,launch,state,created_at,updated_at"},
 	{"dune_users", "id,email,salt,password_hash,enabled,auth_version"},
 	{"dune_sessions", "hash,user_id,expires_at,auth_version"},

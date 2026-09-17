@@ -14,6 +14,7 @@
 - [x] 启动位置：两产品使用已有就绪 Runner，当前目录 / worktree 选择、项目默认配置。
 - [x] 统一启动服务：固定配置解析、宿主环境默认值、当前目录 / 新 worktree、启动前快照与部分结果保留。
 - [x] 恢复索引数据库：不可变实际配置、原生 ID 绑定、最近启动 attempt、跨连接继续去重与未知结果屏障。
+- [x] 原生会话切换索引：Runtime 当前关联、分离进程 / 原生 cwd、迟到确认只补历史、重复 load 去重。
 - [ ] 原生会话恢复：实际启动快照、可靠 ID 采集、恢复索引与并发继续去重。
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
 - [x] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
@@ -50,3 +51,5 @@
 - 两产品启动入口：HTTP / UI 接入固定 Profile 修订和当前目录 / worktree 选择，保留部分结果，并从数据库会话摘要恢复项目关联。Dune 类型检查、前端单元测试、生产构建、十项浏览器场景通过（两个新场景修正测试定位器后重跑通过）；webapp / host Go 回归、HTTP / binding 定向 race 和 vet 通过。SandDance 全量 142 项浏览器测试、类型检查、生产构建、全量 Go 和相关 vet 通过；窄屏样式最终调整后三项相关浏览器场景及构建再次通过，已检查两产品宽 / 窄屏截图。SandDance 的真实本地 fabricd / Gateway / tmux 集成验证冻结后的环境进入 PTY / ACP 进程；ACP 使用 Python 协议夹具，不代表真实 AI Agent / MCP 验收。
 
 - ACP 原生确认：成功 new/load 的操作及 Runtime 摘要保留不可变 ID / cwd / Agent 版本 / load 能力，确认序号防止迟到采集改变当前关联。fabricd / api / client / host 回归、新增确认与队列定向 race、相关 vet、IM duneagent race / vet、Gateway AgentOperations / ManagedACP 多进程用例通过；SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 回归通过。恢复索引采集与显式继续尚待接入。
+
+- 原生会话切换索引：SQLite / PostgreSQL 及定向 race 验证两个连接重复采集、B 先于 A 入库、晚到记录只补历史、相同序号冲突整体回滚、旧 Runtime / Owner 隔离、索引和启动 attempt 原子提交、恢复时拒绝不同原生 ID / cwd、数据库重开。相关 identity / authorization / metadata / webapp / host 回归及 vet、SandDance 全量 Go 回归通过。两产品只用 selected 记录关联当前 Agent，类型检查、生产构建和各一项含历史记录干扰的浏览器回归通过；Dune 前端单元测试通过。宿主自动采集和实际继续尚未接入。

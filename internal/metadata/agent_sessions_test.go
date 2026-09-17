@@ -56,7 +56,7 @@ func captureFixture(t *testing.T, store *Store, session agents.Session, runtime 
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err = store.CaptureAgentSession(t.Context(), session.OwnerID, session.ID, session.Attempt.ID, runtime, agents.NativeSession{ID: "native-original", Source: "acp.new", AgentVersion: "1.2", ResumeSupported: true})
+	session, err = store.CaptureAgentSession(t.Context(), session.OwnerID, session.ID, session.Attempt.ID, runtime, agents.NativeSession{ID: "native-original", Cwd: session.Launch.Profile.WorkingDirectory, Source: "acp.new", AgentVersion: "1.2", ResumeSupported: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestAgentWithoutNativeCaptureIsNotRecoverable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.CaptureAgentSession(t.Context(), "tenant", session.ID, session.Attempt.ID, recoveryRuntime("custom"), agents.NativeSession{ID: "native", Source: "fixture", ResumeSupported: true}); !errors.Is(err, ErrInvalidArgument) {
+		if _, err := store.CaptureAgentSession(t.Context(), "tenant", session.ID, session.Attempt.ID, recoveryRuntime("custom"), agents.NativeSession{ID: "native", Cwd: "/src", Source: "fixture", ResumeSupported: true}); !errors.Is(err, ErrInvalidArgument) {
 			t.Fatal("recovery without adapter", err)
 		}
 		session, err = store.AgentCaptureUnavailable(t.Context(), "tenant", session.ID, session.Attempt.ID, "custom launch has no recovery adapter")

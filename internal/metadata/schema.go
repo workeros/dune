@@ -20,6 +20,8 @@ var localIdentitySchema = []string{
 var executionSchema = []string{
 	`CREATE TABLE dune_agent_sessions (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>0),launch TEXT NOT NULL,state TEXT NOT NULL,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_agent_sessions_owner ON dune_agent_sessions(owner_id,id)`,
+	`CREATE TABLE dune_agent_runtime_sessions (owner_id TEXT NOT NULL,target TEXT NOT NULL,source_id TEXT NOT NULL,source_attempt TEXT NOT NULL,session_id TEXT NOT NULL,sequence BIGINT NOT NULL CHECK(sequence>=0),PRIMARY KEY(owner_id,target))`,
+	`CREATE INDEX dune_agent_runtime_sessions_selected ON dune_agent_runtime_sessions(owner_id,session_id)`,
 	`CREATE TABLE dune_views (owner_id TEXT NOT NULL,user_namespace TEXT NOT NULL,user_id TEXT NOT NULL,id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>0),spec TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(owner_id,user_namespace,user_id,id))`,
 	`CREATE TABLE dune_read_markers (owner_id TEXT NOT NULL,user_namespace TEXT NOT NULL,user_id TEXT NOT NULL,target TEXT NOT NULL,epoch TEXT NOT NULL,sequence BIGINT NOT NULL CHECK(sequence>=0),PRIMARY KEY(owner_id,user_namespace,user_id,target,epoch))`,
 	`CREATE TABLE dune_projects (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>0),spec TEXT NOT NULL,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL)`,
@@ -40,17 +42,18 @@ type schemaQueryer interface {
 }
 
 var schemaColumns = map[string][]string{
-	"dune_agent_sessions":    {"id", "owner_id", "revision", "launch", "state", "created_at", "updated_at"},
-	"dune_views":             {"owner_id", "user_namespace", "user_id", "id", "revision", "spec", "updated_at"},
-	"dune_read_markers":      {"owner_id", "user_namespace", "user_id", "target", "epoch", "sequence"},
-	"dune_projects":          {"id", "owner_id", "revision", "spec", "created_at", "updated_at"},
-	"dune_profiles":          {"id", "owner_id", "kind", "revision", "created_by_type", "created_by_subject", "created_at", "updated_at"},
-	"dune_profile_revisions": {"profile_id", "revision", "name", "description", "profile", "created_at"},
-	"dune_users":             {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
-	"dune_sessions":          {"hash", "user_id", "expires_at", "auth_version"},
-	"dune_runners":           {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
-	"dune_enrollments":       {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
-	"dune_routes":            {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
+	"dune_agent_runtime_sessions": {"owner_id", "target", "source_id", "source_attempt", "session_id", "sequence"},
+	"dune_agent_sessions":         {"id", "owner_id", "revision", "launch", "state", "created_at", "updated_at"},
+	"dune_views":                  {"owner_id", "user_namespace", "user_id", "id", "revision", "spec", "updated_at"},
+	"dune_read_markers":           {"owner_id", "user_namespace", "user_id", "target", "epoch", "sequence"},
+	"dune_projects":               {"id", "owner_id", "revision", "spec", "created_at", "updated_at"},
+	"dune_profiles":               {"id", "owner_id", "kind", "revision", "created_by_type", "created_by_subject", "created_at", "updated_at"},
+	"dune_profile_revisions":      {"profile_id", "revision", "name", "description", "profile", "created_at"},
+	"dune_users":                  {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
+	"dune_sessions":               {"hash", "user_id", "expires_at", "auth_version"},
+	"dune_runners":                {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
+	"dune_enrollments":            {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
+	"dune_routes":                 {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
 }
 
 func (s *Store) schemaExists(ctx context.Context, queryer schemaQueryer) (bool, error) {
@@ -100,7 +103,7 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 }
 
 func (s *Store) expectedTables() []string {
-	tables := []string{"dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions", "dune_projects", "dune_views", "dune_read_markers", "dune_agent_sessions"}
+	tables := []string{"dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions", "dune_projects", "dune_views", "dune_read_markers", "dune_agent_sessions", "dune_agent_runtime_sessions"}
 	if s.localIdentity {
 		tables = append(tables, "dune_sessions", "dune_users")
 	}

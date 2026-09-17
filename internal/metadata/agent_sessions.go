@@ -13,13 +13,14 @@ import (
 	"github.com/aiomni/dune/pkg/workbench"
 )
 
-const agentSessionColumns = `id,owner_id,revision,launch,state,created_at,updated_at`
+const agentSessionColumns = `id,owner_id,revision,launch,state,created_at,updated_at,
+EXISTS(SELECT 1 FROM dune_agent_runtime_sessions ar WHERE ar.owner_id=dune_agent_sessions.owner_id AND ar.session_id=dune_agent_sessions.id)`
 
 func scanAgentSession(row interface{ Scan(...any) error }) (agents.Session, error) {
 	var session agents.Session
 	var launch, state string
 	var created, updated int64
-	err := row.Scan(&session.ID, &session.OwnerID, &session.Revision, &launch, &state, &created, &updated)
+	err := row.Scan(&session.ID, &session.OwnerID, &session.Revision, &launch, &state, &created, &updated, &session.Selected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return session, ErrNotFound
 	}
@@ -96,16 +97,26 @@ func (s *Store) CreateAgentSession(ctx context.Context, owner string, launch age
 // updateAgentState changes only mutable recovery metadata. There is no method
 // that updates the launch column or follows the Profile's current revision.
 func (s *Store) updateAgentState(ctx context.Context, session agents.Session) (agents.Session, error) {
+	var updated agents.Session
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		updated, err = writeAgentState(ctx, tx, session)
+		return err
+	})
+	if err != nil {
+		return agents.Session{}, err
+	}
+	return updated, err
+}
+
+func writeAgentState(ctx context.Context, tx *sql.Tx, session agents.Session) (agents.Session, error) {
 	state, err := json.Marshal(session.SessionState)
 	if err != nil {
 		return agents.Session{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	err = s.transaction(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE dune_agent_sessions SET revision=revision+1,state=$1,updated_at=$2 WHERE owner_id=$3 AND id=$4 AND revision=$5`, string(state), now.UnixMicro(), session.OwnerID, session.ID, session.Revision)
-		return changedRow(result, err)
-	})
-	if err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE dune_agent_sessions SET revision=revision+1,state=$1,updated_at=$2 WHERE owner_id=$3 AND id=$4 AND revision=$5`, string(state), now.UnixMicro(), session.OwnerID, session.ID, session.Revision)
+	if err := changedRow(result, err); err != nil {
 		return agents.Session{}, err
 	}
 	session.Revision++
@@ -144,7 +155,25 @@ func (s *Store) RecordAgentRuntime(ctx context.Context, owner, id, attempt strin
 	if session.Attempt.Kind == "start" {
 		session.LastRuntime = &runtime
 	}
-	return s.updateAgentState(ctx, session)
+	var updated agents.Session
+	err = s.transaction(ctx, func(tx *sql.Tx) error {
+		// Recovery metadata and Runtime association commit together. This row is
+		// an index, not queue ownership or a lease; fabricd still orders actions.
+		if _, err := tx.ExecContext(ctx, `UPDATE dune_agent_runtime_sessions SET session_id='' WHERE owner_id=$1 AND session_id=$2`, owner, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_agent_runtime_sessions(owner_id,target,source_id,source_attempt,session_id,sequence) VALUES($1,$2,$3,$4,$3,0)`, owner, target.Key(), id, attempt); err != nil {
+			return err
+		}
+		session.Selected = true
+		var err error
+		updated, err = writeAgentState(ctx, tx, session)
+		return err
+	})
+	if err != nil {
+		return agents.Session{}, err
+	}
+	return updated, err
 }
 
 // CaptureAgentSession records a successful new/load response or authenticated
@@ -157,17 +186,28 @@ func (s *Store) CaptureAgentSession(ctx context.Context, owner, id, attempt stri
 	if err != nil {
 		return agents.Session{}, err
 	}
-	if session.Attempt.Runtime == nil || *session.Attempt.Runtime != runtime || (session.Native != nil && session.Native.ID != native.ID) {
-		return agents.Session{}, ErrConflict
+	changed, err := captureAgentState(&session, runtime, native)
+	if err != nil {
+		return agents.Session{}, err
 	}
-	if native.ResumeSupported && session.Launch.Recovery.ID == "" {
-		return agents.Session{}, ErrInvalidArgument
-	}
-	if session.Attempt.State == "ready" && session.Native != nil && *session.Native == native {
+	if !changed {
 		return session, nil
 	}
+	return s.updateAgentState(ctx, session)
+}
+
+func captureAgentState(session *agents.Session, runtime workbench.RuntimeRef, native agents.NativeSession) (bool, error) {
+	if session.Attempt.Runtime == nil || *session.Attempt.Runtime != runtime || (session.Native != nil && (session.Native.ID != native.ID || session.Native.Cwd != native.Cwd)) {
+		return false, ErrConflict
+	}
+	if native.ResumeSupported && session.Launch.Recovery.ID == "" {
+		return false, ErrInvalidArgument
+	}
+	if session.Attempt.State == "ready" && session.Native != nil && *session.Native == native {
+		return false, nil
+	}
 	if session.Attempt.State != "capturing" && session.Attempt.State != "unknown" {
-		return agents.Session{}, ErrConflict
+		return false, ErrConflict
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	session.Native, session.ConfirmedAt = &native, &now
@@ -177,7 +217,7 @@ func (s *Store) CaptureAgentSession(ctx context.Context, owner, id, attempt stri
 		session.Status, session.Reason = "available", ""
 	}
 	session.Attempt.State = "ready"
-	return s.updateAgentState(ctx, session)
+	return true, nil
 }
 
 // AgentCaptureUnavailable finishes a launch that cannot expose reliable native
