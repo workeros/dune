@@ -59,9 +59,10 @@ func TestFakeACPChild(t *testing.T) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params struct {
-				SessionID string `json:"sessionId"`
-				Cwd       string `json:"cwd"`
-				Prompt    []struct {
+				MCPServers []injectedMCPServer `json:"mcpServers"`
+				SessionID  string              `json:"sessionId"`
+				Cwd        string              `json:"cwd"`
+				Prompt     []struct {
 					Text string `json:"text"`
 				} `json:"prompt"`
 			} `json:"params"`
@@ -79,8 +80,12 @@ func TestFakeACPChild(t *testing.T) {
 		}
 		switch request.Method {
 		case "initialize":
-			fmt.Fprintln(os.Stdout, string(api.Payload(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]bool{"loadSession": os.Getenv("DUNE_HOST_FAKE_ACP_NO_LOAD") != "1"}, "agentInfo": map[string]string{"name": "fixture", "version": os.Getenv("DUNE_HOST_FAKE_ACP_VERSION")}}})))
+			fmt.Fprintln(os.Stdout, string(api.Payload(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{"loadSession": os.Getenv("DUNE_HOST_FAKE_ACP_NO_LOAD") != "1", "mcpCapabilities": map[string]bool{"http": os.Getenv("DUNE_HOST_FAKE_ACP_MCP_HTTP") == "1"}}, "agentInfo": map[string]string{"name": "fixture", "version": os.Getenv("DUNE_HOST_FAKE_ACP_VERSION")}}})))
 		case "session/new":
+			if !exerciseInjectedMCP(request.Params.MCPServers) {
+				fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"injected MCP unavailable"}}`+"\n", request.ID)
+				continue
+			}
 			if os.Getenv("DUNE_HOST_FAKE_ACP_DROP_NEW") == "1" {
 				return
 			}
@@ -91,6 +96,10 @@ func TestFakeACPChild(t *testing.T) {
 			sessionID = "fake-acp-session"
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-acp-session"}}`+"\n", request.ID)
 		case "session/load":
+			if !exerciseInjectedMCP(request.Params.MCPServers) {
+				fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"injected MCP unavailable"}}`+"\n", request.ID)
+				continue
+			}
 			if os.Getenv("DUNE_HOST_FAKE_ACP_DROP_LOAD") == "1" {
 				return
 			}

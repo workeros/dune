@@ -25,7 +25,11 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 
 真实 HTTP MCP 客户端配合本地 Gateway / fabricd 协议进程已验证：九项工具 schema、Profile 分页与 Tenant 过滤、启动 ACP 后直接提交任务、操作 wait/read、轮流进入两个独立 HTTP handler、撤销后原连接被拒绝、调用 Runtime 退出、cookie / query / Origin 拒绝以及未知结果保留引用且不重发。它证明协议与本地执行链路，不代表两个实际 Pod 或厂商 Agent 已验收。
 
-入口已装配；生产启动尚未自动签发或注入凭据。接下来在 managed ACP 与受支持 PTY 的本次启动配置中注入 MCP，处理 ACP inspector 脱敏及仅支持 stdio 的 bridge，并验证 Runner 对宿主 HTTP 地址的可达性。
+managed ACP 从工作台或 MCP 启动时，先保存 Runtime 回执，再签发凭据并配置 fabricd，最后提交初始 new；显式恢复在 load 前签发新凭据。两产品复用同一宿主装配，endpoint 来自部署 PublicURL，保留部署路径前缀。普通终端内手动启动与原始 ACP 透传不自动改造；受支持 PTY 的原生注入继续接入。
+
+原生会话切换不轮换调用进程的凭据；显式恢复启动新的进程时轮换，旧 attempt 的凭据失效。凭据和 endpoint 不进入保存的 Profile 或恢复配置快照，也不返回给页面。恢复使用原配置快照，当前宿主的 MCP 地址与本次凭据作为运行注入单独处理。
+
+配置失败保留已确认的 Runtime，未提交 native new/load 时不假称已有原生会话。厂商连接 MCP 失败时依其 ACP 响应返回失败或状态，Runtime 在线不等于 MCP 工具就绪；不会因配置或 new 失败而重启/重发。真实本地 ACP 协议进程已在 HTTP 与 stdio 两条注入路径中完成 `agents_list`，验证凭据先绑定 Runtime 再使用、原生切换与恢复轮换、不可达时保留部分结果。仍需验证实际厂商客户端及目标部署网络。
 
 ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/header 与 stdio argv/env；发给 Agent 的真实 RPC 保持原样。fabricd 也会在接收 ACP JSON 时遮盖本次生成凭据的原文，覆盖操作输出、权限参数和错误信息；stderr 按字节流处理，跨读取边界的完整凭据仍会被遮盖。此保护不识别任意编码或拆成多条协议消息的变形回显；实际厂商日志另需验收。
 

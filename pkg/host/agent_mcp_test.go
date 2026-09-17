@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/profiles"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -51,9 +50,6 @@ func callMCP[Out any](t *testing.T, session *mcp.ClientSession, name string, arg
 
 func issueMCPFixture(t *testing.T, f executorFixture, session agents.Summary) string {
 	t.Helper()
-	if err := f.app.store.RegisterAccount(t.Context(), identity.Account{User: f.principal, Salt: "unused", PasswordHash: "unused"}, "unused", time.Now().Add(time.Hour).Unix()); err != nil {
-		t.Fatal(err)
-	}
 	token, err := f.app.store.IssueAgentCredential(t.Context(), f.agentScope(), session.ID, session.Attempt.ID, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)

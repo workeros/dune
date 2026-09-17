@@ -25,7 +25,7 @@ func (l *agentLauncher) Start(ctx context.Context, scope agents.Scope, request a
 }
 
 func (a *App) agentService() *agentservice.Service {
-	return &agentservice.Service{Store: a.store, Access: a.authorizer, Environment: a.agentEnvironment, Online: a.agentOnline,
+	return &agentservice.Service{Store: a.store, Access: a.authorizer, Environment: a.agentEnvironment, Online: a.agentOnline, MCPURL: a.agentMCPURL,
 		Dial: func(ctx context.Context, scope agents.Scope, binding runner.Binding, operation string) (*client.Client, func(), error) {
 			return (&runnerExecutor{app: a}).connect(ctx, scope.Principal, scope.OwnerID, binding, operation)
 		},

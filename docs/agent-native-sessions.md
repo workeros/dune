@@ -4,7 +4,7 @@
 
 服务检查 Tenant / Owner、Runner binding、Runtime 和所选原生引用，确认 ACP 就绪后经 SDK / Gateway 提交给 fabricd。load 能力由 fabricd 验证，不调用 list，也不回退 new。排队与执行仍只发生在 fabricd。返回 [操作引用](agent-messaging.md)，可经 `agents/wait`、`agents/read` 查询；可选等待失败也保留已经受理的引用。
 
-初始启动在保存实际配置和 Runtime 后走同一提交路径，自动创建原生会话。正常返回时可以直接 prompt；未完成时返回 pending/running 操作供查询。会话只在匹配 RPC 确认后入索引，new/load 失败、pending 或响应丢失不改变原来的原生 ID。成功 load 切换会话会建立独立恢复记录，保留原配置来源。
+初始启动在保存实际配置和 Runtime 后签发本次调用凭据，配置 fabricd 的 MCP，再走同一提交路径自动创建原生会话。配置保留在 Runtime 内，后续 new/load 复用；详见 [MCP 注入](agent-mcp.md)。正常返回时可以直接 prompt；未完成时返回 pending/running 操作供查询。会话只在匹配 RPC 确认后入索引，new/load 失败、pending 或响应丢失不改变原来的原生 ID。成功 load 切换会话会建立独立恢复记录，保留原配置来源。
 
 操作 wait/read 与共享发现同样能保存可靠确认；这些操作只补索引，不重做 new/load。Runtime 消失前仍未观察到确认时不能声称可恢复。Web 的原生会话按钮仍待迁移到此共享入口，原始 ACP 透传继续由调用方编排。
 

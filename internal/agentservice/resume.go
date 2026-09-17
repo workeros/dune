@@ -53,7 +53,7 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	if err != nil {
 		return result, err
 	}
-	for _, required := range []string{"runtime.get", "runtime.stop", "machine.info", "acp.state", "acp.action", "agent.operation.wait"} {
+	for _, required := range []string{"runtime.get", "runtime.stop", "machine.info", "acp.state", "acp.action", "acp.mcp.configure", "agent.operation.wait"} {
 		if !slices.Contains(connection.Binding.Capabilities, required) {
 			return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support native session recovery"}
 		}
@@ -116,6 +116,9 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	if !ready.CanLoad || session.Native.AgentVersion != "" && ready.Agent.Version != "" && session.Native.AgentVersion != ready.Agent.Version {
 		return s.failResume(ctx, scope, result, session, "failed", "recovery Agent no longer supports the saved native session version or session/load", true, connection)
 	}
+	if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+		return s.failResume(ctx, scope, result, session, "failed", "MCP configuration was not confirmed; no native recovery was submitted", true, connection)
+	}
 	accepted, err := connection.ACPSubmit(ctx, runtime, api.ACPAction{Action: "load", SessionID: session.Native.ID, Cwd: session.Native.Cwd})
 	if err != nil {
 		outcome := "failed"
@@ -166,6 +169,7 @@ func resumeProfile(session agents.Session) (api.Profile, error) {
 		return api.Profile{}, &api.Error{Code: "RECOVERY_UNAVAILABLE", Detail: "the saved launch has no supported native recovery adapter"}
 	}
 	profile.Setup.Steps = nil
+	profile.RequireAgentMCP = true
 	return profile, nil
 }
 

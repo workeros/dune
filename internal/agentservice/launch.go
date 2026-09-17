@@ -27,6 +27,7 @@ type Service struct {
 	Dial        Dial
 	Environment agents.EnvironmentResolver
 	Online      func(context.Context, []string) (map[string]bool, error)
+	MCPURL      string
 }
 
 func invalid(detail string) error { return &api.Error{Code: "INVALID_ARGUMENT", Detail: detail} }
@@ -69,6 +70,9 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 	defer closeConnection()
 	if !slices.Contains(connection.Binding.Capabilities, "profile.start") {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent startup"}
+	}
+	if launch.Profile.RequireAgentMCP && !slices.Contains(connection.Binding.Capabilities, "acp.mcp.configure") {
+		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent MCP configuration"}
 	}
 	var machine api.MachineInfo
 	if err := connection.Call(ctx, "machine.info", struct{}{}, &machine); err != nil {
@@ -215,6 +219,7 @@ func (s *Service) resolveLaunch(ctx context.Context, owner string, request agent
 		launch.Profile.WorkingDirectory = directory
 	}
 	launch.Profile.ManagedACP = launch.Profile.Adapter == "acp"
+	launch.Profile.RequireAgentMCP = launch.Profile.ManagedACP
 	if err := launch.Profile.Validate(); err != nil {
 		return launch, invalid(err.Error())
 	}

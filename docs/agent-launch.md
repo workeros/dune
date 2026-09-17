@@ -10,7 +10,7 @@
 2. 应用宿主提供的 `AgentEnvironment` 默认值，读取 Runner 执行用户与 home，确定实际存储身份。
 3. 用户选择 worktree 时，经 SDK / Gateway 创建一次新工作树；不复制未提交内容，不覆盖已有路径 / 分支。
 4. 保存实际启动快照和 `starting` attempt，然后经同一 SDK 连接调用一次 `profile.start`。
-5. 保存确认的 Runtime。PTY 尚无原生适配器时标记不可恢复；managed ACP 等待初始化（最多 15 秒），提交一次 new 并等待本操作（最多 30 秒），成功后保存原生 ID。pending 仍返回操作引用，不能仅凭进程存活标记可恢复。
+5. 保存确认的 Runtime。PTY 尚无原生适配器时标记不可恢复；managed ACP 等待初始化（最多 15 秒），签发本次调用凭据并配置 fabricd 的 MCP，再提交一次 new 并等待本操作（最多 30 秒），成功后保存原生 ID。pending 仍返回操作引用，不能仅凭进程存活标记可恢复。
 
 `LaunchResult` 返回会话摘要、确认的 Runtime 和 `agent_ref`、已创建 worktree，以及 ACP 初始 new 的操作引用。出现错误时也可能有部分结果，调用方必须保留并显示：例如 worktree 创建成功但 Agent 命令不存在，用户可以直接选该目录再次启动；Runtime 已运行但索引写入失败时，应连接返回的 Runtime，不能重新 start。
 
@@ -38,3 +38,5 @@
 两产品的 `GET {prefix}/agent-sessions` 和 `GET {prefix}/agent-sessions/{id}` 返回 Owner / Tenant 内的恢复摘要；列表使用 `limit` / `cursor` 分页，不返回启动命令或环境。工作台把摘要与完整执行身份匹配，将 `session_record_id` 和项目关联保存到 pane，新 worktree 不会在刷新后丢失项目归类。索引读取失败会单独显示错误，不以索引代替 Runtime 存活检查。
 
 页面对部分成功保留现场：已创建 worktree 时切换为该目录；确认 Runtime 已启动时直接打开会话并显示索引错误。超时或断线不自动重发启动。此入口直接采集初始 new 的确认；尚未完成的操作由 wait/read 或 AgentDirectory 采集，不能重复 new 来补索引。初始化或 new 失败仍保留 Runtime，原生确认未取得时保留待采集状态；用户可以在原 Runtime 就绪后明确创建会话，无需再次启动。显式继续见 [恢复索引](agent-recovery.md)。
+
+MCP 凭据与 endpoint 是本次运行的临时注入，不写入实际配置快照或公共结果。恢复时使用原启动快照，单独注入当前宿主 endpoint 与新凭据；原生会话切换继续使用原进程的凭据。注入失败时保留确认的 Runtime，不能自动再次启动。

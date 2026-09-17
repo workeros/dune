@@ -92,6 +92,7 @@ type App struct {
 	cancel           context.CancelFunc
 	web              *webapp.Server
 	agentMCP         http.Handler
+	agentMCPURL      string
 	core             *gateway.Gateway
 	publicPath       string
 	store            *metadata.Store
@@ -193,6 +194,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	app.agentOnline = online
+	app.agentMCPURL = addresses.PublicURL + "api/v1/agent-mcp"
 	if app.agentOnline == nil {
 		app.agentOnline = func(_ context.Context, ids []string) (map[string]bool, error) {
 			present := make(map[string]bool, len(ids))

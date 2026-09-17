@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/authorization"
+	localidentity "github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
@@ -20,6 +22,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == mcpbridge.Command {
+		if err := mcpbridge.Run(context.Background(), os.Getenv(mcpbridge.URLEnv), os.Getenv(mcpbridge.TokenEnv), os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if code, handled := fabricd.RunHelper(os.Args[1:]); handled {
 		os.Exit(code)
 	}
@@ -49,6 +57,11 @@ func openExecutorFixture(t *testing.T) executorFixture {
 		t.Fatal(err)
 	}
 	principal := identity.User{ID: "background-creator"}
+	if err := app.store.RegisterAccount(ctx, localidentity.Account{User: principal, Salt: "unused", PasswordHash: "unused"}, "unused", time.Now().Add(time.Hour).Unix()); err != nil {
+		cancel()
+		app.Close()
+		t.Fatal(err)
+	}
 	owner := principal.ID
 	logical := runner.Runner{ID: "background-runner", Name: "Background Runner", Kind: "managed"}
 	token, _, err := app.store.IssueManagedEnrollment(ctx, principal, owner, logical, "test-fabric")
