@@ -309,6 +309,10 @@ func (r *runtime) read(rd io.Reader, kind string, wg *sync.WaitGroup) {
 		r.readACP(rd)
 		return
 	}
+	if r.acp != nil && kind == "stderr" {
+		r.acp.readStderr(rd)
+		return
+	}
 	b := make([]byte, wire.ChunkSize)
 	for {
 		n, e := rd.Read(b)

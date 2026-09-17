@@ -42,6 +42,7 @@ func (a *acpController) configureMCP(config api.AgentMCP) (api.AgentMCPStatus, e
 			"env": []map[string]string{{"name": mcpbridge.URLEnv, "value": config.URL}, {"name": mcpbridge.TokenEnv, "value": config.Token}}}
 	}
 	a.mcpServers = []any{server}
+	a.mcpSecret.Store(&config.Token)
 	a.state.MCPTransport = result.Transport
 	a.publishLocked()
 	return result, nil

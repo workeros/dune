@@ -27,7 +27,7 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 
 入口已装配；生产启动尚未自动签发或注入凭据。接下来在 managed ACP 与受支持 PTY 的本次启动配置中注入 MCP，处理 ACP inspector 脱敏及仅支持 stdio 的 bridge，并验证 Runner 对宿主 HTTP 地址的可达性。
 
-ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/header 与 stdio argv/env；发给 Agent 的真实 RPC 保持原样。Agent 在结构化错误中回显这份配置时，inspector 和操作错误也会脱敏。注入后还需验证实际厂商日志和其他输出位置，不把这一检查等同于完整凭据防泄露验收。
+ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/header 与 stdio argv/env；发给 Agent 的真实 RPC 保持原样。fabricd 也会在接收 ACP JSON 时遮盖本次生成凭据的原文，覆盖操作输出、权限参数和错误信息；stderr 按字节流处理，跨读取边界的完整凭据仍会被遮盖。此保护不识别任意编码或拆成多条协议消息的变形回显；实际厂商日志另需验收。
 
 ## 原生 stdio bridge
 

@@ -68,6 +68,7 @@ type acpController struct {
 	requireMCP     bool
 	mcpHTTP        bool
 	mcpServers     []any
+	mcpSecret      atomic.Pointer[string]
 }
 
 func newACPController(r *runtime) *acpController {
@@ -96,7 +97,7 @@ func (a *acpController) send(v any) error {
 	b := api.Payload(v)
 	// Publish before writing so a fast Agent response cannot appear before the
 	// request in the inspector. A subsequent write error is surfaced separately.
-	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": redactMCPConfiguration(b)})})
+	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": json.RawMessage(a.redactCredential(redactMCPConfiguration(b)))})})
 	if err := a.r.p.Write(append(b, '\n')); err != nil {
 		return err
 	}
@@ -159,6 +160,9 @@ func (a *acpController) closed() {
 	a.publishLocked()
 }
 func (a *acpController) receive(data []byte) {
+	// Mask the generated literal before it can enter operation output, permission
+	// state or diagnostics. Native writes still use the original configuration.
+	data = a.redactCredential(data)
 	var m struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
