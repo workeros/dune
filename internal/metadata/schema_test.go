@@ -113,8 +113,8 @@ func TestExternalIdentityOmitsLocalTables(t *testing.T) {
 	}
 	defer s.Close()
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != 4 {
-		t.Fatal("enterprise SQLite schema must contain runner, enrollment and Profile tables", total, err)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(localTables)-2 {
+		t.Fatal("enterprise SQLite schema must omit only local identity tables", total, err)
 	}
 }
 

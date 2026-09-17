@@ -112,6 +112,11 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	}
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
 	s.mux.HandleFunc("GET /api/v1/me", s.me)
+	if options.TenantScoped {
+		s.projectRoutes("/api/v1/tenants/{tenant}")
+	} else {
+		s.projectRoutes("/api/v1")
+	}
 	if !options.TenantScoped {
 		s.mux.HandleFunc("GET /api/v1/profiles", s.listProfiles)
 		s.mux.HandleFunc("GET /api/v1/profiles/{profile}", s.getProfile)

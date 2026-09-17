@@ -4,7 +4,7 @@
 
 ## 功能提交清单
 
-- [ ] 项目工作区：Owner / Tenant 共享项目、多个 Runner 目录、默认 Profile，数据库和 HTTP 合同。
+- [x] 项目工作区共享后端：Owner / Tenant 项目、多个 Runner 目录、默认 Profile，数据库和 HTTP 合同；SandDance 外层路由随产品接入提交。
 - [ ] 个人工作现场：分屏树、焦点、审阅目标、已读位置，数据库持久化和并发更新检查。
 - [ ] Agent 活动：PTY / ACP 摘要、具体会话引用、活动与进程状态分离。
 - [ ] Dune 并行工作台：项目和 Agent 导航、跨 Runner 分屏、焦点审阅联动、布局恢复。
@@ -23,4 +23,5 @@
 
 ## 验证记录
 
-- 2026-09-17：实施开始。Dune 初始 HEAD `40d2c42`，SandDance 初始 HEAD `e5a7db8`。工作区内已有本任务设计文档，先单独提交设计基线。尚未执行产品改动验证。
+- 2026-09-17：实施开始。Dune 初始 HEAD `40d2c42`，SandDance 核对 HEAD `6a8ba0e`。工作区内已有本任务设计文档，先单独提交设计基线 `7ddee55`。
+- 项目工作区：使用独立临时 PostgreSQL，`go test -race ./internal/metadata ./internal/webapp ./pkg/host ./pkg/workbench -count=1` 通过（同时覆盖 SQLite）。验证跨 Owner 隔离、Tenant 共享、两个数据库连接竞争修订、数据库重开、过期绑定拒绝、删除不影响 Runner。相同包的 `go vet` 和 `git diff --check` 通过。HTTP 合同见 [工作台 API](workbench-api.md)。

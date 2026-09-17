@@ -18,6 +18,8 @@ var localIdentitySchema = []string{
 }
 
 var executionSchema = []string{
+	`CREATE TABLE dune_projects (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>0),spec TEXT NOT NULL,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL)`,
+	`CREATE INDEX dune_projects_owner ON dune_projects(owner_id,id)`,
 	`CREATE TABLE dune_runners (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,created_by_id TEXT NOT NULL,created_by_namespace TEXT NOT NULL,created_by_subject TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,binding_revision BIGINT NOT NULL CHECK(binding_revision>0),machine_id TEXT UNIQUE,credential_hash TEXT UNIQUE,os TEXT NOT NULL DEFAULT '',arch TEXT NOT NULL DEFAULT '',enabled BOOLEAN NOT NULL DEFAULT TRUE,suspended BOOLEAN NOT NULL DEFAULT FALSE,created_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_runners_owner ON dune_runners(owner_id,id)`,
 	`CREATE TABLE dune_enrollments (hash TEXT PRIMARY KEY,owner_id TEXT NOT NULL,issued_to_id TEXT NOT NULL,issued_to_kind TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,name TEXT NOT NULL,runner_id TEXT NOT NULL UNIQUE,kind TEXT NOT NULL CHECK(kind IN ('attached','managed')),fabric_id TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
@@ -34,6 +36,7 @@ type schemaQueryer interface {
 }
 
 var schemaColumns = map[string][]string{
+	"dune_projects":          {"id", "owner_id", "revision", "spec", "created_at", "updated_at"},
 	"dune_profiles":          {"id", "owner_id", "kind", "revision", "created_by_type", "created_by_subject", "created_at", "updated_at"},
 	"dune_profile_revisions": {"profile_id", "revision", "name", "description", "profile", "created_at"},
 	"dune_users":             {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
@@ -90,7 +93,7 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 }
 
 func (s *Store) expectedTables() []string {
-	tables := []string{"dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions"}
+	tables := []string{"dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions", "dune_projects"}
 	if s.localIdentity {
 		tables = append(tables, "dune_sessions", "dune_users")
 	}

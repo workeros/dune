@@ -16,9 +16,10 @@ var localTables = []struct{ name, columns string }{
 	{"dune_enrollments", "hash,owner_id,issued_to_id,issued_to_kind,namespace,subject,name,runner_id,kind,fabric_id,expires_at"},
 	{"dune_profiles", "id,owner_id,kind,revision,created_by_type,created_by_subject,created_at,updated_at"},
 	{"dune_profile_revisions", "profile_id,revision,name,description,profile,created_at"},
+	{"dune_projects", "id,owner_id,revision,spec,created_at,updated_at"},
 }
 
-func TestLocalSQLiteSchemaIsExactlyFourTables(t *testing.T) {
+func TestLocalSQLiteSchemaContainsCurrentTables(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")})
 	if err != nil {
@@ -27,7 +28,7 @@ func TestLocalSQLiteSchemaIsExactlyFourTables(t *testing.T) {
 	defer s.Close()
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(localTables) {
-		t.Fatal("local SQLite schema must contain exactly four logical tables", total, err)
+		t.Fatal("local SQLite schema must contain the current logical tables", total, err)
 	}
 	for _, table := range localTables {
 		rows, err := s.db.QueryContext(ctx, "SELECT * FROM "+table.name+" LIMIT 0")
@@ -47,7 +48,7 @@ func TestPostgresLogicalTableCounts(t *testing.T) {
 		name     string
 		external bool
 		want     int
-	}{{"local", false, 7}, {"enterprise", true, 5}} {
+	}{{"local", false, len(localTables) + 1}, {"enterprise", true, len(localTables) - 1}} {
 		t.Run(test.name, func(t *testing.T) {
 			config, _, _ := postgresConfig(t)
 			s, err := Open(context.Background(), config, OpenOptions{ExternalIdentity: test.external})
