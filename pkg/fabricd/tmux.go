@@ -37,7 +37,7 @@ func (d *Engine) watchTmux() {
 			for _, r := range runtimes {
 				p, exists := panes[r.id]
 				if exists && !p.Dead {
-					r.observeForeground(p.Command)
+					r.observePTY(p, false)
 				}
 				if !exists || p.Dead {
 					state, err := r.tmux.TimeoutState()

@@ -54,6 +54,8 @@ type runtime struct {
 	acp              *acpController
 	activity         api.AgentActivity
 	nativeSession    *api.NativeSession
+	ptyActivityMu    sync.Mutex
+	ptyProbeAfter    time.Time
 	operations       *operationLog
 	ptyInput         *ptyInputQueue
 }

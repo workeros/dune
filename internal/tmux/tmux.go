@@ -329,6 +329,13 @@ func (r *Session) Capture() (api.TerminalSnapshot, error) {
 	c.Content, err = r.Server.run("capture-pane", "-p", "-e", "-t", r.pane())
 	return c, err
 }
+
+// LiveScreen returns the active pane screen without ANSI styling. tmux's -M
+// flag selects copy-mode content; deliberately omit it to ignore user scrolling.
+func (r *Session) LiveScreen() (string, error) {
+	return r.Server.run("capture-pane", "-p", "-t", r.pane())
+}
+
 func (r *Session) History(action string) error {
 	var args []string
 	switch action {

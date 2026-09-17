@@ -34,6 +34,17 @@ func TestPTYInputRecorder(t *testing.T) {
 	}
 	defer file.Close()
 	fmt.Print("\x1b[?2004hPTY_RECORDER_READY")
+	go func() {
+		previous := ""
+		for {
+			data, err := os.ReadFile(path + ".screen")
+			if err == nil && string(data) != previous {
+				previous = string(data)
+				fmt.Print("\x1b[H\x1b[2J" + strings.ReplaceAll(previous, "\n", "\r\n"))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 	_, _ = io.Copy(file, os.Stdin)
 }
 
@@ -133,7 +144,8 @@ func TestPTYQueueRejectsWrongForegroundBlockedAndHistory(t *testing.T) {
 	if got := waitPTYOperation(t, queue, wrong); got.State != "failed" || !strings.Contains(got.Error, "STALE_AGENT") {
 		t.Fatalf("foreground: %+v", got)
 	}
-	r.updateActivity("blocked", "hook", "codex", "codex")
+	setPTYScreen(t, r, record, "Would you like to run it?\n1. Yes\n2. No\nPress enter to confirm or esc to cancel")
+	// Submission checks the fresh screen even before summary polling sees it.
 	blocked, err := queue.prompt(api.PTYPrompt{Agent: "codex", Text: "do not approve"})
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +153,7 @@ func TestPTYQueueRejectsWrongForegroundBlockedAndHistory(t *testing.T) {
 	if got := waitPTYOperation(t, queue, blocked); got.State != "failed" || !strings.Contains(got.Error, "AGENT_BLOCKED") {
 		t.Fatalf("blocked: %+v", got)
 	}
-	r.updateActivity("unknown", "foreground", "codex", "codex")
+	setPTYScreen(t, r, record, "›\n? for shortcuts")
 	if err := r.tmux.History("older"); err != nil {
 		t.Fatal(err)
 	}

@@ -90,6 +90,30 @@ func TestPaneDiscoveryIncludesForegroundCommand(t *testing.T) {
 	})
 }
 
+func TestLiveScreenIgnoresHistoryAndRemovesStyling(t *testing.T) {
+	s := server(t)
+	r := session(t, s, "h", `i=0; while [ "$i" -lt 80 ]; do printf 'HISTORICAL_APPROVAL_%s\n' "$i"; i=$((i+1)); done; printf '\033[32mLIVE_PROMPT\033[0m\n'; sleep 120`, []string{"PATH=/usr/bin:/bin"})
+	await(t, func() bool {
+		content, err := r.LiveScreen()
+		return err == nil && strings.Contains(content, "LIVE_PROMPT")
+	})
+	before, err := r.LiveScreen()
+	if err != nil || strings.Contains(before, "\x1b") {
+		t.Fatal("screen retained ANSI styling", before, err)
+	}
+	if err := r.History("older"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := r.LiveScreen()
+	if err != nil || after != before {
+		t.Fatal("copy mode changed live detection screen", before, after, err)
+	}
+	pane, err := r.Inspect()
+	if err != nil || !pane.InMode {
+		t.Fatal("capture left copy mode", pane, err)
+	}
+}
+
 func TestRunningServerSurvivesRemovedRelease(t *testing.T) {
 	s := server(t)
 	currentBinary := s.Binary

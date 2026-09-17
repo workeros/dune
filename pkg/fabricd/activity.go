@@ -56,8 +56,8 @@ func (a *acpController) publishActivityLocked() {
 	a.r.updateActivity(state, "acp", agent.Name, "")
 }
 
-// Foreground recognition identifies supported CLIs, not whether a task finished.
-// Working/idle/blocked for a PTY requires the Agent's native integration.
+// Foreground recognition alone does not identify task state. observePTY adds
+// screen evidence for supported CLIs; an unrecognized UI remains unknown.
 func (r *runtime) observeForeground(command string) {
 	if len(command) > 256 || strings.ContainsFunc(command, unicode.IsControl) {
 		command = ""

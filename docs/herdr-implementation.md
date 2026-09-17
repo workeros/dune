@@ -7,7 +7,8 @@
 - [x] 项目工作区共享后端：Owner / Tenant 项目、多个 Runner 目录、默认 Profile，数据库和 HTTP 合同；SandDance 外层路由随产品接入提交。
 - [x] 个人工作现场共享后端：分屏树、焦点、审阅目标、已读位置，数据库持久化和并发更新检查；页面接入随两产品工作台提交。
 - [x] Agent 摘要基础：Runtime 列表直接携带 ACP 活动与 PTY 前台信息，活动与进程状态分离，无需打开内容订阅。
-- [ ] PTY 原生状态适配：受支持 Agent 的工作 / 空闲 / 权限状态及可靠会话 ID 采集。
+- [x] PTY 画面活动适配：Claude / Codex 明确的工作 / 空闲 / 回应控件；未知画面保持 unknown，原生 ID 采集独立实现。
+- [ ] PTY 原生身份采集：受支持 Agent 通过原生集成确认会话 ID。
 - [x] Dune 并行工作台：项目和 Agent 导航、跨 Runner 分屏、焦点审阅联动、布局恢复。
 - [x] SandDance 并行工作台：接入共享合同，Tenant 内自由分屏与个人布局。
 - [x] worktree 准备能力：SDK / Gateway / fabricd 新建和列出 worktree，复用 Git 仓库锁；不覆盖目录 / 分支，不复制未提交内容。
@@ -99,3 +100,5 @@
 - managed ACP 自动注入：身份/授权/metadata/agentservice/webapp/host 回归（独立 PostgreSQL）、注入/原生会话/恢复定向 race 与相关 vet 通过；SandDance 全量 Go（本地 workspace/独立 PostgreSQL）通过。本地 Agent 进程收到真实配置后分别通过 HTTP 和实际 stdio bridge 调用 `agents_list`，并在 load/恢复中重验；覆盖新 Runtime 先入索引、切换不轮换、恢复轮换、重复恢复不重发，以及配置拒绝/MCP 不可达保留 Runtime 和操作。未据此声称厂商 Agent 或真实多 Pod 验收完成。
 
 - 两产品 ACP 操作交互：见 [界面合同](agent-operation-ui.md)。Dune 类型检查、4 项单元、生产构建、全量 16 项 Chromium 通过；最终 Runtime key / 输出输入校验 / 64 项上限调整后，恢复和操作场景分别重跑通过。SandDance 类型检查、生产构建通过；全量 148 项首次 145 项通过，两项导航测试因定位器竞态/多目标失败，一项文件搜索点击超时；修正导航测试并重跑操作、console、文件搜索的全部 42 项均通过。已检查两产品操作输出宽/窄截图。浏览器验证覆盖 A idle 不满足 B、共享新建/加载、unknown 保留引用且不重发、读取位置推进、缺口和失效提示；仍非真实厂商互操作证据。
+
+- PTY 画面活动：新增 [状态合同](pty-agent-state.md)。agentdetect / tmux / fabricd 全量 Go 回归、画面 / 输入准入定向 race、相关 vet，以及跨进程 PTY / tmux / terminal / input 回归通过。使用真实 tmux 与可控字节进程验证实时屏幕不受历史浏览影响、旧授权和草稿不污染状态、提交前重新检查 blocked；未据此声称厂商 CLI 界面已验收。跨进程回归发现两处仍引用已删除的 `tmux.Capture`，已独立修正为共享 `api.TerminalSnapshot`，无兼容别名。

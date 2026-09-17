@@ -192,9 +192,6 @@ func (q *ptyInputQueue) checkAgent(agent string, prompt bool) (tmux.Pane, error)
 	if info.State != "running" {
 		return tmux.Pane{}, &api.Error{Code: "STALE_RUNTIME", Detail: "PTY Agent has exited"}
 	}
-	if prompt && info.Activity != nil && info.Activity.State == "blocked" {
-		return tmux.Pane{}, &api.Error{Code: "AGENT_BLOCKED", Detail: "Agent requires native interaction; use send_keys explicitly"}
-	}
 	pane, err := q.r.tmux.Inspect()
 	if err != nil {
 		return pane, err
@@ -207,6 +204,12 @@ func (q *ptyInputQueue) checkAgent(agent string, prompt bool) (tmux.Pane, error)
 	}
 	if prompt && !pane.BracketedPaste {
 		return pane, &api.Error{Code: "AGENT_NOT_READY", Detail: "foreground Agent has not enabled bracketed paste"}
+	}
+	if prompt {
+		q.r.observePTY(pane, true)
+		if q.r.info().Activity.State == "blocked" {
+			return pane, &api.Error{Code: "AGENT_BLOCKED", Detail: "Agent requires native interaction; use send_keys explicitly"}
+		}
 	}
 	return pane, nil
 }
