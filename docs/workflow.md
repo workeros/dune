@@ -76,3 +76,5 @@ mock ACP 只验证协议，不证明真实 Agent 可用。涉及 ACP 行为、PT
 
 只因相关代码变化、失败或未解决疑点扩大检查范围。网络 EOF、提交确认丢失或
 连接重建不能当作业务成功；测试和实现都不得自动重放写入或 Agent 请求。
+
+原生 Codex MCP / 恢复验收入口：`DUNE_REAL_AGENT=1 DUNE_NATIVE_CODEX_HOME=/绝对路径/隔离且已登录的目录 go test ./pkg/host -run '^TestRealNativeAgentMCPRecovery$' -count=1 -timeout=210s -v`。使用专用目录，测试会信任其临时工作目录和唯一注入的 SessionStart hook；不修改日常 Codex 配置。测试要求实际 `agents_list` 调用及精确原生恢复，额度不足或配置不受支持会失败，不能记为通过。普通回归默认跳过该测试。

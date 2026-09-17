@@ -122,3 +122,5 @@
 - 真实 Codex 启动发现继承的 `TERM=dumb` 覆盖 tmux 终端类型，导致 CLI 停在终端确认。已使 PTY 固定使用 tmux 对外声明的 `xterm-256color`，并用显式传入 `TERM=dumb` 的回归覆盖；tmux 环境、PTY 原生身份和 MCP 集成用例及相关 vet 通过。本次修复单独提交，真实交互验收继续。
 
 - 原生启动环境隔离：清除宿主继承的 `CODEX_THREAD_ID`，与每次重建的 hook / MCP 环境一起处理，避免新 Agent 的 SessionStart 被当作另一个父线程的回调丢弃。注入环境与原生身份定向 race、相关 vet 及调整后的普通回归通过。实际 Codex 0.140.0 在首次 prompt 后确认 SessionStart；进入欢迎界面时尚未产生确认，恢复索引继续以 hook 事件为准。
+
+- Codex 原生验收入口：新增显式 opt-in 测试，普通检查跳过且编译 / vet 通过。实际运行用隔离的已登录目录，确认本机 Codex 0.140.0 的目录 / hook 信任、PTY 输入及首次提交后的 SessionStart。模型请求被账号 usage limit 拒绝（CLI 提示 2026-09-19 16:16 后再试），未观察到真实模型发起的 MCP 工具调用，完整原生恢复流程未计为通过。没有修改全局 Codex 配置，额度阻塞不重复触发模型请求。

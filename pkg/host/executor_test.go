@@ -41,11 +41,16 @@ type executorFixture struct {
 
 func openExecutorFixture(t *testing.T) executorFixture {
 	t.Helper()
+	return openExecutorFixtureFor(t, 15*time.Second)
+}
+
+func openExecutorFixtureFor(t *testing.T, duration time.Duration) executorFixture {
+	t.Helper()
 	if os.Getenv("DUNE_TMUX") == "" {
 		binary, _ := filepath.Abs("../../bin/tmux")
 		t.Setenv("DUNE_TMUX", binary)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	var app *App
 	app, err := Open(ctx, Options{DataDir: filepath.Join(t.TempDir(), "metadata"), PublicURL: "http://dune.example.test/"})
 	if err != nil {
