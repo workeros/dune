@@ -53,4 +53,6 @@ Profile 的 `require_agent_mcp` 对 managed ACP 门禁原生动作，未配置 M
 
 PTY 配置随 tmux Runtime 保留，fabricd 重启不清除；`runtime stop` / forget 与配置写入共用文件锁并清理。运行目录只服务这个 Runtime，不是 Profile 或恢复数据库中的配置来源。新 Runtime 必须重新注入；宿主仍在每次调用验证凭据、执行实例和在线状态，保留文件不扩大权限。嵌入宿主统一调用 `fabricd.RunHelper` 即可分派 bridge 和原生 hook。
 
-本地真实 tmux、生成的 Claude 配置、实际 bridge 进程及 HTTP MCP 已验证首次等待、单次配置、重启后拒绝替换、配置保留和 stop 清理；文件锁 race 验证并发配置 / 清理。共享启动 / 恢复服务的自动签发通过本地 CLI 协议进程验证：首次 `agents_list` 已能通过活 Runtime 鉴权，恢复轮换 token，重复恢复不轮换，配置失败保留唯一已启动 Runtime。Codex 配置由夹具检查生成字段，真实厂商 CLI 的参数解析、信任与工具可用性单独验收；Runtime 或 SessionStart 就绪不代表原生 MCP 客户端一定连接成功。
+本地真实 tmux、生成的 Claude 配置、实际 bridge 进程及 HTTP MCP 已验证首次等待、单次配置、重启后拒绝替换、配置保留和 stop 清理；文件锁 race 验证并发配置 / 清理。共享启动 / 恢复服务的自动签发通过本地 CLI 协议进程验证：首次 `agents_list` 已能通过活 Runtime 鉴权，恢复轮换 token，重复恢复不轮换，配置失败保留唯一已启动 Runtime。
+
+真实 Codex 0.140.0 已通过原生 MCP 启动验收：接受本次参数、处理目录 / hook 信任，实际启动 bridge 并读取包含 `agents_list` 的工具目录。该测试只使用原生初始化和 `/mcp`，不请求模型；另一次实际 prompt 已确认 SessionStart，但模型请求因账号额度受限失败。真实模型调用工具、完整厂商原生恢复及其他支持厂商仍需验收。入口见 [开发流程](workflow.md#真实-agent-与远端验证)；Runtime、SessionStart 或 MCP 工具目录就绪各有独立含义。

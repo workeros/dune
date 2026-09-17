@@ -2,6 +2,8 @@
 
 目标：[已确认方案](references/herdr-adoption-design.md)。逐功能实现、验证、提交，遵守 SOLID / KISS；不引入宿主队列协调系统，不保留原型旧合同的兼容层。
 
+截至 2026-09-18，两个产品的功能实现已分项提交，本地协议、浏览器、多进程故障测试及真实 Codex MCP 工具发现已通过。完整厂商模型调用、原生恢复和目标部署验收仍未完成，Goal 保留这些缺口。SandDance 已固定到本次验证过的 Dune / IM 提交；尚未 push 或验证远端模块下载。
+
 ## 功能提交清单
 
 - [x] 项目工作区共享后端：Owner / Tenant 项目、多个 Runner 目录、默认 Profile，数据库和 HTTP 合同；SandDance 外层路由随产品接入提交。
@@ -39,7 +41,10 @@
 - [x] MCP 自动注入：managed ACP 和受支持 PTY 通过共享启动 / 恢复服务签发；PTY bridge 等待 Runtime 入库后的配置。
 - [x] 两产品协作交互：共享 ACP new/load/prompt、pending、按操作查询和读取、输出不完整与引用失效提示。
 - [x] 本地多宿主验收：三 Web 进程、独立 peer TLS 入口、共享 PostgreSQL、Web / MCP 同队列、宿主 / Gateway / fabricd 故障边界。
-- [ ] 集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、恢复旧配置及真实 Agent 互操作。
+- [x] 本地集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、Profile 修改或删除后恢复旧配置。
+- [x] 真实 Codex MCP 启动：原生 CLI 启动注入的 bridge，通过鉴权读取工具目录，无模型请求。
+- [ ] 厂商 Agent 互操作：真实模型调用 MCP、完整原生恢复及所宣称支持的厂商行为。
+- [ ] 目标部署验收：实际远端 Runner / 多 Pod 网络链路；本地多进程不能替代这项结果。
 
 清单按产品交付顺序排列；底层依赖可先实现。一个功能涉及两仓库时各自提交，记录对应提交与验证。未通过的外部验收明确记录，不以 mock 或文档检查代替。
 
@@ -129,3 +134,7 @@
 - 本地多宿主进程验收：`TestPostgresClusterWebProcesses` 普通及 race 通过，子 Web / fabricd 程序也以 race 构建。三 Web 进程使用共享 PostgreSQL 和独立 TLS peer，Web A / MCP C 经 Gateway owner B 提交到同一 ACP 队列；A 被杀并重启后 pending / wait / read 保持，A / B 输出独立。Gateway owner 被杀并重启后 fabricd 输出不变；fabricd 被杀并重启后 PTY 调用方仍能认证，原 ACP 操作明确返回失效。初次测试只观察 online 标记，遇到 owner 刚退出后的路由滞后；改为完整链路的只读 `agents_get` 等待，不重放写入。以上为同机多进程拓扑，未表述为实际 Kubernetes Pod 或跨主机部署验收。
 
 - 全量交付检查：`make check-go`（含 IM vet）和 `make build` 通过。`make test TEST_FLAGS='-count=1 -timeout=300s'` 的非 tests 包全部通过；tests 包六个前缀 / 企业 / PostgreSQL 复用场景因仍发送旧 Profile DTO 返回 400。已迁移公共测试 helper 到 `StartRequest / LaunchResult`，四组受影响测试（含所有子场景）重新通过，测试 vet 通过；随后独立运行 IM 全量测试通过。没有为旧 HTTP 合同添加兼容入口。
+
+- SandDance 依赖交付 `e02feae`：Dune 与独立 IM module 固定为 `v0.0.0-20260917192716-8c421802cf44`，来自 Dune Git 提交 `8c421802cf44e3b91db7048df41f89d9d378ecfd` 的归档。使用 Go 官方 module zip 工具生成私有本地产物与校验和，未提交本地路径替换。关闭临时 workspace 后，`GOWORK=off GOPROXY=off go test ./... -count=1 -timeout=180s`、全量 vet 和构建均通过，测试使用独立 PostgreSQL。尚未 push，远端可下载性未验证；其他机器需先发布该提交或使用既有 `SANDDANCE_DUNE_DIR` 构建入口。
+
+- 真实 Codex MCP 工具发现：`DUNE_REAL_AGENT=1 DUNE_NATIVE_CODEX_HOME=<隔离且已登录目录> go test ./pkg/host -run '^TestRealNativeAgentMCPStartup$' -count=1 -timeout=120s -v` 通过。Codex 0.140.0 实际启动保留的 bridge，经 Gateway 核验活 Runtime 后完成 MCP 鉴权和工具发现；断言 HTTP 成功、JSON-RPC 无错误且结果包含 `agents_list`。只执行原生初始化与 `/mcp`，没有模型请求。关闭 opt-in 时两个原生验收测试均跳过，host vet 通过。完整模型工具调用仍受已记录的账号额度限制，完整原生恢复未运行成功，不以工具目录就绪代替这些验收。

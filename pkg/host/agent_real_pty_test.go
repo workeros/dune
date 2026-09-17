@@ -20,6 +20,16 @@ import (
 // Opt in with an isolated, already authenticated Codex home. Ordinary tests
 // never invoke a model or change the developer's native CLI configuration.
 func TestRealNativeAgentMCPRecovery(t *testing.T) {
+	testRealNativeAgent(t, true)
+}
+
+// Native MCP initialization and /mcp do not submit a model request.
+func TestRealNativeAgentMCPStartup(t *testing.T) {
+	testRealNativeAgent(t, false)
+}
+
+func testRealNativeAgent(t *testing.T, checkRecovery bool) {
+	t.Helper()
 	if os.Getenv("DUNE_REAL_AGENT") != "1" || os.Getenv("DUNE_NATIVE_CODEX_HOME") == "" {
 		t.Skip("set DUNE_REAL_AGENT=1 and DUNE_NATIVE_CODEX_HOME for native Codex acceptance")
 	}
@@ -28,7 +38,7 @@ func TestRealNativeAgentMCPRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := openExecutorFixtureFor(t, 3*time.Minute)
-	var toolCalls atomic.Int32
+	var toolCalls, toolLists atomic.Int32
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -36,10 +46,37 @@ func TestRealNativeAgentMCPRecovery(t *testing.T) {
 			Method string
 			Params struct{ Name string }
 		}
-		if json.Unmarshal(body, &rpc) == nil && rpc.Method == "tools/call" && rpc.Params.Name == "agents_list" {
+		_ = json.Unmarshal(body, &rpc)
+		response := httptest.NewRecorder()
+		f.app.ServeHTTP(response, r)
+		for key, values := range response.Header() {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(response.Code)
+		_, _ = w.Write(response.Body.Bytes())
+		var reply struct {
+			Error  *json.RawMessage
+			Result *struct {
+				Tools   []struct{ Name string }
+				IsError bool
+			}
+		}
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &reply) != nil || reply.Error != nil || reply.Result == nil || reply.Result.IsError {
+			return
+		}
+		if rpc.Method == "tools/call" && rpc.Params.Name == "agents_list" {
 			toolCalls.Add(1)
 		}
-		f.app.ServeHTTP(w, r)
+		if rpc.Method == "tools/list" {
+			for _, tool := range reply.Result.Tools {
+				if tool.Name == "agents_list" {
+					toolLists.Add(1)
+					break
+				}
+			}
+		}
 	}))
 	defer host.Close()
 	f.app.agentMCPURL = host.URL + "/api/v1/agent-mcp"
@@ -58,6 +95,10 @@ func TestRealNativeAgentMCPRecovery(t *testing.T) {
 		current, err := connection.Get(t.Context(), *started.Runtime)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !checkRecovery && toolLists.Load() > 0 {
+			t.Log("Native Codex initialized its injected bridge and loaded the MCP tool catalog without a model call")
+			return
 		}
 		if current.NativeSession != nil && toolCalls.Load() > 0 {
 			t.Log("Native SessionStart and MCP tool call confirmed")
@@ -89,7 +130,11 @@ func TestRealNativeAgentMCPRecovery(t *testing.T) {
 			trustedHooks = true
 		}
 		if !submitted && strings.Contains(snapshot.Content, "OpenAI Codex") && strings.Contains(snapshot.Content, "model:") {
-			operation, err := connection.PTYPrompt(t.Context(), *started.Runtime, api.PTYPrompt{Agent: "codex", Text: "Use the dune-agents MCP agents_list tool exactly once, then reply DUNE_MCP_VERIFIED. Do not run shell commands or read/write files."})
+			prompt := "/mcp"
+			if checkRecovery {
+				prompt = "Use the dune-agents MCP agents_list tool exactly once, then reply DUNE_MCP_VERIFIED. Do not run shell commands or read/write files."
+			}
+			operation, err := connection.PTYPrompt(t.Context(), *started.Runtime, api.PTYPrompt{Agent: "codex", Text: prompt})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,5 +161,4 @@ func TestRealNativeAgentMCPRecovery(t *testing.T) {
 		t.Fatal("native CLI did not confirm recovery of the saved session", err)
 	}
 	t.Log("Native CLI recovered the exact saved session")
-
 }
