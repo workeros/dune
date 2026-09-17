@@ -35,6 +35,7 @@ func (d *Engine) watchTmux() {
 				continue
 			} // An unavailable server is not evidence that a process exited.
 			for _, r := range runtimes {
+				r.readNativeSession()
 				p, exists := panes[r.id]
 				if exists && !p.Dead {
 					r.observePTY(p, false)
@@ -60,6 +61,18 @@ func (d *Engine) watchTmux() {
 				}
 			}
 		}
+	}
+}
+
+func (r *runtime) readNativeSession() {
+	native, err := r.tmux.NativeSession()
+	if err != nil || native == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.nativeSession == nil || native.Sequence > r.nativeSession.Sequence {
+		r.nativeSession = native
 	}
 }
 func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription) {

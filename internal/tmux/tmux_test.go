@@ -27,7 +27,7 @@ func server(t *testing.T) *Server {
 }
 func session(t *testing.T, s *Server, id, script string, env []string) *Session {
 	t.Helper()
-	r, e := s.Create(api.Runtime{ID: strings.Repeat(id, 32), Incarnation: "test", Generation: 1, Adapter: "pty", WorkingDirectory: t.TempDir(), Title: "test"}, []string{"/bin/sh", "-c", script}, env, 50000, 0)
+	r, e := s.Create(api.Runtime{ID: strings.Repeat(id, 32), Incarnation: "test", Generation: 1, Adapter: "pty", WorkingDirectory: t.TempDir(), Title: "test"}, []string{"/bin/sh", "-c", script}, env, CreateOptions{HistoryLines: 50000})
 	if e != nil {
 		t.Fatal(e)
 	}

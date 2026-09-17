@@ -150,3 +150,38 @@ func TestSessionHookDoesNotResetCorruptionOrRecreateRemovedDirectory(t *testing.
 		t.Fatal("hook context recreated retired directory", err)
 	}
 }
+
+func TestNativeRetirementExcludesConcurrentReceiptWrites(t *testing.T) {
+	dir, _ := sessionFixture(t, "claude")
+	lock, err := os.OpenFile(filepath.Join(dir, "session.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	removed := make(chan error, 1)
+	go func() { removed <- Remove(dir) }()
+	select {
+	case err := <-removed:
+		t.Fatal("retired while a callback owned the writer lock", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	reported := make(chan error, 1)
+	go func() { reported <- Report(t.Context(), dir, "", strings.NewReader(event(uuid.NewString(), "/src"))) }()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-removed; err != nil {
+		t.Fatal(err)
+	}
+	<-reported // A callback that loses the retirement race may fail to write.
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("retired hook directory still exists", err)
+	}
+	if err := Remove(dir); err != nil {
+		t.Fatal("repeat cleanup failed", err)
+	}
+}

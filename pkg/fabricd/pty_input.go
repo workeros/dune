@@ -184,13 +184,37 @@ func supportedPTYAgent(agent string) bool {
 	return agent == "claude" || agent == "codex" || agent == "opencode" || agent == "gemini"
 }
 
-func (q *ptyInputQueue) checkAgent(agent string, prompt bool) (tmux.Pane, error) {
+type ptyNativeTarget struct{ id, cwd string }
+
+func (q *ptyInputQueue) nativeTarget() ptyNativeTarget {
+	q.r.readNativeSession()
+	if native := q.r.info().NativeSession; native != nil {
+		return ptyNativeTarget{native.ID, native.Cwd}
+	}
+	return ptyNativeTarget{}
+}
+
+func (q *ptyInputQueue) bindNative(id, cwd string) (ptyNativeTarget, error) {
+	if (id == "") != (cwd == "") {
+		return ptyNativeTarget{}, &api.Error{Code: "INVALID_ARGUMENT", Detail: "native PTY target requires both session_id and cwd"}
+	}
+	current := q.nativeTarget()
+	if id != "" && current != (ptyNativeTarget{id, cwd}) {
+		return ptyNativeTarget{}, &api.Error{Code: "STALE_SESSION", Detail: "native PTY session changed"}
+	}
+	return current, nil
+}
+
+func (q *ptyInputQueue) checkAgent(agent string, prompt bool, native ptyNativeTarget) (tmux.Pane, error) {
 	if !supportedPTYAgent(agent) {
 		return tmux.Pane{}, &api.Error{Code: "UNSUPPORTED", Detail: "PTY Agent is not recognized"}
 	}
 	info := q.r.info()
 	if info.State != "running" {
 		return tmux.Pane{}, &api.Error{Code: "STALE_RUNTIME", Detail: "PTY Agent has exited"}
+	}
+	if q.nativeTarget() != native {
+		return tmux.Pane{}, &api.Error{Code: "STALE_SESSION", Detail: "native PTY session changed before input"}
 	}
 	pane, err := q.r.tmux.Inspect()
 	if err != nil {
@@ -222,8 +246,12 @@ func (q *ptyInputQueue) prompt(request api.PTYPrompt) (api.AgentOperation, error
 	if !supportedPTYAgent(request.Agent) {
 		return api.AgentOperation{}, &api.Error{Code: "UNSUPPORTED", Detail: "PTY Agent is not recognized"}
 	}
+	native, err := q.bindNative(request.SessionID, request.Cwd)
+	if err != nil {
+		return api.AgentOperation{}, err
+	}
 	status, _, err := q.submit(func(viewer *tmux.Viewer) error {
-		before, err := q.checkAgent(request.Agent, true)
+		before, err := q.checkAgent(request.Agent, true, native)
 		if err != nil {
 			return err
 		}
@@ -239,7 +267,7 @@ func (q *ptyInputQueue) prompt(request api.PTYPrompt) (api.AgentOperation, error
 			return &api.Error{Code: "RESULT_UNKNOWN", Detail: "input service closed after text; Enter was not confirmed"}
 		case <-timer.C:
 		}
-		after, err := q.checkAgent(request.Agent, true)
+		after, err := q.checkAgent(request.Agent, true, native)
 		if err != nil || after.PID != before.PID {
 			return &api.Error{Code: "RESULT_UNKNOWN", Detail: "foreground changed after text; Enter was not sent"}
 		}
@@ -267,8 +295,12 @@ func (q *ptyInputQueue) keys(request api.PTYKeys) (api.AgentOperation, error) {
 		}
 		data = append(data, []byte(value)...)
 	}
+	native, err := q.bindNative(request.SessionID, request.Cwd)
+	if err != nil {
+		return api.AgentOperation{}, err
+	}
 	status, _, err := q.submit(func(viewer *tmux.Viewer) error {
-		if _, err := q.checkAgent(request.Agent, false); err != nil {
+		if _, err := q.checkAgent(request.Agent, false, native); err != nil {
 			return err
 		}
 		return writePTY(viewer, data)

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aiomni/dune/internal/agentintegration"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/creack/pty"
@@ -33,10 +35,18 @@ type Session struct {
 	Server  *Server
 	Runtime api.Runtime
 	timed   bool
+	native  bool
 }
 type runtimeMetadata struct {
 	api.Runtime
-	HasTimeout bool `json:"has_timeout,omitempty"`
+	HasTimeout     bool `json:"has_timeout,omitempty"`
+	HasNativeAgent bool `json:"has_native_agent,omitempty"`
+}
+
+type CreateOptions struct {
+	HistoryLines int
+	Timeout      time.Duration
+	NativeAgent  string
 }
 type Pane struct {
 	Dead           bool
@@ -159,9 +169,10 @@ func executable(name, cwd string, env []string) error {
 	}
 	return fmt.Errorf("executable not found or not executable: %s", name)
 }
-func (s *Server) Create(meta api.Runtime, argv, env []string, limit int, timeout time.Duration) (*Session, error) {
+func (s *Server) Create(meta api.Runtime, argv, env []string, options CreateOptions) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	limit, timeout := options.HistoryLines, options.Timeout
 	if limit == 0 {
 		limit = 50000
 	}
@@ -178,14 +189,32 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, limit int, timeout
 		return nil, fmt.Errorf("PTY timeout must be 0..24h")
 	}
 	r := &Session{Server: s, Runtime: meta, timed: timeout > 0}
+	if options.NativeAgent != "" {
+		if err := PrivateDir(r.nativeDir()); err != nil {
+			return nil, err
+		}
+		var err error
+		argv, env, err = agentintegration.Launch(r.nativeDir(), agentintegration.Binding{RuntimeID: meta.ID, Incarnation: meta.Incarnation, Agent: options.NativeAgent}, argv, env)
+		if err != nil {
+			_ = os.RemoveAll(r.nativeDir())
+			return nil, err
+		}
+		r.native = true
+	}
 	if r.timed {
 		if err := os.MkdirAll(r.timeoutDir(), 0700); err != nil {
+			if r.native {
+				_ = os.RemoveAll(r.nativeDir())
+			}
 			return nil, err
 		}
 		var err error
 		argv, err = process.PTYCommand(r.timeoutDir(), meta.ID, meta.Incarnation, timeout, argv)
 		if err != nil {
 			_ = os.RemoveAll(r.timeoutDir())
+			if r.native {
+				_ = os.RemoveAll(r.nativeDir())
+			}
 			return nil, err
 		}
 	}
@@ -203,7 +232,7 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, limit int, timeout
 	for _, v := range argv {
 		words = append(words, quote(v))
 	}
-	b, _ := json.Marshal(runtimeMetadata{Runtime: meta, HasTimeout: r.timed})
+	b, _ := json.Marshal(runtimeMetadata{Runtime: meta, HasTimeout: r.timed, HasNativeAgent: r.native})
 	_, err := s.run("start-server", ";", "set-option", "-g", "history-limit", strconv.Itoa(limit), ";", "new-session", "-d", "-s", r.name(), "-x", "80", "-y", "24", "-c", meta.WorkingDirectory, strings.Join(words, " "), ";", "set-option", "-t", r.target(), "@dune-runtime", base64.RawStdEncoding.EncodeToString(b))
 	if err != nil {
 		_ = r.Destroy()
@@ -242,7 +271,7 @@ func (s *Server) Restore() ([]*Session, error) {
 		if json.Unmarshal(b, &meta) != nil || meta.Adapter != "pty" || name != "dune-"+meta.ID || len(meta.ID) != 32 {
 			return nil, fmt.Errorf("invalid tmux runtime identity")
 		}
-		r := &Session{Server: s, Runtime: meta.Runtime, timed: meta.HasTimeout}
+		r := &Session{Server: s, Runtime: meta.Runtime, timed: meta.HasTimeout, native: meta.HasNativeAgent}
 		if r.timed {
 			if _, err := r.waitTimeoutState(); err != nil {
 				return nil, err
@@ -260,6 +289,18 @@ func (r *Session) pane() string   { return r.target() + ":0.0" }
 func (r *Session) timeoutDir() string {
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(r.Runtime.ID+"\x00"+r.Runtime.Incarnation)))
 	return filepath.Join(r.Server.stateDir, "pty-timeouts", key)
+}
+
+func (r *Session) nativeDir() string {
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(r.Runtime.ID+"\x00"+r.Runtime.Incarnation)))
+	return filepath.Join(r.Server.stateDir, "native-agents", key)
+}
+
+func (r *Session) NativeSession() (*api.NativeSession, error) {
+	if !r.native {
+		return nil, nil
+	}
+	return agentintegration.Read(r.nativeDir(), r.Runtime.ID, r.Runtime.Incarnation)
 }
 
 func (r *Session) TimeoutState() (*process.PTYState, error) {
@@ -312,8 +353,13 @@ func (r *Session) Destroy() error {
 	if err != nil && (strings.Contains(err.Error(), "can't find session") || strings.Contains(err.Error(), "no server running")) {
 		err = nil
 	}
-	if err == nil && r.timed {
-		err = process.RemovePTYState(r.timeoutDir())
+	if err == nil {
+		if r.timed {
+			err = process.RemovePTYState(r.timeoutDir())
+		}
+		if r.native {
+			err = errors.Join(err, agentintegration.Remove(r.nativeDir()))
+		}
 	}
 	return err
 }

@@ -16,6 +16,9 @@ func TestMain(m *testing.M) {
 	if code, handled := RunHelper(os.Args[1:]); handled {
 		os.Exit(code)
 	}
+	if os.Getenv("DUNE_TEST_NATIVE_CLI") == "1" {
+		os.Exit(runNativeCLIFixture())
+	}
 	if os.Getenv("DUNE_TMUX") == "" {
 		binary, _ := filepath.Abs("../../bin/tmux")
 		_ = os.Setenv("DUNE_TMUX", binary)

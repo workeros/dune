@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func ptyInputFixture(t *testing.T) (*runtime, *ptyInputQueue, string) {
 	}
 	record := filepath.Join(dir, "input")
 	meta := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, Adapter: "pty", WorkingDirectory: dir}
-	session, err := server.Create(meta, []string{agent, "-test.run=^TestPTYInputRecorder$"}, []string{"PATH=/usr/bin:/bin", "DUNE_TEST_PTY_INPUT_RECORD=" + record}, 1000, 0)
+	session, err := server.Create(meta, []string{agent, "-test.run=^TestPTYInputRecorder$"}, []string{"PATH=/usr/bin:/bin", "DUNE_TEST_PTY_INPUT_RECORD=" + record}, tmux.CreateOptions{HistoryLines: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,5 +197,63 @@ func TestPTYQueueAdmissionAndShutdownAreBounded(t *testing.T) {
 	<-queue.done
 	if _, _, err := queue.submit(func(*tmux.Viewer) error { return nil }, false); err == nil {
 		t.Fatal("closed queue accepted input")
+	}
+}
+
+func TestPTYQueuePinsNativeSessionAndCwd(t *testing.T) {
+	r, queue, record := ptyInputFixture(t)
+	setNative := func(id, cwd string) {
+		r.mu.Lock()
+		r.nativeSession = &api.NativeSession{ID: id, Cwd: cwd, Sequence: 1, Source: "fixture"}
+		r.mu.Unlock()
+	}
+	setNative("first", "/src")
+	if _, err := queue.prompt(api.PTYPrompt{Agent: "codex", Text: "old request", SessionID: "other", Cwd: "/src"}); err == nil {
+		t.Fatal("accepted mismatched native target")
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	_, done, err := queue.submit(func(*tmux.Viewer) error { close(entered); <-release; return nil }, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	prompt, err := queue.prompt(api.PTYPrompt{Agent: "codex", Text: "queued request", SessionID: "first", Cwd: "/src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Omitted native arguments are pinned at admission as well.
+	keys, err := queue.keys(api.PTYKeys{Agent: "codex", Keys: []string{"Enter"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setNative("first", "/changed")
+	once.Do(func() { close(release) })
+	<-done
+	for _, op := range []api.AgentOperation{prompt, keys} {
+		if got := waitPTYOperation(t, queue, op); got.State != "failed" || !strings.Contains(got.Error, "STALE_SESSION") {
+			t.Fatal(got)
+		}
+	}
+	if data, err := os.ReadFile(record); err != nil || len(data) != 0 {
+		t.Fatal("old operation wrote to a new native session", string(data), err)
+	}
+	setNative("first", "/src")
+	accepted, err := queue.prompt(api.PTYPrompt{Agent: "codex", Text: "paste before a switch", SessionID: "first", Cwd: "/src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitPTY(t, func() bool {
+		data, err := os.ReadFile(record)
+		return err == nil && bytes.Contains(data, []byte("\x1b[201~"))
+	})
+	setNative("second", "/src")
+	if got := waitPTYOperation(t, queue, accepted); got.State != "unknown" {
+		t.Fatal("paste with unconfirmed Enter must be unknown", got)
+	}
+	data, err := os.ReadFile(record)
+	if err != nil || bytes.Contains(data, []byte{'\r'}) {
+		t.Fatal("Enter reached replacement session", string(data), err)
 	}
 }

@@ -55,7 +55,8 @@ func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents
 		if runtime.Activity != nil {
 			agent = runtime.Activity.Agent
 		}
-		accepted, err = connection.PTYPrompt(ctx, runtime, api.PTYPrompt{Text: request.Text, Agent: agent})
+		nativeID, nativeCwd := nativePTYTarget(runtime)
+		accepted, err = connection.PTYPrompt(ctx, runtime, api.PTYPrompt{Text: request.Text, Agent: agent, SessionID: nativeID, Cwd: nativeCwd})
 	}
 	if err != nil {
 		return agents.Operation{}, submissionError(err)
@@ -95,11 +96,19 @@ func (s *Service) SendKeys(ctx context.Context, scope agents.Scope, request agen
 	if runtime.Activity != nil {
 		agent = runtime.Activity.Agent
 	}
-	accepted, err := connection.PTYSendKeys(ctx, runtime, api.PTYKeys{Keys: request.Keys, Agent: agent})
+	nativeID, nativeCwd := nativePTYTarget(runtime)
+	accepted, err := connection.PTYSendKeys(ctx, runtime, api.PTYKeys{Keys: request.Keys, Agent: agent, SessionID: nativeID, Cwd: nativeCwd})
 	if err != nil {
 		return agents.Operation{}, submissionError(err)
 	}
 	return s.describeOperation(ctx, scope, ref.Target, accepted), nil
+}
+
+func nativePTYTarget(runtime api.Runtime) (string, string) {
+	if runtime.NativeSession == nil {
+		return "", ""
+	}
+	return runtime.NativeSession.ID, runtime.NativeSession.Cwd
 }
 
 // Transport errors after submission do not prove rejection. Only a structured

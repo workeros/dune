@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
@@ -146,6 +147,32 @@ func Read(dir, id, incarnation string) (*api.NativeSession, error) {
 		return nil, fmt.Errorf("invalid native session receipt")
 	}
 	return &value.Native, nil
+}
+
+// Remove serializes retirement with hook writers. An open os.Root remains
+// usable after a rename, so renaming alone would not prevent a late write from
+// racing the directory walk used to clean up a stopped Runtime.
+func Remove(dir string) error {
+	root, err := privateRoot(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	lock, err := root.OpenFile("session.lock", os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := acquire(ctx, lock); err != nil {
+		return err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	return process.RemovePTYState(dir)
 }
 
 func validBinding(b Binding) bool {

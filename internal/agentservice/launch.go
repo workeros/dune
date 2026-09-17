@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/aiomni/dune/internal/agentintegration"
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/agents"
@@ -131,7 +132,7 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 		return result, &api.Error{Code: "RECOVERY_INDEX_FAILED", Detail: "Agent is running, but its Runtime could not be saved in the recovery index; do not start it again"}
 	}
 	setSession(session)
-	if launch.Profile.Adapter == "pty" && launch.Recovery.ID == "" {
+	if launch.Profile.Adapter == "pty" && agentintegration.Agent(launch.Profile.Start.Argv) == "" {
 		session, err = s.Store.AgentCaptureUnavailable(saveCtx, scope.OwnerID, session.ID, session.Attempt.ID, "This launch has no native session capture adapter")
 		if err != nil {
 			return result, &api.Error{Code: "RECOVERY_INDEX_FAILED", Detail: "Agent is running, but recovery availability could not be saved"}

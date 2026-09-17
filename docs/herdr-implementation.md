@@ -8,7 +8,7 @@
 - [x] 个人工作现场共享后端：分屏树、焦点、审阅目标、已读位置，数据库持久化和并发更新检查；页面接入随两产品工作台提交。
 - [x] Agent 摘要基础：Runtime 列表直接携带 ACP 活动与 PTY 前台信息，活动与进程状态分离，无需打开内容订阅。
 - [x] PTY 画面活动适配：Claude / Codex 明确的工作 / 空闲 / 回应控件；未知画面保持 unknown，原生 ID 采集独立实现。
-- [ ] PTY 原生身份采集：受支持 Agent 通过原生集成确认会话 ID。
+- [x] PTY 原生身份采集：直接启动的 Claude / Codex 注入 SessionStart，tmux 保留确认并接入数据库索引；厂商交互验收仍待完成。
 - [x] PTY 原生回调收集器：绑定 Runtime、SessionStart 过滤、持久确认序号和有界静默子进程；启动接入另行完成。
 - [x] Dune 并行工作台：项目和 Agent 导航、跨 Runner 分屏、焦点审阅联动、布局恢复。
 - [x] SandDance 并行工作台：接入共享合同，Tenant 内自由分屏与个人布局。
@@ -105,3 +105,5 @@
 - PTY 画面活动：新增 [状态合同](pty-agent-state.md)。agentdetect / tmux / fabricd 全量 Go 回归、画面 / 输入准入定向 race、相关 vet，以及跨进程 PTY / tmux / terminal / input 回归通过。使用真实 tmux 与可控字节进程验证实时屏幕不受历史浏览影响、旧授权和草稿不污染状态、提交前重新检查 blocked；未据此声称厂商 CLI 界面已验收。跨进程回归发现两处仍引用已删除的 `tmux.Capture`，已独立修正为共享 `api.TerminalSnapshot`，无兼容别名。
 
 - PTY 原生回调收集器：agentintegration / fabricd / cmd/dune Go 回归、确认并发与实际回调子进程定向 race、相关 vet 通过。验证跨读取保留序号、重复与切换、错误绑定、子 Agent 过滤、损坏不重置、已删除目录不重建、私有字段不保存，以及输入管道不关闭时一秒退出。初次并发检查发现同时创建锁文件的竞态，改为启动前独占创建锁文件；初次管道检查发现关闭 stdin 不能可靠中断阻塞读取，改为有界等待后退出回调进程，两项均已重跑通过。尚未自动注入厂商 CLI。
+
+- PTY 原生身份接入：直接 Claude / Codex 启动使用本次 hook 参数和环境，保留 helper 可执行文件，tmux 元数据恢复集成标记；SDK / Gateway 的 Runtime 摘要接入共享数据库索引。相关 agentintegration / tmux / agentservice / api / client / fabricd / host Go 回归通过（独立 PostgreSQL）；注入、离线切换、队列目标与并发清理定向 race / vet 通过，host 索引定向 race 通过。跨进程 PTY / tmux / terminal / input / AgentOperations 通过；SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 通过。验证了 A 到 B 切换保留历史、旧引用失效、ID / cwd 改变拒绝排队输入，以及粘贴后切换返回 unknown、不发送 Enter。安装的 Codex 0.140 接受生成的内联 hook 配置；厂商 CLI 回调、实际恢复及 MCP 尚未计为验收完成。

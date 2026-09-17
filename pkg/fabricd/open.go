@@ -65,6 +65,7 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 			return nil, err
 		}
 		r.readTimeoutState(state)
+		r.readNativeSession()
 		d.runtimes[m.ID] = r
 	}
 	d.cleaner, err = process.NewCleaner()

@@ -266,6 +266,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil {
+			if r.tmux != nil {
+				r.readNativeSession()
+			}
 			if m.Operation == "runtime.stop" {
 				e = d.stop(r)
 			}

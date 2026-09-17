@@ -67,14 +67,19 @@ type AgentOperationOutput struct {
 
 // PTY submissions preserve native CLI semantics: delivered confirms only ordered
 // terminal input, never completion or per-prompt output attribution.
+// SessionID/Cwd pin the last native confirmation; omit both to bind at admission.
 type PTYPrompt struct {
-	Text  string `json:"text"`
-	Agent string `json:"agent"`
+	Text      string `json:"text"`
+	Agent     string `json:"agent"`
+	SessionID string `json:"session_id,omitempty"`
+	Cwd       string `json:"cwd,omitempty"`
 }
 
 type PTYKeys struct {
-	Keys  []string `json:"keys"`
-	Agent string   `json:"agent"`
+	Keys      []string `json:"keys"`
+	Agent     string   `json:"agent"`
+	SessionID string   `json:"session_id,omitempty"`
+	Cwd       string   `json:"cwd,omitempty"`
 }
 
 // TerminalSnapshot contains the current screen only. History counts describe
