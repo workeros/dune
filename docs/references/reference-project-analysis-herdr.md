@@ -6,16 +6,18 @@
 >
 > 方法：核对固定提交的源码、同提交 `docs/next` 文档及仓库截图，并对照两个本地项目的实现。未安装或运行 herdr，未执行真实 Agent、SSH、故障恢复或性能实测。文中的耗时和交互目标若未另有说明，均为建议验收目标。
 
+> **设计范围已确认：** 详细方案见 [Dune / SandDance 工作台与 Tenant Agent 通信](herdr-adoption-design.md)。本文的产品建议已同步为 PTY / ACP 双核心入口、Tenant 自由分屏与 MCP 协作、个人布局和已读存入数据库；ACP pending 只保存在内存，当前目录与 worktree 由用户选择。
+
 ## 结论与优先级
 
 herdr 最值得借鉴的是：**让人围绕项目组织工作，随时看见哪些 Agent 正在做事、哪些需要回应，并能直接进入相应的工作现场。** 后台进程托管、状态识别、分屏和可编程控制共同支撑了这个体验。[H01] [H06]
 
 对 Dune、SandDance，建议优先做四件事：
 
-1. **把项目工作区保存下来。** 记住目录、常用 Agent、打开的会话和布局；已配置好的项目提供直接继续入口，减少每次选择 Runner、Profile、cwd 的操作。
-2. **把全局 Agent 列表和并排会话做出来。** 单独显示“工作中、需要回应、结果未读”，不要用进程的 `running` 代替 Agent 的工作状态。第一版支持双栏和四格即可。
-3. **利用现有 ACP 能力做定向协作。** 提供“交给审查 Agent”“发送补充要求”“查看执行结果”等操作；先明确接收者、请求身份和结果，再扩展自主协作。
-4. **由宿主承担持久协作状态。** Dune 提供执行、状态与目标校验，个人 Web/SandDance 保存项目和协作关系。SandDance 复用现有队列设计经验，避免把任务库放进 Gateway/fabricd。
+1. **先做全局 Agent 列表和并行工作台。** PTY / ACP 同为核心入口；Tenant 内任意 Agent 可以跨项目、跨 Runner 分屏，单独显示“工作中、需要回应、结果未读”。
+2. **把项目与继续工作入口接起来。** 记住目录、常用 Agent 和工作现场，减少每次选择 Runner、Profile、cwd 的操作；启动时可选择当前目录或 worktree。
+3. **通过自动注入 MCP 完成 Tenant 协作。** 提供发现、启动、投递、等待、读取等原语，支持主 Agent 在已有且就绪的 Runner 上创建助手和协调结果。
+4. **明确数据库与运行状态的边界。** 项目、个人布局、已读和原生会话恢复索引保存到应用数据库；每个 Runtime 的队列、操作记录与有界输出保存在 fabricd 内存。宿主 Pod 重启不清空队列，fabricd 实例失效后不恢复旧队列。
 
 第一批产品价值无需等待完整任务编排系统。另一方面，herdr 的终端投递和状态等待也不能直接承担企业级任务完成保证：**`done` 表示尚未看过的空闲状态；`agent prompt --wait` 等待生命周期变化，不关联某一条 prompt 的唯一完成结果。** 这两点决定了哪些交互可以借鉴、哪些协议需要我们自己补齐。[H14] [H16]
 
@@ -239,7 +241,7 @@ herdr 明确允许给 working Agent 投递 prompt。但是，如果它本来就�
 
 依据：[Dune Web][D01]、[Runtime 类型][D02]、[ACP controller][D03]、[宿主 Agent 接口][D04]、[Dune 生命周期][D06]、[Git 操作][D07]、[SandDance 工作区][S01]、[布局偏好][S02]、[ACP UI][S03]、[IM 存储][S04]。
 
-### 4.1 现有 ACP 能力比终端状态推测更适合做协作
+### 4.1 ACP 的结构化状态与 PTY 的原生交互分别适配
 
 Dune 的 managed ACP 已经能够得到 `ready`、`busy`、`permissions`、`revision`、`session_id` 和 `stop_reason`。`acp.action` 在忙碌时拒绝新的普通动作，prompt 经 ACP RPC 发出，结果通过 state/update 传递。[D03]
 
@@ -253,7 +255,7 @@ Dune 的 managed ACP 已经能够得到 `ready`、`busy`、`permissions`、`revi
 
 当前 IM 模块解决的是“外部消息 → 固定 Bot/Conversation → ACP → 对外回复”。SandDance 使用 HTTP callbacks；PostgreSQL 保存队列与投递事实，同一 conversation 按序处理，running/unknown 不自动接管或重放。[D09] [S05]
 
-这为 Agent 协作提供了值得复用的代码经验：持久受理后再执行、lease fencing、固定目标快照、结果未知时阻止重放。**不能直接把 Agent ID 填进飞书 Chat ID，然后认为完成了协作模型。** Agent 间请求还需要发送方身份、接收方授权、任务关系、artifact 引用及明确的响应归属。
+这为 Agent 协作提供了值得借鉴的实现经验：固定目标快照、执行所有权、结果未知时阻止重放。**不能直接把 Agent ID 填进飞书 Chat ID，然后认为完成了协作模型。** 本方案需要明确 Tenant 范围、会话目标、输入协调与输出语义；已经确认使用内存 pending，不复用 IM 的持久消息库作为协作前提。
 
 ### 4.3 与已有多 Agent 调研的关系
 
@@ -261,205 +263,91 @@ Dune 的 managed ACP 已经能够得到 `ready`、`busy`、`permissions`、`revi
 
 herdr 补充了一个更近的产品入口：**先交付多 Agent 可见、可切换、可并排工作的工作台，再按真实协作需要增加任务控制。** 不需要把完整任务 DAG、调度器、版本化文件系统作为分屏的前置依赖。
 
-## 5. 推荐的目标体验
+## 5. 已确认的目标体验
 
-### 5.1 保留企业空间，在其下面增加项目工作区
+产品范围已通过设计访谈确认，详细机制见 [Dune / SandDance 实现方案](herdr-adoption-design.md)。
 
-SandDance 已将 Tenant 称作“工作空间”。建议新增对象显示为“项目工作区”，避免同时存在两个含义不同的“空间”。Dune 个人模式省去 Tenant 这一层。
+| 能力 | 目标体验 |
+| --- | --- |
+| 项目工作区 | Tenant 共享项目，一个项目可关联多个 Runner 上的目录或 worktree |
+| Agent 列表 | 聚合 Tenant 内的 Agent，区分活动、进程、连接与个人已读状态；PTY / ACP 都是核心入口 |
+| 自由分屏 | 同一布局可放入任意 Tenant 内 Agent，跨项目、跨 Runner；每个 pane 明示自己的目标 |
+| 文件 / Git | 跟随焦点 pane，可固定审阅目标；后台状态变化不抢焦点 |
+| 开始工作 | 使用项目默认 Profile 与目录，用户选择当前目录或 worktree；减少重复填写启动参数 |
+| 继续工作 | 存活会话自动重连；失效项通过恢复索引中的原生 ID 和实际启动快照继续，Profile 修订仅作来源记录 |
+| 个人工作现场 | 布局、焦点、已读按用户保存到应用数据库，换浏览器可恢复 |
+| Agent 协作 | 自动注入 MCP，主 Agent 可发现其他 Agent、在已有就绪 Runner 创建助手、分工、等待和读取结果 |
+
+关闭 pane 只移出视图，停止 Agent 另有明确操作。同一 Runtime 复用控制连接，避免重复视图争抢输入和 resize；宽度不足时折叠视图，保留布局与运行会话。
+
+“打开就能用”仍需建立在可用 Runner、已安装并登录的 Agent、有效项目目录之上。Dune 个人模式可整合本地启动与浏览器入口，SandDance 继续使用自己的环境准备与登录流程。Agent 自主协作首版只使用已有且就绪的 Runner，不自动创建云环境。
+
+## 6. 实现边界与数据保存
+
+| 层 | 职责 |
+| --- | --- |
+| Dune fabricd | 执行 PTY / ACP，持有每 Runtime 队列、操作记录与有界输出；识别活动、校验前台目标、统一输入 |
+| Dune Gateway / SDK | 目标路由、Tenant / Owner 归属与操作检查、实例和输入有效性校验 |
+| Dune 可复用宿主服务 | 身份、Tenant Agent 聚合与 MCP 工具；通过 SDK 调用 fabricd 的操作级投递 / 等待 / 读取 |
+| Dune 个人 Web / SandDance 应用后端 | 装配身份、Profile 和数据库；保存项目、个人视图与原生会话恢复索引 |
+| 两端工作台 | 项目和 Agent 导航、自由分屏、焦点、审阅联动、状态呈现和自动保存个人设置 |
+
+数据库保存项目、个人工作现场和恢复索引；每 Runtime 的队列、操作与有界输出由 fabricd 管理。**pending 不持久化：浏览器关闭、宿主 Pod 重启都不清空已受理队列；fabricd 实例失效后旧引用失效。** 恢复索引保存原生会话定位与实际启动快照，不保存消息队列。
+
+SandDance 多 Pod 的提交、操作 wait / read 都经现有 SDK / Gateway 路由到持有 Runtime 的同一 fabricd，自然汇入唯一队列。复用当前授权、实例校验和 Gateway 连接归属机制，不新增宿主队列选主、协调目录或内部转发服务。具体生命周期见[实现方案](herdr-adoption-design.md)。
+
+布局独立于项目与 Runtime：项目对象组织各 Runner 的 checkout，个人工作台视图的每个 pane 引用自己的项目、Runner 和会话。已读记录关联用户与活动事件的实例 / 序号，不能将一个人看过结果变成全 Tenant 已读。
+
+全局列表订阅活动摘要，可见 pane 或正在等待结果的调用者按需读取内容。快照与增量合并，断线或溢出后重新读取；不为每个后台 Agent 建立完整输出流。`Runtime.State` 继续表达进程事实，working / blocked 等活动状态另行表达。[D02] [D03]
+
+## 7. Tenant Agent 通信方案
+
+MCP 是提供给 Agent 的工具入口；共享宿主服务处理身份、Tenant 聚合与目标解析，fabricd 管理操作执行和输出，Dune 个人 Web 和 SandDance 共同复用。
 
 ```text
-工作空间：研发团队                         项目：dune · devbox-01 · main
-┌──────────────────────┬───────────────────┬───────────────────┬───────────────┐
-│ 项目                 │ 实现 Agent        │ 审查 Agent        │ 文件 / Git    │
-│  dune                │ 工作中            │ 需要回应          │ 当前焦点目录  │
-│  service-api         │                   │ [查看请求]        │               │
-│                      ├───────────────────┴───────────────────┤               │
-│ Agents · 需要关注 2  │ 辅助终端 / 测试输出（按需打开）       │               │
-│  审查者 · 需要回应   │                                       │               │
-│  测试者 · 结果未读   │                                       │               │
-│  实现者 · 工作中     │                                       │               │
-└──────────────────────┴───────────────────────────────────────┴───────────────┘
+Agent A → 注入的 MCP → Tenant 协作服务
+                          ↓
+                   SDK → Gateway → fabricd → Agent B
 ```
 
-这是布局建议，不是当前产品截图。第一版允许同一项目、同一 Runner 下两个或四个 Agent 并排；全局列表可以跨已授权 Runner 导航。跨 Runner 混排和任意嵌套分屏留给后续实际需要，先避免文件审阅区的目标变得难以辨认。
+首版提供发现 Runner / Profile / Agent、启动助手、发送 prompt、等待活动和读取输出等原语。主 Agent 自己组合这些工具完成分工与汇总，不要求先建立持久 Agent 角色、Task / DAG 或任务数据库。
 
-### 5.2 “开始工作”与“继续工作”各有清晰入口
-
-**首次使用 Dune 个人模式：** 单入口完成本地组合服务启动并打开浏览器；完成必要身份和 Runner 接入后，选择目录，发现或选择可用 Agent，直接开始。默认值可以自动准备，但不能把“命令存在”显示为“账号已登录、模型调用已就绪”。启动装配仍使用现有 Gateway 路径。
-
-**首次使用 SandDance：** 管理员准备可用环境模板和 Agent Profile；研发选择项目模板与名称，看到分阶段进度：环境创建、连接就绪、项目初始化、Agent 准备。保留已有按需 OAuth，不在入口要求研发填写 PSM、provider endpoint 或底层命令。[S06] [S07]
-
-**日常继续：** 项目卡片显示上次目录、Agent 状态和“继续工作”。先验证 Runner binding 与 Runtime 身份；仍是同一实例时恢复视图，身份变更时显示原现场失效和进入新现场的明确操作。恢复布局本身不应重发 prompt，也不自动取得其他人的输入权。
-
-**启动 ACP 的一次操作：** 当前 UI 先启动 Runtime，再点击“开始对话”，随后输入任务。[S01] [S03] 可以把首条任务输入作为入口，依次完成 prepare/start → ready → new session → prompt，并展示阶段。仅在没有待恢复 session 且前一阶段已确认成功时推进；`new` 或 prompt 的结果未知时停在原尝试查询，不重新开始。
-
-**Profile 是高级配置的承载，不必是每次工作的表单。** 常用 Profile 及其固定修订可成为项目默认项；修改 Profile 后是否用于下一次启动应明确，不能悄悄改变已有 Agent Session。
-
-### 5.3 全局 Agent 列表
-
-每行保留：名称/角色、Agent 类型、项目、Runner、活动状态、最近变化时间、未读标记。默认优先呈现“需要回应”和“结果未读”，提供按项目查看和搜索；详情打开后再展示 Runtime ID、协议等信息。
-
-执行状态、连接状态与注意力状态分别表达：
-
-- 执行：运行中、已退出，以及退出原因。
-- 活动：准备中、工作中、等待回应、空闲、未知；附上来源为 ACP、hook 或终端推测的诊断信息。
-- 注意力：某用户是否看过这次完成/问题；不能把“读过”写成全局 Agent 生命周期变化。
-- 连接：实时、重连中、离线缓存；缓存不得继续显示为确认在线。
-
-先覆盖 managed ACP 的可确认状态。对 PTY Agent，先提供进程事实；随后为高频 Agent 增加 hook 或 manifest 适配，无法分类时保留 unknown。不能仅凭“几秒没有输出”推断任务完成，也不能把 PTY 输出忙碌程度当作可靠 Agent 状态。
-
-### 5.4 分屏的交互合同
-
-“在右侧打开”“四格查看”“聚焦此会话”“移出视图”应独立于“新建 Agent”和“停止 Agent”。关闭一个视图只移除视图；停止和清理历史延续现有明确动作。
-
-同一个 Runtime 在一个工作台里复用一个连接/controller；若需要第二个视图，采用观察视图或跳到原位置，不应同时创建两个会争抢输入租约与 resize 的可写连接。对 ACP 也需要同样的单一操作所有权，避免用户输入与协作请求竞争。
-
-焦点 pane 决定文件/Git 的跟随目标，界面显示项目、worktree/branch 和目录；用户可以固定审阅目录。某个 Agent 状态变化不自动切换焦点或审阅目标。隐藏 pane 不应以零尺寸 resize 远端终端；可见 pane 在容器尺寸改变时更新尺寸。
-
-宽度不够时收敛为单 pane 加切换列表；保留布局和会话，不以缩小字体维持四格。键盘移动焦点与调整分隔线沿用现有可访问组件，快捷键不得吞掉终端原生输入。
-
-## 6. 推荐的实现边界与数据模型
-
-### 6.1 谁负责什么
-
-| 层 | 推荐职责 | 不应顺带承担 |
-| --- | --- | --- |
-| Dune fabricd | Runtime/PTY/ACP 执行；当前实例的活动摘要；如有必要，结构化 worktree 操作 | 企业项目库、任务 DAG、持久消息正文、每个用户的未读状态 |
-| Dune Gateway / SDK | 目标路由、身份与操作授权、订阅和调用；保持 generation/input lease 校验 | 以连接成功代替业务成功；跨重启无限重放 |
-| 可复用宿主服务 | 项目/会话引用、ACP 请求执行合同、协作目标解析；与存储和具体 UI 分离 | 在底层协议里固化 Planner/Coder/Reviewer 等角色 |
-| Dune 个人 Web 宿主 | 个人项目与布局、默认 Profile、个人 Agent 列表；需要持久化时使用个人宿主存储 | 为个人使用引入企业 Tenant 编排 |
-| SandDance | Tenant 下的项目与共享权限、环境模板/初始化、持久协作请求、配额与审计 | 复制一套 Dune Agent 执行后端或绕过 Gateway |
-| 前端工作台 | 多 pane 布局、关注排序、焦点、已读和审阅联动 | 充当唯一后台调度器；关闭浏览器后丢掉已受理的持久任务 |
-
-共用服务可以在 Dune 的宿主侧包中提供，两个 Web 前端分别接入；不必为了共享概念立即把两个 UI 重构为一个大组件库。原型阶段直接采用目标接口，不为本次被替换的旧对象设计兼容层。
-
-### 6.2 最小对象
-
-以下为建议模型，不是现有 API/schema：
-
-| 对象 | 最小字段 | 生命周期 |
-| --- | --- | --- |
-| `ProjectWorkspace` | ID、owner scope、名称、Runner 引用、项目 root、默认 Profile 修订、可选 worktree 来源 | 项目级持久元数据；Runner 重新绑定不自动变成同一执行现场 |
-| `WorkspaceView` | user、workspace、布局、pane 引用、焦点、审阅目录 | 用户自己的视图；共享项目不共享输入焦点 |
-| `AgentSessionRef` | workspace、Profile 修订、完整 Runtime identity、可选 ACP session ID、显示名称 | 业务会话引用；可失效，不伪装成永久进程句柄 |
-| `AgentActivity` | Runtime identity、活动状态、来源、状态序号/epoch、观测时间 | 可重建的实时摘要；执行实例变化后旧摘要过期 |
-| `AttentionReceipt` | user、目标身份、已读的事件 epoch/seq | 读者状态；与 Agent 状态分离 |
-| `AgentRequest`（协作阶段再加） | request ID、发送方、接收方、目标实例、输入、artifact refs、状态、deadline、结果引用 | 宿主持久工作对象；不因页面关闭而消失 |
-
-第一个 UI 版本可在按账号和环境隔离的浏览器存储中保存布局偏好；需要跨设备恢复时，再由宿主持久保存 `WorkspaceView`。文件草稿、完整 transcript 和 UI 布局分别确定保留策略，不能因为保存布局就默认上传全部内容。
-
-### 6.3 摘要流与内容流分离
-
-Dune 目前 `runtime.list` 返回进程事实，ACP 细节在单 Runtime `acp.state`/事件中。建议新增可批量读取和订阅的活动摘要，由 fabricd 产生当前事实，宿主只聚合已授权目标；**不要改变 `Runtime.State` 的含义，把 working/blocked 塞进进程状态。**[D02] [D03]
-
-首版可以有界并发读取摘要，但不应为列表上的 N 个 Agent 各创建一套无限轮询和完整输出流。持续演进为：
-
-1. 打开工作台先建立摘要订阅，再读取快照，按 epoch/revision 合并。
-2. 活动摘要驱动侧栏；只有用户打开的 pane 或宿主正在执行的请求消费内容流。
-3. 订阅溢出、断线或实例变化时标记摘要过期，重新取快照；不假设事件无限可回放。
-4. server 重启后，实时摘要从当前 Runtime 重建；持久请求状态从宿主数据库恢复。两者不能互相替代。
-
-这借鉴了 herdr 的快照/增量和非当前机器仅传摘要的原则；具体线协议仍沿用 Dune 的 WebSocket/Yamux/protobuf，并按新增能力更新 schema 和合同测试。
-
-## 7. Agent 通信的落地方案
-
-### 7.1 先做三个明确的交互
-
-| 操作 | 用户看到的行为 | 最小实现 |
-| --- | --- | --- |
-| 交给另一个 Agent | 选接收 Agent，附任务、当前 commit/diff 或文件引用；在旁边查看进度 | 定向请求和结果关联；默认新建或选择空闲的专用 ACP session |
-| 发补充要求 | 发给明确的 Agent/请求，能看出尚未投递或已接收 | busy 时保留在宿主队列，或者明确拒绝；不把文本直接灌进权限弹窗 |
-| 查看/等待结果 | 显示工作中、需要人工回应、完成、失败或未知，结果可打开 | 依据请求身份和执行事实等待；读取对应结果/Artifact |
-
-Agent 自主调用时使用同一套宿主接口，初始范围限制为同一项目、明确加入协作的 Agent。CLI 或 MCP 是这套接口的入口形式，不能因为 herdr 提供了 CLI 就把现有 `dune` connector 命令扩展成无限权限的控制入口。
-
-### 7.2 ACP 请求闭环
-
-```mermaid
-sequenceDiagram
-    participant A as 用户或 Agent A
-    participant H as 宿主协作服务
-    participant G as Dune Gateway / fabricd
-    participant B as Agent B（ACP）
-    A->>H: 提交 request_id、目标、任务与产物引用
-    H->>H: 授权、固定目标、登记 queued
-    H->>H: 领取会话执行权，先登记 submitting
-    H->>G: 建立观察，检查实例与空闲状态
-    H->>G: 投递关联到本请求的 prompt
-    G->>B: ACP session/prompt
-    B-->>G: update / permission / RPC result
-    G-->>H: 相关状态、结果或连接中断
-    H->>H: 持久完成 / 失败 / unknown
-    H-->>A: 状态通知及结果引用
-```
-
-建议请求状态至少为：`queued → submitting → running → completed/failed/cancelled`，另有 `unknown`。等待权限可作为 running 的子状态 `waiting_input`，不抢占已有请求或创建第二个 turn。
-
-几个不能省略的约束：
-
-- **同一 ACP Session 单请求执行。** 调度队列、Web 输入和 IM 操作必须经共同所有权/序列化规则；只在协作服务里加锁、而 Web 仍可自由写入，不足以建立请求归属。
-- **请求关联需要实际实现。** 现有 `AgentConnection.Action` 成功只表示底层 action 已 accepted，不能直接拿它冒充完成接口。应扩展 managed ACP 调用合同，让请求 ID/执行 attempt 与返回结果、事件对应；或首期给每次协作独占 Session，并严格串行。仅凭“后来 busy 变空”不可靠。
-- **持久 submitting 在外部调用之前。** 宿主在此期间崩溃，恢复后可能不知道 prompt 是否已发出，必须收敛为 unknown 并对账，而非自动再发。数据库里的去重只能避免重复受理，不能独自证明远端副作用只发生一次。
-- **等待绑定完整身份。** 固定 owner/project、Runner binding、Runtime id/incarnation/generation 和 ACP session；恢复后新 Runtime 是新 attempt，不能接收旧请求的回写。
-- **blocked 不默认代答。** 人工操作使用明确的 permission ID；Agent 间任务内容不携带给其他 Agent 自动批准任意操作的权限。
-- **完成与验收分开。** ACP turn 正常结束是一次执行完成；任务是否成功，应由结果、commit、测试或审查结论决定。
-
-新增请求 ID/结果缓存若位于 fabricd 内存，只能在该实例存活及保留窗口内查询。跨重启持久状态仍由宿主负责，不能承诺跨故障 exactly-once。原始 ACP 透传入口保持其语义，新增 managed ACP 合同需检查对它的影响。
-
-### 7.3 PTY 协作的定位
-
-PTY 可以借鉴 herdr 的“选目标 → 状态检查 → 有序文本/Enter → 等待 → 读取”，但它适合辅助交互，完成保证弱于结构化 ACP。若产品提供它，应在能力上区分“终端已投递”“观察到空闲”“收到明确结果”，不能都显示成“任务成功”。
-
-优先让常用 Agent 通过 ACP 承担自动交接；PTY 继续保留完整原生体验。确需 PTY 自动化时，对每种 Agent 分别验证 bracketed paste、前台识别、审批 UI、alternate-screen 读取和版本变化，再决定支持范围。
-
-### 7.4 权限与内容归属
-
-Agent A 只能取得本项目中明确授权的接收目标及操作，不能持有用户的全权限 Gateway 凭据；项目/Tenant 是服务端校验，不由 prompt 里的字段决定。跨 Runner 的产物引用还需校验接收方能否读取，不能假设相同文件路径指向相同内容。
-
-消息应尽量是任务、必要上下文和 Artifact 引用，不广播各 Agent 的全部 token stream。请求正文和结果需要持久保存时，由个人宿主/SandDance 明确存储、访问及保留规则；Gateway/fabricd 的实时转发不变成 transcript 数据库。
-
-Sandbox/Runner 恢复后，可以继续显示原项目与历史请求；但不能声称文件仍在，或未经核对就把 `/workspace/repo` 绑定到新机器。worktree 只提供同一仓库里的 checkout 隔离，不替代跨机器文件持久化或沙箱安全隔离。
-
-## 8. 分阶段交付建议
-
-| 阶段 | 交付内容 | 主要改动位置 | 可验收结果 |
-| --- | --- | --- | --- |
-| P0：减少启动摩擦 | 项目入口、记住默认 Agent/目录、分阶段启动、继续工作 | 个人 Web；SandDance 项目/Profiles/启动流 | 已配置项目进入时无需再填启动命令；首次 ACP 输入可完成已确认的初始化链路 |
-| P1：并行工作台 | 两栏/四格、全局 Agent 列表、ACP 活动摘要、关注/未读、失效恢复 | Dune 活动摘要及宿主接口；两端 Web session/controller 和布局 | 四个 Agent 同时运行可见；需要回应能直接定位；关闭视图不杀进程；离线不显示假实时 |
-| P2：隔离与定向协作 | worktree 创建/登记/清理；向一个 ACP Agent 交任务、等待、取结果 | Dune 薄 worktree 能力；宿主 Workspace/AgentRequest；优先 SandDance 队列实现 | 两个写 Agent 使用独立 checkout；请求绑定确切 Session；中断或回执丢失不重复提交 |
-| P3：按需要扩展 | 有限自主委派、跨 Runner 交接、跨设备布局、精选 PTY integration | 宿主策略/持久存储与适配包 | 预算、目标权限、结果归属和恢复语义可验证；故障不扩散到无关 Agent |
-
-建议先在 SandDance 验证并行工作台：它已经保留 `opened[]`、多个环境的 WorkspaceHost 和可调审阅区，前端起点更接近目标。底层活动摘要和执行合同在 Dune 实现，Dune 个人 Web 同期或随后接入；无需把企业生命周期逻辑搬回 Dune。[S01] [S02]
-
-P2 可以先用独占 ACP Session 与有限串行队列完成两 Agent 的交接，不必一开始实现任意任务图。worktree 与请求持久化可以分别交付，但面向并行写入的产品入口应等文件隔离具备后再开放。
-
-### 8.1 建议验收场景
-
-这些是后续实现的验收要求，本次未执行：
-
-| 场景 | 必须观察到的结果 |
+| 场景 | 已确认的规则 |
 | --- | --- |
-| 已配置项目重新进入 | 项目、布局及仍有效会话可恢复；无重复 start/new/prompt |
-| 4 个 Agent 同时运行，其中 1 个需确认 | 侧栏准确计数，一步跳到目标；另外 3 个继续运行 |
-| 切换/缩放/关闭 pane | 输入只进入当前持有操作权的目标；无隐藏 pane 零尺寸 resize；移出视图不停止 Runtime |
-| Agent A 在工作时收到第二条任务 | 明确 queued 或 busy；旧 turn 结束不能冒充第二条任务结束 |
-| 投递后断网、宿主在 submitting 后崩溃 | 保留原 request ID，显示 unknown 或可查询事实；无自动重发 |
-| Runtime/Runner 身份变化 | 旧视图和旧回执不能作用到替代实例；允许查询/导出旧现场 |
-| UI 未打开时 Agent 完成 | 宿主持久任务仍正确结束；下一次进入看到结果和未读状态 |
-| 两个用户看同一项目 | 已读、焦点、输入权按各自合同工作；一个人看过结果不会隐式替所有人标记 |
-| 并行 worktree 清理 | 脏目录有明确处理；关闭布局不删除 checkout；移除 checkout 不顺带删除分支 |
-| 多 Runner/权限撤销/慢订阅者 | 不越权聚合；撤销后停止访问；溢出后重取摘要；一个慢目标不拖住整个工作台 |
+| 通信范围 | Tenant 内共享，允许跨项目和 Runner；首版不增加复杂 Agent 级权限模型 |
+| MCP 注入 | 工作台或 MCP 创建的 PTY / ACP Agent 自动注入；普通终端手动启动暂不自动注入 |
+| managed ACP | 新建 / 恢复时注入 MCP；忙时接受为 pending 并返回 operation_ref，当前 turn 结束后再投递 |
+| PTY | 按 Agent 的启动机制注入 MCP；prompt 参考 herdr 检查目标、blocked 状态，并有序写入文本与 Enter |
+| PTY 人工输入 | 与自动提交统一排队，不增加接管 / 交还步骤；不承诺隔离原生 CLI 中已经存在的草稿 |
+| 等待与读取 | ACP 按 operation_ref 等待匹配 RPC 的完成，并按操作内位置读取有界输出；返回状态、stop reason、下一位置与完整性标记。PTY 操作只确认投递，结果用会话快照读取 |
+| 故障处理 | 未知投递不自动重放；原 fabricd / Runtime 或缓存失效时明确返回，不降级读取最新会话输出；宿主 Pod 重启不使操作失效 |
 
-性能目标应在实施时选定环境测量：重点记录首次可输入时间、状态到侧栏的延迟、四格输入延迟、后台 Agent 增长时的订阅/内存成本。不能用 herdr 的单机 TUI 观感直接推断 Web 跨网络表现。
+当前两仓库没有完整 MCP 接入、Agent 会话凭据或启动注入适配。managed ACP 的 `mcpServers` 仍为空；宿主执行入口当前只覆盖 managed ACP。需要补齐 PTY 控制、ACP 队列、输出读取和两种启动适配。[D03] [D04]
+
+ACP 内部 JSON-RPC ID 尚未贯穿到工具操作；新增合同在 fabricd 建立操作映射、按操作保存输出，并由匹配的 RPC 响应确定结束。调用方不需要全局事件序号或起止区间。原生恢复持久保存 Agent / 适配器、native session ID、实际启动快照、cwd 及 Runner 归属；快照是恢复配置的唯一依据，Profile 修订只记录来源。load 与 list 是独立能力，已知 ID 的恢复不依赖 list。详细字段、采集时机与失败处理见[实现方案](herdr-adoption-design.md)。
+
+浏览器当前占有 PTY 连接级输入权，不能只在宿主加锁或旁路调用 `tmux send-keys` 就认为完成了通信。实现应在 fabricd 统一协调各输入路径，并保留当前实例和路由校验。MCP 的 Runner → 应用后端接入、认证、网络可达性以及 ACP 诊断凭据脱敏同样需要新增实现，详见[实现方案](herdr-adoption-design.md)。
+
+## 8. 交付顺序与验收
+
+| 阶段 | 两个产品共同交付的能力 | 主要验收 |
+| --- | --- | --- |
+| P1：并行工作台 | PTY / ACP 活动摘要、Tenant Agent 列表、任意 Agent 分屏、个人布局与已读落库 | 四个 Agent 跨项目、跨 Runner 同屏；输入和审阅目标明确；换浏览器恢复个人布局 |
+| P2：启动与恢复 | 项目默认项、当前目录 / worktree 选择、恢复索引及固定启动快照 | Profile 修改后仍继续正确原生会话；load=true / list=false 可直接恢复；不重复启动或重发任务 |
+| P3：Tenant MCP 协作 | 自动注入、跨 Runner 委派、fabricd 队列与操作级 wait / read | 多 Pod 命中同一 fabricd 队列；A 完成不会满足 B；宿主重启可继续查询，fabricd 失效后不重放旧队列 |
+
+两个产品采用同一套共享能力，SandDance 负责自己的企业身份和环境集成。分屏、当前目录并行、worktree 工作流均是可用入口，不把强制文件隔离作为开放并行的前提。
+
+完整验收清单见[实现方案](herdr-adoption-design.md)。本次是源码研究与设计，未运行这些验收。实施时还需测量首次可输入时间、状态更新延迟、四格输入延迟，以及后台 Agent 数量增长时的订阅和内存成本。
 
 ## 9. 采用范围与取舍
 
 | 采用方式 | 内容 |
 | --- | --- |
 | 直接借鉴交互原则 | 项目与 Agent 两种导航、关注优先级、分屏焦点、关闭视图与停止执行分离、可恢复布局 |
-| 按现有架构改造 | Workspace/Tab/Pane 分层、快照与摘要订阅、worktree 工作流、Agent 目标解析及等待 |
-| 作为受限适配参考 | 终端 manifest、PTY prompt 投递、原生 Agent session resume、alternate-screen 读取 |
-| 暂不采用 | 自研终端渲染器替代 xterm、任意深度布局作为第一版、全量 Agent 聊天网络、在 Gateway/fabricd 保存持久任务库 |
+| 按现有架构改造 | 项目与个人布局分层、快照与摘要订阅、可选 worktree 工作流、Tenant Agent 目标解析及等待、MCP 工具入口 |
+| 按 Agent 分别适配 | 终端 manifest、PTY prompt 投递、原生 Agent session resume、alternate-screen 读取 |
+| 暂不采用 | 自研终端渲染器替代 xterm、持久任务 DAG、复杂 Agent 权限模型、自动创建云环境、在 Gateway/fabricd 保存持久任务库 |
 
 herdr 在本次提交使用 Apache-2.0。[H27] 如后续实际移植源码或规则，需要保留相应许可证、版权及适用声明，并按引入内容检查 vendor 依赖；本次仅新增调研文档，没有引入其源码或第三方资产。
 

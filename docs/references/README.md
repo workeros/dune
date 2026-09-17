@@ -29,7 +29,7 @@ Dune 交付底层协议、SDK、Gateway 和 daemon。统一调用路径为 `SDK 
 | Daytona | Files/Exec/Process/PTY/Git 接口 | 开发环境分配、Snapshot/Volume、preview | [Daytona](reference-project-analysis-daytona.md) |
 | DeepSeek Harness | ACP 互操作、能力接口、取消与结算、远程执行 provider 差距 | Agent loop、插件组合、会话事件与子 Agent | [DeepSeek Harness](reference-project-analysis-deepseek-harness.md) |
 | E2B | 来宾 daemon、能力 readiness、代理路由 | 微虚机调度、模板、pause/resume | [E2B](reference-project-analysis-e2b.md) |
-| herdr | Agent 活动摘要、定向操作、等待与恢复边界、worktree 能力 | 项目工作区、Agent 列表、并行分屏、低摩擦启动；Dune / SandDance 落地建议 | [herdr](reference-project-analysis-herdr.md) |
+| herdr | Agent 活动摘要、定向操作、等待与恢复边界、worktree 能力 | 项目工作区、Agent 列表、并行分屏、个人布局落库；Tenant MCP 协作 | [源码调研](reference-project-analysis-herdr.md) · [实现方案](herdr-adoption-design.md) |
 | Modal Sandboxes | 进程 handle、结构化能力约束 | 资源请求、GPU、Volume、Snapshot | [Modal](reference-project-analysis-modal-sandboxes.md) |
 | OpenChamber | 远程连接、凭证分层、PTY 同步 | 设备配对与远程开发 UI | [OpenChamber](reference-project-analysis-openchamber.md) |
 | OpenClaw | 启动配置、能力授权、doctor | 身份接入、Agent 产品、channel | [OpenClaw](reference-project-analysis-openclaw-2.md) |
