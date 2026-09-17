@@ -164,6 +164,16 @@ func (s *Service) describe(ctx context.Context, scope agents.Scope, logical runn
 	}
 	session, err := s.Store.RuntimeAgentSession(ctx, scope.OwnerID, target)
 	if err == nil {
+		if runtime.Adapter == "pty" && runtime.State == "exited" && session.Attempt.Kind == "resume" && session.Attempt.State == "capturing" && (runtime.NativeSession == nil || session.Native != nil && (runtime.NativeSession.ID != session.Native.ID || runtime.NativeSession.Cwd != session.Native.Cwd)) {
+			// A bounded resume wait may return while the native CLI is asking for
+			// login/trust. A later confirmed exit makes that attempt retryable.
+			failed, saveErr := s.Store.FailAgentAttempt(ctx, scope.OwnerID, session.ID, session.Attempt.ID, "failed", "native CLI exited without confirming the saved session")
+			if saveErr == nil {
+				session = failed
+			} else {
+				item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
+			}
+		}
 		if runtime.NativeSession == nil || session.Native != nil && session.Native.ID == runtime.NativeSession.ID && session.Native.Cwd == runtime.NativeSession.Cwd {
 			summary := session.Summary()
 			item.Session = &summary

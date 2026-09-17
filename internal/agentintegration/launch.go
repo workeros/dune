@@ -15,15 +15,21 @@ import (
 
 const HelperEnv = "DUNE_AGENT_HELPER"
 
-// Agent supports unambiguous interactive launches. Shell commands, subcommands
-// and extra arguments may encode a one-shot task or change native config roots.
+// Agent supports unambiguous interactive launches and exact native resumes.
+// Other arguments may encode a one-shot task or change native config roots.
 func Agent(argv []string) string {
-	if len(argv) != 1 {
+	if len(argv) == 0 {
 		return ""
 	}
 	switch agent := filepath.Base(argv[0]); agent {
 	case "claude", "codex":
-		return agent
+		if len(argv) == 1 {
+			return agent
+		}
+		if len(argv) == 3 && validSessionID(argv[2]) && (agent == "claude" && argv[1] == "--resume" || agent == "codex" && argv[1] == "resume") {
+			return agent
+		}
+		return ""
 	default:
 		return ""
 	}

@@ -239,7 +239,15 @@ func (s *Service) resolveLaunch(ctx context.Context, owner string, request agent
 // task. Only recognized transport-only launches can be resumed automatically.
 func recoveryAdapter(profile api.Profile) agents.RecoveryAdapter {
 	argv := profile.Start.Argv
-	if profile.Adapter != "acp" || len(argv) == 0 || profile.Start.Run != "" {
+	if len(argv) == 0 || profile.Start.Run != "" {
+		return agents.RecoveryAdapter{}
+	}
+	if profile.Adapter == "pty" && len(argv) == 1 {
+		if agent := agentintegration.Agent(argv); agent != "" {
+			return agents.RecoveryAdapter{ID: "pty-" + agent, Version: 1}
+		}
+	}
+	if profile.Adapter != "acp" {
 		return agents.RecoveryAdapter{}
 	}
 	executable := path.Base(argv[0])

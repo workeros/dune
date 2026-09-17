@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/aiomni/dune/internal/agentintegration"
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/agents"
@@ -53,7 +54,11 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	if err != nil {
 		return result, err
 	}
-	for _, required := range []string{"runtime.get", "runtime.stop", "machine.info", "acp.state", "acp.action", "acp.mcp.configure", "agent.operation.wait"} {
+	requiredCapabilities := []string{"runtime.get", "runtime.stop", "machine.info"}
+	if profile.Adapter == "acp" {
+		requiredCapabilities = append(requiredCapabilities, "acp.state", "acp.action", "acp.mcp.configure", "agent.operation.wait")
+	}
+	for _, required := range requiredCapabilities {
 		if !slices.Contains(connection.Binding.Capabilities, required) {
 			return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support native session recovery"}
 		}
@@ -109,6 +114,9 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 		return result, &api.Error{Code: "RECOVERY_INDEX_FAILED", Detail: "recovery Runtime started but its index write was not confirmed; do not start it again"}
 	}
 	setSession(session)
+	if runtime.Adapter == "pty" {
+		return s.awaitPTYResume(ctx, scope, connection, result, session)
+	}
 	ready, err := awaitACPReady(ctx, connection, runtime)
 	if err != nil {
 		return s.failResume(ctx, scope, result, session, "failed", "recovery Agent did not become ready for native loading", true, connection)
@@ -165,11 +173,31 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 
 func resumeProfile(session agents.Session) (api.Profile, error) {
 	profile := session.Launch.Profile
-	if session.Launch.Recovery != (agents.RecoveryAdapter{ID: "acp-load", Version: 1}) || recoveryAdapter(profile) != session.Launch.Recovery {
+	if session.Launch.Recovery.ID == "" || recoveryAdapter(profile) != session.Launch.Recovery {
 		return api.Profile{}, &api.Error{Code: "RECOVERY_UNAVAILABLE", Detail: "the saved launch has no supported native recovery adapter"}
 	}
 	profile.Setup.Steps = nil
-	profile.RequireAgentMCP = true
+	switch session.Launch.Recovery.ID {
+	case "acp-load":
+		profile.RequireAgentMCP = true
+	case "pty-claude", "pty-codex":
+		if session.Native == nil {
+			return api.Profile{}, &api.Error{Code: "RECOVERY_UNAVAILABLE", Detail: "native PTY identity is missing"}
+		}
+		argument := "resume"
+		if session.Launch.Recovery.ID == "pty-claude" {
+			argument = "--resume"
+		}
+		profile.Start.Argv = []string{profile.Start.Argv[0], argument, session.Native.ID}
+		if agentintegration.Agent(profile.Start.Argv) == "" {
+			return api.Profile{}, &api.Error{Code: "RECOVERY_UNAVAILABLE", Detail: "native PTY resume requires an exact session UUID"}
+		}
+		// PTY CLIs have one process working directory; resume in the confirmed
+		// native directory, which may differ from the initial process launch.
+		profile.WorkingDirectory = session.Native.Cwd
+	default:
+		return api.Profile{}, &api.Error{Code: "RECOVERY_UNAVAILABLE", Detail: "native recovery adapter is unsupported"}
+	}
 	return profile, nil
 }
 

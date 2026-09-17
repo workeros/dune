@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 	if code, handled := fabricd.RunHelper(os.Args[1:]); handled {
 		os.Exit(code)
 	}
+	if os.Getenv("DUNE_HOST_FAKE_NATIVE") == "1" {
+		os.Exit(runHostNativeFixture())
+	}
 	os.Exit(m.Run())
 }
 
