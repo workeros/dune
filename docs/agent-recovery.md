@@ -30,4 +30,18 @@
 
 原生 cwd 与进程启动 cwd 分开保存：`native.cwd` 用于 session/load，快照中的工作目录仍用于重新启动进程。摘要显示原生 cwd，二者不同时不冒用原项目目录 ID。`selected` 表示此记录是数据库中关联到 Runtime 的当前选择，不表示 Runtime 在线。两产品发现列表只使用 selected 记录关联项目；历史记录仍可用于显式继续。
 
-本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；两产品工作台同步最新 selected 恢复记录到个人布局，并在索引暂不可用时保留运行中的 Agent。恢复编排及页面的“继续”入口仍待接入。
+本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；两产品工作台同步最新 selected 恢复记录到个人布局，并在索引暂不可用时保留运行中的 Agent。`App.AgentRestorer()` 已实现 managed ACP 的显式继续；页面的“继续”入口和 PTY 原生恢复仍待接入。
+
+## 原生 ACP 继续服务
+
+`App.AgentRestorer().Resume(scope, {session_record_id, revision})` 使用已认证 Scope，HTTP 为 `POST /api/v1[/tenants/{tenant}]/agent-sessions/{session}/resume`，body 为 `{revision}`。返回 `session`、已确认的 `runtime` 和可选 `operation`；错误响应也在 `result` 中保留部分进度。
+
+服务先检查 Owner / Tenant、原 Runner binding、旧 Runtime 与遗留 attempt Runtime 已退出、执行用户与 HOME 存储身份，再申请数据库恢复 attempt。首版支持 acp-load v1 的标准 transport 启动，去掉原 setup，原样保留实际命令、环境、进程 cwd 与其他启动选项；不再解析来源 Profile 或宿主环境默认值。已有 Runtime 存活时返回 RUNTIME_ALIVE，可直接重新连接。
+
+恢复进程必须就绪并广告 load 能力；list 能力完全独立，不请求 list，也不会退回 new。双方都有版本信息而版本不同时明确拒绝，避免默默跨版本恢复。原生 cwd 与进程 cwd 分开传入。只有匹配 load RPC 的完成确认包含原 ID / cwd，且数据库确认保存后，attempt 才变为 ready。
+
+同一基准修订的重复请求返回同一 attempt，包括它已经完成或失败之后。新的显式重试须使用最新修订，且上次为已知失败、Runtime 已停止。已知初始化 / load 失败时结束本次新进程；未知执行结果不自动清理或重放。后续可靠的 Runtime / 操作确认可以补齐未知结果。整个恢复最多等待 90 秒，其中初始化最多 15 秒，等待本身不赋予接替权。
+
+成功恢复后，旧 Runtime 即使仍在发现列表中，其迟到原生观察也不重新占用恢复记录，不显示为数据库故障。若恢复后的 Runtime 又被显式切换到另一原生会话，重复点击原恢复请求返回 STALE_SESSION，不能把另一个对话当成原会话的继续。
+
+本地 Gateway / fabricd 验证覆盖修改并删除来源 Profile 后恢复实际快照、setup 只运行一次、原生与进程 cwd 分离、load=true/list=false、并发请求单次启动、已知失败后显式重试、丢失响应保留 unknown 屏障、缺失 load 能力及版本变化拒绝。测试使用可控协议进程；厂商 Agent 原生文件恢复与多 Pod 故障仍需整体验收。

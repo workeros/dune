@@ -16,6 +16,37 @@ import (
 
 type launchFunc func(context.Context, agents.Scope, agents.StartRequest) (agents.LaunchResult, error)
 
+type resumeFunc func(context.Context, agents.Scope, agents.ResumeRequest) (agents.ResumeResult, error)
+
+func (f resumeFunc) Resume(ctx context.Context, scope agents.Scope, request agents.ResumeRequest) (agents.ResumeResult, error) {
+	return f(ctx, scope, request)
+}
+
+func TestAgentResumeHTTPUsesSelectedRecordAndPreservesPartialProgress(t *testing.T) {
+	f := newWorkbenchFixture(t, true)
+	calls := 0
+	f.server.options.AgentRestorer = resumeFunc(func(_ context.Context, scope agents.Scope, request agents.ResumeRequest) (agents.ResumeResult, error) {
+		calls++
+		if scope.Principal.ID != f.users[0].ID || scope.OwnerID != f.owner || request.SessionID != "chosen" || request.Revision != 5 {
+			t.Fatal("resume scope or selected revision changed")
+		}
+		return agents.ResumeResult{Session: &agents.Summary{ID: "chosen"}, Runtime: &api.Runtime{ID: "started-runtime"}}, &api.Error{Code: "RESULT_UNKNOWN", Detail: "load outcome unknown"}
+	})
+	out := f.request(t, "POST", "/agent-sessions/chosen/resume", 0, map[string]int{"revision": 5})
+	if out.Code != 503 || !bytes.Contains(out.Body.Bytes(), []byte("started-runtime")) || calls != 1 {
+		t.Fatal("resume lost partial progress", out.Code, out.Body.String(), calls)
+	}
+	if out := f.request(t, "POST", "/agent-sessions/chosen/resume", 0, agents.ResumeRequest{SessionID: "other", Revision: 5}); out.Code != 400 || calls != 1 {
+		t.Fatal("body changed selected record", out.Code, calls)
+	}
+	if out := f.request(t, "POST", "/agent-sessions/chosen/resume", 2, map[string]int{"revision": 5}); out.Code != 403 || calls != 1 {
+		t.Fatal("cross-Tenant resume", out.Code, calls)
+	}
+	if out := f.request(t, "POST", "/agent-sessions/chosen/resume", -1, map[string]int{"revision": 5}); out.Code != 401 || calls != 1 {
+		t.Fatal("anonymous resume", out.Code, calls)
+	}
+}
+
 func (f launchFunc) Start(ctx context.Context, scope agents.Scope, request agents.StartRequest) (agents.LaunchResult, error) {
 	return f(ctx, scope, request)
 }

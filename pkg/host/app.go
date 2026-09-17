@@ -205,6 +205,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 		AgentLauncher:  app.AgentLauncher(),
 		AgentDirectory: app.AgentDirectory(),
 		AgentMessenger: app.AgentMessenger(),
+		AgentRestorer:  app.AgentRestorer(),
 		Assets:         options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway:            dial,

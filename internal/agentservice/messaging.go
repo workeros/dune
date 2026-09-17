@@ -6,7 +6,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/workbench"
@@ -260,7 +259,7 @@ func (s *Service) describeOperation(ctx context.Context, scope agents.Scope, tar
 	operation.Ref = operationRef(target, operation.Ref)
 	result := agents.Operation{AgentOperation: operation}
 	if operation.NativeSession != nil {
-		if _, err := s.Store.ObserveAgentSession(ctx, scope.OwnerID, target, *operation.NativeSession); err != nil && !errors.Is(err, metadata.ErrNotFound) {
+		if _, err := s.Store.ObserveAgentSession(ctx, scope.OwnerID, target, *operation.NativeSession); captureFailed(err) {
 			result.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
 		}
 	}

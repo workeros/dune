@@ -66,6 +66,29 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 func (s *Server) agentSessionRoutes(prefix string) {
 	s.mux.HandleFunc("GET "+prefix+"/agent-sessions", s.listAgentSessions)
 	s.mux.HandleFunc("GET "+prefix+"/agent-sessions/{session}", s.getAgentSession)
+	s.mux.HandleFunc("POST "+prefix+"/agent-sessions/{session}/resume", s.resumeAgentSession)
+}
+
+func (s *Server) resumeAgentSession(w http.ResponseWriter, r *http.Request) {
+	user, owner, ok := s.workbenchOwner(w, r, "workspace.write")
+	if !ok {
+		return
+	}
+	var request agents.ResumeRequest
+	if !readJSON(w, r, &request) {
+		return
+	}
+	if request.SessionID != "" && request.SessionID != r.PathValue("session") {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "session record must match the selected path")
+		return
+	}
+	request.SessionID = r.PathValue("session")
+	if s.options.AgentRestorer == nil {
+		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "Agent recovery is not configured")
+		return
+	}
+	result, err := s.options.AgentRestorer.Resume(r.Context(), agents.Scope{Principal: user, OwnerID: owner}, request)
+	writeAgentResult(w, result, err)
 }
 
 func (s *Server) listAgentSessions(w http.ResponseWriter, r *http.Request) {

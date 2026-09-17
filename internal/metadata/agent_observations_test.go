@@ -153,7 +153,7 @@ func TestAgentResumeConfirmationCannotChangeNativeSessionOrReviveOldAssociation(
 		if _, err := store.RecordAgentRuntime(t.Context(), "tenant", captured.ID, resuming.Attempt.ID, next.Runtime); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ObserveAgentSession(t.Context(), "tenant", original, native); !errors.Is(err, ErrConflict) {
+		if _, err := store.ObserveAgentSession(t.Context(), "tenant", original, native); !errors.Is(err, ErrStaleAgentObservation) {
 			t.Fatal("old attempt selected a session again", err)
 		}
 		wrong := native

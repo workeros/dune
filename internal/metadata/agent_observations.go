@@ -21,6 +21,11 @@ type runtimeSessionIndex struct {
 	Sequence      int64
 }
 
+// An old Runtime can remain visible after its recovery record has moved to a
+// new attempt. Its observations must neither revive the index nor look like a
+// database outage to the workbench.
+var ErrStaleAgentObservation = errors.New("native observation belongs to a superseded launch attempt")
+
 // RuntimeAgentSession resolves the selected recovery record without scanning
 // private launch snapshots. This index says nothing about Runtime liveness.
 func (s *Store) RuntimeAgentSession(ctx context.Context, owner string, target workbench.AgentTarget) (agents.Session, error) {
@@ -53,7 +58,10 @@ func (s *Store) ObserveAgentSession(ctx context.Context, owner string, target wo
 		if err != nil {
 			return err
 		}
-		if source.Attempt.ID != index.SourceAttempt || source.Attempt.Runtime == nil || *source.Attempt.Runtime != target.Runtime || source.Launch.Binding != target.Binding {
+		if source.Attempt.ID != index.SourceAttempt {
+			return ErrStaleAgentObservation
+		}
+		if source.Attempt.Runtime == nil || *source.Attempt.Runtime != target.Runtime || source.Launch.Binding != target.Binding {
 			return ErrConflict
 		}
 		if source.Launch.Recovery.ID == "" {

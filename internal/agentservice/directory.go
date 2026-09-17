@@ -158,7 +158,7 @@ func (s *Service) describe(ctx context.Context, scope agents.Scope, logical runn
 	target := targetFor(*logical.Binding, runtime)
 	item := agents.Agent{Ref: agentRef(target, runtime.NativeSession), Target: target, Runtime: runtime, Runner: logical}
 	if runtime.NativeSession != nil {
-		if _, err := s.Store.ObserveAgentSession(ctx, scope.OwnerID, target, *runtime.NativeSession); err != nil && !errors.Is(err, metadata.ErrNotFound) {
+		if _, err := s.Store.ObserveAgentSession(ctx, scope.OwnerID, target, *runtime.NativeSession); captureFailed(err) {
 			item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
 		}
 	}
@@ -174,6 +174,10 @@ func (s *Service) describe(ctx context.Context, scope agents.Scope, logical runn
 		item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
 	}
 	return item
+}
+
+func captureFailed(err error) bool {
+	return err != nil && !errors.Is(err, metadata.ErrNotFound) && !errors.Is(err, metadata.ErrStaleAgentObservation)
 }
 
 func discoveryError(err error) string {

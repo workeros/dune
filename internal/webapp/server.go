@@ -45,6 +45,7 @@ type Options struct {
 	AgentLauncher  agents.Launcher
 	AgentDirectory agents.Directory
 	AgentMessenger agents.Messenger
+	AgentRestorer  agents.Restorer
 	// TrustedProxies contains CIDRs allowed to supply X-Forwarded-For.
 	TrustedProxies []string
 	Binaries       string

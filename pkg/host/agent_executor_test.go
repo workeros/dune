@@ -60,6 +60,7 @@ func TestFakeACPChild(t *testing.T) {
 			Method string          `json:"method"`
 			Params struct {
 				SessionID string `json:"sessionId"`
+				Cwd       string `json:"cwd"`
 				Prompt    []struct {
 					Text string `json:"text"`
 				} `json:"prompt"`
@@ -68,13 +69,28 @@ func TestFakeACPChild(t *testing.T) {
 		if json.Unmarshal(scanner.Bytes(), &request) != nil || len(request.ID) == 0 {
 			continue
 		}
+		if filename := os.Getenv("DUNE_HOST_FAKE_ACP_METHODS"); filename != "" {
+			file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = fmt.Fprintf(file, "%s:%s:%s\n", request.Method, request.Params.SessionID, request.Params.Cwd)
+			_ = file.Close()
+		}
 		switch request.Method {
 		case "initialize":
-			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}`+"\n", request.ID)
+			fmt.Fprintln(os.Stdout, string(api.Payload(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]bool{"loadSession": os.Getenv("DUNE_HOST_FAKE_ACP_NO_LOAD") != "1"}, "agentInfo": map[string]string{"name": "fixture", "version": os.Getenv("DUNE_HOST_FAKE_ACP_VERSION")}}})))
 		case "session/new":
 			sessionID = "fake-acp-session"
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-acp-session"}}`+"\n", request.ID)
 		case "session/load":
+			if os.Getenv("DUNE_HOST_FAKE_ACP_DROP_LOAD") == "1" {
+				return
+			}
+			if os.Getenv("DUNE_HOST_FAKE_ACP_FAIL_LOAD") == "1" {
+				fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"native session missing"}}`+"\n", request.ID)
+				continue
+			}
 			sessionID = request.Params.SessionID
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{}}`+"\n", request.ID)
 		case "session/prompt":

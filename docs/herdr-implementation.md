@@ -15,7 +15,8 @@
 - [x] 统一启动服务：固定配置解析、宿主环境默认值、当前目录 / 新 worktree、启动前快照与部分结果保留。
 - [x] 恢复索引数据库：不可变实际配置、原生 ID 绑定、最近启动 attempt、跨连接继续去重与未知结果屏障。
 - [x] 原生会话切换索引：Runtime 当前关联、分离进程 / 原生 cwd、迟到确认只补历史、重复 load 去重。
-- [ ] 原生会话恢复：实际启动快照、可靠 ID 采集、恢复索引与并发继续去重。
+- [x] managed ACP 继续后端：实际启动快照、显式 load、数据库 claim、并发去重与未知结果屏障。
+- [ ] 原生恢复接入：两产品继续入口、PTY 原生 ID / resume 适配与真实 Agent 验收。
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
 - [x] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
 - [x] Tenant / Owner Agent 发现服务：分页、固定 Agent 引用、SDK / Gateway 读取与原生确认采集；两产品已挂载共享 HTTP 路由。
@@ -65,3 +66,5 @@
 - ACP 原生目标补齐：prompt 同时固定 ID / cwd，入队和出队都拒绝目录变化；新增同 ID 切换目录场景和全部 ACPQueue race、api / client 回归、相关 vet 通过。
 
 - 共享通信服务：[AgentMessenger](agent-messaging.md) 和两产品 HTTP 入口就绪，引用不绑定宿主实例，prompt 可选等待失败保留操作引用。agentservice / tmux / agents / api / client / host / webapp / fabricd 回归、通信与发现定向 race、相关 vet 全部通过；SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 回归及 app vet 通过。真实本地 Gateway/fabricd 验证两连接统一排队、输出隔离、原生切换、PTY 字节投递和跨 Tenant 拒绝；尚未验证多 Pod 故障及真实厂商 MCP 互操作。
+
+- managed ACP 继续后端：真实本地 Gateway / fabricd 协议夹具覆盖冻结配置与 Profile 删除、setup 不重跑、双请求单次恢复、独立 cwd、无 list 的 load、失败 / unknown 分离、原生切换后重复请求拒绝及原 Runner / 存储校验。相关 Go 回归（含 SQLite / PostgreSQL）、恢复定向 race、vet 通过；SandDance 全量 Go 回归（本地 workspace / 独立 PostgreSQL）及 app vet 通过。页面与 PTY 原生恢复未据此计为完成。

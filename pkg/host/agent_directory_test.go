@@ -24,6 +24,12 @@ func directoryACP(t *testing.T, f executorFixture) (agents.LaunchResult, *client
 }
 
 func directoryACPWithEnvironment(t *testing.T, f executorFixture, environment map[string]string) (agents.LaunchResult, *client.Client) {
+	profile := directoryACPProfile(t, f)
+	maps.Copy(profile.Env, environment)
+	return startDirectoryACP(t, f, agents.StartRequest{Binding: f.binding, Custom: &profile})
+}
+
+func directoryACPProfile(t *testing.T, f executorFixture) api.Profile {
 	t.Helper()
 	// This local transport fixture accepts --acp, without invoking an AI model.
 	script := filepath.Join(f.workspace, "fixture-agent")
@@ -31,10 +37,13 @@ func directoryACPWithEnvironment(t *testing.T, f executorFixture, environment ma
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec "+executable+" -test.run=^TestFakeACPChild$\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: f.workspace,
+	return api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: f.workspace,
 		Start: api.Command{Argv: []string{script, "--acp"}}, Env: map[string]string{"DUNE_HOST_FAKE_ACP_CHILD": "1", "TEST_LAUNCH_SECRET": "not-for-discovery"}}
-	maps.Copy(profile.Env, environment)
-	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+}
+
+func startDirectoryACP(t *testing.T, f executorFixture, request agents.StartRequest) (agents.LaunchResult, *client.Client) {
+	t.Helper()
+	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
