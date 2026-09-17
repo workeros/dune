@@ -121,6 +121,9 @@ func (s *Store) SetUserEnabled(ctx context.Context, id string, enabled bool) err
 		if _, err := tx.ExecContext(ctx, `UPDATE dune_users SET enabled=$2,auth_version=auth_version+1 WHERE id=$1`, id, enabled); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_agent_credentials WHERE principal_id=$1`, id); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_sessions WHERE user_id=$1`, id); err != nil {
 			return err
 		}

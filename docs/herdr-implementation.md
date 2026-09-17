@@ -24,7 +24,8 @@
 - [x] Tenant / Owner Agent 发现服务：分页、固定 Agent 引用、SDK / Gateway 读取与原生确认采集；两产品已挂载共享 HTTP 路由。
 - [x] 两产品共享 Agent 发现列表：按 Runner 分页、部分失败保留、拒绝访问断开、原生切换更新布局索引且不重连。
 - [x] Tenant Agent 服务：发现、启动、投递、操作 / 活动等待、ACP 输出 / PTY 快照读取，复用 SDK / Gateway 路由。
-- [ ] MCP 接入：工具合同、会话凭据、跨 Tenant 拒绝、凭据脱敏。
+- [x] MCP 会话凭据数据库：调用方与启动 attempt 绑定、哈希、轮换、撤销、过期及跨连接校验。
+- [ ] MCP 接入：工具合同、HTTP 凭据校验、跨 Tenant 拒绝、凭据脱敏。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
 - [ ] 两产品协作交互：pending、操作进度、输出不完整与引用失效提示。
 - [ ] 集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、恢复旧配置及真实 Agent 互操作。
@@ -76,3 +77,5 @@
 - 历史恢复迟到确认修复 `0f07034`：原 Runtime 切换出的历史记录被独立恢复后，旧观察不会重新选中它或误报索引故障。SQLite / PostgreSQL 定向 race 和 metadata vet 通过。
 
 - managed ACP 原生会话编排：identity / authorization / metadata / agentservice / webapp / host 回归（配置独立 PostgreSQL）、新编排及恢复定向 race、相关 vet 通过。SandDance 使用本地 workspace 的全量 Go 与 app / integration vet 通过，实际 Gateway 集成夹具同步响应初始 new。新路由鉴权及部分结果保留已验证；两产品按钮迁移、MCP 注入、厂商 Agent 验收继续推进。
+
+- MCP 凭据存储：SQLite / PostgreSQL 定向 race 通过；相关身份、授权、webapp、host 回归和 SandDance 全量 Go 通过。元数据全量首次暴露 schema 测试删表顺序未覆盖新外键，已调整快照表顺序并定向重跑初始化原子性；企业身份无需本地账号的用例也通过。HTTP / 实际注入尚未装配。
