@@ -12,7 +12,7 @@
 4. 保存实际启动快照和 `starting` attempt，然后经同一 SDK 连接调用一次 `profile.start`。
 5. 保存确认的 Runtime。PTY 尚无原生适配器时标记不可恢复；managed ACP 等待初始化（最多 15 秒），提交一次 new 并等待本操作（最多 30 秒），成功后保存原生 ID。pending 仍返回操作引用，不能仅凭进程存活标记可恢复。
 
-`LaunchResult` 返回会话摘要、确认的 Runtime、已创建 worktree，以及 ACP 初始 new 的操作引用。出现错误时也可能有部分结果，调用方必须保留并显示：例如 worktree 创建成功但 Agent 命令不存在，用户可以直接选该目录再次启动；Runtime 已运行但索引写入失败时，应连接返回的 Runtime，不能重新 start。
+`LaunchResult` 返回会话摘要、确认的 Runtime 和 `agent_ref`、已创建 worktree，以及 ACP 初始 new 的操作引用。出现错误时也可能有部分结果，调用方必须保留并显示：例如 worktree 创建成功但 Agent 命令不存在，用户可以直接选该目录再次启动；Runtime 已运行但索引写入失败时，应连接返回的 Runtime，不能重新 start。
 
 服务持有宿主请求生命周期，保存已确认结果时给数据库最多三秒的独立上下文，避免浏览器断开立即丢弃已确认 Runtime。网络 / 写入结果未知不自动重发；未取得确认的 attempt 留在索引供后续检查。
 

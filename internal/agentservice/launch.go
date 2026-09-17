@@ -35,6 +35,11 @@ func invalid(detail string) error { return &api.Error{Code: "INVALID_ARGUMENT", 
 // optional worktree is created once, followed by a committed launch snapshot,
 // then a single profile.start over SDK/Gateway. Errors never trigger a replay.
 func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.StartRequest) (result agents.LaunchResult, err error) {
+	defer func() {
+		if result.Runtime != nil {
+			result.AgentRef = agentRef(targetFor(request.Binding, *result.Runtime), result.Runtime.NativeSession)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	resource, _, err := s.Access.Resource(ctx, scope.Principal, request.Binding.RunnerID, false, "profile.start")

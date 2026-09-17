@@ -91,6 +91,7 @@ type App struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	web              *webapp.Server
+	agentMCP         http.Handler
 	core             *gateway.Gateway
 	publicPath       string
 	store            *metadata.Store
@@ -201,6 +202,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 			return present, nil
 		}
 	}
+	app.agentMCP = app.newAgentMCP(service.Namespace(), addresses.Origin)
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		AgentNativeSessions: app.AgentNativeSessions(),
 		AgentLauncher:       app.AgentLauncher(),
@@ -228,6 +230,10 @@ func Open(parent context.Context, options Options) (*App, error) {
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.health(w, r) {
+		return
+	}
+	if r.URL.Path == a.publicPath+"api/v1/agent-mcp" {
+		a.serveHTTP(a.agentMCP, w, r, false)
 		return
 	}
 	a.serveHTTP(a.web, w, r, strings.HasPrefix(r.URL.Path, a.publicPath+"api/v1/ws/"))

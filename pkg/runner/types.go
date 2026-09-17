@@ -31,8 +31,8 @@ type Runner struct {
 
 // Query selects a bounded discovery page. Cursor is opaque and user-scoped.
 type Query struct {
-	Cursor string
-	Limit  int
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 type Page struct {
 	Items      []Runner `json:"items"`

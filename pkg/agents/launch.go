@@ -71,6 +71,7 @@ func (s Session) Summary() Summary {
 // A partial result is meaningful even with an error: a confirmed worktree or
 // Runtime must not be silently discarded and recreated by the caller.
 type LaunchResult struct {
+	AgentRef  string        `json:"agent_ref,omitempty"`
 	Operation *Operation    `json:"operation,omitempty"`
 	Session   *Summary      `json:"session,omitempty"`
 	Runtime   *api.Runtime  `json:"runtime,omitempty"`

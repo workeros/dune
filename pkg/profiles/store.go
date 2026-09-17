@@ -147,6 +147,28 @@ func (s *Store) List(ctx context.Context, ownerID string) ([]Record, error) {
 	return items, rows.Err()
 }
 
+// ListAgentPage bounds catalog discovery for tools without reading all saved
+// Profile revisions. The caller projects the private records to safe summaries.
+func (s *Store) ListAgentPage(ctx context.Context, ownerID, after string, limit int) ([]Record, error) {
+	if !validText(ownerID, 256) || len(after) > 256 || limit < 1 || limit > 101 {
+		return nil, ErrInvalid
+	}
+	rows, err := s.queries.QueryContext(ctx, selectRecord+` WHERE p.owner_id=$1 AND p.kind='agent' AND p.id>$2 AND r.revision=p.revision ORDER BY p.id LIMIT $3`, ownerID, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Record{}
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, record)
+	}
+	return items, rows.Err()
+}
+
 // Get accepts revision zero for editing the latest version. Executions should
 // resolve a positive revision to keep a concurrent edit from changing input.
 func (s *Store) Get(ctx context.Context, ownerID string, selection Selection) (Record, error) {
