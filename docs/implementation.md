@@ -90,7 +90,7 @@ Gateway 两方向逐条读取、转发，无无界队列。protobuf 写入按 st
 
 这些上限共同约束并发缓冲总量；没有按文件大小缓存整份上传。包括 Yamux 窗口的最大内存随已限制的 session/stream 数有上界，但不是操作系统 RSS 硬配额。并发 e2e 使用 2 PTY + 2 ACP + 16MiB 上传 + 4MiB TCP，p95 验收阈值为 2s。不承诺协议级优先级或物理 TCP 故障隔离。
 
-普通 request_id 由 SDK 随机生成。`CallID` 可显式复用 ID：缓存有效时同输入返回同结果，不同输入返回 IDEMPOTENCY_CONFLICT，尚在运行返回 RESULT_UNKNOWN。`PrepareID` 接受宿主稳定的 execution ID；去重范围是单个 fabricd 进程，ID 在该进程内全局使用。同一 ID、同一 Profile 在内存尝试记录有效时不会重复执行，而是返回 RESULT_UNKNOWN 并要求查询，同一 ID、不同 Profile 返回 IDEMPOTENCY_CONFLICT。Environment 尝试在 fabricd 内存中最多 256 条，running 不淘汰，终态保留至多 60s；fabricd 重启或终态淘汰后查询返回 unknown，不表示从未执行。取消等待、网络中断或应用等待超时只令调用方得到 RESULT_UNKNOWN，不作为远端已停止的证明，也不会自动重发 Profile。宿主决定是否重新执行、持久记录或回收环境。
+普通 request_id 由 SDK 随机生成。`CallID` 可显式复用 ID：缓存有效时同输入返回同结果（搜索只保留去重标记，不缓存大响应；需发起新查询），不同输入返回 IDEMPOTENCY_CONFLICT，尚在运行返回 RESULT_UNKNOWN。`PrepareID` 接受宿主稳定的 execution ID；去重范围是单个 fabricd 进程，ID 在该进程内全局使用。同一 ID、同一 Profile 在内存尝试记录有效时不会重复执行，而是返回 RESULT_UNKNOWN 并要求查询，同一 ID、不同 Profile 返回 IDEMPOTENCY_CONFLICT。Environment 尝试在 fabricd 内存中最多 256 条，running 不淘汰，终态保留至多 60s；fabricd 重启或终态淘汰后查询返回 unknown，不表示从未执行。取消等待、网络中断或应用等待超时只令调用方得到 RESULT_UNKNOWN，不作为远端已停止的证明，也不会自动重发 Profile。宿主决定是否重新执行、持久记录或回收环境。
 
 ## Files 和完整上传
 
@@ -98,19 +98,20 @@ Gateway 两方向逐条读取、转发，无无界队列。protobuf 写入按 st
 
 | Files action | 参数/结果 |
 | --- | --- |
-| stat | path → name/size/mode/is_dir |
-| list | path → 至多 4096 项；超限报错 |
-| read | path、offset≥0、length 1..32768 → data、下一 offset |
-| write | path、data≤32KiB、overwrite；临时文件 + 原子提交 |
+| stat | path → name/size/mode/is_dir；with_revision=true 才计算内容与权限 revision |
+| list_page | path、cursor、limit → 名称排序 items、next_cursor；有界内存逐页扫描 |
+| search | path、search: SearchOptions → SearchResult；路径/内容搜索见 [搜索合同](file-search.md) |
+| read | path、offset≥0、length 1..32768、可选 with_revision → data、下一 offset、EOF、Info |
+| write | path、data≤32KiB、intent=create/conditional/unconditional；conditional 必须有 expected_revision |
 | mkdir | path；创建父级 |
 | rename | path、destination、overwrite=true；POSIX rename 语义 |
 | remove | path、recursive=false；true 时递归删除 |
 
-写入的临时文件默认 0600。不覆盖提交使用同文件系统 hard link + unlink，目标已存在时报错；显式覆盖使用 rename。不会先删除已有目标。
+新建默认权限 0600，覆盖保留目标权限。create 使用同文件系统 hard link + unlink，目标已存在时报错；conditional 在 Engine 统一写锁内验证内容及权限 revision 后 rename；unconditional 显式跳过 revision 比较。Files 与 Upload 共用提交锁，只读和上传传输在锁外。非普通文件目标拒绝替换，外部 Shell/Git/Agent 写入仅尽力检测。编辑读取必须校验完整原始字节的 EOF、长度和 SHA256，分块不是快照，截断预览保持只读。
 
 Upload action 都使用结构化 `api.Upload`：
 
-1. create：path、size（0..10GiB）、小写 SHA256、overwrite、ttl_seconds（默认 1800，1..86400），返回 ID/incarnation/offset/size/expires_at。
+1. create：path、size（0..10GiB）、小写 SHA256、intent、conditional 的 expected_revision、ttl_seconds（默认 1800，1..86400），返回 ID/incarnation/offset/size/expires_at。
 2. chunk：ID、精确 offset、1..32768 字节 data，可带 chunk_sha256。offset 不一致为 OFFSET_CONFLICT；chunk hash 失败不改变 offset。磁盘部分写失败需 query 实际 offset。
 3. query：返回当前 offset；仅同 incarnation 内有效。网络断线后由调用方显式 query/chunk 续传。
 4. commit：必须完整 size，流式校验整文件 SHA256、sync 后原子提交。失败不宣告完成，hash 错误需 cancel 后重新创建。成功重复 commit 返回 committed=true（在句柄 TTL 内）。
@@ -120,7 +121,7 @@ fabricd 的一个小型 cleanup 子进程仅在内存记录其创建的上传临
 
 ## Git
 
-使用本机 Git 和当前用户凭证环境，所有 Dune Git 调用串行，避免同 daemon 内并发修改 index。外部编辑器仍可修改同一仓库；Git 锁和冲突错误原样保留。禁止交互凭证提示/askpass，SSH BatchMode，120s 超时；使用已经配置的 helper/agent。失败返回 exit_code、stderr；Web 显示失败状态。传输丢失时不自动重试写操作。
+使用本机 Git 和当前用户凭证环境，同一规范化 Git common directory 的调用串行（含 worktree 和路径别名），不同仓库可以并行。外部编辑器仍可修改同一仓库；Git 锁和冲突错误原样保留。禁止交互凭证提示/askpass，SSH BatchMode，120s 超时；使用已经配置的 helper/agent。失败返回 exit_code、stderr；Web 显示失败状态。传输丢失时不自动重试写操作。
 
 | action | 参数 |
 | --- | --- |

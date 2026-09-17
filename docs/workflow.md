@@ -13,6 +13,9 @@ Go 版本以 `go.mod` 为准。Go 源码修改后运行 `gofmt`；Web 使用仓�
 protobuf schema 修改后运行 `make proto`，再运行 wire、Gateway、fabricd 和
 client 的相关测试。
 
+`make build` 同时准备固定版本的 tmux 和 ripgrep。四平台归档、搜索依赖与授权说明
+的打包方式见[发行说明](releases.md)。
+
 `im/` 是独立 Go module，直接运行根目录的 `go test ./...` 不会覆盖它。
 默认 `make test` / `make test-race` 包含两个 module，`make check-go` 同时执行两者的 vet。
 指定 `TEST_PKGS` 时只检查主 module 的指定包；IM 定向检查使用
@@ -26,7 +29,7 @@ IM 的本地 Gateway/ACP 整链测试需要与主仓库测试相同的 `bin/tmux
 | --- | --- |
 | 身份、Session、Runner、enrollment | `go test ./internal/identity ./internal/authorization ./internal/metadata ./internal/webapp ./pkg/host` |
 | Gateway、peer、协议 | `go test ./internal/wire ./pkg/gateway ./pkg/transport/... ./pkg/fabricd` |
-| Web UI | `make web-check web-build` |
+| Web UI | `make web-check web-build`、`npm --prefix web test`；交互变化另做浏览器回归 |
 | CLI/宿主装配 | `go test ./cmd/dune ./pkg/host ./tests -run '^$'` 后运行相关端到端用例 |
 | 可选 IM module / 飞书 / IM ACP | `make test-im-race check-im`；修改 host 边界时另跑 `go test ./pkg/host` |
 | SandDance 公共边界 | 在相邻 SandDance 仓库运行 `go test ./...` |

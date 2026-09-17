@@ -22,7 +22,9 @@ make release
 ```
 
 浏览器注册或登录后生成一次性接入命令。安装流程在 Linux/macOS 上写入
-connector 配置并安装用户级后台服务，不要求目标机器开放入站端口。
+connector 配置并安装用户级后台服务，不要求目标机器开放入站端口。已有配置直接报错；配置完整时用 repair 修复安装，用 upgrade 独立升级。新版完成本地初始化后清理旧程序，保留配置、SessionDir 和 PTY 历史。详见 [安装与升级](docs/install-upgrade.md)。
+
+内置 Web 聚焦个人工作台，可选个人 Managed 模板使用当前用户作为 scope；企业租户界面由宿主承担。文件搜索 API 及 SandDance 磁盘搜索界面见 [搜索合同](docs/file-search.md)。
 
 ## 生产部署
 
@@ -134,7 +136,7 @@ Provider 可用 `fabric.NewBootstrapPlan` 按目标 OS/architecture 生成 Dune 
 以下命令服务网页安装链路，不是远程执行客户端：
 
 ```sh
-dune --config /absolute/machine.yaml enroll --site https://dune.example.com/ --token TOKEN
+dune --config /absolute/machine.yaml enroll --site https://dune.example.com/ --token TOKEN --runner-id RUNNER_ID
 dune --config /absolute/machine.yaml service install --name dune
 dune --config /absolute/machine.yaml fabricd
 ```
