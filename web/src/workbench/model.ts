@@ -10,7 +10,7 @@ export type Split = { id: string; direction: "horizontal" | "vertical"; ratio: n
 export type LayoutNode = Leaf | Split;
 export type ViewSpec = { root: LayoutNode | null; focus_pane?: string; review_pane?: string };
 export type SavedView = ViewSpec & { id: string; revision: number };
-export type Agent = { target: AgentTarget; runtime: AgentRuntime; runner: Runner; session?: AgentSession };
+export type Agent = { ref?: string; target: AgentTarget; runtime: AgentRuntime; runner: Runner; session?: AgentSession };
 export type ReadMarker = { target: AgentTarget; epoch: string; sequence: number };
 export const emptyView: ViewSpec = { root: null };
 
@@ -78,4 +78,20 @@ export function projectFor(agent: Agent, projects: Project[]) {
 export function activityLabel(runtime: AgentRuntime): string {
   if (runtime.state !== "running") return runtime.stop_reason === "timed_out" ? "已超时" : "已退出";
   return ({ working: "执行中", idle: "空闲", blocked: "等待回应", unknown: "状态未知" } as const)[runtime.activity?.state ?? "unknown"];
+}
+
+// Update only the recovery record attached to each exact Runtime. Keeping
+// unchanged nodes stable preserves the terminal/ACP connection in each pane.
+export function syncSessionRecords(view: ViewSpec, agents: Agent[]): ViewSpec {
+  const sessions = new Map(agents.filter((agent) => agent.session?.selected).map((agent) => [targetKey(agent.target), agent.session!.id]));
+  const visit = (node: LayoutNode): LayoutNode => {
+    if ("pane" in node) {
+      const id = sessions.get(targetKey(node.pane.target));
+      return id && id !== node.pane.session_record_id ? { ...node, pane: { ...node.pane, session_record_id: id } } : node;
+    }
+    const children = node.children.map(visit) as Split["children"];
+    return children.every((child, index) => child === node.children[index]) ? node : { ...node, children };
+  };
+  const root = view.root ? visit(view.root) : null;
+  return root === view.root ? view : { ...view, root };
 }

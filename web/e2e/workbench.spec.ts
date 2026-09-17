@@ -121,11 +121,11 @@ test("summary refresh errors retain open sessions and their connections", async 
   await expect.poll(() => state.connections.length).toBe(1);
   state.discoveryError = true;
   await page.getByRole("button", { name: "刷新", exact: true }).click();
-  await expect(page.getByText("Runner one：discovery temporarily unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("Runner one：暂时无法读取 Agent 列表", { exact: true })).toBeVisible();
   await expect(page.locator(".xterm-helper-textarea")).toHaveCount(1);
   state.discoveryError = false;
   await page.getByRole("button", { name: "刷新", exact: true }).click();
-  await expect(page.getByText("Runner one：discovery temporarily unavailable", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Runner one：暂时无法读取 Agent 列表", { exact: true })).toHaveCount(0);
   expect(state.connections).toHaveLength(1);
 });
 

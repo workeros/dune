@@ -1,35 +1,67 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { bindingKey, call, errorText, listAll, type AgentRuntime, type Runner } from "../lib/api";
-import { targetFor, targetKey, type Agent } from "./model";
+import { APIError, bindingKey, errorText, request, type AgentRuntime, type Runner } from "../lib/api";
+const isAccessError = (error: unknown) => error instanceof APIError && [401, 403].includes(error.status);
+
+import { targetFor, type Agent, type AgentTarget } from "./model";
 import type { AgentSession } from "./launch";
 
+type DirectoryPage = {
+  items: { agent_ref: string; target: AgentTarget; runtime: AgentRuntime; session?: AgentSession; recovery_error?: string }[];
+  runners: { runner: Pick<Runner, "id" | "binding">; online: boolean; ready: boolean }[];
+  issues: { runner_id: string; code: string }[]; next_cursor?: string;
+};
 type Discovery = { agents: Agent[]; errors: Record<string, string>; checked: Set<string> };
-export function useAgents(runners: Runner[]) {
+const issueText = (code: string) => ({ OFFLINE: "开发环境暂时离线", ACCESS_DENIED: "会话访问已失效", BINDING_CHANGED: "开发环境绑定已变化", UNSUPPORTED: "开发环境暂不支持会话发现" } as Record<string, string>)[code] ?? "暂时无法读取 Agent 列表";
+
+export function useAgents(runners: Runner[], prefix = "/api/v1") {
   const [discovery, setDiscovery] = useState<Discovery>({ agents: [], errors: {}, checked: new Set() });
   const current = useRef(runners); current.current = runners;
   const epoch = useRef(0);
   const signature = JSON.stringify(runners.map((runner) => [bindingKey(runner.binding), runner.online]));
   const refresh = useCallback(async () => {
-    const generation = ++epoch.current, queue = [...current.current], agents: Agent[] = [], errors: Record<string, string> = {}, checked = new Set<string>();
-    const sessions = new Map<string, AgentSession>();
+    const generation = ++epoch.current, selected = current.current;
+    const agents: Agent[] = [], errors: Record<string, string> = {}, checked = new Set<string>(), denied = new Set<string>();
+    if (!selected.length) { setDiscovery({ agents: [], errors: {}, checked: new Set() }); return; }
+    const seen = new Set<string>();
+    let cursor = "";
     try {
-      for (const session of await listAll<AgentSession>("/api/v1/agent-sessions")) {
-        if (session.selected && session.last_runtime) sessions.set(targetKey(targetFor(session.binding, session.last_runtime)), session);
-      }
-    } catch (cause) { errors.sessions = `会话索引暂不可用：${errorText(cause)}`; }
-    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
-      for (let runner = queue.shift(); runner; runner = queue.shift()) {
-        if (!runner.binding || !runner.online) continue;
+      do {
+        const page = await request<DirectoryPage>(`${prefix}/agents?limit=32&cursor=${encodeURIComponent(cursor)}`);
+        if (generation !== epoch.current) return;
+        const issues = new Map(page.issues.map((issue) => [issue.runner_id, issue.code]));
+        for (const availability of page.runners) {
+          const runner = selected.find((item) => item.id === availability.runner.id && bindingKey(item.binding) === bindingKey(availability.runner.binding));
+          if (!runner?.binding) continue;
+          const key = bindingKey(runner.binding), issue = issues.get(runner.id);
+          if (issue) { errors[key] = issueText(issue); if (issue === "ACCESS_DENIED") denied.add(key); }
+          else if (availability.online) checked.add(key);
+          else errors[key] = issueText("OFFLINE");
+        }
+        for (const item of page.items) {
+          const runner = selected.find((runner) => bindingKey(runner.binding) === bindingKey(item.target.binding));
+          if (!runner) continue;
+          agents.push({ runner, target: item.target, runtime: item.runtime, session: item.session, ref: item.agent_ref });
+          if (item.recovery_error) errors.sessions = "会话恢复索引暂不可用，已运行的 Agent 可以继续使用。";
+        }
+        cursor = page.next_cursor ?? "";
+        if (cursor && seen.has(cursor)) throw new Error("Agent 列表分页未前进，请刷新重试。");
+        seen.add(cursor);
+      } while (cursor);
+    } catch (cause) {
+      for (const runner of selected) {
+        if (!runner.binding) continue;
         const key = bindingKey(runner.binding);
-        try {
-          const runtimes = await call<AgentRuntime[]>(runner.binding, "runtime.list");
-          checked.add(key);
-          agents.push(...runtimes.map((runtime) => { const target = targetFor(runner!.binding!, runtime); return { runner: runner!, runtime, target, session: sessions.get(targetKey(target)) }; }));
-        } catch (cause) { errors[key] = errorText(cause); }
+        if (!checked.has(key)) errors[key] = errorText(cause);
+        if (isAccessError(cause)) denied.add(key);
       }
+    }
+    if (generation === epoch.current) setDiscovery((old) => ({
+      agents: [...agents.filter((agent) => !denied.has(bindingKey(agent.target.binding))), ...old.agents.filter((agent) => {
+        const key = bindingKey(agent.target.binding);
+        return errors[key] && !checked.has(key) && !denied.has(key);
+      })], errors, checked,
     }));
-    if (generation === epoch.current) setDiscovery((old) => ({ agents: [...agents, ...old.agents.filter((agent) => errors[bindingKey(agent.target.binding)])], errors, checked }));
-  }, []);
+  }, [prefix]);
   useEffect(() => {
     let disposed = false, active = false;
     const tick = async () => { if (active || disposed) return; active = true; try { await refresh(); } finally { active = false; } };

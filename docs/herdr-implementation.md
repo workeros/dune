@@ -19,6 +19,7 @@
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
 - [x] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
 - [x] Tenant / Owner Agent 发现服务：分页、固定 Agent 引用、SDK / Gateway 读取与原生确认采集；两产品已挂载共享 HTTP 路由。
+- [x] 两产品共享 Agent 发现列表：按 Runner 分页、部分失败保留、拒绝访问断开、原生切换更新布局索引且不重连。
 - [ ] Tenant Agent 服务：发现、启动、投递、等待、读取，复用 SDK / Gateway 路由。
 - [ ] MCP 接入：工具合同、会话凭据、跨 Tenant 拒绝、凭据脱敏。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
@@ -58,3 +59,5 @@
 - Runner 发现分页修复：游标改用有界逻辑 Runner ID 校验，允许 SandDance 的 `runner_…` 标识，不再误用协议消息 ID 的十六进制约束。带前缀 ID 的授权扫描、跨数据库重开 / 跨连接续页、无权限项过滤及无效游标边界通过 SQLite / PostgreSQL 定向 race；metadata vet 通过。
 
 - Agent 发现服务：[AgentDirectory](agent-directory.md) 复用 SDK / Gateway，自动采集可靠原生确认并保留历史。真实本地 fabricd + 协议夹具验证创建 / 切换采集、旧引用拒绝、退出后索引保留、无敏感配置泄露、跨 Tenant 拒绝、Runner 分页和部分故障；定向 race 通过。HTTP 鉴权与参数边界、identity / authorization / metadata / webapp / host / agentservice 回归和相关 vet 通过；SandDance 共享路由用例、全量 Go 回归和 app vet 通过。工作台发现列表尚未迁移此入口，MCP 工具与实际恢复继续推进。
+
+- 工作台共享发现：Dune 类型检查、前端单元测试、十项原有浏览器场景、新增分页 / 原生切换 / 部分故障场景及生产构建通过。SandDance 类型检查通过；全量 143 项浏览器场景首次 141 项通过，新增场景的连接次数断言修正为等待 StrictMode 初始化完成，另一个文件编辑场景受 Monaco 开发错误浮层干扰；两类相关的七项场景重跑全部通过，生产构建通过。两端使用真实浏览器与 HTTP / WebSocket 夹具，不代表真实 Agent 互操作验收。

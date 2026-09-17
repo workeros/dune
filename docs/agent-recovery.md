@@ -30,4 +30,4 @@
 
 原生 cwd 与进程启动 cwd 分开保存：`native.cwd` 用于 session/load，快照中的工作目录仍用于重新启动进程。摘要显示原生 cwd，二者不同时不冒用原项目目录 ID。`selected` 表示此记录是数据库中关联到 Runtime 的当前选择，不表示 Runtime 在线。两产品发现列表只使用 selected 记录关联项目；历史记录仍可用于显式继续。
 
-本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；工作台发现迁移、恢复编排及页面的“继续”入口仍待接入。
+本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；两产品工作台同步最新 selected 恢复记录到个人布局，并在索引暂不可用时保留运行中的 Agent。恢复编排及页面的“继续”入口仍待接入。

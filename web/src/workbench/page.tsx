@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
 import { bindingKey, call, errorText, listAll, type ProfileRecord, type Runner } from "../lib/api";
-import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
+import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, syncSessionRecords, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
 import { useView } from "./use-view";
 import { useAgents } from "./use-agents";
 import { useReadMarkers } from "./use-read-markers";
@@ -20,6 +20,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   runners: Runner[]; runnersLoading: boolean; selectedRunner?: Runner; onSelectRunner: (runner: Runner) => void; profileVersion: number; onManageProfiles: () => void;
 }) {
   const prefix = "/api/v1", saved = useView(prefix), directory = useAgents(runners), projects = useProjects(prefix);
+  useEffect(() => { if (saved.loaded) saved.change((view) => syncSessionRecords(view, directory.agents)); }, [saved.loaded, saved.change, directory.agents]);
   const [projectID, setProjectID] = useState(""), [editing, setEditing] = useState<Project | "new">(), [profiles, setProfiles] = useState<ProfileRecord[]>([]);
   const [direction, setDirection] = useState<Split["direction"]>("horizontal"), [error, setError] = useState(""), [review, setReview] = useState<"files" | "git" | "">("");
   const [stopping, setStopping] = useState<Agent>(), [stopBusy, setStopBusy] = useState(false);

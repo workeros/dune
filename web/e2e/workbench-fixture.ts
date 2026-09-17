@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { AgentRuntime, ProfileRecord, Runner } from "../src/lib/api";
-import type { Project, ReadMarker, SavedView } from "../src/workbench/model";
+import { targetFor, targetKey, type Project, type ReadMarker, type SavedView } from "../src/workbench/model";
 import type { AgentSession, LaunchRequest, LaunchResult } from "../src/workbench/launch";
 
 export function workbenchState() {
@@ -10,7 +10,7 @@ export function workbenchState() {
   return {
     runners, runtimes, projects, view: { id: "main", revision: 0, root: null } as SavedView,
     markers: new Map<string, number>(), inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
-    connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false,
+    connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>, recoveryError: false,
     profiles: [] as ProfileRecord[], sessions: [] as AgentSession[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "index",
   };
 }
@@ -32,6 +32,16 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     if (path.endsWith("/me")) return reply({ id: "owner", email: "owner@test.dev" });
     if (path === "/api/v1/runners") return reply({ items: state.runners });
     if (path === "/api/v1/profiles") return reply({ items: state.profiles });
+    if (path === "/api/v1/agents") {
+      state.directoryRequests.push(url.searchParams.get("cursor") ?? "");
+      const start = Number(url.searchParams.get("cursor") ?? 0), end = start + state.directoryPageSize;
+      const runners = state.runners.slice(start, end), issues = runners.flatMap((runner) => state.discoveryError || state.discoveryIssues[runner.id] ? [{ runner_id: runner.id, code: state.discoveryIssues[runner.id] ?? "RUNNER_UNAVAILABLE" }] : []);
+      const items = runners.flatMap((runner) => !runner.binding || !runner.online || issues.some((issue) => issue.runner_id === runner.id) ? [] : (state.runtimes[runner.id] ?? []).map((runtime) => {
+        const target = targetFor(runner.binding!, runtime);
+        return { agent_ref: `ref-${runtime.id}`, target, runtime, recovery_error: state.recoveryError ? "RECOVERY_INDEX_UNAVAILABLE" : undefined, session: state.sessions.find((session) => session.selected && session.last_runtime && targetKey(targetFor(session.binding, session.last_runtime)) === targetKey(target)) };
+      }));
+      return reply({ items, runners: runners.map((runner) => ({ runner, online: runner.online, ready: runner.online })), issues, next_cursor: end < state.runners.length ? String(end) : undefined });
+    }
     if (path === "/api/v1/agent-sessions") return reply({ items: state.sessions });
     if (path === "/api/v1/projects") {
       if (method === "GET") return reply({ items: state.projects });

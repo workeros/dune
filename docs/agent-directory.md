@@ -16,4 +16,4 @@ HTTP 使用个人前缀 `/api/v1` 或 Tenant 前缀 `/api/v1/tenants/{tenant}`�
 
 List / Get 从 fabricd 回执采集 native_session 到数据库，不接受调用方提交原生观察。启动快照存在时，按确认序号维护恢复记录和当前关联。直接由底层 SDK 启动且没有快照的 Runtime 仍可发现，但不会伪造恢复配置。数据库采集失败时保留 Runtime 并返回 `recovery_error`，不能据此再启动一次。原生会话改变后不会把旧恢复摘要关联到新观察。
 
-公共发现不返回启动命令、环境或存储身份。ACP 的 load 支持与 list 支持独立；当前仅在可靠 ID 已入库后显示可恢复。此入口本身不发送 new/load/prompt，也不自动恢复已停止的 Runtime。两产品工作台的发现迁移及 MCP 工具装配属于后续接入。
+公共发现不返回启动命令、环境或存储身份。ACP 的 load 支持与 list 支持独立；当前仅在可靠 ID 已入库后显示可恢复。此入口本身不发送 new/load/prompt，也不自动恢复已停止的 Runtime。两产品工作台已经使用此分页入口，不再在浏览器按 Runner 分别执行 runtime.list 或拼接历史索引。单个 Runner 暂时失败保留已有会话，访问被拒绝则断开；原生会话切换只更新 pane 的恢复记录，不重建终端 / ACP 连接。MCP 工具装配仍待接入。

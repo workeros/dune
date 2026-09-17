@@ -1,0 +1,31 @@
+import { expect, test } from "@playwright/test";
+import { mockWorkbench, workbenchState } from "./workbench-fixture";
+import { leaves } from "../src/workbench/model";
+
+test("shared discovery follows pages and refreshes native recovery references without reconnecting panes", async ({ page }) => {
+  const state = workbenchState(); state.directoryPageSize = 1;
+  state.sessions.push({ id: "native-a", revision: 3, selected: true, binding: state.runners[0].binding!, adapter: "acp", agent_type: "fixture", working_directory: "/repo-a", status: "available", last_runtime: state.runtimes.one[1] });
+  await mockWorkbench(page, state); await page.goto("/");
+  await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+  await page.getByRole("button", { name: "打开 B-PTY · Runner two", exact: true }).click();
+  await expect.poll(() => state.connections.length).toBe(2);
+  await expect.poll(() => leaves(state.view.root).find((item) => item.pane.target.runtime.id === "one-acp")?.pane.session_record_id).toBe("native-a");
+  expect(state.directoryRequests).toContain("1");
+  expect(state.calls.some((call) => call.operation === "runtime.list")).toBe(false);
+  state.sessions[0].selected = false;
+  state.sessions.push({ ...state.sessions[0], id: "native-b", selected: true });
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect.poll(() => leaves(state.view.root).find((item) => item.pane.target.runtime.id === "one-acp")?.pane.session_record_id).toBe("native-b");
+  expect(state.connections).toHaveLength(2);
+  state.discoveryIssues.two = "RUNNER_UNAVAILABLE";
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.getByText("Runner two：暂时无法读取 Agent 列表", { exact: true })).toBeVisible();
+  await expect(page.locator(".xterm-helper-textarea")).toHaveCount(1);
+  state.recoveryError = true;
+  state.discoveryIssues.two = "ACCESS_DENIED";
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.getByText("会话恢复索引暂不可用，已运行的 Agent 可以继续使用。", { exact: false })).toBeVisible();
+  await expect(page.locator(".xterm-helper-textarea")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true })).toBeVisible();
+  expect(state.connections).toHaveLength(2);
+});
