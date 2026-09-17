@@ -70,3 +70,9 @@ Dune 同一构建工具下的基线 `cd9513a` 与当前生产产物：
 - 外部写入不受 Engine 文件锁协调，分块读取和搜索不是快照；脱离受管进程组的进程不在 PTY 强终止保证内。
 
 使用说明：[授权](access-checks.md)、[搜索与文件](file-search.md)、[安装升级](install-upgrade.md)、[PTY](tmux-backend.md)、[验证流程](workflow.md)。
+
+## Review 修复与复验（2026-09-17）
+
+上述初次交付后修复了三处边界问题。Dune 提交 `d36b2323322eb32af97fd3b942384eae8464ed5f` 保留搜索 root 的目录别名，使搜索结果与目录列表、文件读取使用相同路径。SandDance 同步锁定主模块与 IM 到 `v0.0.0-20260917081151-d36b2323322e`，升级程序通过目标目录内的临时副本原子替换，并统一取消搜索、目录树、标签切换和编辑器关闭引起的过期导航。
+
+本次重新通过 Dune 主模块与 IM 全量测试、`make check-go`、`make build`、搜索 race 回归，以及 SandDance `GOWORK=off` 全量 Go 测试和 vet、升级模块 race、Web 类型检查和生产构建、135 个浏览器用例。跨文件系统安装已在 macOS 的临时 HFS+ 映像与本机数据卷之间实测通过，测试映像已卸载删除。以上不替代前文尚未执行的真实 Agent、休眠或真实服务管理器验收；本次未重跑 PostgreSQL 和四平台归档构建。
