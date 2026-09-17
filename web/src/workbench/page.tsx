@@ -2,12 +2,13 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
 import { bindingKey, call, errorText, listAll, type ProfileRecord, type Runner } from "../lib/api";
-import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, syncSessionRecords, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
+import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, restorePane, syncSessionRecords, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
 import { useView } from "./use-view";
 import { useAgents } from "./use-agents";
 import { useReadMarkers } from "./use-read-markers";
 import { ProjectEditor, useProjects } from "./projects";
 import { SplitCanvas } from "./splits";
+import { SessionRecovery } from "./recovery";
 import { StartAgent } from "./start-agent";
 import { Diff } from "./diff";
 import { Files } from "./files";
@@ -54,14 +55,14 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     else if (runner && !bindingValid) unavailable = "原环境绑定已失效，请从列表选择当前会话。";
     else if (runner && !runner.online) unavailable = "开发环境离线，等待重新连接。";
     else if (discoveryError) unavailable = `暂时无法核验会话：${discoveryError}`;
-    else if (directory.checked.has(key) && !agent) unavailable = "原会话已失效，当前还没有可用的恢复索引。可以新建 Agent。";
+    else if (directory.checked.has(key) && !agent) unavailable = leaf.pane.session_record_id ? "原运行会话已结束，可以检查原生恢复记录。" : "原会话已失效，当前还没有可用的恢复索引。可以新建 Agent。";
     return <div className="agent-pane-card"><header>
       <button className="pane-title" onClick={() => focus(leaf.id)} title={`${projectName} · ${runner?.name ?? leaf.pane.target.binding.runner_id}`}><strong>{agent?.runtime.title ?? leaf.pane.target.runtime.adapter.toUpperCase()}</strong><small>{projectName} · {runner?.name ?? "原环境"}</small></button>
       <span className="pane-status">{agent ? activityLabel(agent.runtime) : "待核验"} · {leaf.pane.target.runtime.adapter.toUpperCase()}</span>
       <Button size="sm" variant="ghost" aria-label={`固定审阅 ${agent?.runtime.title ?? leaf.id}`} onClick={() => { saved.change((old) => ({ ...old, review_pane: old.review_pane === leaf.id ? undefined : leaf.id })); setReview((old) => old || "git"); }}>{saved.view.review_pane === leaf.id ? "取消固定" : "固定审阅"}</Button>
       {available && <Button size="sm" variant="ghost" aria-label={`${agent.runtime.state === "running" ? "停止" : "删除"} ${agent.runtime.title ?? leaf.id}`} onClick={() => setStopping(agent)}>{agent.runtime.state === "running" ? "停止" : "删除"}</Button>}
       <Button size="sm" variant="ghost" aria-label={`移出 ${agent?.runtime.title ?? leaf.id}`} title="移出视图，Agent 继续运行" onClick={() => saved.change((old) => removePane(old, leaf.id))}>移出</Button>
-    </header><div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane binding={leaf.pane.target.binding} runtime={agent.runtime} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
+    </header>{leaf.pane.session_record_id && agent?.runtime.state !== "running" && <SessionRecovery key={leaf.pane.session_record_id} prefix={prefix} recordID={leaf.pane.session_record_id} current={directory.agents.find((item) => item.session?.id === leaf.pane.session_record_id && item.session?.selected)} enabled={true} ready={!!bindingValid && !!runner?.online && directory.checked.has(key)} onRefresh={directory.refresh} onRestored={(runtime, session) => { if (!runner) return; const restored = directory.add(runner, runtime, session); if (restored) saved.change((view) => restorePane(view, leaf.id, restored, session)); }} />}<div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane binding={leaf.pane.target.binding} runtime={agent.runtime} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
   };
   const visibleAgents = directory.agents.filter((agent) => !projectID || projectFor(agent, projects.projects)?.project.id === projectID);
   return <div className="parallel-workbench">

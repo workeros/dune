@@ -95,3 +95,14 @@ export function syncSessionRecords(view: ViewSpec, agents: Agent[]): ViewSpec {
   const root = view.root ? visit(view.root) : null;
   return root === view.root ? view : { ...view, root };
 }
+
+export function restorePane(view: ViewSpec, id: string, agent: Agent, session: AgentSession): ViewSpec {
+  const original = leaves(view.root).find((leaf) => leaf.id === id);
+  if (!original || original.pane.session_record_id !== session.id) return view;
+  const existing = leaves(view.root).find((leaf) => leaf.id !== id && targetKey(leaf.pane.target) === targetKey(agent.target));
+  if (existing) {
+    const removed = removePane(view, id);
+    return { ...removed, focus_pane: view.focus_pane === id ? existing.id : removed.focus_pane, review_pane: view.review_pane === id ? existing.id : removed.review_pane };
+  }
+  return { ...view, root: mapNode(view.root!, id, () => ({ ...original, pane: { target: agent.target, session_record_id: session.id, project_id: session.project_id, directory_id: session.directory_id } })) };
+}

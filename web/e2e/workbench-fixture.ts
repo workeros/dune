@@ -11,6 +11,7 @@ export function workbenchState() {
     runners, runtimes, projects, view: { id: "main", revision: 0, root: null } as SavedView,
     markers: new Map<string, number>(), inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
     connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>, recoveryError: false,
+    resumeRequests: [] as { id: string; revision: number }[], resumeOutcome: "success" as "success" | "unknown" | "pending",
     profiles: [] as ProfileRecord[], sessions: [] as AgentSession[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "index",
   };
 }
@@ -43,6 +44,21 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
       return reply({ items, runners: runners.map((runner) => ({ runner, online: runner.online, ready: runner.online })), issues, next_cursor: end < state.runners.length ? String(end) : undefined });
     }
     if (path === "/api/v1/agent-sessions") return reply({ items: state.sessions });
+    const recoveryRoute = path.match(/^\/api\/v1\/agent-sessions\/([^/]+)(\/resume)?$/);
+    if (recoveryRoute) {
+      const session = state.sessions.find((item) => item.id === recoveryRoute[1]);
+      if (!session) return reply({ code: "NOT_FOUND", error: "session missing" }, 404);
+      if (method === "GET") return reply(session);
+      state.resumeRequests.push({ id: session.id, revision: body.revision });
+      session.revision++; session.attempt = { id: "resume-attempt", kind: "resume", state: state.resumeOutcome === "success" ? "ready" : state.resumeOutcome === "unknown" ? "unknown" : "capturing", base_revision: body.revision };
+      session.status = state.resumeOutcome === "success" ? "available" : state.resumeOutcome === "unknown" ? "unknown" : "pending_capture";
+      if (state.resumeOutcome === "success") {
+        const runtime: AgentRuntime = { ...session.last_runtime!, id: "resumed-acp", incarnation: "resumed-boot", state: "running", title: "Restored ACP", working_directory: session.working_directory };
+        session.last_runtime = runtime; state.runtimes[session.binding.runner_id].push(runtime);
+        return reply({ session, runtime });
+      }
+      return state.resumeOutcome === "unknown" ? reply({ code: "RESULT_UNKNOWN", error: "load result unknown", result: { session } }, 503) : reply({ session });
+    }
     if (path === "/api/v1/projects") {
       if (method === "GET") return reply({ items: state.projects });
       const project = { ...body, id: `project-${state.projects.length}`, revision: 1 }; state.projects.push(project); return reply(project, 201);

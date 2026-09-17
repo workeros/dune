@@ -30,7 +30,7 @@
 
 原生 cwd 与进程启动 cwd 分开保存：`native.cwd` 用于 session/load，快照中的工作目录仍用于重新启动进程。摘要显示原生 cwd，二者不同时不冒用原项目目录 ID。`selected` 表示此记录是数据库中关联到 Runtime 的当前选择，不表示 Runtime 在线。两产品发现列表只使用 selected 记录关联项目；历史记录仍可用于显式继续。
 
-本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；两产品工作台同步最新 selected 恢复记录到个人布局，并在索引暂不可用时保留运行中的 Agent。`App.AgentRestorer()` 已实现 managed ACP 的显式继续；页面的“继续”入口和 PTY 原生恢复仍待接入。
+本层提供 `RuntimeAgentSession` 查询与 `ObserveAgentSession` 采集方法。[AgentDirectory](agent-directory.md) 的 List / Get 已自动采集 fabricd 原生确认；两产品工作台同步最新 selected 恢复记录到个人布局，并在索引暂不可用时保留运行中的 Agent。`App.AgentRestorer()` 已实现 managed ACP 的显式继续；两产品已提供保存 pane 的“继续”入口；PTY 原生恢复仍待接入。
 
 ## 原生 ACP 继续服务
 
@@ -45,3 +45,11 @@
 成功恢复后，旧 Runtime 即使仍在发现列表中，其迟到原生观察也不重新占用恢复记录，不显示为数据库故障。若恢复后的 Runtime 又被显式切换到另一原生会话，重复点击原恢复请求返回 STALE_SESSION，不能把另一个对话当成原会话的继续。
 
 本地 Gateway / fabricd 验证覆盖修改并删除来源 Profile 后恢复实际快照、setup 只运行一次、原生与进程 cwd 分离、load=true/list=false、并发请求单次启动、已知失败后显式重试、丢失响应保留 unknown 屏障、缺失 load 能力及版本变化拒绝。测试使用可控协议进程；厂商 Agent 原生文件恢复与多 Pod 故障仍需整体验收。
+
+## 工作台继续入口
+
+Dune 与 SandDance 在原 Runtime 结束后显示保存会话的恢复入口。用户明确点击“继续会话”才提交当前记录修订；页面刷新只查询，不执行恢复。成功后仅替换对应 pane 的运行引用，保留焦点、分屏和固定审阅；若新 Runtime 已在另一个 pane 中打开，则聚焦已有 pane，避免两个控制入口。
+
+并发请求返回 pending 时，页面通过共享发现观察同一个恢复 attempt，确认后接入。另一个窗口已经完成恢复时提供“连接已恢复会话”。结果未知时保留提示和查询入口，不自动重放；只有观察到更新的已知失败记录，才允许明确重试。离线或原 binding 已变化时不可提交恢复。
+
+已通过两端浏览器场景：显式继续、其他 pane 连接保持、重载不重复启动、未知结果刷新不重发、pending 跟随共享确认。这里只覆盖保存 pane 的入口；原生历史总列表及真实厂商 Agent 恢复不由这些界面测试证明。
