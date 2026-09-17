@@ -738,7 +738,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	wc.SetReadLimit(64 * 1024)
 	_ = wc.SetReadDeadline(time.Now().Add(45 * time.Second))
 	wc.SetPongHandler(func(string) error { return wc.SetReadDeadline(time.Now().Add(45 * time.Second)) })
-	done := make(chan error, 2)
+	inputDone := make(chan error, 1)
 	go func() {
 		for {
 			var input struct {
@@ -749,11 +749,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				Cols   uint16 `json:"cols"`
 			}
 			if err := wc.ReadJSON(&input); err != nil {
-				done <- err
+				inputDone <- err
 				return
 			}
 			if !valid() {
-				done <- identity.ErrUnauthorized
+				inputDone <- identity.ErrUnauthorized
 				return
 			}
 			var err error
@@ -774,25 +774,27 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				err = fmt.Errorf("invalid browser input")
 			}
 			if err != nil {
-				done <- err
+				inputDone <- err
 				return
 			}
 		}
 	}()
-	frames := make(chan *pb.Message, 8)
+	type streamRead struct {
+		message *pb.Message
+		err     error
+	}
+	// Keep read errors behind all preceding messages, including exit and any
+	// retained PTY history, so EOF cannot close the browser before they arrive.
+	frames := make(chan streamRead, 8)
 	go func() {
 		for {
 			m, err := stream.Recv()
-			if err != nil {
-				done <- err
-				return
-			}
 			select {
-			case frames <- m:
+			case frames <- streamRead{message: m, err: err}:
 			case <-ctx.Done():
 				return
 			}
-			if m.Kind == "exit" && runtime.Adapter != "pty" {
+			if err != nil || (m.Kind == "exit" && runtime.Adapter != "pty") {
 				return
 			}
 		}
@@ -803,13 +805,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
+	exited := false
 	for {
 		select {
-		case m := <-frames:
+		case frame := <-frames:
+			if frame.err != nil {
+				if exited && errors.Is(frame.err, io.EOF) {
+					_ = wc.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(5*time.Second))
+				} else {
+					_ = write(browserEvent{Type: "error", Code: "STREAM_INTERRUPTED", Error: frame.err.Error()})
+				}
+				return
+			}
 			if !valid() {
 				_ = write(browserEvent{Type: "error", Code: "UNAUTHORIZED", Error: "access revoked"})
 				return
 			}
+			m := frame.message
 			event := browserEvent{Type: m.Kind, Payload: m.Payload, Data: string(m.Data), RequestID: m.RequestId, Code: m.Code, Error: m.Detail}
 			if runtime.Adapter == "pty" && m.Kind == "data" {
 				event.Binary = true
@@ -818,10 +830,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if err := write(event); err != nil {
 				return
 			}
-			if m.Kind == "exit" && runtime.Adapter != "pty" {
-				return
+			if m.Kind == "exit" {
+				exited = true
+				if runtime.Adapter != "pty" {
+					_ = wc.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(5*time.Second))
+					return
+				}
 			}
-		case err := <-done:
+		case err := <-inputDone:
 			_ = write(browserEvent{Type: "error", Code: "STREAM_INTERRUPTED", Error: err.Error()})
 			return
 		case <-ping.C:

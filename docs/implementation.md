@@ -46,6 +46,8 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`，daemon 调用 TCP CloseWrite，两方向都完成后返回 result。Yamux Close 用于取消/结束 stream。其他业务的 EOF 若未见 result/exit，SDK 返回 STREAM_INTERRUPTED；已提交 unary 调用丢失结果时为 RESULT_UNKNOWN，不自动重试。断开已受理的 Exec/Git 不回滚，也不保证立即取消；其超时仍有效。交互订阅断开不会停止 Agent。
 
+Web PTY 订阅按同一队列转发消息和读取结束，保证 `exit` 及后续历史画面先于关闭送达。已转发 `exit` 后的 EOF 使用正常 WebSocket 关闭码 1000；未确认退出的 EOF 或其他断流错误仍返回 STREAM_INTERRUPTED。非零退出码通过 `exit` 表达，不属于连接异常；收到 `exit` 本身不会关闭仍可浏览历史的 PTY 订阅。
+
 ## 机器配置和 Profile
 
 配置字段：`gateway`、`listen`、`token`、`target`、`log_level`；仅显式 WSS 配置使用 `certificate` 和 `key`。SDK 客户端无需 `listen` 或私钥。log_level 目前保存设置，日志使用 Go 标准 logger，只有运行信息/错误；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。为兼容原有配置，显式选择 wss 时仍验证证书，init 会把连接地址加入证书 SAN。
