@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/aiomni/dune/internal/agentintegration"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/tmux"
 )
@@ -82,6 +84,23 @@ func RunHelper(args []string) (code int, handled bool) {
 		return 0, false
 	}
 	switch args[0] {
+	case agentintegration.SessionCommand:
+		// Native hooks are observational: no stdout, event echo or policy
+		// decision. A missing receipt must not block the Agent's own lifecycle.
+		if len(args) == 1 {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			done := make(chan struct{})
+			go func() {
+				_ = agentintegration.Report(ctx, os.Getenv(agentintegration.SessionDirEnv), os.Getenv("CODEX_THREAD_ID"), os.Stdin)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+		}
+		return 0, true
 	case "_cleanup":
 		return process.CleanupGuard(), true
 	case "_pty_guard":
