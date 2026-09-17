@@ -38,6 +38,7 @@
 - [ ] MCP 注入后的运行凭据脱敏验收：实际厂商日志和其他输出位置。
 - [x] MCP 自动注入：managed ACP 和受支持 PTY 通过共享启动 / 恢复服务签发；PTY bridge 等待 Runtime 入库后的配置。
 - [x] 两产品协作交互：共享 ACP new/load/prompt、pending、按操作查询和读取、输出不完整与引用失效提示。
+- [x] 本地多宿主验收：三 Web 进程、独立 peer TLS 入口、共享 PostgreSQL、Web / MCP 同队列、宿主 / Gateway / fabricd 故障边界。
 - [ ] 集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、恢复旧配置及真实 Agent 互操作。
 
 清单按产品交付顺序排列；底层依赖可先实现。一个功能涉及两仓库时各自提交，记录对应提交与验证。未通过的外部验收明确记录，不以 mock 或文档检查代替。
@@ -124,3 +125,5 @@
 - 原生启动环境隔离：清除宿主继承的 `CODEX_THREAD_ID`，与每次重建的 hook / MCP 环境一起处理，避免新 Agent 的 SessionStart 被当作另一个父线程的回调丢弃。注入环境与原生身份定向 race、相关 vet 及调整后的普通回归通过。实际 Codex 0.140.0 在首次 prompt 后确认 SessionStart；进入欢迎界面时尚未产生确认，恢复索引继续以 hook 事件为准。
 
 - Codex 原生验收入口：新增显式 opt-in 测试，普通检查跳过且编译 / vet 通过。实际运行用隔离的已登录目录，确认本机 Codex 0.140.0 的目录 / hook 信任、PTY 输入及首次提交后的 SessionStart。模型请求被账号 usage limit 拒绝（CLI 提示 2026-09-19 16:16 后再试），未观察到真实模型发起的 MCP 工具调用，完整原生恢复流程未计为通过。没有修改全局 Codex 配置，额度阻塞不重复触发模型请求。
+
+- 本地多宿主进程验收：`TestPostgresClusterWebProcesses` 普通及 race 通过，子 Web / fabricd 程序也以 race 构建。三 Web 进程使用共享 PostgreSQL 和独立 TLS peer，Web A / MCP C 经 Gateway owner B 提交到同一 ACP 队列；A 被杀并重启后 pending / wait / read 保持，A / B 输出独立。Gateway owner 被杀并重启后 fabricd 输出不变；fabricd 被杀并重启后 PTY 调用方仍能认证，原 ACP 操作明确返回失效。初次测试只观察 online 标记，遇到 owner 刚退出后的路由滞后；改为完整链路的只读 `agents_get` 等待，不重放写入。以上为同机多进程拓扑，未表述为实际 Kubernetes Pod 或跨主机部署验收。
