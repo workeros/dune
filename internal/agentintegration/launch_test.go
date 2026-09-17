@@ -17,7 +17,7 @@ func TestLaunchKeepsNativeSettingsAndStableHookDefinition(t *testing.T) {
 				t.Fatal(err)
 			}
 			originalArgs := []string{filepath.Join("/usr/local/bin", agent)}
-			originalEnv := []string{"CUSTOM=kept", SessionDirEnv + "=/wrong", HelperEnv + "=/wrong"}
+			originalEnv := []string{"CUSTOM=kept", SessionDirEnv + "=/wrong", HelperEnv + "=/wrong", "CODEX_THREAD_ID=parent-thread"}
 			argv, env, err := Launch(dir, Binding{RuntimeID: "runtime", Incarnation: "boot", Agent: agent}, originalArgs, originalEnv, false)
 			if err != nil {
 				t.Fatal(err)
@@ -27,6 +27,9 @@ func TestLaunchKeepsNativeSettingsAndStableHookDefinition(t *testing.T) {
 			}
 			if !slices.Contains(env, "CUSTOM=kept") || !slices.Contains(env, SessionDirEnv+"="+dir) || !slices.Contains(env, HelperEnv+"="+filepath.Join(dir, "helper")) || slices.Contains(env, HelperEnv+"=/wrong") {
 				t.Fatal(env)
+			}
+			if slices.Contains(env, "CODEX_THREAD_ID=parent-thread") {
+				t.Fatal("new Agent inherited the host's native identity")
 			}
 			if strings.Contains(strings.Join(argv, " "), "bypass") || strings.Contains(strings.Join(argv, " "), dir) {
 				t.Fatal("trust bypass or variable hook definition", argv)

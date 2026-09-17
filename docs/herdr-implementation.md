@@ -120,3 +120,5 @@
 - PTY 自动 MCP 签发：身份 / 授权 / metadata / agentservice / webapp 回归（独立 PostgreSQL）通过；host 全量首次两个新增场景误用 ACP 停止判定，改为 PTY 停止即引用失效后，PTY 注入 / 恢复及 ACP 注入定向 race 全部通过，相关 vet 通过。本地 CLI 协议进程收到实际注入参数后，通过真实 bridge 调用宿主 `agents_list`，验证 Runtime 先入库再鉴权、恢复轮换、重复恢复不重发及失败保留 Runtime。SandDance 全量 Go（本地 workspace / 独立 PostgreSQL）通过。真实 Codex 登录检查目前遇到全局配置解析错误，未据此计为厂商模型或原生交互通过。
 
 - 真实 Codex 启动发现继承的 `TERM=dumb` 覆盖 tmux 终端类型，导致 CLI 停在终端确认。已使 PTY 固定使用 tmux 对外声明的 `xterm-256color`，并用显式传入 `TERM=dumb` 的回归覆盖；tmux 环境、PTY 原生身份和 MCP 集成用例及相关 vet 通过。本次修复单独提交，真实交互验收继续。
+
+- 原生启动环境隔离：清除宿主继承的 `CODEX_THREAD_ID`，与每次重建的 hook / MCP 环境一起处理，避免新 Agent 的 SessionStart 被当作另一个父线程的回调丢弃。注入环境与原生身份定向 race、相关 vet 及调整后的普通回归通过。实际 Codex 0.140.0 在首次 prompt 后确认 SessionStart；进入欢迎界面时尚未产生确认，恢复索引继续以 hook 事件为准。

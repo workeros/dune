@@ -71,9 +71,14 @@ func Launch(dir string, binding Binding, argv, env []string, requireMCP bool) ([
 	}
 	resultEnv := make([]string, 0, len(env)+2)
 	for _, value := range env {
-		if !strings.HasPrefix(value, SessionDirEnv+"=") && !strings.HasPrefix(value, HelperEnv+"=") && !strings.HasPrefix(value, mcpbridge.URLEnv+"=") && !strings.HasPrefix(value, mcpbridge.TokenEnv+"=") {
-			resultEnv = append(resultEnv, value)
+		key, _, _ := strings.Cut(value, "=")
+		switch key {
+		case SessionDirEnv, HelperEnv, "CODEX_THREAD_ID", mcpbridge.URLEnv, mcpbridge.TokenEnv:
+			// This launch gets its own identity and MCP context, even when
+			// the Runner was itself started from another Agent's environment.
+			continue
 		}
+		resultEnv = append(resultEnv, value)
 	}
 	resultEnv = append(resultEnv, SessionDirEnv+"="+dir, HelperEnv+"="+helper)
 	return argv, resultEnv, nil
