@@ -10,6 +10,8 @@
 
 内容结果包含绝对 Path、从 1 开始的 Line、原始 UTF-8 Text（第一行保留 BOM）、UTF-8 字节范围 Ranges（End 不含）及 Before/After 行。客户端必须转换成编辑器列单位。rg 命中文件会再读取一次，在预算内核对完整 UTF-8 字节和每个候选命中，其他编码或扫描期间变化的文件不返回为确认结果。它不是磁盘快照。
 
+搜索结果和问题中的路径沿用请求 root 的目录别名，与目录列表、stat、read 保持一致。root 可以是符号链接；搜索不会把返回路径改成链接目标的真实路径，也不会因此跟随 root 内的目录链接。
+
 默认 200 / 最大 1000 处命中，默认 5 / 最大 10 秒，序列化响应不超过 1 MiB，每 Engine 最多 2 个查询、每 rg 最多 2 个线程。内容单文件最多 16 MiB、单条 rg JSON 与每项上下文最多 256 KiB，最多 10 行上下文；路径模式不按内容大小过滤。结果数达到上限时保守报告不完整，即使恰好等于全集。`Complete=false` 与有界 Issues 给出 result_limit、byte_limit、timeout、content_encoding、path_encoding、file_size_limit、line_size_limit、context_size_limit、file_changed、read_error 等原因；more_issues 表示还有未列出的原因。被正常 ignore/glob 排除不属于错误。
 
 取消通过 HTTP context / SDK stream / Gateway 到达 fabricd，只读搜索会终止并 Wait rg。写入和 Agent 请求的断线语义保持结果未知，不自动重放。服务默认运行随发行包安装的固定 rg；缺失返回 DEPENDENCY_MISSING。详见 [发行依赖](releases.md)。

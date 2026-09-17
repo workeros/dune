@@ -90,6 +90,41 @@ func TestSearchScopeAndModes(t *testing.T) {
 	}
 }
 
+func TestSearchPreservesRootAlias(t *testing.T) {
+	engine := searchEngine(t)
+	root := t.TempDir()
+	actual := filepath.Join(root, "actual")
+	alias := filepath.Join(root, "workspace")
+	searchWrite(t, actual, "note.txt", "needle\n")
+	if err := os.Symlink(actual, alias); err != nil {
+		t.Fatal(err)
+	}
+	page, err := listFilePage(context.Background(), alias, "", 10)
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("list: %+v %v", page, err)
+	}
+	for _, mode := range []string{"path", "content"} {
+		t.Run(mode, func(t *testing.T) {
+			query := "needle"
+			if mode == "path" {
+				query = "note"
+			}
+			result, err := engine.search(context.Background(), alias, api.SearchOptions{Mode: mode, Query: query})
+			if err != nil || !result.Complete || len(result.Matches) != 1 {
+				t.Fatalf("search: %+v %v", result, err)
+			}
+			path := result.Matches[0].Path
+			if path != page.Items[0].Path {
+				t.Fatalf("search path %q differs from directory entry %q", path, page.Items[0].Path)
+			}
+			chunk, err := readFileChunk(api.File{Path: path, Length: 32, WithRevision: true})
+			if err != nil || string(chunk.Data) != "needle\n" || chunk.Info.Path != path {
+				t.Fatalf("open search result: %+v %v", chunk, err)
+			}
+		})
+	}
+}
+
 func TestSearchUTF8AndBudgets(t *testing.T) {
 	engine := searchEngine(t)
 	root := t.TempDir()
