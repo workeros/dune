@@ -22,6 +22,7 @@ import (
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
@@ -41,6 +42,7 @@ func (s *Server) setSession(w http.ResponseWriter, token string, lifetime time.D
 }
 
 type Options struct {
+	AgentLauncher agents.Launcher
 	// TrustedProxies contains CIDRs allowed to supply X-Forwarded-For.
 	TrustedProxies []string
 	Binaries       string
@@ -115,9 +117,11 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	if options.TenantScoped {
 		s.projectRoutes("/api/v1/tenants/{tenant}")
 		s.viewRoutes("/api/v1/tenants/{tenant}")
+		s.agentSessionRoutes("/api/v1/tenants/{tenant}")
 	} else {
 		s.projectRoutes("/api/v1")
 		s.viewRoutes("/api/v1")
+		s.agentSessionRoutes("/api/v1")
 	}
 	if !options.TenantScoped {
 		s.mux.HandleFunc("GET /api/v1/profiles", s.listProfiles)
@@ -553,28 +557,6 @@ func operationError(w http.ResponseWriter, err error) {
 		}
 	}
 	writeError(w, status, code, err.Error())
-}
-
-func (s *Server) start(w http.ResponseWriter, r *http.Request) {
-	client, ok := s.executionClient(w, r)
-	if !ok {
-		return
-	}
-	defer client.Close()
-	var profile api.Profile
-	if !readJSON(w, r, &profile) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-	profile.ManagedACP = profile.Adapter == "acp"
-	runtime, stream, err := client.Start(ctx, profile)
-	if err != nil {
-		operationError(w, err)
-		return
-	}
-	stream.Close()
-	writeJSON(w, 201, runtime)
 }
 
 type browserEvent struct {

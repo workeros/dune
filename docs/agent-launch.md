@@ -1,6 +1,6 @@
 # 统一 Agent 启动服务
 
-`host.App.AgentLauncher()` 提供共享的进程内 `agents.Launcher`，供 Web 和 MCP 装配使用。该服务已实现；页面和 MCP 接入单独交付。调用者从认证上下文提供 `agents.Scope`，不能采信模型传入的 Tenant。
+`host.App.AgentLauncher()` 提供共享的进程内 `agents.Launcher`，两产品 Web 已接入，MCP 随后装配。调用者从认证上下文提供 `agents.Scope`，不能采信模型传入的 Tenant。
 
 `StartRequest` 指定完整 Runner binding、固定 Profile 修订（或自定义 Profile）、可选的项目修订和目录、工作目录，以及可选的新 worktree 路径 / 分支 / ref。未选 Profile 时使用所选项目的默认修订。项目修改冲突、跨 Owner 访问、失效绑定和未就绪环境在创建 worktree 前拒绝。只使用已有 Runner，不触发云环境创建。
 
@@ -19,3 +19,22 @@
 恢复适配器目前只识别标准 ACP transport 启动：`<agent> --acp`、`opencode acp`、`gemini --experimental-acp`、无额外参数的 `codex-acp` / `claude-agent-acp`。这表示命令形态可以构造 load，不表示已完成厂商互操作验收。任意 shell 命令或含额外一次性参数的命令不声明可自动恢复。后续恢复仍需确认 Agent 支持 load、原生 ID 有效、程序版本与存储前置条件满足。
 
 新 worktree 的会话保留项目 ID，但不冒充源目录 ID，也不自动修改共享项目目录配置。页面通过会话摘要关联新工作树；需要长期固定时由用户添加项目目录。
+
+## HTTP 与页面
+
+`POST /api/v1/runners/{runner}/sessions?machine_id=…&fabric_id=…&revision=…` 接收 `StartRequest`，URL 固定 Runner binding；正文若提供不同 binding 会被拒绝。不再接收裸 Profile。成功返回 201 和 `LaunchResult`；失败返回 `code`、`error`、`result`，其中 `result` 可以包含已经确认的 worktree、Runtime 或会话索引，调用方不得忽略部分成功并自动重发。
+
+```json
+{
+  "project": {"id": "project-id", "revision": 2},
+  "profile": {"id": "profile-id", "revision": 3},
+  "working_directory": "/workspace/source",
+  "worktree": {"path": "/workspace/helper", "branch": "feat/helper"}
+}
+```
+
+省略 `worktree` 使用当前目录。`custom` 可以提供自定义 Profile，与 `profile` 互斥。SandDance 普通终端继续走 Tenant 的 `terminal-sessions` 路由，由后端选择已保存 Shell 配置后转入同一个启动服务；该入口接收目录、项目和 worktree 选择，禁止用户混入 Profile。
+
+两产品的 `GET {prefix}/agent-sessions` 和 `GET {prefix}/agent-sessions/{id}` 返回 Owner / Tenant 内的恢复摘要；列表使用 `limit` / `cursor` 分页，不返回启动命令或环境。工作台把摘要与完整执行身份匹配，将 `session_record_id` 和项目关联保存到 pane，新 worktree 不会在刷新后丢失项目归类。索引读取失败会单独显示错误，不以索引代替 Runtime 存活检查。
+
+页面对部分成功保留现场：已创建 worktree 时切换为该目录；确认 Runtime 已启动时直接打开会话并显示索引错误。超时或断线不自动重发启动。此入口目前保存启动信息，原生 ID 采集与显式继续仍待后续功能。

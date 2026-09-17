@@ -1,4 +1,5 @@
 import type { AgentRuntime, Binding, Runner, Runtime } from "../lib/api";
+import type { AgentSession } from "./launch";
 
 export type AgentTarget = { binding: Binding; runtime: Pick<Runtime, "id" | "incarnation" | "generation" | "adapter"> };
 export type ProjectDirectory = { id: string; binding: Binding; path: string; repository?: string };
@@ -9,7 +10,7 @@ export type Split = { id: string; direction: "horizontal" | "vertical"; ratio: n
 export type LayoutNode = Leaf | Split;
 export type ViewSpec = { root: LayoutNode | null; focus_pane?: string; review_pane?: string };
 export type SavedView = ViewSpec & { id: string; revision: number };
-export type Agent = { target: AgentTarget; runtime: AgentRuntime; runner: Runner };
+export type Agent = { target: AgentTarget; runtime: AgentRuntime; runner: Runner; session?: AgentSession };
 export type ReadMarker = { target: AgentTarget; epoch: string; sequence: number };
 export const emptyView: ViewSpec = { root: null };
 
@@ -17,7 +18,7 @@ export function targetKey(target: AgentTarget): string {
   const b = target.binding, r = target.runtime;
   return JSON.stringify([b.runner_id, b.fabric_id, b.machine_id, b.revision, r.id, r.incarnation, r.generation]);
 }
-export function targetFor(binding: Binding, runtime: Runtime): AgentTarget {
+export function targetFor(binding: Binding, runtime: AgentTarget["runtime"]): AgentTarget {
   return { binding, runtime: { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter } };
 }
 export function leaves(root: LayoutNode | null): Leaf[] {
@@ -65,6 +66,10 @@ export function geometry(root: LayoutNode | null) {
   return { panes, dividers };
 }
 export function projectFor(agent: Agent, projects: Project[]) {
+  if (agent.session?.project_id) {
+    const project = projects.find((item) => item.id === agent.session!.project_id);
+    if (project) return { project, directory: project.directories.find((item) => item.id === agent.session!.directory_id) };
+  }
   return projects.flatMap((project) => project.directories.map((directory) => ({ project, directory }))).find(({ directory }) => {
     const a = agent.target.binding, b = directory.binding;
     return a.runner_id === b.runner_id && a.machine_id === b.machine_id && a.fabric_id === b.fabric_id && a.revision === b.revision && directory.path === agent.runtime.working_directory;

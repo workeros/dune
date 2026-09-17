@@ -189,8 +189,10 @@ func Open(parent context.Context, options Options) (*App, error) {
 			return nil, err
 		}
 	}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	web, err := webapp.NewServer(ctx, webapp.Options{
-		Assets: options.Assets, Binaries: options.Binaries,
+		AgentLauncher: app.AgentLauncher(),
+		Assets:        options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway:            dial,
 		Online:                 online,
@@ -203,7 +205,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app.web = web
 	assembled = true
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil

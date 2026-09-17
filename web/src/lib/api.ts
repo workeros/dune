@@ -4,13 +4,13 @@ export function siteURL(path: string): URL { return new URL(path.replace(/^\//, 
 export function socketURL(path: string): URL {
  const url = siteURL(path); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; return url;
 }
-export class APIError extends Error { constructor(message: string, public status: number, public code: string) { super(message); } }
+export class APIError extends Error { constructor(message: string, public status: number, public code: string, public result?: unknown) { super(message); } }
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(siteURL(path), { credentials: "same-origin", ...options, headers: { "Content-Type": "application/json", "X-Dune-Request": "1", ...options.headers } });
   if (response.status === 204 && response.ok) return undefined as T;
   let body: unknown;
   try { body = await response.json(); } catch { throw new APIError(`服务返回了无效响应（${response.status}）`, response.status, "INVALID_RESPONSE"); }
-  if (!response.ok) { const error = body as { error?: string; code?: string }; throw new APIError(error.code === "BINDING_CHANGED" ? "环境绑定已变化，请刷新列表并重新选择环境。" : error.code === "STALE_RUNTIME" ? "会话执行身份已变化，请重新选择会话。" : error.error ?? "请求失败", response.status, error.code ?? "FAILED"); }
+  if (!response.ok) { const error = body as { error?: string; code?: string; result?: unknown }; throw new APIError(error.code === "BINDING_CHANGED" ? "环境绑定已变化，请刷新列表并重新选择环境。" : error.code === "STALE_RUNTIME" ? "会话执行身份已变化，请重新选择会话。" : error.error ?? "请求失败", response.status, error.code ?? "FAILED", error.result); }
   return body as T;
 }
 export function post<T>(path: string, body: unknown) { return request<T>(path, { method: "POST", body: JSON.stringify(body) }); }

@@ -32,7 +32,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   const open = (agent: Agent) => {
     if (!saved.loaded) return;
     const association = projectFor(agent, projects.projects);
-    try { saved.change((current) => addPane(current, { target: agent.target, project_id: association?.project.id, directory_id: association?.directory.id }, direction, () => crypto.randomUUID())); setError(""); }
+    try { saved.change((current) => addPane(current, { target: agent.target, project_id: association?.project.id, directory_id: association?.directory?.id, session_record_id: agent.session?.id }, direction, () => crypto.randomUUID())); setError(""); }
     catch (cause) { setError(errorText(cause)); }
   };
   const focus = (id: string) => saved.change((old) => old.focus_pane === id ? old : { ...old, focus_pane: id });
@@ -67,7 +67,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     <header className="parallel-header"><div><h1>并行工作台</h1><p className="muted" role="status">{saved.error ? "布局未保存" : !saved.loaded ? "读取个人布局…" : saved.saving ? "保存布局中…" : "布局已保存"}</p></div><div className="flex flex-wrap gap-2"><label className="split-choice">新会话打开方向<select value={direction} onChange={(event) => setDirection(event.target.value as Split["direction"])}><option value="horizontal">左右分屏</option><option value="vertical">上下分屏</option></select></label><Button size="sm" variant={review === "files" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "files" ? "" : "files")}>文件</Button><Button size="sm" variant={review === "git" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "git" ? "" : "git")}>Git diff</Button></div></header>
     {saved.error && <div className="error-box mx-3" role="alert">{saved.error}<Button variant="outline" size="sm" onClick={() => void saved.reload()}>加载已保存布局</Button></div>}
     {(error || projects.error || read.error) && <p className="error-box mx-3" role="alert">{error || projects.error || read.error}</p>}
-    <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime) => { const agent = directory.add(runner, runtime); if (agent) open(agent); }} />
+    <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime, session) => { const agent = directory.add(runner, runtime, session); if (agent) open(agent); }} />
     <div className="parallel-body"><aside className="agent-navigation">
       <div className="nav-heading"><h2>项目</h2><Button size="sm" variant="ghost" onClick={() => setEditing("new")}>新建项目</Button></div>
       <nav aria-label="项目列表"><button className={!projectID ? "selected" : ""} onClick={() => setProjectID("")}>全部项目</button>{projects.projects.map((item) => <div className="project-nav-row" key={item.id}><button className={projectID === item.id ? "selected" : ""} title={item.name} onClick={() => setProjectID(item.id)}>{item.name}</button><Button size="sm" variant="ghost" aria-label={`编辑项目 ${item.name}`} onClick={() => setEditing(item)}>编辑</Button></div>)}</nav>

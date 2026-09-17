@@ -10,6 +10,10 @@
 .start-agent-fields select { height:40px; font-size:13px; }
 .start-agent-fields .start-directory { flex:1; max-width:none; min-width:220px; }
 .start-agent > .error-box { margin-top:10px; }
+.start-agent-worktree { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.start-agent-worktree label { flex:1; min-width:180px; font-size:12px; }
+.start-agent-worktree label:first-child { flex:2; min-width:240px; }
+.start-agent-worktree p { width:100%; margin:0; font-size:12px; }
 .parallel-body { display:grid; grid-template-columns:190px minmax(0,1fr); flex:1; min-height:0; }
 .parallel-body:has(.workbench-review) { grid-template-columns:190px minmax(0,1fr) minmax(270px,30%); }
 .agent-navigation { min-height:0; overflow:auto; padding:12px 8px; border-right:1px solid #35433e26; background:#fffaf055; }

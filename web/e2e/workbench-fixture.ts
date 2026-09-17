@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
-import type { AgentRuntime, Runner } from "../src/lib/api";
+import type { AgentRuntime, ProfileRecord, Runner } from "../src/lib/api";
 import type { Project, ReadMarker, SavedView } from "../src/workbench/model";
+import type { AgentSession, LaunchRequest, LaunchResult } from "../src/workbench/launch";
 
 export function workbenchState() {
   const runners: Runner[] = ["one", "two"].map((id) => ({ id, name: `Runner ${id}`, online: true, kind: "attached", binding: { runner_id: id, machine_id: `machine-${id}`, fabric_id: "attached", revision: 1 } }));
@@ -10,6 +11,7 @@ export function workbenchState() {
     runners, runtimes, projects, view: { id: "main", revision: 0, root: null } as SavedView,
     markers: new Map<string, number>(), inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
     connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false,
+    profiles: [] as ProfileRecord[], sessions: [] as AgentSession[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "index",
   };
 }
 export type WorkbenchState = ReturnType<typeof workbenchState>;
@@ -29,7 +31,8 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     if (path.endsWith("/bootstrap")) return reply({ login_methods: [{ kind: "password", url: "/api/v1/auth/login" }], attached: true, managed: false, tenant_scoped: false, local_registration: true });
     if (path.endsWith("/me")) return reply({ id: "owner", email: "owner@test.dev" });
     if (path === "/api/v1/runners") return reply({ items: state.runners });
-    if (path === "/api/v1/profiles") return reply({ items: [] });
+    if (path === "/api/v1/profiles") return reply({ items: state.profiles });
+    if (path === "/api/v1/agent-sessions") return reply({ items: state.sessions });
     if (path === "/api/v1/projects") {
       if (method === "GET") return reply({ items: state.projects });
       const project = { ...body, id: `project-${state.projects.length}`, revision: 1 }; state.projects.push(project); return reply(project, 201);
@@ -52,7 +55,18 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     if (path.endsWith("/read-markers")) { state.markers.set(key(body), Math.max(state.markers.get(key(body)) ?? 0, body.sequence)); return reply({ ...body, sequence: state.markers.get(key(body)) }); }
     const runner = path.match(/\/runners\/([^/]+)\/(call|sessions)$/);
     if (runner) {
-      if (runner[2] === "sessions") { state.starts++; return reply({ error: "unexpected start" }, 500); }
+      if (runner[2] === "sessions") {
+        state.starts++; state.launchRequests.push(body);
+        const binding = state.runners.find((item) => item.id === runner[1])!.binding!;
+        const profile = body.custom ?? state.profiles.find((item) => item.id === body.profile?.id)?.profile;
+        const runtime: AgentRuntime = { id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
+        const session: AgentSession = { id: `record-${state.starts}`, revision: 2, binding, project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, working_directory: runtime.working_directory!, adapter: runtime.adapter, agent_type: "fixture", status: "pending_capture", last_runtime: state.launchFailure === "start" ? undefined : runtime };
+        const result: LaunchResult = { session, worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
+        if (state.launchFailure !== "start") { result.runtime = runtime; state.runtimes[runner[1]].push(runtime); }
+        state.sessions.push(session);
+        if (state.launchFailure) return reply({ code: state.launchFailure === "start" ? "START_FAILED" : "RECOVERY_INDEX_FAILED", error: "startup confirmation failed", result }, 503);
+        return reply(result, 201);
+      }
       state.calls.push({ runner: runner[1], operation: body.operation, payload: body.payload });
       if (body.operation === "runtime.list") return state.discoveryError ? reply({ error: "discovery temporarily unavailable" }, 503) : reply(state.runtimes[runner[1]] ?? []);
       if (body.operation === "machine.info") return reply({ home: "/workspace" });
