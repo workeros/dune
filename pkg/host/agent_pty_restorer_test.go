@@ -23,11 +23,14 @@ import (
 func runHostNativeFixture() int {
 	mode, id := "start", os.Getenv("DUNE_HOST_NATIVE_ID")
 	args := os.Args[1:]
-	if len(args) == 4 && (args[0] == "--resume" || args[0] == "resume") {
+	if len(args) >= 2 && (args[0] == "--resume" || args[0] == "resume") {
 		mode, id, args = "resume", args[1], args[2:]
 	}
-	if len(args) != 2 || (args[0] != "--settings" && args[0] != "-c") {
+	if len(args) != 4 || (args[0] != "--settings" && args[0] != "-c") {
 		return 2
+	}
+	if !exerciseHostNativeMCP(args[2:]) {
+		return 9
 	}
 	cwd, err := os.Getwd()
 	if err != nil {

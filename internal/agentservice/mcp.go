@@ -15,7 +15,7 @@ import (
 func (s *Service) configureMCP(ctx context.Context, scope agents.Scope, connection *client.Client, runtime api.Runtime, session agents.Summary) error {
 	token, err := s.Store.IssueAgentCredential(ctx, scope, session.ID, session.Attempt.ID, time.Now().Add(metadata.AgentCredentialLifetime))
 	if err != nil {
-		return &api.Error{Code: "MCP_CONFIGURATION_FAILED", Detail: "Runtime started but its Agent credential could not be issued; no native session was submitted"}
+		return &api.Error{Code: "MCP_CONFIGURATION_FAILED", Detail: "Runtime started but its Agent credential could not be issued; inspect this Runtime before another start"}
 	}
 	_, err = connection.ConfigureAgentMCP(ctx, runtime, api.AgentMCP{URL: s.MCPURL, Token: token})
 	if err != nil {

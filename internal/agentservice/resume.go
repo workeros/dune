@@ -54,9 +54,9 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	if err != nil {
 		return result, err
 	}
-	requiredCapabilities := []string{"runtime.get", "runtime.stop", "machine.info"}
+	requiredCapabilities := []string{"runtime.get", "runtime.stop", "machine.info", "agent.mcp.configure"}
 	if profile.Adapter == "acp" {
-		requiredCapabilities = append(requiredCapabilities, "acp.state", "acp.action", "agent.mcp.configure", "agent.operation.wait")
+		requiredCapabilities = append(requiredCapabilities, "acp.state", "acp.action", "agent.operation.wait")
 	}
 	for _, required := range requiredCapabilities {
 		if !slices.Contains(connection.Binding.Capabilities, required) {
@@ -115,6 +115,9 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	}
 	setSession(session)
 	if runtime.Adapter == "pty" {
+		if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+			return s.failResume(ctx, scope, result, session, "failed", "MCP configuration was not confirmed for the recovery Runtime", true, connection)
+		}
 		return s.awaitPTYResume(ctx, scope, connection, result, session)
 	}
 	ready, err := awaitACPReady(ctx, connection, runtime)
@@ -181,6 +184,7 @@ func resumeProfile(session agents.Session) (api.Profile, error) {
 	case "acp-load":
 		profile.RequireAgentMCP = true
 	case "pty-claude", "pty-codex":
+		profile.RequireAgentMCP = true
 		if session.Native == nil {
 			return api.Profile{}, &api.Error{Code: "RECOVERY_UNAVAILABLE", Detail: "native PTY identity is missing"}
 		}

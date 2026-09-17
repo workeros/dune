@@ -142,6 +142,11 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 	if runtime.Adapter == "acp" {
 		return s.initializeACP(ctx, scope, connection, result)
 	}
+	if launch.Profile.RequireAgentMCP {
+		if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
 }
 
@@ -220,7 +225,7 @@ func (s *Service) resolveLaunch(ctx context.Context, owner string, request agent
 		launch.Profile.WorkingDirectory = directory
 	}
 	launch.Profile.ManagedACP = launch.Profile.Adapter == "acp"
-	launch.Profile.RequireAgentMCP = launch.Profile.ManagedACP
+	launch.Profile.RequireAgentMCP = launch.Profile.ManagedACP || launch.Profile.Adapter == "pty" && agentintegration.Agent(launch.Profile.Start.Argv) != ""
 	if err := launch.Profile.Validate(); err != nil {
 		return launch, invalid(err.Error())
 	}

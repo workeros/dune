@@ -36,7 +36,7 @@
 - [x] managed ACP 自动 MCP 注入：确认 Runtime 后签发、新建/恢复前配置，原生切换复用，恢复轮换。
 - [x] fabricd PTY MCP 配置：原生启动参数注入 bridge、凭据就绪等待、私有单次配置、tmux 生命周期保留与清理。
 - [ ] MCP 注入后的运行凭据脱敏验收：实际厂商日志和其他输出位置。
-- [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
+- [x] MCP 自动注入：managed ACP 和受支持 PTY 通过共享启动 / 恢复服务签发；PTY bridge 等待 Runtime 入库后的配置。
 - [x] 两产品协作交互：共享 ACP new/load/prompt、pending、按操作查询和读取、输出不完整与引用失效提示。
 - [ ] 集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、恢复旧配置及真实 Agent 互操作。
 
@@ -116,3 +116,5 @@
 
 - fabricd PTY MCP 配置：agentintegration / mcpbridge / api / access / client / fabricd / tmux / host 全量包检查通过，原生配置和 ACP 配置定向 race、相关 vet 通过。真实本地 tmux 中的可控 CLI 用生成的配置启动实际 bridge 并调用 HTTP MCP，覆盖配置前等待、一次配置、fabricd 重启保留、拒绝替换和停止清理；并发文件写入 / 清理与错误绑定、取消、过期、损坏配置通过。统一配置操作为 `agent.mcp.configure`，嵌入宿主的 `RunHelper` 分派 bridge，删除重复入口。厂商 UI、自动签发与真实 Tenant 通信验收继续推进。
 - 本轮 SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 回归通过，统一 MCP 操作名变更已覆盖共享宿主边界。
+
+- PTY 自动 MCP 签发：身份 / 授权 / metadata / agentservice / webapp 回归（独立 PostgreSQL）通过；host 全量首次两个新增场景误用 ACP 停止判定，改为 PTY 停止即引用失效后，PTY 注入 / 恢复及 ACP 注入定向 race 全部通过，相关 vet 通过。本地 CLI 协议进程收到实际注入参数后，通过真实 bridge 调用宿主 `agents_list`，验证 Runtime 先入库再鉴权、恢复轮换、重复恢复不重发及失败保留 Runtime。SandDance 全量 Go（本地 workspace / 独立 PostgreSQL）通过。真实 Codex 登录检查目前遇到全局配置解析错误，未据此计为厂商模型或原生交互通过。

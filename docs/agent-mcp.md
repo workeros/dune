@@ -25,7 +25,7 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 
 真实 HTTP MCP 客户端配合本地 Gateway / fabricd 协议进程已验证：九项工具 schema、Profile 分页与 Tenant 过滤、启动 ACP 后直接提交任务、操作 wait/read、轮流进入两个独立 HTTP handler、撤销后原连接被拒绝、调用 Runtime 退出、cookie / query / Origin 拒绝以及未知结果保留引用且不重发。它证明协议与本地执行链路，不代表两个实际 Pod 或厂商 Agent 已验收。
 
-managed ACP 从工作台或 MCP 启动时，先保存 Runtime 回执，再签发凭据并配置 fabricd，最后提交初始 new；显式恢复在 load 前签发新凭据。两产品复用同一宿主装配，endpoint 来自部署 PublicURL，保留部署路径前缀。普通终端内手动启动与原始 ACP 透传不自动改造；受支持 PTY 的原生注入继续接入。
+managed ACP 从工作台或 MCP 启动时，先保存 Runtime 回执，再签发凭据并配置 fabricd，最后提交初始 new；显式恢复在 load 前签发新凭据。受支持的 PTY 启动和精确恢复也先保存 Runtime 再签发配置，原生 bridge 等待此配置后才连接宿主。两产品复用同一宿主装配，endpoint 来自部署 PublicURL，保留部署路径前缀。普通终端内手动启动与原始 ACP 透传不自动改造。
 
 原生会话切换不轮换调用进程的凭据；显式恢复启动新的进程时轮换，旧 attempt 的凭据失效。凭据和 endpoint 不进入保存的 Profile 或恢复配置快照，也不返回给页面。恢复使用原配置快照，当前宿主的 MCP 地址与本次凭据作为运行注入单独处理。
 
@@ -53,4 +53,4 @@ Profile 的 `require_agent_mcp` 对 managed ACP 门禁原生动作，未配置 M
 
 PTY 配置随 tmux Runtime 保留，fabricd 重启不清除；`runtime stop` / forget 与配置写入共用文件锁并清理。运行目录只服务这个 Runtime，不是 Profile 或恢复数据库中的配置来源。新 Runtime 必须重新注入；宿主仍在每次调用验证凭据、执行实例和在线状态，保留文件不扩大权限。嵌入宿主统一调用 `fabricd.RunHelper` 即可分派 bridge 和原生 hook。
 
-本地真实 tmux、生成的 Claude 配置、实际 bridge 进程及 HTTP MCP 已验证首次等待、单次配置、重启后拒绝替换、配置保留和 stop 清理；文件锁 race 验证并发配置 / 清理。尚未由这些测试证明厂商 UI 工具已就绪，工作台启动服务的自动签发另行接入。
+本地真实 tmux、生成的 Claude 配置、实际 bridge 进程及 HTTP MCP 已验证首次等待、单次配置、重启后拒绝替换、配置保留和 stop 清理；文件锁 race 验证并发配置 / 清理。共享启动 / 恢复服务的自动签发通过本地 CLI 协议进程验证：首次 `agents_list` 已能通过活 Runtime 鉴权，恢复轮换 token，重复恢复不轮换，配置失败保留唯一已启动 Runtime。Codex 配置由夹具检查生成字段，真实厂商 CLI 的参数解析、信任与工具可用性单独验收；Runtime 或 SessionStart 就绪不代表原生 MCP 客户端一定连接成功。
