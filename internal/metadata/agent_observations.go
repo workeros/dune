@@ -122,6 +122,11 @@ func (s *Store) captureRuntimeSession(ctx context.Context, tx *sql.Tx, source ag
 					ID: source.Attempt.ID, Kind: "start", State: "capturing", Runtime: &target.Runtime, StartedAt: source.Attempt.StartedAt}}}
 			newRecord = true
 		}
+		if selected.Attempt.ID != source.Attempt.ID {
+			// A history record can resume independently of the original launch
+			// record. Its previous Runtime may not reclaim it with a late update.
+			return agents.Session{}, ErrStaleAgentObservation
+		}
 	}
 	changed, err := captureAgentState(&selected, target.Runtime, native)
 	if err != nil {

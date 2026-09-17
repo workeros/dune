@@ -204,3 +204,42 @@ func TestAgentRuntimeIndexAndCaptureFailuresAreAtomic(t *testing.T) {
 		}
 	})
 }
+
+func TestAgentHistoricalObservationCannotReviveResumedAssociation(t *testing.T) {
+	recoveryStores(t, func(t *testing.T, store *Store, _ storage.Config) {
+		_, original := observationFixture(t, store)
+		if _, err := store.ObserveAgentSession(t.Context(), "tenant", original, nativeObservation("first", "/src", 1)); err != nil {
+			t.Fatal(err)
+		}
+		native := nativeObservation("second", "/other", 2)
+		history, err := store.ObserveAgentSession(t.Context(), "tenant", original, native)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resuming, claimed, err := store.BeginAgentResume(t.Context(), "tenant", history.ID, history.Revision)
+		if err != nil || !claimed {
+			t.Fatal("resume claim", err)
+		}
+		next := original
+		next.Runtime = recoveryRuntime("resumed-history")
+		if _, err := store.RecordAgentRuntime(t.Context(), "tenant", history.ID, resuming.Attempt.ID, next.Runtime); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ObserveAgentSession(t.Context(), "tenant", next, native); err != nil {
+			t.Fatal(err)
+		}
+		for _, sequence := range []int64{2, 3} {
+			native.Sequence = sequence
+			if _, err := store.ObserveAgentSession(t.Context(), "tenant", original, native); !errors.Is(err, ErrStaleAgentObservation) {
+				t.Fatal("late historical observation was not recognized", err)
+			}
+		}
+		if _, err := store.RuntimeAgentSession(t.Context(), "tenant", original); !errors.Is(err, ErrNotFound) {
+			t.Fatal("old Runtime regained history selection", err)
+		}
+		current, err := store.RuntimeAgentSession(t.Context(), "tenant", next)
+		if err != nil || current.ID != history.ID || !current.Selected || *current.LastRuntime != next.Runtime {
+			t.Fatal("history recovery changed after late observation", err)
+		}
+	})
+}
