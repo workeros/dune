@@ -14,6 +14,19 @@ type ACPAction struct {
 	OptionID     string `json:"option_id,omitempty"`
 }
 
+// NativeSession is a confirmed native conversation, observed from a matching
+// new/load response or a supported native hook. Sequence orders confirmations
+// within one Runtime; it is internal recovery metadata, not an output cursor.
+// A failed or pending session switch does not replace the last confirmation.
+type NativeSession struct {
+	ID              string `json:"id"`
+	Cwd             string `json:"cwd"`
+	Sequence        int64  `json:"sequence"`
+	Source          string `json:"source"`
+	AgentVersion    string `json:"agent_version,omitempty"`
+	ResumeSupported bool   `json:"resume_supported"`
+}
+
 // AgentOperation identifies one accepted submission in the original fabricd
 // Runtime. A completed ACP RPC does not imply the user's task passed acceptance.
 type AgentOperation struct {
@@ -21,8 +34,9 @@ type AgentOperation struct {
 	State      string `json:"state"`
 	StopReason string `json:"stop_reason,omitempty"`
 	Error      string `json:"error,omitempty"`
-	// NativeSessionID is confirmed only by a successful new/load response.
-	NativeSessionID string `json:"native_session_id,omitempty"`
+	// NativeSession belongs to this operation's matching successful response,
+	// even when another caller has since changed the Runtime's session.
+	NativeSession *NativeSession `json:"native_session,omitempty"`
 }
 
 func (o AgentOperation) Terminal() bool {

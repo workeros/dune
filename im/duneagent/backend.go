@@ -127,10 +127,10 @@ func newSession(ctx context.Context, connection host.AgentConnection, runtime ap
 	if err != nil {
 		return "", err
 	}
-	if result.NativeSessionID == "" {
+	if result.NativeSession == nil || result.NativeSession.ID == "" {
 		return "", errors.New("ACP new did not confirm a native session ID")
 	}
-	return result.NativeSessionID, nil
+	return result.NativeSession.ID, nil
 }
 
 func (b Backend) Attach(ctx context.Context, session channel.ConversationSession, existing channel.AgentSession) (channel.AgentSession, error) {
@@ -198,10 +198,10 @@ func (b Backend) recoverSession(ctx context.Context, connection host.AgentConnec
 	if err != nil {
 		return channel.AgentSession{}, err
 	}
-	if loaded.NativeSessionID != existing.ACPSessionID {
+	if loaded.NativeSession == nil || loaded.NativeSession.ID != existing.ACPSessionID {
 		return channel.AgentSession{}, errors.New("ACP load did not confirm the requested native session")
 	}
-	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: loaded.NativeSessionID}, nil
+	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: loaded.NativeSession.ID}, nil
 }
 
 func (b Backend) Stop(ctx context.Context, session channel.ConversationSession, existing channel.AgentSession) error {

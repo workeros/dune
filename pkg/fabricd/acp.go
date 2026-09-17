@@ -49,20 +49,21 @@ const (
 )
 
 type acpController struct {
-	mu          sync.Mutex
-	controlMu   sync.Mutex
-	controlling bool
-	r           *runtime
-	state       acpState
-	pending     map[string]chan acpReply
-	permissions map[string]acpPermission
-	methods     map[string]string
-	done        chan struct{}
-	once        sync.Once
-	replaying   atomic.Bool
-	queue       []*acpQueuedAction
-	active      *acpQueuedAction
-	operations  *operationLog
+	mu             sync.Mutex
+	controlMu      sync.Mutex
+	controlling    bool
+	r              *runtime
+	state          acpState
+	pending        map[string]chan acpReply
+	permissions    map[string]acpPermission
+	methods        map[string]string
+	done           chan struct{}
+	once           sync.Once
+	replaying      atomic.Bool
+	queue          []*acpQueuedAction
+	active         *acpQueuedAction
+	operations     *operationLog
+	nativeSequence int64
 }
 
 func newACPController(r *runtime) *acpController {

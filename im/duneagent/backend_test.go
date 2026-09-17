@@ -76,7 +76,7 @@ func (f *fakeConnection) Submit(_ context.Context, _ api.Runtime, action host.Ag
 	if action.Action == "prompt" {
 		return api.AgentOperation{Ref: "prompt-operation", State: "pending"}, nil
 	}
-	return api.AgentOperation{Ref: "lifecycle-operation", State: "completed", NativeSessionID: f.state.SessionID}, nil
+	return api.AgentOperation{Ref: "lifecycle-operation", State: "completed", NativeSession: &api.NativeSession{ID: f.state.SessionID}}, nil
 }
 func (f *fakeConnection) WaitOperation(ctx context.Context, _ api.Runtime, request api.AgentOperationWait) (api.AgentOperation, error) {
 	return api.AgentOperation{Ref: request.Ref, State: "running"}, ctx.Err()

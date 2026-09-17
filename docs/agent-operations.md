@@ -14,7 +14,9 @@
 
 SDK 提供 `ACPSubmit`、`WaitAgentOperation`、`ReadAgentOperation`。`acp.action` 的 permission / cancel 是即时控制，继续返回 `accepted`；控制写入完成前不会启动下一条 prompt。`acp.state` 额外提供当前 `operation_ref` 和 pending 数量，订阅的 `agent_operation` 事件仅用于展示，可靠查询走上述 API。
 
-状态为 pending、running、completed、failed、cancelled 或 unknown。完成以匹配的 ACP JSON-RPC 响应为准。成功的 new/load 另返回 `native_session_id`，供调用方可靠采集恢复索引，避免从可能已切换的会话状态猜测 ID。prompt 的 `session_id` 可显式指定；省略时在受理时固定到当前原生会话。此前排队的 new/load 改变会话后，该 prompt 失败，不会被发送到另一个原生对话。
+状态为 pending、running、completed、failed、cancelled 或 unknown。完成以匹配的 ACP JSON-RPC 响应为准。成功的 new/load 另返回 `native_session`（确认的 ID、cwd、Agent 版本、load 能力及 Runtime 内确认序号），供调用方可靠采集恢复索引，避免从可能已切换的会话状态猜测 ID。prompt 的 `session_id` 可显式指定；省略时在受理时固定到当前原生会话。此前排队的 new/load 改变会话后，该 prompt 失败，不会被发送到另一个原生对话。
+
+Runtime get/list 也保留最近一次成功确认的 `native_session`，便于宿主断开后补采集。它表示最后确认的原生会话；当前能否发 prompt 仍按 ACP state 判断。pending / failed 的 new/load 不覆盖这份确认，旧操作中的确认也不随当前会话变化。确认序号只在同一 Runtime 内排序恢复索引的更新，不作为 MCP prompt 输出位置或跨 Runtime 的事件序号；load 能力与 list 能力独立。
 
 ## 输出与寿命
 

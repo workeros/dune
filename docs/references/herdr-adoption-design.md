@@ -66,7 +66,7 @@ flowchart LR
 
 `operation_ref` 是 fabricd 为一次已受理操作生成的不透明引用，内部绑定原 fabricd / Runtime 执行身份与操作 ID。调用方保存并原样传回即可，不需要理解宿主 Pod、协调任期或全局事件流。操作记录和每操作的有界输出缓冲都保存在 fabricd 内存。
 
-首版 prompt 操作接口暴露以下信息，读取响应另外包含实际输出内容与错误说明；成功的 new/load 额外返回已确认的 `native_session_id`，供恢复索引采集：
+首版 prompt 操作接口暴露以下信息，读取响应另外包含实际输出内容与错误说明；成功的 new/load 额外返回已确认的 `native_session`（ID、cwd、版本与恢复能力；内部确认序号用于防止迟到记录覆盖），供恢复索引采集：
 
 | 字段 | 含义 |
 | --- | --- |

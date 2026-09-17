@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -32,7 +34,7 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 	if req.Cwd == "" {
 		req.Cwd = a.state.Cwd
 	}
-	if !filepath.IsAbs(req.Cwd) || len(req.Cwd) > 4096 || len(req.SessionID) > 4096 || len(req.Cursor) > 8192 {
+	if !filepath.IsAbs(req.Cwd) || len(req.Cwd) > 4096 || strings.ContainsFunc(req.Cwd, unicode.IsControl) || len(req.SessionID) > 4096 || strings.ContainsFunc(req.SessionID, unicode.IsControl) || len(req.Cursor) > 8192 {
 		return api.AgentOperation{}, fmt.Errorf("invalid ACP session parameters")
 	}
 	switch req.Action {
@@ -160,9 +162,10 @@ func (a *acpController) runOperation(operation *acpQueuedAction, params map[stri
 		a.operations.markIncomplete(operation.ref)
 	}
 	if err == nil && (operation.request.Action == "new" || operation.request.Action == "load") {
+		native := a.confirmSessionLocked()
 		a.operations.mu.Lock()
 		if record := a.operations.records[operation.ref]; record != nil {
-			record.status.NativeSessionID = a.state.SessionID
+			record.status.NativeSession = native
 		}
 		a.operations.mu.Unlock()
 	}
@@ -188,7 +191,7 @@ func (a *acpController) applyResultLocked(action string, result json.RawMessage)
 		var value struct {
 			ID string `json:"sessionId"`
 		}
-		if json.Unmarshal(result, &value) != nil || value.ID == "" || len(value.ID) > 4096 {
+		if json.Unmarshal(result, &value) != nil || strings.TrimSpace(value.ID) == "" || len(value.ID) > 4096 || strings.ContainsFunc(value.ID, unicode.IsControl) {
 			return "", &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent returned invalid sessionId"}
 		}
 		a.state.SessionID = value.ID
@@ -216,6 +219,26 @@ func (a *acpController) applyResultLocked(action string, result json.RawMessage)
 		return value.Reason, nil
 	}
 	return "", nil
+}
+
+// The controller owns the confirmation sequence. Published values are never
+// mutated, so Runtime lists and old operation results can safely share them.
+func (a *acpController) confirmSessionLocked() *api.NativeSession {
+	var agent struct {
+		Version string `json:"version"`
+	}
+	_ = json.Unmarshal(a.state.Agent, &agent)
+	if len(agent.Version) > 256 || strings.ContainsFunc(agent.Version, unicode.IsControl) {
+		agent.Version = ""
+	}
+	a.nativeSequence++
+	native := &api.NativeSession{ID: a.state.SessionID, Cwd: a.state.Cwd,
+		Sequence: a.nativeSequence, Source: "acp-response", AgentVersion: agent.Version,
+		ResumeSupported: a.state.CanLoad}
+	a.r.mu.Lock()
+	a.r.nativeSession = native
+	a.r.mu.Unlock()
+	return native
 }
 
 func (a *acpController) cancelPendingLocked(detail string) {

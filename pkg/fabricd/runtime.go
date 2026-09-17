@@ -53,6 +53,7 @@ type runtime struct {
 	done             chan struct{}
 	acp              *acpController
 	activity         api.AgentActivity
+	nativeSession    *api.NativeSession
 	operations       *operationLog
 	ptyInput         *ptyInputQueue
 }
@@ -100,7 +101,7 @@ func (r *runtime) info() api.Runtime {
 	if r.exit != nil {
 		activity.State = "unknown"
 	}
-	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity}
+	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
 }
 
 // The timeout helper owns these facts. fabricd only publishes its record; it

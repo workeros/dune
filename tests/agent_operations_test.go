@@ -121,7 +121,7 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 	must(t, err)
 	created, err = h.client.WaitAgentOperation(h.ctx, runtime, api.AgentOperationWait{Ref: created.Ref, TimeoutMS: 3000})
 	must(t, err)
-	if created.State != "completed" || created.NativeSessionID != "mock-session" {
+	if created.State != "completed" || created.NativeSession == nil || created.NativeSession.ID != "mock-session" || created.NativeSession.Cwd != runtime.WorkingDirectory || created.NativeSession.Sequence != 1 {
 		t.Fatalf("new: %+v", created)
 	}
 	clientA := h.client

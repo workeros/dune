@@ -48,3 +48,5 @@
 - 统一启动服务：新增 [启动合同](agent-launch.md)，`App.AgentLauncher()` 通过 SDK / Gateway 启动。真实 tmux / Git 测试覆盖项目默认旧修订、合并环境与实际进程一致、cwd 覆盖、隔离工作树及脏文件保留、失效输入先拒绝、启动失败仍返回已建 worktree；定向 race 通过。fabricd / api / host / webapp 回归、相关 vet 和使用本地 workspace 的 SandDance 全量 Go 测试通过。页面尚未迁移到此入口，真实 Agent / MCP 验收仍待后续。
 
 - 两产品启动入口：HTTP / UI 接入固定 Profile 修订和当前目录 / worktree 选择，保留部分结果，并从数据库会话摘要恢复项目关联。Dune 类型检查、前端单元测试、生产构建、十项浏览器场景通过（两个新场景修正测试定位器后重跑通过）；webapp / host Go 回归、HTTP / binding 定向 race 和 vet 通过。SandDance 全量 142 项浏览器测试、类型检查、生产构建、全量 Go 和相关 vet 通过；窄屏样式最终调整后三项相关浏览器场景及构建再次通过，已检查两产品宽 / 窄屏截图。SandDance 的真实本地 fabricd / Gateway / tmux 集成验证冻结后的环境进入 PTY / ACP 进程；ACP 使用 Python 协议夹具，不代表真实 AI Agent / MCP 验收。
+
+- ACP 原生确认：成功 new/load 的操作及 Runtime 摘要保留不可变 ID / cwd / Agent 版本 / load 能力，确认序号防止迟到采集改变当前关联。fabricd / api / client / host 回归、新增确认与队列定向 race、相关 vet、IM duneagent race / vet、Gateway AgentOperations / ManagedACP 多进程用例通过；SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 回归通过。恢复索引采集与显式继续尚待接入。

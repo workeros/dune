@@ -209,6 +209,7 @@ type Runtime struct {
 	StartedAt        *time.Time     `json:"started_at,omitempty"`
 	DeadlineAt       *time.Time     `json:"deadline_at,omitempty"`
 	Activity         *AgentActivity `json:"activity,omitempty"`
+	NativeSession    *NativeSession `json:"native_session,omitempty"`
 }
 
 // AgentActivity is a lightweight observation, separate from process liveness.
