@@ -129,6 +129,9 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 		}
 		setSession(session)
 	}
+	if runtime.Adapter == "acp" {
+		return s.initializeACP(ctx, scope, connection, result)
+	}
 	return result, nil
 }
 

@@ -88,13 +88,13 @@ func TestAgentDirectoryCapturesNativeSessionsThroughGateway(t *testing.T) {
 	launched, connection := directoryACP(t, f)
 	directory := f.app.AgentDirectory()
 	page, err := directory.List(t.Context(), f.agentScope(), runner.Query{})
-	if err != nil || len(page.Items) != 1 || len(page.Runners) != 1 || !page.Runners[0].Ready || page.Items[0].Session.Status != "pending_capture" {
+	if err != nil || len(page.Items) != 1 || len(page.Runners) != 1 || !page.Runners[0].Ready || page.Items[0].Session.Status != "available" {
 		t.Fatal("initial discovery", page, err)
 	}
 	initial := page.Items[0]
 	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "new"})
 	created, err := directory.Get(t.Context(), f.agentScope(), initial.Ref)
-	if err != nil || created.Session == nil || created.Session.ID != launched.Session.ID || created.Session.Status != "available" || created.Ref == initial.Ref {
+	if err != nil || created.Session == nil || created.Session.ID != launched.Session.ID || created.Session.Status != "available" || created.Ref != initial.Ref {
 		t.Fatal("confirmed native session not captured", created, err)
 	}
 	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "load", SessionID: "other-native", Cwd: "/other-session"})

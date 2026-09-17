@@ -42,10 +42,11 @@ func (s *Server) setSession(w http.ResponseWriter, token string, lifetime time.D
 }
 
 type Options struct {
-	AgentLauncher  agents.Launcher
-	AgentDirectory agents.Directory
-	AgentMessenger agents.Messenger
-	AgentRestorer  agents.Restorer
+	AgentNativeSessions agents.NativeSessions
+	AgentLauncher       agents.Launcher
+	AgentDirectory      agents.Directory
+	AgentMessenger      agents.Messenger
+	AgentRestorer       agents.Restorer
 	// TrustedProxies contains CIDRs allowed to supply X-Forwarded-For.
 	TrustedProxies []string
 	Binaries       string

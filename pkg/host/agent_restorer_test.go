@@ -124,7 +124,7 @@ func TestAgentRestorerUsesSnapshotAndDeduplicatesConcurrentContinue(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(methods), "session/new:") != 1 || strings.Count(string(methods), "session/load:"+session.Native.ID+":"+nativeCwd) != 1 || strings.Contains(string(methods), "session/list:") {
+	if strings.Count(string(methods), "session/new:") != 2 || strings.Count(string(methods), "session/load:"+session.Native.ID+":"+nativeCwd) != 1 || strings.Contains(string(methods), "session/list:") {
 		t.Fatal("recovery used new/list or loaded multiple times", string(methods))
 	}
 	page, err = f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
@@ -163,7 +163,6 @@ func TestAgentRestorerKeepsFailedAndUnknownLoadsDistinct(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			f := openExecutorFixture(t)
 			started, connection := directoryACP(t, f)
-			directoryAction(t, connection, *started.Runtime, api.ACPAction{Action: "new"})
 			page, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
 			if err != nil {
 				t.Fatal(err)
@@ -230,7 +229,6 @@ func TestAgentRestorerRejectsUnavailableLoadCapabilitiesAndChangedVersion(t *tes
 			f := openExecutorFixture(t)
 			methods := filepath.Join(f.workspace, "methods")
 			started, connection := directoryACPWithEnvironment(t, f, map[string]string{"DUNE_HOST_FAKE_ACP_VERSION": "v1", "DUNE_HOST_FAKE_ACP_METHODS": methods})
-			directoryAction(t, connection, *started.Runtime, api.ACPAction{Action: "new"})
 			page, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
 			if err != nil {
 				t.Fatal(err)

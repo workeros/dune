@@ -15,6 +15,7 @@
 - [x] 统一启动服务：固定配置解析、宿主环境默认值、当前目录 / 新 worktree、启动前快照与部分结果保留。
 - [x] 恢复索引数据库：不可变实际配置、原生 ID 绑定、最近启动 attempt、跨连接继续去重与未知结果屏障。
 - [x] 原生会话切换索引：Runtime 当前关联、分离进程 / 原生 cwd、迟到确认只补历史、重复 load 去重。
+- [x] managed ACP 原生会话编排：启动自动 new、共享 new/load 入口、操作引用与确认采集。
 - [x] managed ACP 继续后端：实际启动快照、显式 load、数据库 claim、并发去重与未知结果屏障。
 - [x] 两产品 ACP 继续入口：保存 pane 显式恢复、并发 attempt 跟随、未知结果不重放，保持其他 pane 连接。
 - [ ] PTY 原生恢复接入：原生 ID / resume 适配与真实 Agent 验收。
@@ -71,3 +72,7 @@
 - managed ACP 继续后端：真实本地 Gateway / fabricd 协议夹具覆盖冻结配置与 Profile 删除、setup 不重跑、双请求单次恢复、独立 cwd、无 list 的 load、失败 / unknown 分离、原生切换后重复请求拒绝及原 Runner / 存储校验。相关 Go 回归（含 SQLite / PostgreSQL）、恢复定向 race、vet 通过；SandDance 全量 Go 回归（本地 workspace / 独立 PostgreSQL）及 app vet 通过。页面与 PTY 原生恢复未据此计为完成。
 
 - 两产品 ACP 继续界面：Dune 类型检查、4 项单元测试、生产构建和全部 14 项 Chromium 场景通过；SandDance 类型检查、生产构建和全部 146 项 Chromium 场景通过。新恢复场景覆盖显式提交、pending 共享确认和 unknown 不重发，宽 / 窄屏截图已检查。测试为浏览器协议夹具，厂商原生存储和多 Pod 验收仍待后续。
+
+- 历史恢复迟到确认修复 `0f07034`：原 Runtime 切换出的历史记录被独立恢复后，旧观察不会重新选中它或误报索引故障。SQLite / PostgreSQL 定向 race 和 metadata vet 通过。
+
+- managed ACP 原生会话编排：identity / authorization / metadata / agentservice / webapp / host 回归（配置独立 PostgreSQL）、新编排及恢复定向 race、相关 vet 通过。SandDance 使用本地 workspace 的全量 Go 与 app / integration vet 通过，实际 Gateway 集成夹具同步响应初始 new。新路由鉴权及部分结果保留已验证；两产品按钮迁移、MCP 注入、厂商 Agent 验收继续推进。

@@ -8,7 +8,6 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/metadata"
-	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
@@ -168,39 +167,6 @@ func resumeProfile(session agents.Session) (api.Profile, error) {
 	}
 	profile.Setup.Steps = nil
 	return profile, nil
-}
-
-type readyACP struct {
-	Ready   bool   `json:"ready"`
-	CanLoad bool   `json:"can_load"`
-	Error   string `json:"error"`
-	Agent   struct {
-		Version string `json:"version"`
-	} `json:"agent"`
-}
-
-func awaitACPReady(ctx context.Context, connection *client.Client, runtime api.Runtime) (readyACP, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		var state readyACP
-		if err := connection.CallID(ctx, "acp.state", wire.ID(), struct{}{}, &state, &runtime); err != nil {
-			return state, err
-		}
-		if state.Error != "" {
-			return state, &api.Error{Code: "AGENT_NOT_READY", Detail: "Agent initialization failed"}
-		}
-		if state.Ready {
-			return state, nil
-		}
-		select {
-		case <-ctx.Done():
-			return state, ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }
 
 func (s *Service) existingResume(ctx context.Context, scope agents.Scope, connection *client.Client, session agents.Session) (agents.ResumeResult, error) {

@@ -81,6 +81,13 @@ func TestFakeACPChild(t *testing.T) {
 		case "initialize":
 			fmt.Fprintln(os.Stdout, string(api.Payload(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]bool{"loadSession": os.Getenv("DUNE_HOST_FAKE_ACP_NO_LOAD") != "1"}, "agentInfo": map[string]string{"name": "fixture", "version": os.Getenv("DUNE_HOST_FAKE_ACP_VERSION")}}})))
 		case "session/new":
+			if os.Getenv("DUNE_HOST_FAKE_ACP_DROP_NEW") == "1" {
+				return
+			}
+			if os.Getenv("DUNE_HOST_FAKE_ACP_FAIL_NEW") == "1" {
+				fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"cannot create session"}}`+"\n", request.ID)
+				continue
+			}
 			sessionID = "fake-acp-session"
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-acp-session"}}`+"\n", request.ID)
 		case "session/load":

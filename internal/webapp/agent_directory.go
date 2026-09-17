@@ -9,6 +9,7 @@ import (
 
 func (s *Server) agentDirectoryRoutes(prefix string) {
 	s.agentMessagingRoutes(prefix)
+	s.mux.HandleFunc("POST "+prefix+"/agents/open-session", s.openAgentSession)
 	s.mux.HandleFunc("GET "+prefix+"/agents", s.listAgents)
 	s.mux.HandleFunc("POST "+prefix+"/agents/get", s.getAgent)
 }

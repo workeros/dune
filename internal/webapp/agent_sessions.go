@@ -134,3 +134,20 @@ func (s *Server) getAgentSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, item.Summary())
 }
+
+func (s *Server) openAgentSession(w http.ResponseWriter, r *http.Request) {
+	user, owner, ok := s.workbenchOwner(w, r, "workspace.write")
+	if !ok {
+		return
+	}
+	var request agents.OpenSessionRequest
+	if !readJSON(w, r, &request) {
+		return
+	}
+	if s.options.AgentNativeSessions == nil {
+		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "native session service is not configured")
+		return
+	}
+	result, err := s.options.AgentNativeSessions.OpenSession(r.Context(), agents.Scope{Principal: user, OwnerID: owner}, request)
+	writeAgentResult(w, result, err)
+}
