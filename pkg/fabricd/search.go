@@ -108,10 +108,9 @@ func (d *Engine) search(ctx context.Context, root string, options api.SearchOpti
 	if !filepath.IsAbs(root) || len(root) > 4096 || !utf8.ValidString(root) {
 		return api.SearchResult{}, fmt.Errorf("search root must be an absolute UTF-8 directory")
 	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return api.SearchResult{}, err
-	}
+	// Keep the caller's directory alias, as list_page/stat/read do. Resolving
+	// symlinks here would give the same file different paths in search and tabs.
+	root = filepath.Clean(root)
 	directory, err := os.Open(root)
 	if err != nil {
 		return api.SearchResult{}, err
