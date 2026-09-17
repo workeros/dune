@@ -35,6 +35,9 @@ func (d *Engine) watchTmux() {
 			} // An unavailable server is not evidence that a process exited.
 			for _, r := range runtimes {
 				p, exists := panes[r.id]
+				if exists && !p.Dead {
+					r.observeForeground(p.Command)
+				}
 				if !exists || p.Dead {
 					state, err := r.tmux.TimeoutState()
 					if err == nil {

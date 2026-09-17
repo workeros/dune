@@ -52,6 +52,7 @@ type runtime struct {
 	tmux             *tmux.Session
 	done             chan struct{}
 	acp              *acpController
+	activity         api.AgentActivity
 }
 
 // ACP parsing and replay budgets scale with the development machine while the
@@ -93,7 +94,11 @@ func (r *runtime) info() api.Runtime {
 	if r.exit != nil {
 		state = "exited"
 	}
-	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd}
+	activity := r.activityLocked()
+	if r.exit != nil {
+		activity.State = "unknown"
+	}
+	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity}
 }
 
 // The timeout helper owns these facts. fabricd only publishes its record; it
@@ -108,6 +113,7 @@ func (r *runtime) readTimeoutState(state *process.PTYState) {
 	r.stopReason = state.StopReason
 	if r.exit == nil && state.ExitCode != nil {
 		r.exit = state.ExitCode
+		r.endActivityLocked()
 		close(r.done)
 	}
 }
@@ -123,6 +129,7 @@ func (r *runtime) stop() error {
 			code := -1
 			r.exit = &code
 			r.stopReason = "stopped"
+			r.endActivityLocked()
 			close(r.done)
 		}
 		return nil
@@ -156,6 +163,7 @@ func (r *runtime) finish(code int) {
 		return
 	}
 	r.exit = &code
+	r.endActivityLocked()
 	if r.stopReason == "" {
 		r.stopReason = "exited"
 	}

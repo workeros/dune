@@ -70,6 +70,7 @@ type acpController struct {
 }
 
 func newACPController(r *runtime) *acpController {
+	r.updateActivity("working", "acp", "", "")
 	return &acpController{r: r, state: acpState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
 }
 func (a *acpController) snapshotLocked() acpState {
@@ -87,6 +88,7 @@ func (a *acpController) snapshot() acpState {
 }
 func (a *acpController) publishLocked() {
 	a.state.Revision++
+	a.publishActivityLocked()
 	a.r.emit(&pb.Message{Kind: "acp_state", Payload: api.Payload(a.snapshotLocked())})
 }
 func (a *acpController) send(v any) error {

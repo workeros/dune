@@ -48,6 +48,7 @@ type Capture struct {
 type Pane struct {
 	Dead          bool
 	ExitCode, PID int
+	Command       string
 }
 
 func PrivateDir(dir string) error {
@@ -402,7 +403,7 @@ var _ io.Reader = (*Viewer)(nil)
 
 // Panes probes all managed sessions in one command, independent of viewer count.
 func (s *Server) Panes() (map[string]Pane, error) {
-	out, err := s.run("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}")
+	out, err := s.run("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}\t#{pane_current_command}")
 	result := map[string]Pane{}
 	if err != nil {
 		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "no sessions") {
@@ -410,14 +411,18 @@ func (s *Server) Panes() (map[string]Pane, error) {
 		}
 		return nil, err
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 4 || !strings.HasPrefix(f[0], "dune-") {
+		if !strings.HasPrefix(f[0], "dune-") {
 			continue
+		}
+		if len(f) != 5 {
+			return nil, fmt.Errorf("invalid tmux pane discovery response")
 		}
 		p := Pane{Dead: f[1] == "1"}
 		p.ExitCode, _ = strconv.Atoi(f[2])
 		p.PID, _ = strconv.Atoi(f[3])
+		p.Command = f[4]
 		result[strings.TrimPrefix(f[0], "dune-")] = p
 	}
 	return result, nil

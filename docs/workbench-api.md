@@ -49,3 +49,11 @@ Dune 个人模式的前缀为 `/api/v1`，SandDance / Tenant 模式为 `/api/v1/
 `target` 包含完整 Runner `binding` 和 `{id, incarnation, generation, adapter}` 形式的 `runtime`。同一执行身份不能出现两次；再次打开时界面定位原 pane。保存只检查 Runner 的 Tenant 归属，允许保留已禁用或已替换 Runner 的旧引用以显示失效项；重新连接和任何输入仍必须校验实际绑定、Runtime 和权限，保存布局不会自动创建执行。
 
 已读位置在 `(Owner, 用户命名空间, 用户, 目标执行身份, epoch)` 内单调递增。另一个用户、一个新 Runtime 或一个新事件 epoch 从自己的位置开始。布局保存冲突不自动覆盖服务器版本，也不让另一窗口的保存强制改变当前焦点。
+
+## 活动摘要
+
+现有 `runtime.list` / `runtime.get` 的 Runtime 增加 `activity`，包含 `state`（unknown、working、idle、blocked）、`source`、可选 `agent` / `foreground`、`epoch` 和 `sequence`。运行进程仍使用 Runtime 的 `state` 字段，活动状态不替代进程状态，也不证明某条 prompt 已成功。
+
+managed ACP 由 controller 更新摘要，权限待处理为 blocked，普通调用执行中为 working，准备就绪且没有错误为 idle。PTY 当前根据 tmux 前台命令提供识别信息；未取得原生状态集成时始终返回 unknown，不通过静默时长、屏幕文本或进程存活推断空闲。原始 ACP 透传同样保留 unknown。
+
+摘要不包含消息正文或权限参数，列表无需建立每个 Runtime 的内容订阅。活动变化增加 sequence，单纯轮询不增加。fabricd 重启后即使 tmux Runtime 继续存在，活动 epoch 仍重新生成，旧已读位置不能用于新的活动序列。

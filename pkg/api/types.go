@@ -197,17 +197,30 @@ type ExecResult struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
-	Title            string     `json:"title,omitempty"`
-	WorkingDirectory string     `json:"working_directory,omitempty"`
-	ID               string     `json:"id"`
-	Incarnation      string     `json:"incarnation"`
-	Generation       uint64     `json:"generation"`
-	Adapter          string     `json:"adapter"`
-	State            string     `json:"state"`
-	ExitCode         *int       `json:"exit_code,omitempty"`
-	StopReason       string     `json:"stop_reason,omitempty"`
-	StartedAt        *time.Time `json:"started_at,omitempty"`
-	DeadlineAt       *time.Time `json:"deadline_at,omitempty"`
+	Title            string         `json:"title,omitempty"`
+	WorkingDirectory string         `json:"working_directory,omitempty"`
+	ID               string         `json:"id"`
+	Incarnation      string         `json:"incarnation"`
+	Generation       uint64         `json:"generation"`
+	Adapter          string         `json:"adapter"`
+	State            string         `json:"state"`
+	ExitCode         *int           `json:"exit_code,omitempty"`
+	StopReason       string         `json:"stop_reason,omitempty"`
+	StartedAt        *time.Time     `json:"started_at,omitempty"`
+	DeadlineAt       *time.Time     `json:"deadline_at,omitempty"`
+	Activity         *AgentActivity `json:"activity,omitempty"`
+}
+
+// AgentActivity is a lightweight observation, separate from process liveness.
+// Unknown is deliberate when a PTY has no supported activity integration.
+// Epoch/Sequence identify changes for per-user read markers, not prompt results.
+type AgentActivity struct {
+	State      string `json:"state"`
+	Source     string `json:"source"`
+	Agent      string `json:"agent,omitempty"`
+	Foreground string `json:"foreground,omitempty"`
+	Epoch      string `json:"epoch"`
+	Sequence   int64  `json:"sequence"`
 }
 type Attach struct {
 	Observe bool `json:"observe"`

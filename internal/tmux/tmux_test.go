@@ -80,6 +80,16 @@ func TestPersistenceAndEnvironmentIsolation(t *testing.T) {
 	}
 }
 
+func TestPaneDiscoveryIncludesForegroundCommand(t *testing.T) {
+	s := server(t)
+	r := session(t, s, "g", "exec sleep 120", []string{"PATH=/usr/bin:/bin"})
+	await(t, func() bool {
+		panes, err := s.Panes()
+		pane, found := panes[r.Runtime.ID]
+		return err == nil && found && !pane.Dead && pane.PID > 0 && pane.Command == "sleep"
+	})
+}
+
 func TestRunningServerSurvivesRemovedRelease(t *testing.T) {
 	s := server(t)
 	currentBinary := s.Binary
