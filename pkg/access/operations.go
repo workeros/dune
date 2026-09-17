@@ -77,6 +77,13 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		if !oneOf(a.Action, "create", "query", "chunk", "commit", "cancel") {
 			return r, ErrDenied
 		}
+	case "worktree.list", "worktree.create":
+		var request api.WorktreeCreate
+		err = decode(&request)
+		r.Resource.Directory = request.Directory
+		if m.Operation == "worktree.create" {
+			r.Resource.Destination = request.Path
+		}
 	case "git":
 		var a api.Git
 		err = decode(&a)

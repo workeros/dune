@@ -10,6 +10,7 @@
 - [ ] PTY 原生状态适配：受支持 Agent 的工作 / 空闲 / 权限状态及可靠会话 ID 采集。
 - [x] Dune 并行工作台：项目和 Agent 导航、跨 Runner 分屏、焦点审阅联动、布局恢复。
 - [x] SandDance 并行工作台：接入共享合同，Tenant 内自由分屏与个人布局。
+- [x] worktree 准备能力：SDK / Gateway / fabricd 新建和列出 worktree，复用 Git 仓库锁；不覆盖目录 / 分支，不复制未提交内容。
 - [ ] 启动位置：已有就绪 Runner，当前目录 / worktree 选择、项目默认配置。
 - [ ] 原生会话恢复：实际启动快照、可靠 ID 采集、恢复索引与并发继续去重。
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
@@ -37,3 +38,5 @@
 
 - 2026-09-18：PTY 有序投递通过共享 tmux 输入客户端实现，浏览器按键与文本 / Enter 同队列；已有浏览器输入所有权保留。真实本地 tmux + 字节记录进程验证顺序、投递前置检查、队列上限、fabricd 重启后的旧操作失效。原生 Agent 状态 hook、厂商 CLI 与 MCP 仍待后续验证。
 - PTY 检查：`go test ./internal/tmux ./pkg/fabricd` 通过；新增 PTY / ACP 队列与输出用例 race 通过；`go test ./tests -run 'TestPTY|TestTmux|TestTerminal|TestAgentOperations|TestManagedACP|TestInput'` 通过，覆盖 fabricd / Gateway 重连、原生历史和输入租约；相关包 vet 与 diff 检查通过。
+
+- worktree 准备：新增 [API 合同](worktree-api.md)，定向 race 覆盖实际 Git 工作树、源目录脏文件保留、中文 / 空格路径、已有分支与目录拒绝、共享仓库并发创建；client / access 回归和相关包 vet 通过。`TestWorktreeCreationThroughGateway` 通过，覆盖 SDK 经 Gateway 到 fabricd 的真实 Git 创建与列出。两产品启动选择与实际配置快照仍随统一启动服务接入。

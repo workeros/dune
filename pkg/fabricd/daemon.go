@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -303,6 +303,16 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		e = wire.Decode(m, &a)
 		if e == nil {
 			result, e = d.uploadOp(a)
+		}
+	case "worktree.list", "worktree.create":
+		var request api.WorktreeCreate
+		e = wire.Decode(m, &request)
+		if e == nil {
+			if m.Operation == "worktree.list" {
+				result, e = d.worktrees(request.Directory)
+			} else {
+				result, e = d.createWorktree(request)
+			}
 		}
 	case "git":
 		var a api.Git
