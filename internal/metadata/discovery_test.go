@@ -3,9 +3,11 @@ package metadata
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +28,20 @@ func discoveryDecision(r access.Request, allowed bool) access.Decision {
 	return access.Decision{Allowed: allowed, Reason: "TEST_POLICY", ID: r.RequestID, ValidUntil: time.Now().Add(30 * time.Second)}
 }
 
-func catalogID(n int) string { return fmt.Sprintf("%032x", n+1) }
+func catalogID(n int) string { return fmt.Sprintf("runner_%032x", n+1) }
+
+func TestDiscoveryCursorBoundsLogicalRunnerIDs(t *testing.T) {
+	store := &Store{}
+	for _, id := range []string{"", " runner", "runner\n", strings.Repeat("x", 257), string([]byte{0xff})} {
+		if _, err := store.SaveCursor(t.Context(), "", "", "", id); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatal("invalid position encoded", err)
+		}
+		cursor := "dune_page_" + base64.RawURLEncoding.EncodeToString([]byte(id))
+		if _, err := store.ReadCursor(t.Context(), "", "", "", cursor); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatal("invalid position decoded", err)
+		}
+	}
+}
 
 func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {

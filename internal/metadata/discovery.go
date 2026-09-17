@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/authorization"
-	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -74,19 +76,25 @@ func (s *Store) Candidates(ctx context.Context, owner, after string, limit int) 
 // the position is still checked against the current user and policy.
 func (s *Store) ReadCursor(_ context.Context, _, _, _, cursor string) (string, error) {
 	const prefix = "dune_page_"
-	if len(cursor) <= len(prefix) || cursor[:len(prefix)] != prefix {
+	if len(cursor) <= len(prefix) || len(cursor) > 512 || !strings.HasPrefix(cursor, prefix) {
 		return "", ErrInvalidArgument
 	}
 	data, err := base64.RawURLEncoding.DecodeString(cursor[len(prefix):])
-	if err != nil || !wire.ValidID(string(data)) {
+	if err != nil || !validCursorPosition(string(data)) || base64.RawURLEncoding.EncodeToString(data) != cursor[len(prefix):] {
 		return "", ErrInvalidArgument
 	}
 	return string(data), nil
 }
 
 func (s *Store) SaveCursor(_ context.Context, _, _, _, after string) (string, error) {
-	if !wire.ValidID(after) {
+	if !validCursorPosition(after) {
 		return "", ErrInvalidArgument
 	}
 	return "dune_page_" + base64.RawURLEncoding.EncodeToString([]byte(after)), nil
+}
+
+// Logical Runner IDs may have host prefixes such as SandDance's "runner_".
+// They are not protocol message IDs; the cursor is only a bounded position.
+func validCursorPosition(id string) bool {
+	return len(id) > 0 && len(id) <= 256 && utf8.ValidString(id) && strings.TrimSpace(id) == id && !strings.ContainsFunc(id, unicode.IsControl)
 }
