@@ -26,3 +26,5 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 真实 HTTP MCP 客户端配合本地 Gateway / fabricd 协议进程已验证：九项工具 schema、Profile 分页与 Tenant 过滤、启动 ACP 后直接提交任务、操作 wait/read、轮流进入两个独立 HTTP handler、撤销后原连接被拒绝、调用 Runtime 退出、cookie / query / Origin 拒绝以及未知结果保留引用且不重发。它证明协议与本地执行链路，不代表两个实际 Pod 或厂商 Agent 已验收。
 
 入口已装配；生产启动尚未自动签发或注入凭据。接下来在 managed ACP 与受支持 PTY 的本次启动配置中注入 MCP，处理 ACP inspector 脱敏及仅支持 stdio 的 bridge，并验证 Runner 对宿主 HTTP 地址的可达性。
+
+ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/header 与 stdio argv/env；发给 Agent 的真实 RPC 保持原样。Agent 在结构化错误中回显这份配置时，inspector 和操作错误也会脱敏。注入后还需验证实际厂商日志和其他输出位置，不把这一检查等同于完整凭据防泄露验收。

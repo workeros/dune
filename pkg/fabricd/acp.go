@@ -92,7 +92,7 @@ func (a *acpController) send(v any) error {
 	b := api.Payload(v)
 	// Publish before writing so a fast Agent response cannot appear before the
 	// request in the inspector. A subsequent write error is surfaced separately.
-	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": json.RawMessage(b)})})
+	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": redactMCPConfiguration(b)})})
 	if err := a.r.p.Write(append(b, '\n')); err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func (a *acpController) receive(data []byte) {
 		a.emitUpdate(m.Params)
 		return
 	}
-	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "output", "message": json.RawMessage(data)})})
+	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "output", "message": redactMCPConfiguration(data)})})
 	if m.Method == "" {
 		var id string
 		if json.Unmarshal(m.ID, &id) != nil {
@@ -245,6 +245,7 @@ func (a *acpController) receive(data []byte) {
 func formatACPError(code int, message string, data json.RawMessage) error {
 	detail := ""
 	if len(data) > 0 && string(data) != "null" {
+		data = redactMCPConfiguration(data)
 		var structured struct {
 			Details string `json:"details"`
 		}
@@ -397,7 +398,8 @@ func (a *acpController) initialize() {
 	a.state.CanList = json.Unmarshal(init.Capabilities.Sessions.List, &object) == nil && object != nil
 	a.publishLocked()
 	a.mu.Unlock()
-	// New session is explicit in the UI: users may instead load Agent history.
+	// The caller chooses new/load after initialization; the shared launcher
+	// creates an initial session and the restorer loads the saved native ID.
 }
 func (a *acpController) action(req api.ACPAction) (any, error) {
 	if req.Action == "permission" || req.Action == "cancel" {

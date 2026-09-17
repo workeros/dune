@@ -26,7 +26,8 @@
 - [x] Tenant Agent 服务：发现、启动、投递、操作 / 活动等待、ACP 输出 / PTY 快照读取，复用 SDK / Gateway 路由。
 - [x] MCP 会话凭据数据库：调用方与启动 attempt 绑定、哈希、轮换、撤销、过期及跨连接校验。
 - [x] MCP HTTP 接入：九项工具、无状态协议请求、凭据与活 Runtime 校验、Tenant 隔离和部分结果保留。
-- [ ] MCP 运行凭据脱敏：ACP inspector、注入配置与实际厂商输出验证。
+- [x] ACP MCP 配置诊断脱敏：inspector 请求/结构化响应和操作错误隐藏连接配置，原生 RPC 保留真实值。
+- [ ] MCP 注入后的运行凭据脱敏验收：实际厂商日志和其他输出位置。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
 - [ ] 两产品协作交互：pending、操作进度、输出不完整与引用失效提示。
 - [ ] 集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、恢复旧配置及真实 Agent 互操作。
@@ -82,3 +83,5 @@
 - MCP 凭据存储：SQLite / PostgreSQL 定向 race 通过；相关身份、授权、webapp、host 回归和 SandDance 全量 Go 通过。元数据全量首次暴露 schema 测试删表顺序未覆盖新外键，已调整快照表顺序并定向重跑初始化原子性；企业身份无需本地账号的用例也通过。HTTP / 实际注入尚未装配。
 
 - MCP HTTP 工具接入：相关 Go 回归（独立 PostgreSQL）、MCP HTTP/Runtime 定向 race、相关 vet 通过；SandDance 全量 Go 与 app vet 通过。官方 MCP 客户端经两个独立 HTTP handler 轮流访问同一 Gateway/fabricd，完成发现、启动、投递、wait/read；鉴权撤销、退出、非法 Origin/cookie/query 和错误结果保留验证通过。真实多 Pod 与厂商 MCP 注入仍待后续。
+
+- ACP MCP 诊断脱敏：fabricd / host 全量包回归、新增 inspector 原生 RPC 不变/URL/header/env/argv/结构化错误脱敏定向 race、fabricd vet 通过。生产注入与真实厂商日志仍待验证。
