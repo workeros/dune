@@ -13,7 +13,7 @@ export function SplitCanvas({ root, focus, onFocus, onRatio, render }: { root: L
     onRatio(current.split.id, Math.max(0.1, Math.min(0.9, ratio)));
   };
   return <div ref={container} className="split-canvas" aria-label="并行会话" onPointerMove={move} onPointerUp={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }}>
-    {panes.map(({ leaf, rect }) => <section key={leaf.id} className={`agent-pane ${focus === leaf.id ? "is-focused" : ""}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} data-pane-id={leaf.id} onPointerDown={() => onFocus(leaf.id)} onFocusCapture={() => onFocus(leaf.id)}>{render(leaf)}</section>)}
+    {panes.map(({ leaf, rect }) => <section key={leaf.id} className={`agent-pane ${focus === leaf.id ? "is-focused" : ""}`} style={{ left: `${rect.x}%`, top: `${rect.y}%`, width: `${rect.width}%`, height: `${rect.height}%` }} data-pane-id={leaf.id} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("button")) onFocus(leaf.id); }} onFocusCapture={(event) => { if (!(event.target instanceof Element) || !event.target.closest("button")) onFocus(leaf.id); }}>{render(leaf)}</section>)}
     {dividers.map(({ split, rect }) => {
       const horizontal = split.direction === "horizontal";
       return <div key={split.id} className={`split-handle ${horizontal ? "is-vertical" : "is-horizontal"}`} role="separator" tabIndex={0} aria-label="调整分屏比例" aria-orientation={horizontal ? "vertical" : "horizontal"} aria-valuenow={Math.round(split.ratio * 100)} aria-valuemin={10} aria-valuemax={90}
