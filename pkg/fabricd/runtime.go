@@ -54,6 +54,7 @@ type runtime struct {
 	acp              *acpController
 	activity         api.AgentActivity
 	operations       *operationLog
+	ptyInput         *ptyInputQueue
 }
 
 // ACP parsing and replay budgets scale with the development machine while the
@@ -120,6 +121,7 @@ func (r *runtime) readTimeoutState(state *process.PTYState) {
 }
 func (r *runtime) stop() error {
 	if r.tmux != nil {
+		r.closePTYInput()
 		// Publish completion before a closing viewer can report EOF.
 		r.mu.Lock()
 		defer r.mu.Unlock()

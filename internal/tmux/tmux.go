@@ -46,9 +46,11 @@ type Capture struct {
 	HistoryLimit int    `json:"history_limit"`
 }
 type Pane struct {
-	Dead          bool
-	ExitCode, PID int
-	Command       string
+	Dead           bool
+	ExitCode, PID  int
+	Command        string
+	InMode         bool
+	BracketedPaste bool
 }
 
 func PrivateDir(dir string) error {
@@ -295,22 +297,23 @@ func (r *Session) waitTimeoutState() (*process.PTYState, error) {
 	}
 }
 func (r *Session) Inspect() (Pane, error) {
-	out, err := r.Server.run("display-message", "-p", "-t", r.pane(), "#{pane_dead} #{pane_dead_status} #{pane_pid}")
+	out, err := r.Server.run("display-message", "-p", "-t", r.pane(), "#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}\t#{pane_current_command}\t#{pane_in_mode}\t#{bracket_paste_flag}")
 	if err != nil {
 		return Pane{}, err
 	}
-	f := strings.Fields(out)
-	var p Pane
-	if len(f) < 2 {
-		return p, fmt.Errorf("invalid tmux pane state")
+	fields := strings.Split(strings.TrimSuffix(out, "\n"), "\t")
+	if len(fields) != 6 {
+		return Pane{}, fmt.Errorf("invalid tmux pane state")
 	}
-	p.Dead = f[0] == "1"
-	p.PID, _ = strconv.Atoi(f[len(f)-1])
-	if p.Dead && len(f) == 3 {
-		p.ExitCode, _ = strconv.Atoi(f[1])
+	pane := Pane{Dead: fields[0] == "1", Command: fields[3], InMode: fields[4] == "1", BracketedPaste: fields[5] == "1"}
+	pane.ExitCode, _ = strconv.Atoi(fields[1])
+	pane.PID, err = strconv.Atoi(fields[2])
+	if err != nil {
+		return Pane{}, fmt.Errorf("invalid tmux pane PID")
 	}
-	return p, nil
+	return pane, nil
 }
+
 func (r *Session) Destroy() error {
 	_, err := r.Server.run("kill-session", "-t", r.target())
 	if err != nil && (strings.Contains(err.Error(), "can't find session") || strings.Contains(err.Error(), "no server running")) {

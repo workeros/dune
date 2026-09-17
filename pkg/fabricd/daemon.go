@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -69,6 +69,7 @@ func (d *Engine) Close() {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		for _, r := range d.runtimes {
+			r.closePTYInput()
 			if r.tmux == nil {
 				_ = r.stop()
 				if r.p != nil {
@@ -178,6 +179,27 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 				}
 			}
 		}
+	case "pty.prompt", "pty.keys":
+		var r *runtime
+		r, e = d.lookup(m)
+		if e == nil && r.tmux == nil {
+			e = &api.Error{Code: "UNSUPPORTED", Detail: "PTY submission requires a terminal Runtime"}
+		}
+		if e == nil {
+			if m.Operation == "pty.prompt" {
+				var request api.PTYPrompt
+				e = wire.Decode(m, &request)
+				if e == nil {
+					result, e = r.inputQueue(d.ctx).prompt(request)
+				}
+			} else {
+				var request api.PTYKeys
+				e = wire.Decode(m, &request)
+				if e == nil {
+					result, e = r.inputQueue(d.ctx).keys(request)
+				}
+			}
+		}
 	case "agent.operation.wait", "agent.operation.read":
 		var r *runtime
 		r, e = d.lookup(m)
@@ -230,6 +252,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 			r.mu.Unlock()
 			d.mu.Unlock()
 		}
+		if e == nil {
+			r.closePTYInput()
+		}
 	case "runtime.get", "runtime.stop":
 		var r *runtime
 		r, e = d.lookup(m)
@@ -254,7 +279,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 				}
 				e = wire.Decode(m, &req)
 				if e == nil {
-					e = r.tmux.History(req.Action)
+					e = r.inputQueue(d.ctx).write(s.ctx, func(*tmux.Viewer) error { return r.tmux.History(req.Action) })
 				}
 			}
 		}

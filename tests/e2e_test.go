@@ -24,6 +24,9 @@ import (
 var binary string
 
 func TestMain(m *testing.M) {
+	if os.Getenv("DUNE_TEST_PTY_INPUT_CAPTURE") != "" {
+		os.Exit(m.Run())
+	}
 	if os.Getenv("DUNE_TMUX") == "" {
 		path, _ := filepath.Abs("../bin/tmux")
 		os.Setenv("DUNE_TMUX", path)

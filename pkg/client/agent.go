@@ -29,3 +29,15 @@ func (c *Client) ReadAgentOperation(ctx context.Context, runtime api.Runtime, re
 	err := c.CallID(ctx, "agent.operation.read", wire.ID(), request, &output, &runtime)
 	return output, err
 }
+
+func (c *Client) PTYPrompt(ctx context.Context, runtime api.Runtime, request api.PTYPrompt) (api.AgentOperation, error) {
+	var operation api.AgentOperation
+	err := c.CallID(ctx, "pty.prompt", wire.ID(), request, &operation, &runtime)
+	return operation, err
+}
+
+func (c *Client) PTYSendKeys(ctx context.Context, runtime api.Runtime, request api.PTYKeys) (api.AgentOperation, error) {
+	var operation api.AgentOperation
+	err := c.CallID(ctx, "pty.keys", wire.ID(), request, &operation, &runtime)
+	return operation, err
+}

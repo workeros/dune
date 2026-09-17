@@ -25,8 +25,18 @@ SDK 提供 `ACPSubmit`、`WaitAgentOperation`、`ReadAgentOperation`。`acp.acti
 - fabricd 重启会清空操作记录和 pending；旧 Runtime 返回 `STALE_RUNTIME`，存活的 tmux Runtime 中旧操作返回 `OPERATION_EXPIRED`。淘汰记录同样返回 `OPERATION_EXPIRED`，不降级读取当前会话内容。
 - Agent 退出前未收到匹配响应，正在执行的操作为 unknown、未发送项为 cancelled；已收到匹配响应的结果仍可确认。协议结果不可信时停止继续出队。
 
-IM 入口已改为按操作增量读取和等待，不再把会话 idle 当作某条 prompt 的完成。PTY 投递、MCP 工具装配及两产品的操作进度界面属于后续功能。
+IM 入口已改为按操作增量读取和等待，不再把会话 idle 当作某条 prompt 的完成。MCP 工具装配及两产品的操作进度界面属于后续功能。
+
+## PTY 有序投递
+
+`pty.prompt` 接收 `{agent, text}`；`pty.keys` 接收 `{agent, keys}`。SDK 对应 `PTYPrompt` / `PTYSendKeys`，返回同一种操作引用，并通过 `agent.operation.wait` 查询 pending / running / delivered / failed / cancelled / unknown。`delivered` 仅表示文本和 Enter 已按顺序写入 tmux 输入客户端，不表示 Agent 完成任务。PTY 输出仍通过 Runtime 终端快照读取，不做逐 prompt 归属。
+
+fabricd 为每个 PTY Runtime 持有一个共享输入客户端和最多 64 项待输入队列。浏览器键盘、INT / QUIT、resize、历史操作，以及 Agent 投递都经过该队列。浏览器关闭不关闭共享输入客户端；fabricd 关闭时结束客户端但保留 tmux 会话；显式 stop / forget 同时结束输入服务。现有浏览器输入所有权规则保留，Agent API 无需抢占浏览器连接。
+
+普通任务文本使用 bracketed paste，等待 200ms 后发送 Enter，整组写入期间不插入后续人工按键。先检查前台仍是指定 CLI、Runtime 存活且未处于已知 blocked 状态或历史模式，并要求 CLI 已启用 bracketed paste；Enter 前再核验进程与状态。粘贴后失去目标时不发送 Enter，记录 unknown。已有输入框草稿仍按原生 CLI 行为处理，不保存或恢复草稿。
+
+按键支持 Enter、Tab、Escape、Backspace、Delete、方向键、Home / End、PageUp / PageDown、Ctrl+C / D / U / L；每次最多 32 个。普通任务正文允许换行和 Tab，拒绝终端控制字符。当前前台命令可识别 claude / codex / opencode / gemini；这只是投递前置检查，实际厂商 CLI 的身份 hook、权限状态与 MCP 注入仍需相应适配和真实验收。
 
 ## 本轮验证边界
 
-controller race 测试覆盖 A/B 分离、load 重放、原生会话变化、队列容量、取消与权限、控制写入边界、立即退出、输出裁剪和引用失效。多进程 SDK / Gateway / fabricd 测试使用可控 ACP Agent，验证两个独立连接统一排队、提交方断线后补读及 Runtime 校验。真实 Agent 和两个宿主 Pod 的验收仍在整体实施清单中，不由这些测试替代。
+controller race 测试覆盖 A/B 分离、load 重放、原生会话变化、队列容量、取消与权限、控制写入边界、立即退出、输出裁剪和引用失效。多进程 SDK / Gateway / fabricd 测试使用可控 ACP Agent，验证两个独立连接统一排队、提交方断线后补读及 Runtime 校验。PTY 使用真实 tmux 和原生字节记录进程，检查粘贴 / Enter / 浏览器按键的顺序、前台 / blocked / 历史拒绝、队列上限，以及 fabricd 重启后 tmux 存活、旧操作引用失效。真实 Agent 和两个宿主 Pod 的验收仍在整体实施清单中，不由这些测试替代。

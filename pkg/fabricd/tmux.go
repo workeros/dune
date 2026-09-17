@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -103,20 +104,24 @@ func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription)
 				if len(m.Data) > wire.ChunkSize {
 					e = fmt.Errorf("input exceeds chunk limit")
 				} else {
-					e = view.Write(m.Data)
+					data := append([]byte(nil), m.Data...)
+					e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return writePTY(input, data) })
 				}
 			case "resize":
 				var a api.Resize
 				e = wire.Decode(m, &a)
 				if e == nil {
 					e = view.Resize(a.Rows, a.Cols)
+					if e == nil {
+						e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return input.Resize(a.Rows, a.Cols) })
+					}
 				}
 			case "signal":
 				switch string(m.Data) {
 				case "INT":
-					e = view.Write([]byte{3})
+					e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return writePTY(input, []byte{3}) })
 				case "QUIT":
-					e = view.Write([]byte{28})
+					e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return writePTY(input, []byte{28}) })
 				case "TERM", "HUP":
 					e = d.stop(r)
 				default:

@@ -49,3 +49,15 @@ type AgentOperationOutput struct {
 	Incomplete   bool              `json:"incomplete"`
 	Output       []json.RawMessage `json:"output"`
 }
+
+// PTY submissions preserve native CLI semantics: delivered confirms only ordered
+// terminal input, never completion or per-prompt output attribution.
+type PTYPrompt struct {
+	Text  string `json:"text"`
+	Agent string `json:"agent"`
+}
+
+type PTYKeys struct {
+	Keys  []string `json:"keys"`
+	Agent string   `json:"agent"`
+}

@@ -13,7 +13,7 @@
 - [ ] 启动位置：已有就绪 Runner，当前目录 / worktree 选择、项目默认配置。
 - [ ] 原生会话恢复：实际启动快照、可靠 ID 采集、恢复索引与并发继续去重。
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
-- [ ] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
+- [x] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
 - [ ] Tenant Agent 服务：发现、启动、投递、等待、读取，复用 SDK / Gateway 路由。
 - [ ] MCP 接入：工具合同、会话凭据、跨 Tenant 拒绝、凭据脱敏。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
@@ -34,3 +34,6 @@
 - 两产品并行工作台提交：Dune `74514d4` / `8d06717`，SandDance `9ca8f0b`。SandDance 类型检查、139 项 Chromium 回归和显式 CDN 配置的生产构建通过；移动导航最终调整后相关五项交互用例再次通过。
 - fabricd ACP 操作：新增 [操作合同](agent-operations.md)，所有 managed 生命周期 / prompt 共用 Runtime 队列，操作级 wait / read 与有界输出；IM 也改为按操作读取。定向 race 覆盖排队、输出关联、控制与关闭边界；多进程 SDK / Gateway 测试覆盖两个连接、提交方断线后查询。真实 MCP、原生恢复和双宿主 Pod 验证仍待整体验收。
 - ACP 本轮检查：`go test ./pkg/fabricd ./pkg/api ./pkg/client ./pkg/sdk ./pkg/access ./pkg/host ./internal/webapp` 通过；新增队列用例的 race 和相关包 vet 通过；`go test ./tests -run 'TestAgentOperations|TestManagedACP'` 通过；IM module 全量 race / vet 通过；SandDance 使用本地 workspace 与独立 PostgreSQL 的全量 Go 测试通过。
+
+- 2026-09-18：PTY 有序投递通过共享 tmux 输入客户端实现，浏览器按键与文本 / Enter 同队列；已有浏览器输入所有权保留。真实本地 tmux + 字节记录进程验证顺序、投递前置检查、队列上限、fabricd 重启后的旧操作失效。原生 Agent 状态 hook、厂商 CLI 与 MCP 仍待后续验证。
+- PTY 检查：`go test ./internal/tmux ./pkg/fabricd` 通过；新增 PTY / ACP 队列与输出用例 race 通过；`go test ./tests -run 'TestPTY|TestTmux|TestTerminal|TestAgentOperations|TestManagedACP|TestInput'` 通过，覆盖 fabricd / Gateway 重连、原生历史和输入租约；相关包 vet 与 diff 检查通过。
