@@ -6,6 +6,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 var (
@@ -27,6 +28,17 @@ type User struct {
 	Kind      string `json:"-"`
 }
 
+// Authentication is one successful credential verification. ExpiresAt is the
+// actual credential expiry, not a cache TTL or a property of the user.
+type Authentication struct {
+	User      User
+	ExpiresAt time.Time
+}
+
+func (a Authentication) Valid() bool {
+	return a.User.ID != "" && time.Now().Before(a.ExpiresAt)
+}
+
 // LoginMethod is advertised by /api/v1/bootstrap. URL may point outside Dune when
 // a host owns the enterprise login flow.
 type LoginMethod struct {
@@ -34,11 +46,13 @@ type LoginMethod struct {
 	URL  string `json:"url"`
 }
 
-// Service validates and revokes the host's opaque browser session. It must
-// honor cancellation and may consult the host's authoritative identity system
-// on every call. Dune never persists enterprise sessions or user records.
+// Service validates the host's opaque browser credential and returns its actual
+// expiry. Every Authenticate call must use the freshest facts the identity source
+// exposes and honor cancellation. Logout delegates revocation where the source
+// supports it; offline JWT verification cannot observe upstream logout.
+// Dune never persists enterprise sessions or user records.
 type Service interface {
-	Authenticate(context.Context, string) (User, error)
+	Authenticate(context.Context, string) (Authentication, error)
 	Logout(context.Context, string) error
 	Namespace() string
 	LoginMethods(publicURL string) []LoginMethod

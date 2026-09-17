@@ -20,7 +20,7 @@ import (
 var ErrNotFound = errors.New("machine not found")
 
 type Sessions interface {
-	Authenticate(context.Context, string) (identity.User, error)
+	Authenticate(context.Context, string) (identity.Authentication, error)
 	Namespace() string
 }
 
@@ -60,7 +60,8 @@ func (l *Service) evaluate(ctx context.Context, request access.Request) (access.
 
 // ClientGrant permits only the initial authenticated connection. Close removes
 // the short-lived credential; established connections retain the original user
-// and target and continue checking their session and ownership through Valid.
+// and target and revalidate their session, Runner and policy for every action
+// lease. Valid performs an uncached check for in-process callers.
 type ClientGrant struct {
 	token   string
 	expires int64
@@ -73,35 +74,31 @@ func (g *ClientGrant) ExpiresAt() int64 { return g.expires }
 func (g *ClientGrant) Valid() bool      { return g.valid() }
 func (g *ClientGrant) Close()           { g.release() }
 
-func (l *Service) Client(ctx context.Context, session, target string) (*ClientGrant, error) {
-	return l.client(ctx, session, target, l.sessions.Authenticate, nil)
-}
 func (l *Service) ClientRunner(ctx context.Context, session string, binding runner.Binding) (*ClientGrant, error) {
-	return l.client(ctx, session, binding.MachineID, l.sessions.Authenticate, &binding)
-}
-func (l *Service) client(ctx context.Context, session, target string, authenticate func(context.Context, string) (identity.User, error), binding *runner.Binding) (*ClientGrant, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
-	user, err := authenticate(ctx, session)
+	authenticated, err := l.authenticate(ctx, session)
 	if err != nil {
 		return nil, err
 	}
-	resource, decision, err := l.Resource(ctx, user, target, true, "runner.connect")
+	user := authenticated.User
+	resource, decision, err := l.Resource(ctx, user, binding.MachineID, true, "runner.connect")
 	if err != nil {
 		return nil, err
 	}
 	if resource.Runner.Binding == nil {
 		return nil, ErrNotFound
 	}
-	if binding != nil && *binding != *resource.Runner.Binding {
+	if binding != *resource.Runner.Binding {
 		return nil, runner.ErrBindingChanged
 	}
 	expected := *resource.Runner.Binding
 	ctx, cancel := context.WithDeadline(ctx, decision.ValidUntil)
 	defer cancel()
 	token := ticketPrefix + wire.ID() + wire.ID()
-	record := ConnectionAccess{Session: session, PrincipalID: user.ID, PrincipalKind: user.Kind, Namespace: user.Namespace, Subject: user.Subject, Target: expected.MachineID, RunnerID: expected.RunnerID, FabricID: expected.FabricID, BindingRevision: expected.Revision, OwnerID: resource.OwnerID, ExpiresAt: time.Now().Add(TicketLifetime).Unix()}
+	expires := earliest(time.Now().Add(TicketLifetime), authenticated.ExpiresAt, decision.ValidUntil)
+	record := ConnectionAccess{Session: session, PrincipalID: user.ID, PrincipalKind: user.Kind, Namespace: user.Namespace, Subject: user.Subject, Target: expected.MachineID, RunnerID: expected.RunnerID, FabricID: expected.FabricID, BindingRevision: expected.Revision, OwnerID: resource.OwnerID, ExpiresAt: expires.Unix()}
 	l.mu.Lock()
 	now := time.Now().Unix()
 	pending := 0
@@ -126,25 +123,9 @@ func (l *Service) client(ctx context.Context, session, target string, authentica
 }
 
 func (l *Service) validAccess(record ConnectionAccess) func() bool {
-	// Captured values cannot be replaced by a request payload or another login.
 	return func() bool {
-		if l.ctx.Err() != nil || record.Namespace != l.sessions.Namespace() {
-			return false
-		}
-		ctx, cancel := context.WithTimeout(l.ctx, 500*time.Millisecond)
-		defer cancel()
-		if record.Background {
-			if record.Session != "" {
-				return false
-			}
-		} else {
-			user, err := l.sessions.Authenticate(ctx, record.Session)
-			if err != nil || user.ID != record.PrincipalID || user.Kind != record.PrincipalKind || user.Namespace != record.Namespace || user.Subject != record.Subject {
-				return false
-			}
-		}
-		valid, err := l.bindings.CheckRunnerAccess(ctx, record)
-		return err == nil && valid
+		_, err := l.validateAccess(l.ctx, record)
+		return err == nil
 	}
 }
 
@@ -177,11 +158,11 @@ func (l *Service) Authorize(token string) (gateway.BindingContext, gateway.Conne
 		if _, err := l.evaluate(ctx, access.Request{Scope: fixed, RequestID: wire.ID(), Operation: "runner.connect", Suboperation: "attached"}); err != nil {
 			return gateway.BindingContext{}, nil, err
 		}
-		policy := &access.Policy{Scope: fixed, Checker: l.checker, Observer: l.observer}
+		policy := l.streamPolicy(record)
 		if l.bootID != "" {
 			policy.Delegate = l.delegate(record)
 		}
-		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Valid: l.validAccess(record), Policy: policy}).Bind()
+		return (access.Grant{Target: record.Target, Role: gateway.RoleSDK, Policy: policy}).Bind()
 	}
 	target, err := l.bindings.MachineCredential(ctx, token)
 	if err != nil {

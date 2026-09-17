@@ -3,7 +3,7 @@ IM_TEST_PKGS ?= ./...
 TEST_FLAGS ?= -count=1 -timeout=180s
 
 .PHONY: build test test-race test-im test-im-race check check-go check-im check-proto tools proto
-build: tmux
+build: tmux rg
 	go build -o bin/dune ./cmd/dune
 
 test:
@@ -44,9 +44,11 @@ proto:
 	.tools/buf generate
 	.tools/buf lint
 
-.PHONY: tmux web web-deps web-check web-build release
+.PHONY: tmux rg web web-deps web-check web-build release
 tmux:
 	python3 scripts/fetch-tmux.py
+rg:
+	python3 scripts/fetch-rg.py
 web-deps:
 	npm --prefix web ci
 
@@ -66,4 +68,5 @@ release: build web
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o bin/dune-darwin-amd64 ./cmd/dune
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o bin/dune-darwin-arm64 ./cmd/dune
 	python3 scripts/fetch-tmux.py --all
+	python3 scripts/fetch-rg.py --all
 	python3 scripts/package-release.py

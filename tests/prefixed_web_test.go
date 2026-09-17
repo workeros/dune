@@ -35,8 +35,7 @@ import (
 
 func TestPrefixedWorkbenchEnrollmentAndTerminal(t *testing.T) {
 	t.Run("default", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{}) })
-	t.Run("runner-entry", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{runnerEntry: true}) })
-	t.Run("machine-entry-override", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{override: true}) })
+	t.Run("gateway-override", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{override: true}) })
 	t.Run("external-host", func(t *testing.T) { testPrefixedWorkbench(t, workbenchCase{external: true}) })
 }
 
@@ -44,7 +43,6 @@ type workbenchCase struct {
 	override, external bool
 	cluster            bool
 	enterprise         bool
-	runnerEntry        bool
 	database           *storage.Config
 }
 
@@ -186,10 +184,13 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	var user struct{ ID string }
 	email := "prefix@example.test"
 	do("POST", "api/v1/auth/register", map[string]string{"email": email, "password": "prefix-test-password"}, &user)
-	var enrollment struct{ Token string }
+	var enrollment struct {
+		Token  string
+		Runner struct{ ID string }
+	}
 	do("POST", "api/v1/enrollments", map[string]string{"name": "prefixed machine"}, &enrollment)
 	machinePath := filepath.Join(dir, "machine", "config.yaml")
-	must(t, webapp.EnrollMachine(ctx, machinePath, site, enrollment.Token, ""))
+	must(t, webapp.EnrollMachine(ctx, machinePath, site, enrollment.Token, "", enrollment.Runner.ID))
 	machineConfig, err := config.Load(machinePath)
 	must(t, err)
 	if mode.enterprise {
@@ -233,7 +234,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 		// Standalone split-host tests observe the actual owner. Cluster tests
 		// read shared online facts from A and execute through A's peer route.
-		response, err := browser.Get(onlineSite + "api/v1/machines")
+		response, err := browser.Get(onlineSite + "api/v1/runners")
 		must(t, err)
 		if response.StatusCode != 200 {
 			response.Body.Close()
@@ -252,7 +253,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 	}
 	var selected runner.Runner
-	if mode.runnerEntry {
+	{
 		var page runner.Page
 		do("GET", "api/v1/runners", nil, &page)
 		for _, row := range page.Items {
@@ -266,9 +267,6 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 	}
 	executionRoute := func(suffix string) string {
-		if !mode.runnerEntry {
-			return "api/v1/machines/" + machineConfig.Target + "/" + suffix
-		}
 		b := selected.Binding
 		query := url.Values{"machine_id": {b.MachineID}, "fabric_id": {b.FabricID}, "revision": {fmt.Sprint(b.Revision)}}
 		return "api/v1/runners/" + selected.ID + "/" + suffix + "?" + query.Encode()
@@ -395,7 +393,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		}
 		policyRevoked.Store(true)
 		awaitRevocation()
-		response, err = browser.Get(site + "api/v1/machines")
+		response, err = browser.Get(site + "api/v1/runners")
 		must(t, err)
 		var page struct{ Items []json.RawMessage }
 		must(t, json.NewDecoder(response.Body).Decode(&page))

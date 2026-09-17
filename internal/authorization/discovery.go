@@ -15,6 +15,7 @@ import (
 type Resource struct {
 	Runner            runner.Runner
 	OwnerID, OS, Arch string
+	CreatedBy         access.CreatorIdentity
 	// FabricID and BindingRevision remain authoritative when a Managed Runner
 	// has no machine. They let lifecycle access checks retain its fixed scope
 	// without pretending that an executable Binding exists.
@@ -37,7 +38,7 @@ func scope(user identity.User, resource Resource) access.Scope {
 }
 
 func (l *Service) Check(ctx context.Context, user identity.User, resource Resource, operation, suboperation string) (access.Decision, error) {
-	return l.evaluate(ctx, access.Request{Scope: scope(user, resource), RequestID: wire.ID(), Operation: operation, Suboperation: suboperation})
+	return l.evaluate(ctx, access.Request{Scope: scope(user, resource), CreatedBy: resource.CreatedBy, RequestID: wire.ID(), Operation: operation, Suboperation: suboperation})
 }
 
 func (l *Service) Resource(ctx context.Context, user identity.User, id string, machine bool, operation string) (Resource, access.Decision, error) {

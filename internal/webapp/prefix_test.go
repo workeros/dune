@@ -87,7 +87,7 @@ func TestDeploymentPrefixRoutesCookiesAndEnrollment(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &enrollment); err != nil || response.Code != 200 {
 				t.Fatalf("enrollment: %d %v", response.Code, err)
 			}
-			if enrollment.Endpoint != origin+strings.TrimSuffix(prefix, "/") || !strings.Contains(enrollment.Command, origin+prefix+"install.sh") || strings.Contains(enrollment.Command, "machines.test") || strings.Contains(enrollment.Command, "forged") {
+			if enrollment.Endpoint != origin+strings.TrimSuffix(prefix, "/") || !strings.Contains(enrollment.Command, origin+prefix+"api/v1/install.sh") || strings.Contains(enrollment.Command, "machines.test") || strings.Contains(enrollment.Command, "forged") {
 				t.Fatalf("incorrect installation address: %+v", enrollment)
 			}
 			body, _ := json.Marshal(map[string]string{"token": enrollment.Token, "os": "linux", "arch": "amd64"})

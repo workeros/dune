@@ -43,9 +43,9 @@ func (l *Service) BackgroundRunner(ctx context.Context, user identity.User, owne
 	if !valid() {
 		return gateway.BindingContext{}, nil, ErrNotFound
 	}
-	policy := &access.Policy{Scope: record.Scope(), Checker: l.checker, Observer: l.observer}
+	policy := l.streamPolicy(record)
 	if l.bootID != "" {
 		policy.Delegate = l.delegate(record)
 	}
-	return (access.Grant{Target: binding.MachineID, Role: gateway.RoleSDK, Valid: valid, Policy: policy}).Bind()
+	return (access.Grant{Target: binding.MachineID, Role: gateway.RoleSDK, Policy: policy}).Bind()
 }

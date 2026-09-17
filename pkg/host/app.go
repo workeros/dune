@@ -50,6 +50,8 @@ type Options struct {
 	DisableRegistration   bool
 	DisableAttached       bool
 	TenantScoped          bool
+	// TrustedProxies contains CIDRs allowed to supply client forwarding headers.
+	TrustedProxies []string
 	// Identity selects host-owned session validation. Nil uses Dune's local
 	// password implementation. Enterprise implementations live outside Dune and
 	// return their stable enterprise user ID directly.
@@ -72,7 +74,6 @@ type Options struct {
 	// ConsumeWebSocketTicket enables browser WebSocket authentication without
 	// putting a JWT in a URL. SandDance supplies the persistent one-time store.
 	ConsumeWebSocketTicket func(context.Context, string, string, runner.Binding, api.Runtime) (string, error)
-	CanDetachAttached      func(context.Context, publicidentity.User, string, string) (bool, error)
 }
 
 // App is an http.Handler mounted with the complete deployment prefix preserved.
@@ -190,8 +191,8 @@ func Open(parent context.Context, options Options) (*App, error) {
 		Managed:                options.Managed,
 		DisableAttached:        options.DisableAttached,
 		TenantScoped:           options.TenantScoped,
+		TrustedProxies:         options.TrustedProxies,
 		ConsumeWebSocketTicket: options.ConsumeWebSocketTicket,
-		CanDetachAttached:      options.CanDetachAttached,
 	}, store, service, authorizer, core)
 	if err != nil {
 		return nil, err

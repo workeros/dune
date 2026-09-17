@@ -22,6 +22,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/jackc/pgx/v5"
@@ -66,7 +67,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := first.IssueEnrollment(ctx, user.ID, "owned execution")
+	_, token, _, err := first.IssueEnrollment(ctx, user.ID, "owned execution")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,13 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	entryRepository := &peerEntryRepository{Repository: second}
-	entryAuth, err := authorization.NewLocal(ctx, identity.NewLocal(second, true), entryRepository).WithPeers(entry.BootID())
+	entryIdentity := identity.NewLocal(second, true)
+	authenticated, err := entryIdentity.Authenticate(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entrySessions := &peerEntrySessions{Sessions: entryIdentity, stale: &entryRepository.stale, authenticated: authenticated}
+	entryAuth, err := authorization.NewLocal(ctx, entrySessions, entryRepository).WithPeers(entry.BootID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +202,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 			t.Fatal(err)
 		}
 		if g == entry {
-			grant, err := entryAuth.Client(ctx, cookie, machine.ID)
+			grant, err := entryAuth.ClientRunner(ctx, cookie, runner.Binding{RunnerID: machine.RunnerID, MachineID: machine.ID, FabricID: "attached", Revision: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -332,8 +339,8 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		}
 	}
 	// Logout on the other pool must close an idle peer user stream.
-	// Deliberately hold the entry's validity answer stale to prove the owner's
-	// independent watchdog, rather than relying on the entry to close the path.
+	// Deliberately hold both entry identity and Runner facts stale to prove the
+	// owner's independent watchdog, without relying on entry-side revocation.
 	entryRepository.stale.Store(true)
 	if err := identity.NewLocal(first, true).Logout(ctx, cookie); err != nil {
 		t.Fatal(err)
@@ -349,12 +356,25 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	}()
 	select {
 	case <-idleDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(access.StreamLeaseLimit + 200*time.Millisecond):
 		t.Fatal("revoked peer user kept idle terminal access")
 	}
 	if _, err := current.List(ctx); err == nil {
 		t.Fatal("revoked peer user opened another request")
 	}
+}
+
+type peerEntrySessions struct {
+	authorization.Sessions
+	stale         *atomic.Bool
+	authenticated identity.Authentication
+}
+
+func (s *peerEntrySessions) Authenticate(ctx context.Context, token string) (identity.Authentication, error) {
+	if s.stale.Load() {
+		return s.authenticated, nil
+	}
+	return s.Sessions.Authenticate(ctx, token)
 }
 
 type peerOwnerChecker struct{ denied atomic.Bool }

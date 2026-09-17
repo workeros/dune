@@ -1,0 +1,28 @@
+{
+  "version": "15.1.0",
+  "repository": "https://github.com/BurntSushi/ripgrep",
+  "license_files": ["COPYING", "LICENSE-MIT", "UNLICENSE"],
+  "pcre2": {
+    "version": "10.45",
+    "license_url": "https://raw.githubusercontent.com/PCRE2Project/pcre2/pcre2-10.45/LICENCE.md",
+    "license_sha256": "9cf7ac6976099a1d856826d3ef1b093bd6b84489dc6100628ac79e740cf9885a"
+  },
+  "archives": {
+    "linux-amd64": [
+      "x86_64-unknown-linux-musl",
+      "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599"
+    ],
+    "linux-arm64": [
+      "aarch64-unknown-linux-gnu",
+      "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e"
+    ],
+    "darwin-amd64": [
+      "x86_64-apple-darwin",
+      "64811cb24e77cac3057d6c40b63ac9becf9082eedd54ca411b475b755d334882"
+    ],
+    "darwin-arm64": [
+      "aarch64-apple-darwin",
+      "378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715"
+    ]
+  }
+}

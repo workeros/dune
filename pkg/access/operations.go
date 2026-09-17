@@ -62,7 +62,7 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		if a.Action == "rename" {
 			r.Resource.Destination = a.Destination
 		}
-		if !oneOf(a.Action, "stat", "list", "list_page", "search", "read", "write", "mkdir", "rename", "remove") {
+		if !oneOf(a.Action, "stat", "list_page", "search", "read", "write", "mkdir", "rename", "remove") {
 			return r, ErrDenied
 		}
 	case "upload":

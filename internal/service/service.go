@@ -13,7 +13,10 @@ import (
 	"strings"
 )
 
-func Run(action, config, name string) error {
+func Run(action, config, name, readyFile, readyNonce string) error {
+	if (readyFile == "") != (readyNonce == "") {
+		return fmt.Errorf("startup receipt path and nonce must be supplied together")
+	}
 	if name == "" || len(name) > 64 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != "" {
 		return fmt.Errorf("service name must contain 1..64 letters, digits, - or _")
 	}
@@ -46,7 +49,16 @@ func Run(action, config, name string) error {
 			quote := func(s string) string {
 				return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `%`, `%%`, "\n", `\n`, "\r", `\r`).Replace(s) + `"`
 			}
-			body := "[Unit]\nDescription=Dune development machine connector\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart=" + quote(exe) + " --config " + quote(path) + " fabricd\nEnvironment=" + quote("PATH="+os.Getenv("PATH")) + "\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n"
+			extra := ""
+			if readyFile != "" {
+				extra = " --ready-file " + quote(readyFile) + " --ready-nonce " + quote(readyNonce)
+			}
+			if _, statErr := os.Lstat(filepath.Join(dir, unit)); statErr == nil {
+				if err = run("systemctl", "--user", "stop", unit); err != nil {
+					return err
+				}
+			}
+			body := "[Unit]\nDescription=Dune development machine connector\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart=" + quote(exe) + " --config " + quote(path) + " fabricd" + extra + "\nEnvironment=" + quote("PATH="+os.Getenv("PATH")) + "\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n"
 			if err = os.WriteFile(filepath.Join(dir, unit), []byte(body), 0600); err != nil {
 				return err
 			}
@@ -72,11 +84,15 @@ func Run(action, config, name string) error {
 			}
 			esc := func(s string) string { var b strings.Builder; _ = xml.EscapeText(&b, []byte(s)); return b.String() }
 			log := filepath.Join(filepath.Dir(path), name+".log")
-			body := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + esc(label) + `</string><key>ProgramArguments</key><array><string>` + esc(exe) + `</string><string>--config</string><string>` + esc(path) + `</string><string>fabricd</string></array><key>EnvironmentVariables</key><dict><key>PATH</key><string>` + esc(os.Getenv("PATH")) + `</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>AbandonProcessGroup</key><true/><key>StandardOutPath</key><string>` + esc(log) + `</string><key>StandardErrorPath</key><string>` + esc(log) + `</string></dict></plist>`
+			extra := ""
+			if readyFile != "" {
+				extra = `<string>--ready-file</string><string>` + esc(readyFile) + `</string><string>--ready-nonce</string><string>` + esc(readyNonce) + `</string>`
+			}
+			_ = exec.Command("launchctl", "bootout", domain+"/"+label).Run()
+			body := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + esc(label) + `</string><key>ProgramArguments</key><array><string>` + esc(exe) + `</string><string>--config</string><string>` + esc(path) + `</string><string>fabricd</string>` + extra + `</array><key>EnvironmentVariables</key><dict><key>PATH</key><string>` + esc(os.Getenv("PATH")) + `</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>AbandonProcessGroup</key><true/><key>StandardOutPath</key><string>` + esc(log) + `</string><key>StandardErrorPath</key><string>` + esc(log) + `</string></dict></plist>`
 			if err = os.WriteFile(plist, []byte(body), 0600); err != nil {
 				return err
 			}
-			_ = exec.Command("launchctl", "bootout", domain+"/"+label).Run()
 			return run("launchctl", "bootstrap", domain, plist)
 		}
 		switch action {

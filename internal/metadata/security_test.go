@@ -50,7 +50,7 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 			if err := s.db.QueryRowContext(ctx, `SELECT hash FROM dune_sessions WHERE user_id=$1`, user.ID).Scan(&hash); err != nil || hash != tokenHash(cookie) {
 				t.Fatal("session token not hashed", err)
 			}
-			enrollment, _, err := s.IssueEnrollment(ctx, user.ID, "private machine")
+			_, enrollment, _, err := s.IssueEnrollment(ctx, user.ID, "private machine")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 			if err != nil {
 				t.Fatal("logout did not free a session slot", err)
 			}
-			enrollment, _, err = s.IssueEnrollment(ctx, user.ID, "expired")
+			_, enrollment, _, err = s.IssueEnrollment(ctx, user.ID, "expired")
 			if err != nil {
 				t.Fatal(err)
 			}

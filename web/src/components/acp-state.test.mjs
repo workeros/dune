@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { conversationReducer, initialConversation } from './acp-state.ts';
+const update = (state, value) => conversationReducer(state, { type: 'update', update: value });
+test('tool updates preserve unchanged sizes and bound accumulated conversation', () => {
+ let state = initialConversation;
+ for (let i=0; i<5001; i++) state=update(state,{sessionUpdate:'tool_call',toolCallId:String(i),title:'tool'});
+ assert.equal(state.entries.length,5000);
+ assert.equal(state.gap,true);
+ const before=state;
+ state=update(state,{sessionUpdate:'tool_call_update',toolCallId:'2000',rawOutput:'中🙂'.repeat(1000),status:'completed'});
+ assert.equal(state.entries[0],before.entries[0]);
+ assert.equal(state.sizes[0],before.sizes[0]);
+ assert.equal(state.bytes,state.sizes.reduce((sum,size)=>sum+size,0));
+ state=update(state,{sessionUpdate:'agent_message',content:'x'.repeat(2*1024*1024)});
+ assert.equal(state.entries.length,0);
+ assert.equal(state.bytes,0);
+});
+test('chunks merge and reset clears accounting; debug only retained while open',()=>{
+ let state=update(initialConversation,{sessionUpdate:'agent_message_chunk',content:'a'});
+ state=update(state,{sessionUpdate:'agent_message_chunk',content:'b'});
+ assert.equal(state.entries[0].text,'ab');
+ assert.equal(state.entries.length,1);
+ assert.equal(state.bytes,state.sizes[0]);
+ assert.equal(conversationReducer(state,{type:'stream',direction:'output',message:'secret'}),state);
+ state=conversationReducer(state,{type:'toggleStream'});
+ state=conversationReducer(state,{type:'stream',direction:'output',message:'seen'});
+ assert.equal(state.streamEntries.length,1);
+ state=conversationReducer(state,{type:'toggleStream'});
+ assert.equal(state.streamEntries.length,0);
+ state=conversationReducer(state,{type:'reset'});
+ assert.equal(state.entries.length,0);assert.equal(state.bytes,0);assert.equal(state.gap,false);
+});

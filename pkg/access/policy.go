@@ -17,6 +17,9 @@ import (
 const CheckTimeout = time.Second
 const MaxLease = 30 * time.Second
 
+// StreamLeaseLimit bounds reuse of one exact action on an established stream.
+const StreamLeaseLimit = 5 * time.Second
+
 var ErrDenied = errors.New("access denied")
 var ErrUnavailable = fmt.Errorf("access checker unavailable: %w", ErrDenied)
 
@@ -67,12 +70,19 @@ type Resource struct {
 // belong to the original stream RequestID and fixed operation scope.
 type Request struct {
 	Scope
+	CreatedBy    CreatorIdentity
 	Runtime      RuntimeIdentity
 	RequestID    string
 	Operation    string
 	Suboperation string
 	Mode         string
 	Resource     Resource
+}
+
+// CreatorIdentity contains only the creator identifiers persisted by Dune.
+// It is authoritative resource data, not another authenticated caller.
+type CreatorIdentity struct {
+	ID, Namespace, Subject string
 }
 
 type Decision struct {

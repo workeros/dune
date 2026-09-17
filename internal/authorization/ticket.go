@@ -36,8 +36,9 @@ func (r ConnectionAccess) Scope() access.Scope {
 }
 
 type Repository interface {
-	IssueEnrollmentForSession(context.Context, identity.User, string, string) (string, int64, error)
+	IssueEnrollmentForSession(context.Context, identity.User, string, string) (runner.Runner, string, int64, error)
 	IssueTenantEnrollment(context.Context, identity.User, string, string, string) (runner.Runner, string, int64, error)
+	CancelEnrollmentForSession(context.Context, identity.User, string, string) error
 	RevokeAuthorized(context.Context, identity.User, string, Resource) error
 	MachineResource(context.Context, string) (Resource, error)
 	RunnerResource(context.Context, string) (Resource, error)

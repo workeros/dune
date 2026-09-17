@@ -69,7 +69,10 @@ type Mutation struct {
 }
 
 // Destruction describes an accepted destroy request. The external service owns
-// all provider cleanup and recovery; these fields are presentation state only.
+// all provider cleanup and recovery. AccessClosedAt is when persistence of the
+// access gate was observed; AccessCloseDeadline is the upper bound for Gateway
+// propagation. Outcome "revoked" confirms the gate, not all Gateway copies.
+// Outcome "unknown" carries no access-close timestamp or propagation promise.
 type Destruction struct {
 	Operation
 	ResourceRef                         string
@@ -83,11 +86,12 @@ type Status struct {
 	ExpiresAt                                                       time.Time
 	RenewalPolicyVersion, RenewalReason                             string
 	RenewalObservedAt, RenewalNextCheckAt, RenewalUntil             time.Time
-	AccessClosed, AccessSuspended                                   bool
-	ResourceState                                                   string
-	Capabilities                                                    *fabric.ResourceCapabilities
-	AccessCloseOutcome                                              string
-	AccessCloseDeadline                                             time.Time
+	// These describe the durable gate, not an acknowledgement from every Gateway.
+	AccessClosed, AccessSuspended bool
+	ResourceState                 string
+	Capabilities                  *fabric.ResourceCapabilities
+	AccessCloseOutcome            string
+	AccessCloseDeadline           time.Time
 }
 
 // Service is intentionally a high-level product API. Implementations receive

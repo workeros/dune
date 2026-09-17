@@ -52,7 +52,7 @@ func NewBootstrapPlan(call BootstrapCall, platform BootstrapPlatform) (Bootstrap
 	if !platform.Valid() {
 		return BootstrapPlan{}, fmt.Errorf("unsupported bootstrap platform")
 	}
-	if !boundedIdentifier(call.Action.ID, 128) || strings.TrimSpace(call.Action.ResourceRef) == "" {
+	if !boundedIdentifier(call.Action.ID, 128) || !boundedIdentifier(call.Action.RunnerID, 128) || strings.TrimSpace(call.Action.ResourceRef) == "" {
 		return BootstrapPlan{}, fmt.Errorf("bootstrap requires action and resource identities")
 	}
 	if len(call.EnrollmentToken) != 64 {
@@ -81,10 +81,14 @@ func NewBootstrapPlan(call BootstrapCall, platform BootstrapPlatform) (Bootstrap
 		"mkdir -p \"$root\"",
 		"chmod 700 \"$root\"",
 		"if [ ! -f \"$root/bootstrap.complete\" ]; then",
+		"if [ -e \"$root/config.yaml\" ] || [ -L \"$root/config.yaml\" ]; then echo 'configuration already exists; inspect this bootstrap before retrying' >&2; exit 1; fi",
 		"curl --fail --silent --show-error --proto '=http,https' --proto-redir '=http,https' --connect-timeout 10 --max-time 90 " + shellQuote(archiveURL) + " -o \"$root/dune.tar.gz\"",
+		"curl --fail --silent --show-error --proto '=http,https' --connect-timeout 10 --max-time 90 " + shellQuote(archiveURL+".sha256") + " -o \"$root/dune.sha256\"",
+		"expected=$(cut -d ' ' -f 1 \"$root/dune.sha256\"); case \"$expected\" in *[!0-9a-f]*|'') exit 1;; esac; [ ${#expected} -eq 64 ]",
+		"if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum \"$root/dune.tar.gz\"); else actual=$(shasum -a 256 \"$root/dune.tar.gz\"); fi; [ \"${actual%% *}\" = \"$expected\" ]",
 		"tar -xzf \"$root/dune.tar.gz\" -C \"$root\"",
-		"chmod 700 \"$root/dune\" \"$root/tmux\"",
-		"\"$root/dune\" --config \"$root/config.yaml\" enroll --site " + shellQuote(urls.PublicURL) + " --token " + shellQuote(call.EnrollmentToken),
+		"chmod 700 \"$root/dune\" \"$root/tmux\" \"$root/rg\"",
+		"\"$root/dune\" --config \"$root/config.yaml\" enroll --site " + shellQuote(urls.PublicURL) + " --token " + shellQuote(call.EnrollmentToken) + " --runner-id " + shellQuote(call.Action.RunnerID),
 		"nohup \"$root/dune\" --config \"$root/config.yaml\" fabricd >\"$root/fabricd.log\" 2>&1 </dev/null &",
 		"pid=$!",
 		"sleep 1",

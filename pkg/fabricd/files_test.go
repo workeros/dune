@@ -13,7 +13,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
-func TestFilePagesSearchAndCAS(t *testing.T) {
+func TestFilePagesAndCAS(t *testing.T) {
 	root := t.TempDir()
 	for name, contents := range map[string]string{
 		"alpha.txt":       "alpha",
@@ -50,25 +50,8 @@ func TestFilePagesSearchAndCAS(t *testing.T) {
 		t.Fatalf("unexpected second page: %+v", second)
 	}
 
-	searchValue, err := engine.files(api.File{Action: "search", Path: root, Query: "MATCH", Limit: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	search := searchValue.(api.FilePage)
-	if len(search.Items) != 1 || search.Items[0].Name != "bravo-match.txt" || search.NextCursor == "" {
-		t.Fatalf("unexpected search page: %+v", search)
-	}
-	nextSearchValue, err := engine.files(api.File{Action: "search", Path: root, Query: "match", Limit: 1, Cursor: search.NextCursor})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextSearch := nextSearchValue.(api.FilePage)
-	if len(nextSearch.Items) != 1 || nextSearch.Items[0].Name != "match.md" {
-		t.Fatalf("unexpected next search page: %+v", nextSearch)
-	}
-
 	path := filepath.Join(root, "alpha.txt")
-	readValue, err := engine.files(api.File{Action: "read", Path: path, Length: 3})
+	readValue, err := engine.files(api.File{Action: "read", Path: path, Length: 3, WithRevision: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +59,7 @@ func TestFilePagesSearchAndCAS(t *testing.T) {
 	if string(chunk.Data) != "alp" || chunk.Offset != 3 || chunk.EOF || chunk.Info.Revision == "" || chunk.Info.ContentHash == "" {
 		t.Fatalf("unexpected read chunk: %+v", chunk)
 	}
-	writtenValue, err := engine.files(api.File{Action: "write", Path: path, Data: []byte("updated"), Overwrite: true, ExpectedRevision: chunk.Info.Revision})
+	writtenValue, err := engine.files(api.File{Action: "write", Path: path, Data: []byte("updated"), Intent: "conditional", ExpectedRevision: chunk.Info.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +67,7 @@ func TestFilePagesSearchAndCAS(t *testing.T) {
 	if written.Revision == chunk.Info.Revision {
 		t.Fatal("successful write did not advance revision")
 	}
-	_, err = engine.files(api.File{Action: "write", Path: path, Data: []byte("stale"), Overwrite: true, ExpectedRevision: chunk.Info.Revision})
+	_, err = engine.files(api.File{Action: "write", Path: path, Data: []byte("stale"), Intent: "conditional", ExpectedRevision: chunk.Info.Revision})
 	var apiErr *api.Error
 	if !errors.As(err, &apiErr) || apiErr.Code != "FILE_CHANGED" {
 		t.Fatalf("stale write error = %v", err)
@@ -93,7 +76,7 @@ func TestFilePagesSearchAndCAS(t *testing.T) {
 	if err != nil || string(contents) != "updated" {
 		t.Fatalf("stale write changed file: %q, %v", contents, err)
 	}
-	_, err = engine.files(api.File{Action: "write", Path: path, Data: []byte("forced"), Overwrite: true, ExpectedRevision: chunk.Info.Revision, Force: true})
+	_, err = engine.files(api.File{Action: "write", Path: path, Data: []byte("forced"), Intent: "unconditional"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,13 +95,13 @@ func TestUploadCommitChecksRevision(t *testing.T) {
 	}
 	engine.cleaner = cleaner
 	defer engine.Close()
-	info, err := detailedFileInfo(path)
+	info, err := statFile(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := []byte("uploaded replacement")
 	digest := sha256.Sum256(data)
-	createdValue, err := engine.uploadOp(api.Upload{Action: "create", Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:]), Overwrite: true, ExpectedRevision: info.Revision})
+	createdValue, err := engine.uploadOp(api.Upload{Action: "create", Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:]), Intent: "conditional", ExpectedRevision: info.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}

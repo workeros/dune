@@ -136,11 +136,14 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	}
 	credentials := map[string]string{"email": "cluster-web@example.test", "password": "cluster-process-password"}
 	request(sites[0], "POST", "api/v1/auth/register", credentials, nil)
-	var enrollment struct{ Token string }
+	var enrollment struct {
+		Token  string
+		Runner struct{ ID string }
+	}
 	request(sites[0], "POST", "api/v1/enrollments", map[string]string{"name": "cluster machine"}, &enrollment)
 	machineFile := filepath.Join(dir, "machine", "config.yaml")
 	// Enrollment itself is consumed on B after being issued by A.
-	must(t, webapp.EnrollMachine(ctx, machineFile, sites[1], enrollment.Token, ""))
+	must(t, webapp.EnrollMachine(ctx, machineFile, sites[1], enrollment.Token, "", enrollment.Runner.ID))
 	machine, err := config.Load(machineFile)
 	must(t, err)
 	log, err := os.Create(filepath.Join(dir, "fabricd.log"))
@@ -166,8 +169,8 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 					Online bool
 				}
 			}
-			request(site, "GET", "api/v1/machines", nil, &page)
-			if len(page.Items) == 1 && page.Items[0].ID == machine.Target && page.Items[0].Online {
+			request(site, "GET", "api/v1/runners", nil, &page)
+			if len(page.Items) == 1 && page.Items[0].ID == enrollment.Runner.ID && page.Items[0].Online {
 				break
 			}
 			select {
@@ -176,7 +179,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 			case <-time.After(25 * time.Millisecond):
 			}
 		}
-		request(site, "POST", "api/v1/machines/"+machine.Target+"/call", map[string]any{"operation": "runtime.list", "payload": struct{}{}}, nil)
+		request(site, "POST", "api/v1/runners/"+enrollment.Runner.ID+"/call?fabric_id=attached&revision=1&machine_id="+machine.Target, map[string]any{"operation": "runtime.list", "payload": struct{}{}}, nil)
 		// A different entry revokes the shared browser session.
 		request(sites[1], "POST", "api/v1/auth/logout", struct{}{}, nil)
 	}

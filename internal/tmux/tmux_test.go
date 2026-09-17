@@ -27,7 +27,7 @@ func server(t *testing.T) *Server {
 }
 func session(t *testing.T, s *Server, id, script string, env []string) *Session {
 	t.Helper()
-	r, e := s.Create(api.Runtime{ID: strings.Repeat(id, 32), Incarnation: "test", Generation: 1, Adapter: "pty", WorkingDirectory: t.TempDir(), Title: "test"}, []string{"/bin/sh", "-c", script}, env, 50000)
+	r, e := s.Create(api.Runtime{ID: strings.Repeat(id, 32), Incarnation: "test", Generation: 1, Adapter: "pty", WorkingDirectory: t.TempDir(), Title: "test"}, []string{"/bin/sh", "-c", script}, env, 50000, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -79,6 +79,49 @@ func TestPersistenceAndEnvironmentIsolation(t *testing.T) {
 		t.Fatal("destroy affected another session")
 	}
 }
+
+func TestRunningServerSurvivesRemovedRelease(t *testing.T) {
+	s := server(t)
+	currentBinary := s.Binary
+	program, err := os.ReadFile(currentBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := filepath.Join(t.TempDir(), "old-release")
+	if err := os.Mkdir(release, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.Binary = filepath.Join(release, "tmux")
+	if err := os.WriteFile(s.Binary, program, 0700); err != nil {
+		t.Fatal(err)
+	}
+	r := session(t, s, "f", `printf 'OLD_SERVER_READY\n'; while IFS= read -r line; do printf 'reply:%s\n' "$line"; done`, []string{"PATH=/usr/bin:/bin"})
+	await(t, func() bool { c, e := r.Capture(); return e == nil && strings.Contains(c.Content, "OLD_SERVER_READY") })
+	if err := os.RemoveAll(release); err != nil {
+		t.Fatal(err)
+	}
+	// The new release supplies the CLI; the already-running server continues
+	// to own the pane even though its mapped executable has been unlinked.
+	s.Binary = currentBinary
+	restored, err := s.Restore()
+	if err != nil || len(restored) != 1 {
+		t.Fatal("new client could not restore the old server", restored, err)
+	}
+	view, err := restored[0].Attach(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	go io.Copy(io.Discard, view)
+	if err := view.Write([]byte("NEW_CLIENT\n")); err != nil {
+		t.Fatal(err)
+	}
+	await(t, func() bool {
+		c, e := restored[0].Capture()
+		return e == nil && strings.Contains(c.Content, "reply:NEW_CLIENT")
+	})
+}
+
 func TestNativeHistoryAndExit(t *testing.T) {
 	s := server(t)
 	r := session(t, s, "c", `seq 1 50200; printf '\033[31mFINAL\033[0m\n'; exit 7`, []string{"PATH=/usr/bin:/bin"})

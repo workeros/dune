@@ -35,6 +35,20 @@ func (d *Engine) watchTmux() {
 			} // An unavailable server is not evidence that a process exited.
 			for _, r := range runtimes {
 				p, exists := panes[r.id]
+				if !exists || p.Dead {
+					state, err := r.tmux.TimeoutState()
+					if err == nil {
+						r.readTimeoutState(state)
+					}
+					if err != nil || (state != nil && state.ExitCode == nil) {
+						// A lost helper is not evidence of a natural exit or timeout.
+						r.mu.Lock()
+						if r.exit == nil {
+							r.stopReason = "unknown"
+						}
+						r.mu.Unlock()
+					}
+				}
 				if !exists {
 					r.finish(-1)
 				} else if p.Dead {

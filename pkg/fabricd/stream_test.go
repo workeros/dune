@@ -279,7 +279,7 @@ func TestReverseConnectionRenewsInputLease(t *testing.T) {
 	defer c.Close()
 	original := c.Binding
 	requestID := wire.ID()
-	write := api.File{Action: "write", Path: filepath.Join(t.TempDir(), "deduplicated"), Data: []byte("one write")}
+	write := api.File{Action: "write", Intent: "create", Path: filepath.Join(t.TempDir(), "deduplicated"), Data: []byte("one write")}
 	if err := c.CallID(ctx, "files", requestID, write, nil, nil); err != nil {
 		t.Fatal(err)
 	}

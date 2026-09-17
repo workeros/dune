@@ -11,13 +11,13 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 )
 
-const resourceSelect = `SELECT id,name,kind,created_at,owner_id,fabric_id,binding_revision,machine_id,os,arch FROM dune_runners`
+const resourceSelect = `SELECT id,name,kind,created_at,owner_id,fabric_id,binding_revision,machine_id,os,arch,created_by_id,created_by_namespace,created_by_subject FROM dune_runners`
 
 func scanResource(row interface{ Scan(...any) error }) (authorization.Resource, error) {
 	var resource authorization.Resource
 	var binding runner.Binding
 	var machine sql.NullString
-	if err := row.Scan(&resource.Runner.ID, &resource.Runner.Name, &resource.Runner.Kind, &resource.Runner.CreatedAt, &resource.OwnerID, &binding.FabricID, &binding.Revision, &machine, &resource.OS, &resource.Arch); err != nil {
+	if err := row.Scan(&resource.Runner.ID, &resource.Runner.Name, &resource.Runner.Kind, &resource.Runner.CreatedAt, &resource.OwnerID, &binding.FabricID, &binding.Revision, &machine, &resource.OS, &resource.Arch, &resource.CreatedBy.ID, &resource.CreatedBy.Namespace, &resource.CreatedBy.Subject); err != nil {
 		return resource, err
 	}
 	if machine.Valid {

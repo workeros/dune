@@ -352,7 +352,7 @@ func TestMixedLoad(t *testing.T) {
 		for i := 0; i < 512; i++ {
 			hash.Write(chunk)
 		}
-		u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Path: filepath.Join(h.dir, "bulk"), Size: 16 * 1024 * 1024, SHA256: hex.EncodeToString(hash.Sum(nil))})
+		u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Intent: "create", Path: filepath.Join(h.dir, "bulk"), Size: 16 * 1024 * 1024, SHA256: hex.EncodeToString(hash.Sum(nil))})
 		if e != nil {
 			done <- e
 			return

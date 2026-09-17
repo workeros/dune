@@ -12,6 +12,6 @@ export default {
     { test: /\.tsx?$/, exclude: /node_modules/, loader: "builtin:swc-loader", options: { jsc: { parser: { syntax: "typescript", tsx: true }, transform: { react: { runtime: "automatic" } } } } },
     { test: /\.css$/, type: "css", use: [{ loader: "postcss-loader", options: { postcssOptions: { plugins: { "@tailwindcss/postcss": {} } } } }] },
   ] },
-  plugins: [new rspack.HtmlRspackPlugin({ template: "./index.html" }), new rspack.CopyRspackPlugin({ patterns: [{ from: "install.sh", to: "install.sh" }] })],
+  plugins: [new rspack.HtmlRspackPlugin({ template: "./index.html" })],
   devServer: { host: "127.0.0.1", port: 5173, historyApiFallback: true, proxy: [{ context: ["/api"], target: "http://127.0.0.1:7443", ws: true }] },
 };

@@ -114,7 +114,7 @@ func browserEventConnection(t *testing.T, adapter string, messages []*pb.Message
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, _, err := store.IssueEnrollment(ctx, user.ID, "terminal-machine")
+	_, enrollment, _, err := store.IssueEnrollment(ctx, user.ID, "terminal-machine")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func browserEventConnection(t *testing.T, adapter string, messages []*pb.Message
 	t.Cleanup(app.Close)
 	server := httptest.NewServer(app)
 	t.Cleanup(server.Close)
-	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/ws/machines/" + machine.ID + "/sessions/" + runtime.ID + "/events?incarnation=" + runtime.Incarnation + "&generation=1"
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/ws/runners/" + machine.RunnerID + "/sessions/" + runtime.ID + "/events?incarnation=" + runtime.Incarnation + "&generation=1&fabric_id=attached&revision=1&machine_id=" + machine.ID
 	header := http.Header{"Origin": {origin}, "Cookie": {(&http.Cookie{Name: cookieName, Value: token}).String()}}
 	connection, response, err := websocket.DefaultDialer.DialContext(ctx, endpoint, header)
 	if err != nil {

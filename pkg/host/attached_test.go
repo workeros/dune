@@ -12,8 +12,8 @@ import (
 
 type attachedIdentity struct{}
 
-func (attachedIdentity) Authenticate(context.Context, string) (identity.User, error) {
-	return identity.User{}, identity.ErrUnauthorized
+func (attachedIdentity) Authenticate(context.Context, string) (identity.Authentication, error) {
+	return identity.Authentication{}, identity.ErrUnauthorized
 }
 func (attachedIdentity) Logout(context.Context, string) error { return nil }
 func (attachedIdentity) Namespace() string                    { return "sanddance" }

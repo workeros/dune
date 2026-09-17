@@ -390,7 +390,7 @@ func TestPolicyExecutionAndReadOnlyStreams(t *testing.T) {
 	contents := []byte("private-file-data")
 	sum := sha256.Sum256(contents)
 	var upload api.UploadState
-	if err := c.Call(ctx, "upload", api.Upload{Action: "create", Path: forbidden, Size: int64(len(contents)), SHA256: hex.EncodeToString(sum[:])}, &upload); err != nil {
+	if err := c.Call(ctx, "upload", api.Upload{Action: "create", Intent: "create", Path: forbidden, Size: int64(len(contents)), SHA256: hex.EncodeToString(sum[:])}, &upload); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Call(ctx, "upload", api.Upload{Action: "chunk", ID: upload.ID, Data: contents}, nil); err != nil {
@@ -542,7 +542,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 	}{
 		{"files", api.File{Action: "read", Path: "/tmp/file", Data: []byte("secret")}, "read", ""},
 		{"files", api.File{Action: "list_page", Path: "/tmp", Cursor: "opaque"}, "list_page", ""},
-		{"files", api.File{Action: "search", Path: "/tmp", Query: "secret"}, "search", ""},
+		{"files", api.File{Action: "search", Path: "/tmp", Search: &api.SearchOptions{Mode: "path", Query: "secret"}}, "search", ""},
 		{"upload", api.Upload{Action: "commit", ID: "upload", Data: []byte("secret")}, "commit", ""},
 		{"git", api.Git{Action: "stash", Mode: "list", Patch: "secret", Message: "secret"}, "stash", "list"},
 		{"git", api.Git{Action: "branch", Name: "feature"}, "branch", "create"},
@@ -595,6 +595,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 	t.Run("input-cache-and-resize", func(t *testing.T) {
 		var inputs atomic.Int32
+		var validityChecks atomic.Int32
 		ctx, c := policyFixture(t, checkFunc(func(ctx context.Context, r Request) (Decision, error) {
 			if r.Suboperation == "input" {
 				inputs.Add(1)
@@ -602,14 +603,15 @@ func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 			d := allow(r, MaxLease)
 			d.Allowed = r.Suboperation != "resize"
 			return d, nil
-		}), nil)
+		}), func() bool { validityChecks.Add(1); return true })
 		r, s, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer s.Close()
 		t.Cleanup(func() { c.Stop(context.Background(), r) })
-		for range 2 {
+		firstInputChecks := int32(0)
+		for attempt := range 2 {
 			id, err := s.Input([]byte("printf POLICY_INPUT_OK\\n\n"))
 			if err != nil {
 				t.Fatal(err)
@@ -622,6 +624,11 @@ func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 				if m.Kind == "written" && m.RequestId == id {
 					break
 				}
+			}
+			if attempt == 0 {
+				firstInputChecks = validityChecks.Load()
+			} else if validityChecks.Load() != firstInputChecks {
+				t.Fatal("continuous frames revalidated identity", firstInputChecks, validityChecks.Load())
 			}
 		}
 		if inputs.Load() != 1 {
@@ -675,6 +682,63 @@ func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 			t.Fatal("late approval resurrected a closed stream")
 		}
 	})
+}
+
+func TestStreamLeaseCapsHostTTLAndRechecksNewRequests(t *testing.T) {
+	var revoked atomic.Bool
+	var checks atomic.Int32
+	ctx, c := policyFixture(t, checkFunc(func(_ context.Context, r Request) (Decision, error) {
+		checks.Add(1)
+		d := allow(r, time.Minute)
+		d.Allowed = !revoked.Load()
+		return d, nil
+	}), nil)
+	_, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh", "-c", "while :; do printf x; sleep 0.02; done"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	revokedAt := time.Now()
+	revoked.Store(true)
+	before := checks.Load()
+	if _, err := c.List(ctx); err == nil || checks.Load() <= before {
+		t.Fatal("new request reused the established stream's allow", err)
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+	}
+	if elapsed := time.Since(revokedAt); elapsed > StreamLeaseLimit+200*time.Millisecond {
+		t.Fatal("active stream exceeded the five-second revocation window", elapsed)
+	}
+}
+
+func TestStreamCredentialExpiryCannotBeRenewed(t *testing.T) {
+	expires := time.Now().Add(500 * time.Millisecond)
+	var checks atomic.Int32
+	ctx, c := policyFixture(t, checkFunc(func(_ context.Context, r Request) (Decision, error) {
+		checks.Add(1)
+		d := allow(r, time.Minute)
+		d.ValidUntil = expires
+		return d, nil
+	}), nil)
+	_, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+	}
+	if time.Now().After(expires.Add(200 * time.Millisecond)) {
+		t.Fatal("idle stream outlived the credential's natural expiry")
+	}
+	if checks.Load() > 3 {
+		t.Fatal("a fixed expiry caused an unbounded refresh burst", checks.Load())
+	}
 }
 
 func TestGitWriteAndPortInputAreChecked(t *testing.T) {

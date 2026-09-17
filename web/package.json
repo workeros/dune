@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "rspack serve --mode development",
     "build": "rspack build --mode production",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/components/*.test.mjs"
   },
   "dependencies": {
     "@iconify/react": "^6.0.0",

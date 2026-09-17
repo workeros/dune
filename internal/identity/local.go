@@ -30,6 +30,7 @@ const SessionLifetime = 7 * 24 * time.Hour
 const maxSessions = 32
 
 type User = public.User
+type Authentication = public.Authentication
 type Service = public.Service
 
 type Account struct {
@@ -44,7 +45,7 @@ type Repository interface {
 	RegisterAccount(context.Context, Account, string, int64) error
 	ReadAccount(context.Context, string) (Account, error)
 	CreateSession(context.Context, string, string, int64, int) error
-	ReadSession(context.Context, string, int64) (User, error)
+	ReadSession(context.Context, string, int64) (Authentication, error)
 	DeleteSession(context.Context, string) error
 }
 
@@ -144,15 +145,18 @@ func (l *Local) Login(ctx context.Context, email, password string) (User, string
 	return account.User, token, nil
 }
 
-func (l *Local) Authenticate(ctx context.Context, token string) (User, error) {
+func (l *Local) Authenticate(ctx context.Context, token string) (Authentication, error) {
 	if len(token) != 64 {
-		return User{}, ErrUnauthorized
+		return Authentication{}, ErrUnauthorized
 	}
-	user, err := l.store.ReadSession(ctx, digest(token), time.Now().Unix())
-	if err == nil && user.Namespace != "" {
-		return User{}, ErrUnauthorized
+	authenticated, err := l.store.ReadSession(ctx, digest(token), time.Now().Unix())
+	if err == nil && ctx.Err() != nil {
+		return Authentication{}, ctx.Err()
 	}
-	return user, err
+	if err == nil && (authenticated.User.Namespace != "" || !authenticated.Valid()) {
+		return Authentication{}, ErrUnauthorized
+	}
+	return authenticated, err
 }
 
 func (l *Local) Logout(ctx context.Context, token string) error {

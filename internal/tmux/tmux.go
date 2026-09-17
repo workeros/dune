@@ -19,17 +19,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/creack/pty"
 )
 
 type Server struct {
 	Binary, Socket, config string
+	stateDir               string
 	mu                     sync.Mutex
 }
 type Session struct {
 	Server  *Server
 	Runtime api.Runtime
+	timed   bool
+}
+type runtimeMetadata struct {
+	api.Runtime
+	HasTimeout bool `json:"has_timeout,omitempty"`
 }
 type Capture struct {
 	Content      string `json:"content"`
@@ -91,7 +98,7 @@ func Open(dir string) (*Server, error) {
 	if err = os.WriteFile(config, []byte(body), 0600); err != nil {
 		return nil, err
 	}
-	return &Server{Binary: binary, Socket: socket, config: config}, nil
+	return &Server{Binary: binary, Socket: socket, config: config, stateDir: dir}, nil
 }
 func (s *Server) args(args ...string) []string {
 	return append([]string{"-S", s.Socket, "-f", s.config}, args...)
@@ -156,7 +163,7 @@ func executable(name, cwd string, env []string) error {
 	}
 	return fmt.Errorf("executable not found or not executable: %s", name)
 }
-func (s *Server) Create(meta api.Runtime, argv, env []string, limit int) (*Session, error) {
+func (s *Server) Create(meta api.Runtime, argv, env []string, limit int, timeout time.Duration) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if limit == 0 {
@@ -170,6 +177,21 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, limit int) (*Sessi
 	}
 	if err := executable(argv[0], meta.WorkingDirectory, env); err != nil {
 		return nil, err
+	}
+	if timeout < 0 || timeout > 24*time.Hour {
+		return nil, fmt.Errorf("PTY timeout must be 0..24h")
+	}
+	r := &Session{Server: s, Runtime: meta, timed: timeout > 0}
+	if r.timed {
+		if err := os.MkdirAll(r.timeoutDir(), 0700); err != nil {
+			return nil, err
+		}
+		var err error
+		argv, err = process.PTYCommand(r.timeoutDir(), meta.ID, meta.Incarnation, timeout, argv)
+		if err != nil {
+			_ = os.RemoveAll(r.timeoutDir())
+			return nil, err
+		}
 	}
 	// A single quoted shell argument prevents tmux's command separator parser
 	// from interpreting arbitrary argv/env values. env -i prevents cross-session
@@ -185,11 +207,17 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, limit int) (*Sessi
 	for _, v := range argv {
 		words = append(words, quote(v))
 	}
-	b, _ := json.Marshal(meta)
-	r := &Session{Server: s, Runtime: meta}
+	b, _ := json.Marshal(runtimeMetadata{Runtime: meta, HasTimeout: r.timed})
 	_, err := s.run("start-server", ";", "set-option", "-g", "history-limit", strconv.Itoa(limit), ";", "new-session", "-d", "-s", r.name(), "-x", "80", "-y", "24", "-c", meta.WorkingDirectory, strings.Join(words, " "), ";", "set-option", "-t", r.target(), "@dune-runtime", base64.RawStdEncoding.EncodeToString(b))
 	if err != nil {
+		_ = r.Destroy()
 		return nil, err
+	}
+	if r.timed {
+		if _, err := r.waitTimeoutState(); err != nil {
+			_ = r.Destroy()
+			return nil, err
+		}
 	}
 	return r, nil
 }
@@ -214,11 +242,17 @@ func (s *Server) Restore() ([]*Session, error) {
 		if e != nil {
 			return nil, fmt.Errorf("invalid tmux runtime metadata")
 		}
-		var meta api.Runtime
+		var meta runtimeMetadata
 		if json.Unmarshal(b, &meta) != nil || meta.Adapter != "pty" || name != "dune-"+meta.ID || len(meta.ID) != 32 {
 			return nil, fmt.Errorf("invalid tmux runtime identity")
 		}
-		result = append(result, &Session{Server: s, Runtime: meta})
+		r := &Session{Server: s, Runtime: meta.Runtime, timed: meta.HasTimeout}
+		if r.timed {
+			if _, err := r.waitTimeoutState(); err != nil {
+				return nil, err
+			}
+		}
+		result = append(result, r)
 	}
 	return result, nil
 }
@@ -226,6 +260,39 @@ func (s *Server) Close() error    { _, err := s.run("kill-server"); return err }
 func (r *Session) name() string   { return "dune-" + r.Runtime.ID }
 func (r *Session) target() string { return r.name() }
 func (r *Session) pane() string   { return r.target() + ":0.0" }
+
+func (r *Session) timeoutDir() string {
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(r.Runtime.ID+"\x00"+r.Runtime.Incarnation)))
+	return filepath.Join(r.Server.stateDir, "pty-timeouts", key)
+}
+
+func (r *Session) TimeoutState() (*process.PTYState, error) {
+	if !r.timed {
+		return nil, nil
+	}
+	return process.ReadPTYState(r.timeoutDir(), r.Runtime.ID, r.Runtime.Incarnation)
+}
+
+func (r *Session) waitTimeoutState() (*process.PTYState, error) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		state, err := r.TimeoutState()
+		if err == nil {
+			if state.StopReason == "start_failed" {
+				return nil, fmt.Errorf("PTY timeout helper: %s", state.Error)
+			}
+			return state, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		pane, inspectErr := r.Inspect()
+		if inspectErr != nil || pane.Dead || time.Now().After(deadline) {
+			return nil, fmt.Errorf("PTY timeout helper did not confirm startup: %w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 func (r *Session) Inspect() (Pane, error) {
 	out, err := r.Server.run("display-message", "-p", "-t", r.pane(), "#{pane_dead} #{pane_dead_status} #{pane_pid}")
 	if err != nil {
@@ -246,7 +313,10 @@ func (r *Session) Inspect() (Pane, error) {
 func (r *Session) Destroy() error {
 	_, err := r.Server.run("kill-session", "-t", r.target())
 	if err != nil && (strings.Contains(err.Error(), "can't find session") || strings.Contains(err.Error(), "no server running")) {
-		return nil
+		err = nil
+	}
+	if err == nil && r.timed {
+		err = process.RemovePTYState(r.timeoutDir())
 	}
 	return err
 }

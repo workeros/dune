@@ -262,13 +262,13 @@ for line in sys.stdin:
 func TestFilesUploads(t *testing.T) {
 	h := start(t)
 	path := filepath.Join(h.dir, "file")
-	must(t, h.client.Files(h.ctx, api.File{Action: "write", Path: path, Data: []byte("abc")}, nil))
-	if e := h.client.Files(h.ctx, api.File{Action: "write", Path: path, Data: []byte("oops")}, nil); e == nil {
+	must(t, h.client.Files(h.ctx, api.File{Action: "write", Intent: "create", Path: path, Data: []byte("abc")}, nil))
+	if e := h.client.Files(h.ctx, api.File{Action: "write", Intent: "create", Path: path, Data: []byte("oops")}, nil); e == nil {
 		t.Fatal("overwrite")
 	}
 	var info api.FileInfo
-	must(t, h.client.Files(h.ctx, api.File{Action: "stat", Path: path}, &info))
-	if info.Size != 3 {
+	must(t, h.client.Files(h.ctx, api.File{Action: "stat", Path: path, WithRevision: true}, &info))
+	if info.Size != 3 || info.Revision == "" || info.ContentHash == "" {
 		t.Fatal(info)
 	}
 	var read struct{ Data []byte }
@@ -277,13 +277,13 @@ func TestFilesUploads(t *testing.T) {
 		t.Fatal(read)
 	}
 	must(t, h.client.Files(h.ctx, api.File{Action: "mkdir", Path: filepath.Join(h.dir, "sub")}, nil))
-	var entries []api.FileInfo
-	must(t, h.client.Files(h.ctx, api.File{Action: "list", Path: h.dir}, &entries))
+	var entries api.FilePage
+	must(t, h.client.Files(h.ctx, api.File{Action: "list_page", Path: h.dir}, &entries))
 	must(t, h.client.Files(h.ctx, api.File{Action: "rename", Path: path, Destination: path + "2", Overwrite: true}, nil))
 	must(t, h.client.Files(h.ctx, api.File{Action: "remove", Path: path + "2"}, nil))
 	data := []byte(strings.Repeat("abcdefgh", 10000))
 	sum := sha256.Sum256(data)
-	u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
+	u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Intent: "create", Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
 	must(t, e)
 	id := u.ID
 	u, e = h.client.Upload(h.ctx, api.Upload{Action: "chunk", ID: id, Data: data[:100], Offset: 0})
@@ -324,7 +324,7 @@ func TestFilesUploads(t *testing.T) {
 		t.Fatal("upload content")
 	}
 	for _, action := range []string{"cancel", "expire", "bad-hash"} {
-		u, e = h.client.Upload(h.ctx, api.Upload{Action: "create", Path: path + action, Size: 0, SHA256: strings.Repeat("0", 64), TTLSeconds: 1})
+		u, e = h.client.Upload(h.ctx, api.Upload{Action: "create", Intent: "create", Path: path + action, Size: 0, SHA256: strings.Repeat("0", 64), TTLSeconds: 1})
 		must(t, e)
 		if action == "cancel" {
 			_, e = h.client.Upload(h.ctx, api.Upload{Action: "cancel", ID: u.ID})
@@ -460,7 +460,7 @@ func TestRestart(t *testing.T) {
 	_, e = h.client.Get(h.ctx, rt)
 	must(t, e)
 	sum := sha256.Sum256(nil)
-	u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Path: filepath.Join(h.dir, "upload"), SHA256: hex.EncodeToString(sum[:])})
+	u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Intent: "create", Path: filepath.Join(h.dir, "upload"), SHA256: hex.EncodeToString(sum[:])})
 	must(t, e)
 	h.restartProcess("fabricd")
 	h.client.Close()

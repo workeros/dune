@@ -4,6 +4,7 @@ package ws
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/fasthttp/websocket"
@@ -78,6 +79,8 @@ func (c *wsConn) SetDeadline(t time.Time) error      { return c.w.UnderlyingConn
 func (c *wsConn) SetReadDeadline(t time.Time) error  { return c.w.UnderlyingConn().SetReadDeadline(t) }
 func (c *wsConn) SetWriteDeadline(t time.Time) error { return c.w.UnderlyingConn().SetWriteDeadline(t) }
 
+var ErrUnauthorized = errors.New("Gateway rejected connector credentials; binding is unavailable")
+
 // Dial establishes an authenticated WebSocket byte connection. The caller owns
 // the returned connection. ctx bounds dialing, not the connection lifetime.
 func Dial(ctx context.Context, url, token string, tlsConfig *tls.Config) (net.Conn, error) {
@@ -85,8 +88,14 @@ func Dial(ctx context.Context, url, token string, tlsConfig *tls.Config) (net.Co
 		return nil, fmt.Errorf("empty token")
 	}
 	d := websocket.Dialer{TLSClientConfig: tlsConfig, HandshakeTimeout: 5 * time.Second}
-	w, _, e := d.DialContext(ctx, url, http.Header{"Authorization": []string{"Bearer " + token}})
+	w, response, e := d.DialContext(ctx, url, http.Header{"Authorization": []string{"Bearer " + token}})
 	if e != nil {
+		if response != nil {
+			response.Body.Close()
+			if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+				return nil, ErrUnauthorized
+			}
+		}
 		return nil, e
 	}
 	return NetConn(w), nil
