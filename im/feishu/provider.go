@@ -46,6 +46,7 @@ type Credentials struct {
 type Provider struct {
 	// Deliveries must be durable for every reply mode.
 	Deliveries channel.DeliveryStore
+	wsDomain   string // package-local test endpoint; production uses Site
 }
 
 func (Provider) Kind() string { return Kind }
@@ -107,6 +108,9 @@ func (p Provider) Open(_ context.Context, binding channel.BotBinding, credential
 	if sink == nil || binding.Provider != Kind || binding.ID == "" || binding.TenantID == "" {
 		return nil, errors.New("invalid Feishu binding or event sink")
 	}
+	if binding.ConfigVersion != 1 {
+		return nil, fmt.Errorf("unsupported Feishu config version %d", binding.ConfigVersion)
+	}
 	cfg, secret, err := parseConfig(binding.Config, credentials)
 	if err != nil {
 		return nil, err
@@ -118,6 +122,10 @@ func (p Provider) Open(_ context.Context, binding channel.BotBinding, credential
 	if cfg.Site == "lark" {
 		baseURL = lark.LarkBaseUrl
 	}
+	wsDomain := baseURL
+	if p.wsDomain != "" {
+		wsDomain = p.wsDomain
+	}
 	c := &Channel{
 		binding:    binding,
 		config:     cfg,
@@ -126,13 +134,14 @@ func (p Provider) Open(_ context.Context, binding channel.BotBinding, credential
 		deliveries: p.Deliveries,
 		client:     lark.NewClient(cfg.AppID, secret.AppSecret, lark.WithOpenBaseUrl(baseURL)),
 		stopped:    make(chan struct{}),
+		drained:    make(chan struct{}),
 	}
 	c.transportState = "callback_ready"
 	if cfg.ReceiveMode == ReceiveWebSocket {
 		c.transportState = "connecting"
 		dispatch := dispatcher.NewEventDispatcher("", "").OnP2MessageReceiveV1(c.onMessage)
 		c.ws = larkws.NewClient(cfg.AppID, secret.AppSecret,
-			larkws.WithDomain(baseURL), larkws.WithEventHandler(dispatch),
+			larkws.WithDomain(wsDomain), larkws.WithEventHandler(dispatch),
 			larkws.WithOnReady(func() { c.setTransportState("connected") }),
 			larkws.WithOnError(func(error) { c.setTransportState("connection_error") }),
 			larkws.WithOnReconnecting(func() { c.setTransportState("reconnecting") }),
@@ -151,7 +160,9 @@ type Channel struct {
 	client               *lark.Client
 	ws                   *larkws.Client
 	stopped              chan struct{}
+	drained              chan struct{}
 	stop                 sync.Once
+	ingressMu            sync.RWMutex
 	transportMu          sync.RWMutex
 	transportState       string
 	botMu                sync.Mutex
@@ -184,10 +195,23 @@ func (c *Channel) Stop(ctx context.Context) error {
 	c.stop.Do(func() {
 		close(c.stopped)
 		c.setTransportState("stopped")
+		// Event handlers that entered before Stop must finish before a
+		// successful Stop returns. New handlers observe stopped under the
+		// same ingress lock and cannot accept another event.
+		go func() {
+			c.ingressMu.Lock()
+			c.ingressMu.Unlock()
+			close(c.drained)
+		}()
 		if c.ws != nil {
 			c.ws.Close()
 		}
 	})
+	select {
+	case <-c.drained:
+	case <-ctx.Done():
+		return fmt.Errorf("wait for Feishu inbound events to drain: %w", ctx.Err())
+	}
 	if c.ws != nil {
 		return c.ws.CloseAndWait(ctx)
 	}
@@ -221,6 +245,13 @@ func (c *Channel) CallbackHandler() http.Handler {
 }
 
 func (c *Channel) onMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+	c.ingressMu.RLock()
+	defer c.ingressMu.RUnlock()
+	select {
+	case <-c.stopped:
+		return errors.New("Feishu channel is stopped")
+	default:
+	}
 	message, ok, err := c.normalize(event)
 	if err != nil || !ok {
 		return err
@@ -239,7 +270,7 @@ func (c *Channel) AddressedToBot(ctx context.Context, message channel.InboundMes
 	if message.BindingID != c.binding.ID || message.ChatKind != channel.ChatGroup {
 		return false, errors.New("Feishu group admission does not match binding")
 	}
-	if len(message.BotMentionOpenIDs) == 0 {
+	if len(message.MentionedIDs) == 0 {
 		return false, nil
 	}
 	c.botMu.Lock()
@@ -266,7 +297,7 @@ func (c *Channel) AddressedToBot(ctx context.Context, message channel.InboundMes
 		}
 		c.botOpenID, c.botIdentityFetchedAt = result.Bot.OpenID, time.Now()
 	}
-	for _, mentioned := range message.BotMentionOpenIDs {
+	for _, mentioned := range message.MentionedIDs {
 		if mentioned == c.botOpenID {
 			return true, nil
 		}

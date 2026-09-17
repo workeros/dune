@@ -59,6 +59,9 @@ func TestFeishuThreadAnchorAndLocalRef(t *testing.T) {
 	if err != nil || third != root || thirdRef != ref {
 		t.Fatalf("local thread ref: %+v %q %v", third, thirdRef, err)
 	}
+	if _, _, err := channel.Route(ctx, binding, groupMessage("om_conflict", "om_other_root", "omt_thread"), resolver); err == nil {
+		t.Fatal("known Feishu thread was routed to a conflicting root")
+	}
 	other, _, err := channel.Route(ctx, binding, groupMessage("om_other", "", ""), resolver)
 	if err != nil || other == root {
 		t.Fatalf("separate topic: %+v %v", other, err)

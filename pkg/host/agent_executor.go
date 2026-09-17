@@ -16,7 +16,7 @@ import (
 )
 
 // AgentScope is supplied by trusted host code, not by an IM sender. Principal
-// is the authorized SandDance actor for this Tenant. The Runner's current
+// is the authorized embedding-host actor for this Owner. The Runner's current
 // binding is resolved inside Dune and checked again by BackgroundRunner.
 type AgentScope struct {
 	Principal identity.User

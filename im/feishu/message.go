@@ -62,19 +62,20 @@ func (c *Channel) normalize(event *larkim.P2MessageReceiveV1) (channel.InboundMe
 	if err != nil {
 		return result, false, err
 	}
-	var botMentions []string
+	var mentionedIDs []string
 	for _, mention := range message.Mentions {
-		if mention != nil && value(mention.MentionedType) == "bot" && mention.Id != nil && value(mention.Id.OpenId) != "" {
+		if mention != nil && mention.Id != nil && value(mention.Id.OpenId) != "" {
 			// Admission policy compares these IDs with this application's bot
-			// identity. Mentioning a different bot must not trigger this one.
-			botMentions = append(botMentions, value(mention.Id.OpenId))
+			// identity. mentioned_type is optional in the event; an exact
+			// Open ID match is the authority, not its descriptive type.
+			mentionedIDs = append(mentionedIDs, value(mention.Id.OpenId))
 		}
 	}
 	result = channel.InboundMessage{
-		BindingID: c.binding.ID, EventID: event.EventV2Base.Header.EventID,
+		BindingID: c.binding.ID, BindingRevision: c.binding.Revision, EventID: event.EventV2Base.Header.EventID,
 		MessageID: value(message.MessageId), SenderID: value(sender.SenderId.OpenId),
 		ChatID: value(message.ChatId), ChatKind: chatKind,
-		BotMentionOpenIDs: botMentions, Text: body.Text,
+		MentionedIDs: mentionedIDs, Text: body.Text,
 		Address: channel.ReplyAddress{Provider: Kind, Version: 1, Data: encoded},
 	}
 	return result, true, nil

@@ -1,20 +1,37 @@
 TEST_PKGS ?= ./...
+IM_TEST_PKGS ?= ./...
 TEST_FLAGS ?= -count=1 -timeout=180s
 
-.PHONY: build test test-race check check-go check-proto tools proto
+.PHONY: build test test-race test-im test-im-race check check-go check-im check-proto tools proto
 build: tmux
 	go build -o bin/dune ./cmd/dune
 
 test:
 	go test $(TEST_PKGS) $(TEST_FLAGS)
+ifeq ($(TEST_PKGS),./...)
+	$(MAKE) test-im
+endif
 
 test-race:
 	go test -race $(TEST_PKGS) $(TEST_FLAGS)
+ifeq ($(TEST_PKGS),./...)
+	$(MAKE) test-im-race
+endif
+
+test-im:
+	go -C im test $(IM_TEST_PKGS) $(TEST_FLAGS)
+
+test-im-race:
+	go -C im test -race $(IM_TEST_PKGS) $(TEST_FLAGS)
 
 check: check-go check-proto
 
 check-go:
 	go vet ./...
+	$(MAKE) check-im
+
+check-im:
+	go -C im vet ./...
 
 check-proto:
 	.tools/buf lint

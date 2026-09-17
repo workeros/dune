@@ -11,10 +11,22 @@ import (
 )
 
 // ReconcileConfirmedDelivery atomically finishes bookkeeping after a matching
-// delivery is durably complete. A still-running conversation requires an
-// expired lease so this cannot interrupt an active worker. There is no remote
-// call or replay in this path.
+// delivery is durably complete. This also covers a process crash between
+// confirming delivery and marking the Inbox complete: the event remains in
+// submitting, but must not be replayed. A still-running conversation requires
+// an expired lease so this cannot interrupt an active worker. There is no
+// remote call or replay in this path.
 func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.SessionKey, eventID string) error {
+	return s.reconcileTerminalDelivery(ctx, key, eventID, "complete")
+}
+
+// ReconcileRejectedDelivery releases a session after the Agent finished but
+// the Provider durably confirmed that no platform request was made.
+func (s *Store) ReconcileRejectedDelivery(ctx context.Context, key channel.SessionKey, eventID string) error {
+	return s.reconcileTerminalDelivery(ctx, key, eventID, "failed")
+}
+
+func (s *Store) reconcileTerminalDelivery(ctx context.Context, key channel.SessionKey, eventID, terminal string) error {
 	if !validSessionKey(key) || eventID == "" {
 		return errors.New("IM recovery requires a complete session and event ID")
 	}
@@ -27,8 +39,8 @@ func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.Sess
 	if err := tx.QueryRowContext(ctx, `SELECT state FROM im_inbox WHERE binding_id = ? AND event_id = ?`, key.BindingID, eventID).Scan(&inboxState); err != nil {
 		return err
 	}
-	if inboxState != "unknown" && inboxState != "complete" {
-		return errors.New("IM event is neither unknown nor complete")
+	if inboxState != "submitting" && inboxState != "unknown" && inboxState != terminal {
+		return errors.New("IM event is not awaiting completion reconciliation")
 	}
 	var keyJSON []byte
 	var conversationState, currentEventID string
@@ -50,7 +62,7 @@ func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.Sess
 	var deliveryJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT state_json FROM im_deliveries WHERE binding_id = ? AND delivery_id = ? AND key_hash = ?`, key.BindingID, deliveryID, key.String()).Scan(&deliveryJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("IM matching delivery is not confirmed complete")
+			return errors.New("IM matching terminal delivery was not found")
 		}
 		return err
 	}
@@ -58,12 +70,16 @@ func (s *Store) ReconcileConfirmedDelivery(ctx context.Context, key channel.Sess
 	if err := json.Unmarshal(deliveryJSON, &delivery); err != nil {
 		return err
 	}
-	if delivery.ID != deliveryID || delivery.Session != key || delivery.Phase != "complete" || delivery.Operation != "" {
-		return errors.New("IM matching delivery is not confirmed complete")
+	if delivery.ID != deliveryID || delivery.Session != key || delivery.Phase != terminal || delivery.Operation != "" || !delivery.AgentTurnCompleted {
+		return errors.New("IM matching delivery lacks confirmed Agent completion and terminal outcome")
 	}
-	if inboxState == "unknown" {
-		if err := updateRecoveryRow(ctx, tx, `UPDATE im_inbox SET state = 'complete', failure = '', claim_token = '', lease_until = 0
-			WHERE binding_id = ? AND event_id = ? AND state = 'unknown'`, key.BindingID, eventID); err != nil {
+	if inboxState != terminal {
+		failure := ""
+		if terminal == "failed" {
+			failure = "IM outbound rejected before platform request"
+		}
+		if err := updateRecoveryRow(ctx, tx, `UPDATE im_inbox SET state = ?, failure = ?, claim_token = '', lease_until = 0
+			WHERE binding_id = ? AND event_id = ? AND state = ?`, terminal, failure, key.BindingID, eventID, inboxState); err != nil {
 			return err
 		}
 	}

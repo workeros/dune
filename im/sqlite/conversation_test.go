@@ -13,7 +13,7 @@ func directKey(sender string) channel.SessionKey {
 	return channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a", ChatID: "p2p-a", SubjectID: sender}
 }
 
-func TestConversationFreezesTargetAndPersistsRuntime(t *testing.T) {
+func TestConversationRetargetsOnlyBeforeAgentStartAndPersistsRuntime(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "im.db")
 	store, err := Open(ctx, path)
@@ -29,21 +29,24 @@ func TestConversationFreezesTargetAndPersistsRuntime(t *testing.T) {
 	}
 	changed := channel.AgentTarget{RunnerID: "runner-2", AgentConfigID: "agent-2"}
 	again, err := store.Ensure(ctx, key, changed, address, "")
-	if err != nil || again.Target != target {
-		t.Fatalf("existing target was silently changed: %+v err=%v", again.Target, err)
+	if err != nil || again.Target != changed || again.Revision <= session.Revision {
+		t.Fatalf("empty conversation did not adopt the current target: %+v err=%v", again, err)
 	}
 	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
 	if err != nil || !acquired {
 		t.Fatalf("acquire: %t %v", acquired, err)
 	}
-	session.Runtime = channel.RuntimeHandle{ID: "runtime-a", Incarnation: "inc-a", Generation: 7, Adapter: "acp"}
-	session.ACPSessionID = "acp-session-a"
-	session, err = store.Save(ctx, lease, session)
+	again.Runtime = channel.RuntimeHandle{ID: "runtime-a", Incarnation: "inc-a", Generation: 7, Adapter: "acp"}
+	again.ACPSessionID = "acp-session-a"
+	again, err = store.Save(ctx, lease, again)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Save(ctx, lease, again); err == nil {
+	if _, err := store.Save(ctx, lease, session); err == nil {
 		t.Fatal("stale conversation revision overwrote Runtime")
+	}
+	if established, err := store.Ensure(ctx, key, target, address, ""); err != nil || established.Target != changed {
+		t.Fatalf("established Agent session changed target: %+v err=%v", established, err)
 	}
 	if err := store.ReleaseLease(ctx, lease); err != nil {
 		t.Fatal(err)
@@ -57,7 +60,7 @@ func TestConversationFreezesTargetAndPersistsRuntime(t *testing.T) {
 	}
 	defer store.Close()
 	loaded, state, found, err := store.Get(ctx, key)
-	if err != nil || !found || state != channel.ConversationReady || loaded.Runtime != session.Runtime || loaded.ACPSessionID != session.ACPSessionID || loaded.Target != target {
+	if err != nil || !found || state != channel.ConversationReady || loaded.Runtime != again.Runtime || loaded.ACPSessionID != again.ACPSessionID || loaded.Target != changed {
 		t.Fatalf("conversation did not survive reopen: %+v %s %t %v", loaded, state, found, err)
 	}
 	other, err := store.Ensure(ctx, directKey("user-b"), changed, address, "")

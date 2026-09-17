@@ -15,6 +15,15 @@ type InboxStore interface {
 	Insert(context.Context, InboundMessage) error
 }
 
+// BindingGuardedInbox atomically checks an active Binding revision and inserts
+// its event. A transport must not ACK a stale revision between a read-only
+// binding check and a separate inbox write. The event carries that revision;
+// identical redelivery after rotation may be ACKed without changing the
+// original stored revision or executing it under the new Agent target.
+type BindingGuardedInbox interface {
+	InsertForBinding(context.Context, BotBinding, InboundMessage) error
+}
+
 // Ingress is the one provider-independent event entry point. Providers retain
 // ownership of verification and normalization; the host supplies the store.
 type Ingress struct{ Inbox InboxStore }

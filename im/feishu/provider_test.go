@@ -34,6 +34,17 @@ type recordingSink struct {
 	err      error
 }
 
+type blockingSink struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSink) Accept(context.Context, channel.InboundMessage) error {
+	close(s.entered)
+	<-s.release
+	return nil
+}
+
 type flakyInbox struct {
 	store    *sqlite.Store
 	failOnce bool
@@ -62,7 +73,7 @@ func testChannel(t *testing.T, sink channel.EventSink) *Channel {
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
 	credentials, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
 	opened, err := (Provider{Deliveries: &memoryStreamStore{}}).Open(context.Background(), channel.BotBinding{
-		ID: "bot-a", TenantID: "tenant-a", Provider: Kind, Config: config,
+		ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1, Config: config,
 	}, credentials, sink)
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +123,87 @@ func TestCallbackAndWebSocketShareNormalizedEvent(t *testing.T) {
 	}
 	if got := sink.messages[0]; got.SenderID != "ou_alice" || got.Address.Provider != Kind || string(got.Address.Data) == "" {
 		t.Fatalf("lost routing fields: %#v", got)
+	}
+}
+
+func TestGroupAdmissionMatchesBotOpenIDWhenMentionTypeIsOmitted(t *testing.T) {
+	c := testChannel(t, &recordingSink{})
+	c.botOpenID, c.botIdentityFetchedAt = "ou_this_bot", time.Now()
+	var raw map[string]any
+	if err := json.Unmarshal(localGroupEvent("event", "om_root", "ou_sender", "", "", true), &raw); err != nil {
+		t.Fatal(err)
+	}
+	mention := raw["event"].(map[string]any)["message"].(map[string]any)["mentions"].([]any)[0].(map[string]any)
+	delete(mention, "mentioned_type")
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event larkim.P2MessageReceiveV1
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatal(err)
+	}
+	message, accepted, err := c.normalize(&event)
+	if err != nil || !accepted || len(message.MentionedIDs) != 1 || message.MentionedIDs[0] != "ou_this_bot" {
+		t.Fatalf("structured mention lost bot Open ID: %+v accepted=%t err=%v", message, accepted, err)
+	}
+	if addressed, err := c.AddressedToBot(context.Background(), message); err != nil || !addressed {
+		t.Fatalf("bot mention without type was not admitted: addressed=%t err=%v", addressed, err)
+	}
+	message.MentionedIDs = []string{"ou_other_bot"}
+	if addressed, err := c.AddressedToBot(context.Background(), message); err != nil || addressed {
+		t.Fatalf("different Open ID triggered bot: addressed=%t err=%v", addressed, err)
+	}
+}
+
+func TestStoppedChannelRejectsLateWebSocketEvent(t *testing.T) {
+	sink := &recordingSink{}
+	c := testChannel(t, sink)
+	var event larkim.P2MessageReceiveV1
+	if err := json.Unmarshal(testEventJSON(), &event); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.onMessage(context.Background(), &event); err == nil || len(sink.messages) != 0 {
+		t.Fatalf("stopped Channel accepted a late event: %v messages=%d", err, len(sink.messages))
+	}
+}
+
+func TestChannelStopWaitsForInflightIngress(t *testing.T) {
+	sink := &blockingSink{entered: make(chan struct{}), release: make(chan struct{})}
+	c := testChannel(t, sink)
+	var event larkim.P2MessageReceiveV1
+	if err := json.Unmarshal(testEventJSON(), &event); err != nil {
+		t.Fatal(err)
+	}
+	accepted := make(chan error, 1)
+	go func() { accepted <- c.onMessage(context.Background(), &event) }()
+	select {
+	case <-sink.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("event did not enter durable acceptance")
+	}
+	stopCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := c.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop did not report undrained in-flight acceptance: %v", err)
+	}
+	close(sink.release)
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight acceptance did not finish")
+	}
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop did not finish draining after event completed: %v", err)
+	}
+	if err := c.onMessage(context.Background(), &event); err == nil {
+		t.Fatal("stopped Channel accepted another event")
 	}
 }
 
@@ -199,6 +291,17 @@ func TestConfigRequiresCallbackSecrets(t *testing.T) {
 	}
 }
 
+func TestProviderRejectsUnknownConfigVersion(t *testing.T) {
+	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
+	credentials, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
+	for _, version := range []int{0, 2} {
+		binding := channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: version, Config: config}
+		if _, err := (Provider{Deliveries: &memoryStreamStore{}}).Open(context.Background(), binding, credentials, &recordingSink{}); err == nil {
+			t.Fatalf("Feishu config version %d was interpreted as v1", version)
+		}
+	}
+}
+
 func TestGroupAdmissionMatchesThisBotAndCachesIdentity(t *testing.T) {
 	c := testChannel(t, &recordingSink{})
 	infoCalls := 0
@@ -216,11 +319,11 @@ func TestGroupAdmissionMatchesThisBotAndCachesIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
-	message := channel.InboundMessage{BindingID: "bot-a", ChatKind: channel.ChatGroup, BotMentionOpenIDs: []string{"ou_other_bot"}}
+	message := channel.InboundMessage{BindingID: "bot-a", ChatKind: channel.ChatGroup, MentionedIDs: []string{"ou_other_bot"}}
 	if addressed, err := c.AddressedToBot(context.Background(), message); err != nil || addressed {
 		t.Fatalf("other bot mention admitted: %t %v", addressed, err)
 	}
-	message.BotMentionOpenIDs = []string{"ou_this_bot"}
+	message.MentionedIDs = []string{"ou_this_bot"}
 	if addressed, err := c.AddressedToBot(context.Background(), message); err != nil || !addressed {
 		t.Fatalf("own bot mention rejected: %t %v", addressed, err)
 	}

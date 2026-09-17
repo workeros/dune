@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,12 +14,67 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
 
+func TestOversizedFinalRepliesAreKnownLocalRejections(t *testing.T) {
+	for _, item := range []struct {
+		mode string
+		text string
+	}{
+		{mode: ReplyFinalCard, text: strings.Repeat("好", 12*1024)},
+		{mode: ReplyFinalText, text: strings.Repeat("好", 55*1024)},
+	} {
+		c := testFinalChannel(t, item.mode)
+		message := testStreamMessage(item.text)
+		if _, err := c.Send(context.Background(), testGroupAddress(), message); !errors.Is(err, channel.ErrOutboundRejected) {
+			t.Fatalf("%s oversized reply was not classified as no external effect: %v", item.mode, err)
+		}
+	}
+}
+
+func TestFinalReplyMeasuresDoubleEscapedRequestBody(t *testing.T) {
+	for _, item := range []struct {
+		mode  string
+		text  string
+		limit int
+	}{
+		{mode: ReplyFinalCard, text: strings.Repeat(`"`, 10*1024), limit: 30 * 1024},
+		{mode: ReplyFinalText, text: strings.Repeat(`"`, 70*1024), limit: 150 * 1024},
+	} {
+		t.Run(item.mode, func(t *testing.T) {
+			c := testFinalChannel(t, item.mode)
+			_, content, err := c.finalContent(item.text)
+			if err != nil || len(content) >= item.limit {
+				t.Fatalf("inner content should fit, demonstrating outer escaping: bytes=%d err=%v", len(content), err)
+			}
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+			if _, err := c.Send(context.Background(), testGroupAddress(), testStreamMessage(item.text)); !errors.Is(err, channel.ErrOutboundRejected) {
+				t.Fatalf("oversized group wire request was not rejected locally: %v", err)
+			}
+			directData, _ := json.Marshal(replyAddress{ChatKind: channel.ChatDirect, ChatID: "oc_dm", SenderOpenID: "ou_alice", ReplyMessageID: "om_input"})
+			directAddress := channel.ReplyAddress{Provider: Kind, Version: 1, Data: directData}
+			directMessage := testStreamMessage(item.text)
+			directMessage.Session.ChatID, directMessage.Session.SubjectID = "oc_dm", "ou_alice"
+			if _, err := c.Send(context.Background(), directAddress, directMessage); !errors.Is(err, channel.ErrOutboundRejected) {
+				t.Fatalf("oversized direct wire request was not rejected locally: %v", err)
+			}
+			if calls != 0 {
+				t.Fatalf("%s made %d external requests before rejecting the oversized body", item.mode, calls)
+			}
+		})
+	}
+}
+
 func testFinalChannel(t *testing.T, mode string) *Channel {
 	t.Helper()
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: mode})
 	secret, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
 	opened, err := (Provider{Deliveries: &memoryStreamStore{}}).Open(context.Background(), channel.BotBinding{
-		ID: "bot-a", TenantID: "tenant-a", Provider: Kind, Config: config,
+		ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1, Config: config,
 	}, secret, &recordingSink{})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +153,30 @@ func TestFinalReplyRequiresDeliveryID(t *testing.T) {
 		outboundUUID("bot-a", "turn-1", "final-message") == outboundUUID("bot-b", "turn-1", "final-message") ||
 		outboundUUID("bot-a", "turn-1", "final-message") == outboundUUID("bot-a", "turn-1", "card-message") {
 		t.Fatal("distinct deliveries, bindings or operations share a UUID")
+	}
+}
+
+func TestGroupReplyRejectsWrongSessionRootBeforeSending(t *testing.T) {
+	message := testStreamMessage("hello")
+	message.Session.SubjectID = "om_another_topic"
+	for _, mode := range []string{ReplyFinalText, ReplyFinalCard} {
+		c := testFinalChannel(t, mode)
+		if _, err := c.Send(context.Background(), testGroupAddress(), message); err == nil {
+			t.Fatalf("%s accepted a different topic's session", mode)
+		}
+	}
+	store := &memoryStreamStore{}
+	c := testStreamingChannel(t, store)
+	if _, err := c.OpenStream(context.Background(), testGroupAddress(), message); err == nil {
+		t.Fatal("streaming_card accepted a different topic's session")
+	}
+	if store.states != nil {
+		t.Fatal("wrong-topic stream reserved a delivery")
+	}
+	threadData, _ := json.Marshal(replyAddress{ChatKind: channel.ChatGroup, ChatID: "oc_group", ReplyMessageID: "om_reply", RootMessageID: "om_root", ThreadID: "omt_thread"})
+	threadAddress := channel.ReplyAddress{Provider: Kind, Version: 1, Data: threadData}
+	if _, err := testFinalChannel(t, ReplyFinalText).Send(context.Background(), threadAddress, message); err == nil {
+		t.Fatal("confirmed thread accepted a different root session")
 	}
 }
 

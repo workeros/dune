@@ -13,6 +13,13 @@ Go 版本以 `go.mod` 为准。Go 源码修改后运行 `gofmt`；Web 使用仓�
 protobuf schema 修改后运行 `make proto`，再运行 wire、Gateway、fabricd 和
 client 的相关测试。
 
+`im/` 是独立 Go module，直接运行根目录的 `go test ./...` 不会覆盖它。
+默认 `make test` / `make test-race` 包含两个 module，`make check-go` 同时执行两者的 vet。
+指定 `TEST_PKGS` 时只检查主 module 的指定包；IM 定向检查使用
+`make test-im IM_TEST_PKGS=./feishu` 或 `make test-im-race`、`make check-im`。
+IM 的本地 Gateway/ACP 整链测试需要与主仓库测试相同的 `bin/tmux`（`make tmux` 准备），
+全部只使用本地假 Agent 和假飞书服务。接入和平台验收步骤见 [IM 说明](../im/README.md)。
+
 ## 按改动选择检查
 
 | 改动 | 最小检查 |
@@ -21,6 +28,7 @@ client 的相关测试。
 | Gateway、peer、协议 | `go test ./internal/wire ./pkg/gateway ./pkg/transport/... ./pkg/fabricd` |
 | Web UI | `make web-check web-build` |
 | CLI/宿主装配 | `go test ./cmd/dune ./pkg/host ./tests -run '^$'` 后运行相关端到端用例 |
+| 可选 IM module / 飞书 / IM ACP | `make test-im-race check-im`；修改 host 边界时另跑 `go test ./pkg/host` |
 | SandDance 公共边界 | 在相邻 SandDance 仓库运行 `go test ./...` |
 
 交付前运行全量 Go、静态检查和 Web 构建。仅文档改动可按实际影响缩小。

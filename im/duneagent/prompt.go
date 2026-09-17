@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aiomni/dune/im/channel"
@@ -44,7 +45,15 @@ func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSe
 	if err != nil {
 		return "", err
 	}
-	defer subscription.Close()
+	// Recv has no context parameter. Close the observation explicitly when
+	// the turn is canceled, independent of the executor implementation.
+	var closeSubscription sync.Once
+	closeObserved := func() { closeSubscription.Do(func() { _ = subscription.Close() }) }
+	stopOnCancel := context.AfterFunc(ctx, closeObserved)
+	defer func() {
+		stopOnCancel()
+		closeObserved()
+	}()
 	state, err := connection.State(ctx, runtime)
 	if err != nil {
 		return "", err

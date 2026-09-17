@@ -8,14 +8,64 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/aiomni/dune/im/channel"
+	"github.com/aiomni/dune/im/sqlite"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkcard "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 )
+
+func TestCardKitChunksRespectEscapedUpdateRequestBudget(t *testing.T) {
+	for _, r := range []rune{'a', '"', '\\', '\b', '\f', '\n', '\r', '\t', 0, 0x1f, '<', '>', '&', '\u2028', '\u2029', '你', '\ufffd'} {
+		encoded, err := json.Marshal(string(r))
+		if err != nil || jsonEscapedRuneBytes(r) != len(encoded)-2 {
+			t.Fatalf("incorrect JSON escaped rune size for %U: got=%d encoded=%q err=%v", r, jsonEscapedRuneBytes(r), encoded, err)
+		}
+	}
+	for _, answer := range []string{
+		strings.Repeat(`"`, maxStreamUpdateRequestBytes),
+		strings.Repeat("<>&\\\n", maxStreamUpdateRequestBytes/4),
+		strings.Repeat("你好", maxStreamUpdateRequestBytes/4),
+	} {
+		parts := streamChunks(answer)
+		if len(parts) < 2 || strings.Join(parts, "") != answer {
+			t.Fatalf("CardKit answer was lost or not split: parts=%d length=%d", len(parts), len(answer))
+		}
+		for index, part := range parts {
+			if !utf8.ValidString(part) {
+				t.Fatalf("part %d split a UTF-8 rune", index)
+			}
+			body := larkcard.NewContentCardElementReqBodyBuilder().Uuid(strings.Repeat("0", 32)).Sequence(index + 1).Content(part).Build()
+			encoded, err := json.Marshal(body)
+			if err != nil || len(encoded) > maxStreamUpdateRequestBytes {
+				t.Fatalf("part %d exceeds update request budget: bytes=%d err=%v", index, len(encoded), err)
+			}
+		}
+	}
+}
+
+func TestCardKitChunksAccountForInvalidUTF8Replacement(t *testing.T) {
+	// A malformed byte becomes six JSON bytes (\\ufffd), not the three bytes
+	// of a valid replacement rune. The public ReplyStream accepts Go strings.
+	answer := strings.Repeat(string([]byte{0xff}), maxStreamUpdateRequestBytes/3)
+	parts := streamChunks(answer)
+	if len(parts) < 2 || strings.Join(parts, "") != answer {
+		t.Fatalf("malformed answer was lost or not split: parts=%d", len(parts))
+	}
+	for index, part := range parts {
+		body := larkcard.NewContentCardElementReqBodyBuilder().Uuid(strings.Repeat("0", 32)).Sequence(index + 1).Content(part).Build()
+		encoded, err := json.Marshal(body)
+		if err != nil || len(encoded) > maxStreamUpdateRequestBytes {
+			t.Fatalf("part %d exceeds update request budget: bytes=%d err=%v", index, len(encoded), err)
+		}
+	}
+}
 
 type memoryStreamStore struct {
 	mu              sync.Mutex
@@ -45,7 +95,7 @@ func (s *memoryStreamStore) Commit(_ context.Context, state channel.Delivery) (c
 	defer s.mu.Unlock()
 	if state.Phase == "active" {
 		s.activeCommits++
-		if s.failActiveAfter > 0 && s.activeCommits == s.failActiveAfter {
+		if s.failActiveAfter > 0 && s.activeCommits >= s.failActiveAfter {
 			return channel.Delivery{}, errors.New("simulated durable write failure")
 		}
 	}
@@ -59,9 +109,40 @@ func (s *memoryStreamStore) Commit(_ context.Context, state channel.Delivery) (c
 	return state, nil
 }
 
+func TestCardKitConfirmedOperationPersistsAfterRequestCancellation(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "im.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := channel.DeliveryManager{Store: store}
+	initial := channel.Delivery{ID: "turn-1", Session: channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a", ChatID: "oc_group", SubjectID: "om_root"},
+		Mode: ReplyStreaming, ProviderStateVersion: 2, AgentTurnCompleted: true}
+	delivery, created, err := manager.Reserve(context.Background(), initial)
+	if err != nil || !created {
+		t.Fatalf("reserve CardKit delivery: created=%t err=%v", created, err)
+	}
+	delivery, err = manager.Intent(context.Background(), delivery, "closing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &cardStream{owner: &Channel{deliveries: store}, delivery: delivery,
+		state: StreamState{CardID: "card-1", MessageID: "om_reply", ConfirmedText: "answer", Sequence: 2}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // CardKit already returned success; only its local confirmation remains.
+	if err := stream.commit(ctx, "complete"); err != nil {
+		t.Fatalf("confirmed CardKit close lost after cancellation: %v", err)
+	}
+	stored, found, err := store.GetDelivery(context.Background(), "bot-a", "turn-1")
+	if err != nil || !found || stored.Phase != "complete" || !stored.AgentTurnCompleted {
+		t.Fatalf("confirmed CardKit close was not durable: %+v found=%t err=%v", stored, found, err)
+	}
+}
+
 func (s *memoryStreamStore) state() struct {
 	StreamState
-	Phase string
+	Phase              string
+	AgentTurnCompleted bool
 } {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -70,8 +151,9 @@ func (s *memoryStreamStore) state() struct {
 	_ = json.Unmarshal(delivery.ProviderState, &state)
 	return struct {
 		StreamState
-		Phase string
-	}{state, delivery.Phase}
+		Phase              string
+		AgentTurnCompleted bool
+	}{state, delivery.Phase, delivery.AgentTurnCompleted}
 }
 
 func testStreamingChannel(t *testing.T, store channel.DeliveryStore) *Channel {
@@ -79,7 +161,7 @@ func testStreamingChannel(t *testing.T, store channel.DeliveryStore) *Channel {
 	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyStreaming})
 	credentials, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
 	opened, err := (Provider{Deliveries: store}).Open(context.Background(), channel.BotBinding{
-		ID: "bot-a", TenantID: "tenant-a", Provider: Kind, Config: config,
+		ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1, Config: config,
 	}, credentials, &recordingSink{})
 	if err != nil {
 		t.Fatal(err)
@@ -120,8 +202,8 @@ func TestCardKitStreamCreatesRepliesUpdatesAndCloses(t *testing.T) {
 			var request struct {
 				Data string `json:"data"`
 			}
-			if json.Unmarshal(body, &request) != nil || !strings.Contains(request.Data, `"streaming_mode":true`) {
-				t.Errorf("create did not enable native streaming: %s", body)
+			if json.Unmarshal(body, &request) != nil || !strings.Contains(request.Data, `"streaming_mode":true`) || !strings.Contains(request.Data, `"update_multi":true`) {
+				t.Errorf("create did not enable shared native streaming: %s", body)
 			}
 			_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-123"}}`)
 		case "/open-apis/im/v1/messages/om_input/reply":
@@ -253,6 +335,208 @@ func TestCardKitStreamUsesDirectMessageForPrivateChat(t *testing.T) {
 	want := []string{"/open-apis/cardkit/v1/cards", "/open-apis/im/v1/messages", "/open-apis/cardkit/v1/cards/card-private/elements/answer/content", "/open-apis/cardkit/v1/cards/card-private/settings"}
 	if !slices.Equal(paths, want) {
 		t.Fatalf("private CardKit call sequence: got %v, want %v", paths, want)
+	}
+}
+
+func TestCardKitUnknownUpdateSurvivesStoreReopenWithoutResend(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "im.db")
+	store, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := testStreamingChannel(t, store)
+	var mu sync.Mutex
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal" {
+			_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+			return
+		}
+		mu.Lock()
+		calls = append(calls, r.URL.Path)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/open-apis/cardkit/v1/cards":
+			_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-1"}}`)
+		case "/open-apis/im/v1/messages/om_input/reply":
+			_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_card"}}`)
+		case "/open-apis/cardkit/v1/cards/card-1/elements/answer/content":
+			_, _ = io.WriteString(w, `{"code":999,"msg":"outcome unknown"}`)
+		default:
+			t.Errorf("unexpected CardKit API path: %s", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+	initial := testStreamMessage("处理中")
+	stream, err := c.OpenStream(ctx, testGroupAddress(), initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Update(ctx, testStreamMessage("answer")); err == nil {
+		t.Fatal("failed CardKit update was reported as confirmed")
+	}
+	before, found, err := store.GetDelivery(ctx, "bot-a", initial.DeliveryID)
+	if err != nil || !found || before.Phase != "unknown" || before.Operation != "updating" {
+		t.Fatalf("unknown update was not durable: %+v found=%t err=%v", before, found, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	c = testStreamingChannel(t, store)
+	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+	mu.Lock()
+	count := len(calls)
+	mu.Unlock()
+	if _, err := c.OpenStream(ctx, testGroupAddress(), initial); err == nil {
+		t.Fatal("reopened unknown delivery was resumed without reconciliation")
+	}
+	mu.Lock()
+	afterCalls := len(calls)
+	mu.Unlock()
+	if afterCalls != count {
+		t.Fatalf("reopened unknown delivery caused new Feishu API calls: before=%d after=%d", count, afterCalls)
+	}
+	after, found, err := store.GetDelivery(ctx, "bot-a", initial.DeliveryID)
+	if err != nil || !found || after.Phase != before.Phase || after.Operation != before.Operation || string(after.ProviderState) != string(before.ProviderState) {
+		t.Fatalf("unknown delivery changed across restart: before=%+v after=%+v found=%t err=%v", before, after, found, err)
+	}
+}
+
+func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
+	store := &memoryStreamStore{}
+	c := testStreamingChannel(t, store)
+	var paths, texts, sendUUIDs []string
+	created, closed := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal" {
+			_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+			return
+		}
+		paths = append(paths, r.URL.Path)
+		switch {
+		case r.URL.Path == "/open-apis/cardkit/v1/cards":
+			created++
+			_, _ = fmt.Fprintf(w, `{"code":0,"data":{"card_id":"card-%d"}}`, created)
+		case r.URL.Path == "/open-apis/im/v1/messages/om_input/reply":
+			var request struct {
+				ReplyInThread bool   `json:"reply_in_thread"`
+				Content       string `json:"content"`
+				UUID          string `json:"uuid"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.ReplyInThread || !strings.Contains(request.Content, fmt.Sprintf(`"card_id":"card-%d"`, created)) {
+				t.Errorf("continuation escaped group thread: %+v %v", request, err)
+			}
+			sendUUIDs = append(sendUUIDs, request.UUID)
+			_, _ = fmt.Fprintf(w, `{"code":0,"data":{"message_id":"om_card_%d"}}`, created)
+		case strings.HasSuffix(r.URL.Path, "/elements/answer/content"):
+			wireBody, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				t.Error(readErr)
+			}
+			var request struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(wireBody, &request); err != nil {
+				t.Error(err)
+			}
+			if len(wireBody) > maxStreamUpdateRequestBytes {
+				t.Errorf("CardKit update request exceeded local byte budget: %d", len(wireBody))
+			}
+			texts = append(texts, request.Content)
+			_, _ = io.WriteString(w, `{"code":0}`)
+		case strings.HasSuffix(r.URL.Path, "/settings"):
+			closed++
+			_, _ = io.WriteString(w, `{"code":0}`)
+		default:
+			t.Errorf("unexpected Feishu API path: %s", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+	ctx := context.Background()
+	stream, err := c.OpenStream(ctx, testGroupAddress(), testStreamMessage("处理中"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := strings.Repeat("你好", maxStreamUpdateRequestBytes/4) // multibyte UTF-8 across multiple cards
+	if err := stream.Update(ctx, testStreamMessage(answer)); err != nil {
+		t.Fatal(err)
+	}
+	final := testStreamMessage(answer)
+	final.AgentTurnCompleted = true
+	if err := stream.Complete(ctx, final); err != nil {
+		t.Fatal(err)
+	}
+	state := store.state()
+	if state.Phase != "complete" || !state.AgentTurnCompleted || created != 2 || closed != 2 || len(state.Parts) != 1 || state.Parts[0].CardID != "card-1" || state.CardID != "card-2" || state.NeedsContinuation {
+		t.Fatalf("long answer was not durably completed across two cards: state=%+v created=%d closed=%d", state, created, closed)
+	}
+	if len(sendUUIDs) != 2 || sendUUIDs[0] == "" || sendUUIDs[1] == "" || sendUUIDs[0] == sendUUIDs[1] {
+		t.Fatalf("continuation messages need distinct deterministic UUIDs: %v", sendUUIDs)
+	}
+	if state.Parts[0].Text+state.ConfirmedText != answer || len(texts) != 2 || texts[0] != state.Parts[0].Text || texts[1] != state.ConfirmedText {
+		t.Fatalf("long answer was lost or duplicated: chunk sizes=%d/%d, answer=%d", len(state.Parts[0].Text), len(state.ConfirmedText), len(answer))
+	}
+	if len(paths) != 8 {
+		t.Fatalf("expected create/send/update/close for each card, got %v", paths)
+	}
+}
+
+func TestCardKitUnknownContinuationIsNotReplayed(t *testing.T) {
+	store := &memoryStreamStore{}
+	c := testStreamingChannel(t, store)
+	created, sent := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+		case "/open-apis/cardkit/v1/cards":
+			created++
+			_, _ = fmt.Fprintf(w, `{"code":0,"data":{"card_id":"card-%d"}}`, created)
+		case "/open-apis/im/v1/messages/om_input/reply":
+			sent++
+			if sent == 2 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"code":999,"msg":"unknown"}`)
+			} else {
+				_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_card_1"}}`)
+			}
+		case "/open-apis/cardkit/v1/cards/card-1/elements/answer/content", "/open-apis/cardkit/v1/cards/card-1/settings":
+			_, _ = io.WriteString(w, `{"code":0}`)
+		default:
+			t.Errorf("unexpected Feishu API path: %s", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+	ctx := context.Background()
+	stream, err := c.OpenStream(ctx, testGroupAddress(), testStreamMessage("处理中"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := strings.Repeat("长", maxStreamUpdateRequestBytes)
+	if err := stream.Complete(ctx, testStreamMessage(answer)); err == nil {
+		t.Fatal("uncertain continuation send unexpectedly succeeded")
+	}
+	state := store.state()
+	if state.Phase != "unknown" || state.CardID != "card-2" || state.MessageID != "" || len(state.Parts) != 1 || created != 2 || sent != 2 {
+		t.Fatalf("uncertain continuation was not preserved: %+v created=%d sent=%d", state, created, sent)
+	}
+	if _, err := c.OpenStream(ctx, testGroupAddress(), testStreamMessage("处理中")); err == nil || created != 2 || sent != 2 {
+		t.Fatal("uncertain continuation was automatically replayed")
 	}
 }
 

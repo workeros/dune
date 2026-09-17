@@ -27,6 +27,7 @@ type Delivery struct {
 	Operation            string          `json:"operation,omitempty"`
 	ProviderStateVersion int             `json:"provider_state_version"`
 	ProviderState        json.RawMessage `json:"provider_state,omitempty"`
+	AgentTurnCompleted   bool            `json:"agent_turn_completed,omitempty"`
 	Revision             int64           `json:"revision"`
 }
 
@@ -39,6 +40,14 @@ type DeliveryStore interface {
 // Providers supply opaque state snapshots and operation labels; they cannot
 // skip a durable intent or silently retry an uncertain external operation.
 type DeliveryManager struct{ Store DeliveryStore }
+
+// ErrOutboundRejected means a Provider rejected the reply before making any
+// external request. A transport error must never be wrapped with this value.
+var ErrOutboundRejected = errors.New("IM outbound rejected before external request")
+
+func RejectOutbound(cause error) error {
+	return errors.Join(ErrOutboundRejected, cause)
+}
 
 func (m DeliveryManager) Reserve(ctx context.Context, initial Delivery) (Delivery, bool, error) {
 	if m.Store == nil {
@@ -72,5 +81,15 @@ func (m DeliveryManager) Unknown(ctx context.Context, d Delivery) (Delivery, err
 		return Delivery{}, errors.New("delivery has no pending operation to reconcile")
 	}
 	d.Phase = "unknown"
+	return m.Store.Commit(ctx, d)
+}
+
+// Reject records a known local failure. It cannot confirm delivery and is
+// distinct from unknown, where a platform side effect may have occurred.
+func (m DeliveryManager) Reject(ctx context.Context, d Delivery) (Delivery, error) {
+	if d.Phase != "pending" || d.Operation == "" {
+		return Delivery{}, errors.New("delivery has no pending operation to reject")
+	}
+	d.Phase, d.Operation, d.ProviderState = "failed", "", nil
 	return m.Store.Commit(ctx, d)
 }

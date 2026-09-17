@@ -4,6 +4,9 @@ Dune 是面向开发环境的 Web 工作台。浏览器负责登录、选择 Run
 Agent 交互；开发机上的 connector 主动连接 Gateway，并在本机运行 PTY、ACP、
 文件浏览与 Git diff。
 
+可选的 [IM Go module](im/README.md) 为外部宿主提供飞书 WebSocket/回调、多机器人、
+私聊与群话题 ACP 会话及三种回复模式；它拥有独立存储，不由默认 Web/CLI 启动。
+
 ## 本地启动
 
 本地模式由一个进程同时提供静态页面、API 和 Gateway：

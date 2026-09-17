@@ -15,26 +15,30 @@ import (
 
 func (c *Channel) Send(ctx context.Context, address channel.ReplyAddress, message channel.OutboundMessage) (json.RawMessage, error) {
 	if c.config.ReplyMode == ReplyStreaming {
-		return nil, errors.New("streaming_card requires OpenStream")
+		return nil, channel.RejectOutbound(errors.New("streaming_card requires OpenStream"))
 	}
 	if strings.TrimSpace(message.Text) == "" {
-		return nil, errors.New("empty Feishu reply")
+		return nil, channel.RejectOutbound(errors.New("empty Feishu reply"))
 	}
 	if message.DeliveryID == "" || len(message.DeliveryID) > 128 {
-		return nil, errors.New("Feishu reply requires a stable 1..128 byte DeliveryID")
+		return nil, channel.RejectOutbound(errors.New("Feishu reply requires a stable 1..128 byte DeliveryID"))
 	}
 	to, err := decodeAddress(address)
 	if err != nil {
-		return nil, err
+		return nil, channel.RejectOutbound(err)
 	}
 	if err := c.validateDeliverySession(to, message.Session); err != nil {
-		return nil, err
+		return nil, channel.RejectOutbound(err)
 	}
 	msgType, content, err := c.finalContent(message.Text)
 	if err != nil {
-		return nil, err
+		return nil, channel.RejectOutbound(err)
 	}
-	messageID, err := c.sendContent(ctx, to, msgType, content, outboundUUID(c.binding.ID, message.DeliveryID, "final-message"))
+	uuid := outboundUUID(c.binding.ID, message.DeliveryID, "final-message")
+	if err := validateFinalRequestSize(to, msgType, content, uuid); err != nil {
+		return nil, channel.RejectOutbound(err)
+	}
+	messageID, err := c.sendContent(ctx, to, msgType, content, uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +52,16 @@ func (c *Channel) validateDeliverySession(to replyAddress, session channel.Sessi
 	if to.ChatKind == channel.ChatDirect && session.SubjectID != to.SenderOpenID {
 		return errors.New("Feishu private delivery session does not match sender")
 	}
-	if to.ChatKind == channel.ChatGroup && to.ThreadID != "" && to.RootMessageID != "" && session.SubjectID != to.RootMessageID {
-		return errors.New("Feishu thread delivery session does not match root")
+	if to.ChatKind == channel.ChatGroup {
+		// A root_id without thread_id is ambiguous until RootResolver looks
+		// up the message; only the unambiguous top-level form can be checked
+		// against the reply message ID here.
+		if to.ThreadID == "" && to.RootMessageID == "" && session.SubjectID != to.ReplyMessageID {
+			return errors.New("Feishu new-topic delivery session does not match root message")
+		}
+		if to.ThreadID != "" && to.RootMessageID != "" && session.SubjectID != to.RootMessageID {
+			return errors.New("Feishu thread delivery session does not match root")
+		}
 	}
 	return nil
 }
@@ -83,16 +95,40 @@ func (c *Channel) finalContent(text string) (string, string, error) {
 			}},
 		}
 		data, err := json.Marshal(card)
-		if err != nil || len(data) > 30*1024 {
-			return "", "", errors.New("Feishu final card exceeds 30 KiB")
+		if err != nil {
+			return "", "", err
 		}
 		return "interactive", string(data), nil
 	}
 	data, err := json.Marshal(map[string]string{"text": text})
-	if err != nil || len(data) > 150*1024 {
-		return "", "", errors.New("Feishu text reply exceeds 150 KiB")
+	if err != nil {
+		return "", "", err
 	}
 	return "text", string(data), nil
+}
+
+// Feishu limits the serialized message request body, not merely the inner
+// content JSON. Content is a JSON string in that body, so quotes, slashes and
+// control characters may be escaped a second time by the SDK.
+func validateFinalRequestSize(to replyAddress, msgType, content, uuid string) error {
+	var body any
+	if to.ChatKind == channel.ChatGroup {
+		body = larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(content).ReplyInThread(true).Uuid(uuid).Build()
+	} else {
+		body = larkim.NewCreateMessageReqBodyBuilder().ReceiveId(to.SenderOpenID).MsgType(msgType).Content(content).Uuid(uuid).Build()
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	limit := 150 * 1024
+	if msgType == "interactive" {
+		limit = 30 * 1024
+	}
+	if len(data) > limit {
+		return fmt.Errorf("Feishu %s message request exceeds %d KiB", msgType, limit/1024)
+	}
+	return nil
 }
 
 // sendContent uses the low-level API so a failed thread reply is never

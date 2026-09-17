@@ -38,12 +38,15 @@ func (r RootResolver) ResolveGroup(ctx context.Context, msg channel.InboundMessa
 		return result, errors.New("Feishu message reply address does not match event")
 	}
 	if address.ThreadID != "" {
+		stored, found, err := r.Conversations.FindByThreadRef(ctx, msg.BindingID, msg.ChatID, address.ThreadID)
+		if err != nil {
+			return result, err
+		}
 		root := address.RootMessageID
+		if root != "" && found && stored.SubjectID != root {
+			return result, errors.New("Feishu thread root conflicts with locally bound topic")
+		}
 		if root == "" {
-			stored, found, err := r.Conversations.FindByThreadRef(ctx, msg.BindingID, msg.ChatID, address.ThreadID)
-			if err != nil {
-				return result, err
-			}
 			if found {
 				root = stored.SubjectID
 			} else {

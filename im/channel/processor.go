@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+var errKnownDeliveryFailure = errors.New("IM reply rejected without an external request")
+var errLeaseRenewalFailed = errors.New("IM conversation lease renewal failed")
+
 // GroupAdmission decides whether a new group topic addresses this bot. Once
 // admitted, later user messages in that same canonical topic are accepted.
 type GroupAdmission interface {
@@ -63,9 +66,21 @@ func (p Processor) ProcessOne(ctx context.Context) (bool, error) {
 	if !active.Binding.Enabled {
 		return true, p.Work.Ignore(ctx, item)
 	}
+	if item.Message.BindingRevision != 0 && item.Message.BindingRevision != active.Binding.Revision {
+		// The event was accepted by an older bot configuration. Never let a
+		// later revision run it against a different Agent target or secret.
+		return true, p.Work.Ignore(ctx, item)
+	}
 	key, threadRef, err := Route(ctx, active.Binding, item.Message, active.Subjects)
 	if err != nil {
 		return true, errors.Join(err, p.Work.ReleaseClaim(ctx, item))
+	}
+	earlier, err := p.Work.PrepareRoute(ctx, item, key)
+	if err != nil {
+		return true, errors.Join(err, p.Work.ReleaseClaim(ctx, item))
+	}
+	if earlier {
+		return true, p.Work.DeferClaim(ctx, item, time.Second)
 	}
 	session, _, exists, err := p.Conversations.Get(ctx, key)
 	if err != nil {
@@ -90,16 +105,18 @@ func (p Processor) ProcessOne(ctx context.Context) (bool, error) {
 		return true, errors.Join(err, p.Work.ReleaseClaim(ctx, item))
 	}
 	lease, acquired, err := p.Conversations.Acquire(ctx, key, sessionLease)
-	if err != nil || !acquired {
-		if err == nil {
-			err = errors.New("IM conversation is busy or requires reconciliation")
-		}
+	if err != nil {
 		return true, errors.Join(err, p.Work.ReleaseClaim(ctx, item))
 	}
-	return true, p.processClaimed(ctx, item, active, session, lease)
+	if !acquired {
+		// Contention is normal while another worker owns this session. It is
+		// not a processing failure and must not exhaust the retry budget.
+		return true, p.Work.DeferClaim(ctx, item, time.Second)
+	}
+	return true, p.processClaimed(ctx, item, active, session, lease, sessionLease)
 }
 
-func (p Processor) processClaimed(ctx context.Context, item WorkItem, active ActiveBinding, session ConversationSession, lease ConversationLease) error {
+func (p Processor) processClaimed(ctx context.Context, item WorkItem, active ActiveBinding, session ConversationSession, lease ConversationLease, leaseDuration time.Duration) error {
 	caps, err := p.Agents.Capabilities(ctx, session)
 	if err != nil || caps.Adapter != "acp" || !caps.ReliableFinal || (active.Streaming && !caps.AssistantDeltas) {
 		if err == nil {
@@ -126,18 +143,92 @@ func (p Processor) processClaimed(ctx context.Context, item WorkItem, active Act
 		return errors.Join(err, p.Conversations.ReleaseLease(ctx, lease), p.Work.ReleaseClaim(ctx, item))
 	}
 	if err := p.Work.BeginSubmission(ctx, item); err != nil {
-		return errors.Join(err, p.unknownSession(ctx, lease, err), p.Work.ReleaseClaim(ctx, item))
+		if errors.Is(err, ErrClaimLost) {
+			// The SQL update did not submit this event. Roll back the
+			// provisional conversation barrier; an expired claim may be
+			// requeued or already owned by another worker.
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if finishErr := p.Conversations.FinishTurn(cleanupCtx, lease); finishErr != nil {
+				return errors.Join(err, finishErr, p.unknownSession(cleanupCtx, lease))
+			}
+			releaseErr := p.Work.ReleaseClaim(cleanupCtx, item)
+			if errors.Is(releaseErr, ErrClaimLost) {
+				releaseErr = nil // another worker now owns the event
+			}
+			return errors.Join(releaseErr, p.Conversations.ReleaseLease(cleanupCtx, lease))
+		}
+		if errors.Is(err, ErrBindingChanged) {
+			// No Agent call has started. Undo the provisional conversation
+			// barrier, then discard this event under its old Binding revision.
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if finishErr := p.Conversations.FinishTurn(cleanupCtx, lease); finishErr != nil {
+				return errors.Join(err, finishErr, p.unknownSession(cleanupCtx, lease), p.Work.ReleaseClaim(cleanupCtx, item))
+			}
+			return errors.Join(p.Work.Ignore(cleanupCtx, item), p.Conversations.ReleaseLease(cleanupCtx, lease))
+		}
+		return errors.Join(err, p.unknownSession(ctx, lease), p.Work.ReleaseClaim(ctx, item))
 	}
-	if err := p.executeTurn(ctx, item, active, &session, lease); err != nil {
-		return errors.Join(err, p.unknown(ctx, item, lease, err))
+	if err := p.executeWithLeaseRenewal(ctx, item, active, &session, lease, leaseDuration); err != nil {
+		if errors.Is(err, errKnownDeliveryFailure) && !errors.Is(err, errLeaseRenewalFailed) {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			const reason = "IM outbound rejected before platform request"
+			if markErr := p.Work.MarkFailed(cleanupCtx, item, reason); markErr != nil {
+				return errors.Join(err, markErr, p.unknown(cleanupCtx, item, lease))
+			}
+			if finishErr := p.Conversations.FinishTurn(cleanupCtx, lease); finishErr != nil {
+				return errors.Join(err, finishErr, p.unknownSession(cleanupCtx, lease))
+			}
+			return errors.Join(err, p.Conversations.ReleaseLease(cleanupCtx, lease))
+		}
+		return errors.Join(err, p.unknown(ctx, item, lease))
 	}
 	if err := p.Work.Complete(ctx, item); err != nil {
-		return errors.Join(err, p.unknown(ctx, item, lease, err))
+		return errors.Join(err, p.unknown(ctx, item, lease))
 	}
 	if err := p.Conversations.FinishTurn(ctx, lease); err != nil {
 		return err // still running: do not admit another turn
 	}
 	return p.Conversations.ReleaseLease(ctx, lease)
+}
+
+// Agent work and external delivery can outlast the initial conversation
+// lease. Keep it live so a recovery operator cannot mistake a slow, healthy
+// turn for an abandoned one. A failed renewal cancels the in-flight work;
+// its outcome is then fenced as unknown rather than replayed.
+func (p Processor) executeWithLeaseRenewal(ctx context.Context, item WorkItem, active ActiveBinding, session *ConversationSession, lease ConversationLease, duration time.Duration) error {
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(duration / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-workCtx.Done():
+				finished <- nil
+				return
+			case <-ticker.C:
+				if err := p.Conversations.Renew(workCtx, lease, duration); err != nil {
+					if workCtx.Err() != nil {
+						finished <- nil
+					} else {
+						finished <- fmt.Errorf("renew IM conversation lease: %w", err)
+					}
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	err := p.executeTurn(workCtx, item, active, session, lease)
+	cancel()
+	if renewErr := <-finished; renewErr != nil {
+		return errors.Join(err, errLeaseRenewalFailed, renewErr)
+	}
+	return err
 }
 
 func (p Processor) executeTurn(ctx context.Context, item WorkItem, active ActiveBinding, session *ConversationSession, lease ConversationLease) error {
@@ -218,14 +309,14 @@ func (p Processor) executeTurn(ctx context.Context, item WorkItem, active Active
 	}
 	if stream != nil {
 		final = visiblePrefix + final
-		return stream.Complete(ctx, OutboundMessage{Text: final, DeliveryID: delivery, Session: session.Key})
+		return stream.Complete(ctx, OutboundMessage{Text: final, DeliveryID: delivery, Session: session.Key, AgentTurnCompleted: true})
 	}
 	mode := active.ReplyMode
 	if mode == "" {
 		mode = "final_text"
 	}
 	manager := DeliveryManager{Store: p.Deliveries}
-	state, created, err := manager.Reserve(ctx, Delivery{ID: delivery, Session: session.Key, Address: item.Message.Address, Mode: mode, ProviderStateVersion: 1})
+	state, created, err := manager.Reserve(ctx, Delivery{ID: delivery, Session: session.Key, Address: item.Message.Address, Mode: mode, ProviderStateVersion: 1, AgentTurnCompleted: true})
 	if err != nil {
 		return err
 	}
@@ -240,21 +331,37 @@ func (p Processor) executeTurn(ctx context.Context, item WorkItem, active Active
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
+		if errors.Is(err, ErrOutboundRejected) {
+			if _, rejectErr := manager.Reject(cleanupCtx, state); rejectErr != nil {
+				return errors.Join(err, rejectErr)
+			}
+			return fmt.Errorf("%w: %v", errKnownDeliveryFailure, err)
+		}
 		_, markErr := manager.Unknown(cleanupCtx, state)
 		return errors.Join(err, markErr)
 	}
-	_, err = manager.Confirm(ctx, state, true, providerState)
-	return err
+	if _, err = manager.Confirm(ctx, state, true, providerState); err != nil {
+		// The platform already returned a message ID. Persisting that known
+		// success is safe to retry with a bounded cleanup context even if the
+		// request context was canceled; never call Send a second time here.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, cleanupErr := manager.Confirm(cleanupCtx, state, true, providerState); cleanupErr != nil {
+			return errors.Join(err, cleanupErr)
+		}
+	}
+	return nil
 }
 
-func (p Processor) unknown(ctx context.Context, item WorkItem, lease ConversationLease, cause error) error {
+func (p Processor) unknown(ctx context.Context, item WorkItem, lease ConversationLease) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return errors.Join(p.Work.MarkUnknown(cleanupCtx, item, cause.Error()), p.Conversations.UnknownTurn(cleanupCtx, lease, cause.Error()))
+	const reason = "IM Agent or delivery outcome unknown; inspect the turn and delivery"
+	return errors.Join(p.Work.MarkUnknown(cleanupCtx, item, reason), p.Conversations.UnknownTurn(cleanupCtx, lease, reason))
 }
 
-func (p Processor) unknownSession(ctx context.Context, lease ConversationLease, cause error) error {
+func (p Processor) unknownSession(ctx context.Context, lease ConversationLease) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return p.Conversations.UnknownTurn(cleanupCtx, lease, cause.Error())
+	return p.Conversations.UnknownTurn(cleanupCtx, lease, "IM submission barrier outcome unknown")
 }

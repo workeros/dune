@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +89,329 @@ func localGroupEvent(eventID, messageID, sender, rootID, threadID string, mentio
 		"event":  map[string]any{"sender": map[string]any{"sender_id": map[string]string{"open_id": sender}, "sender_type": "user"}, "message": message},
 	})
 	return event
+}
+
+func TestTenantBotsKeepCredentialsTargetsSessionsAndReplyModesSeparate(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	type botCase struct {
+		id, appID, secret, encryptKey, token, mode, agentID string
+	}
+	bots := []botCase{
+		{id: "bot-a", appID: testAppID, secret: "secret-a", encryptKey: testEncryptKey, token: testToken, mode: ReplyFinalText, agentID: "agent-a"},
+		{id: "bot-b", appID: "cli_other_app", secret: "secret-b", encryptKey: "other-encrypt-key", token: "other-token", mode: ReplyFinalCard, agentID: "agent-b"},
+	}
+	secrets := map[string][]byte{}
+	for _, bot := range bots {
+		config, _ := json.Marshal(Config{AppID: bot.appID, ReceiveMode: ReceiveCallback, ReplyMode: bot.mode})
+		secret, _ := json.Marshal(Credentials{AppSecret: bot.secret, EncryptKey: bot.encryptKey, VerificationToken: bot.token})
+		secrets[bot.id] = secret
+		if _, err := store.Put(ctx, channel.BotBinding{ID: bot.id, TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
+			Config: config, CredentialRef: bot.id, Target: channel.AgentTarget{RunnerID: "runner", AgentConfigID: bot.agentID}, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agents := &localAgentBackend{starts: map[string]int{}, attaches: map[string]int{}}
+	resolver := credentialResolverFunc(func(_ context.Context, binding channel.BotBinding) ([]byte, error) {
+		secret, ok := secrets[binding.CredentialRef]
+		if !ok {
+			return nil, fmt.Errorf("unexpected credential reference %q", binding.CredentialRef)
+		}
+		return secret, nil
+	})
+	service, err := NewService(store, resolver, agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop(ctx)
+	if err := service.LoadTenant(ctx, "tenant-a"); err != nil {
+		t.Fatal(err)
+	}
+	apiServers := make([]*httptest.Server, 0, len(bots))
+	defer func() {
+		for _, server := range apiServers {
+			server.Close()
+		}
+	}()
+	apiCalls := map[string][]string{}
+	var apiMu sync.Mutex
+	for _, bot := range bots {
+		bot := bot
+		entry := service.bindings[bot.id]
+		if entry == nil || entry.channel.config.AppID != bot.appID || entry.channel.secret.AppSecret != bot.secret || entry.channel.secret.EncryptKey != bot.encryptKey || entry.channel.secret.VerificationToken != bot.token {
+			t.Fatalf("%s did not resolve its own Feishu credentials", bot.id)
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal" {
+				_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+				return
+			}
+			var request struct {
+				MsgType   string `json:"msg_type"`
+				ReceiveID string `json:"receive_id"`
+			}
+			if r.URL.Path != "/open-apis/im/v1/messages" || json.NewDecoder(r.Body).Decode(&request) != nil || request.ReceiveID != "ou_alice" {
+				t.Errorf("%s sent to an unexpected address: path=%s request=%+v", bot.id, r.URL.Path, request)
+			}
+			apiMu.Lock()
+			apiCalls[bot.id] = append(apiCalls[bot.id], request.MsgType)
+			apiMu.Unlock()
+			_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_answer"}}`)
+		}))
+		apiServers = append(apiServers, server)
+		service.bindings[bot.id].channel.client = lark.NewClient(bot.appID, bot.secret, lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+		plain := localDirectEvent("shared-event", "om_shared", "ou_alice", "hello")
+		plain = []byte(strings.ReplaceAll(strings.ReplaceAll(string(plain), testAppID, bot.appID), testToken, bot.token))
+		handler, err := service.CallbackHandler("tenant-a", bot.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, serviceSignedCallback(t, plain, bot.encryptKey))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s callback status=%d body=%q", bot.id, response.Code, response.Body.String())
+		}
+	}
+	processor := channel.Processor{Work: store, Conversations: store, Deliveries: store, Bindings: service, Agents: agents}
+	for range bots {
+		if found, err := processor.ProcessOne(ctx); err != nil || !found {
+			t.Fatalf("multi-bot event was not processed: found=%t err=%v", found, err)
+		}
+	}
+	apiMu.Lock()
+	defer apiMu.Unlock()
+	for _, bot := range bots {
+		key := channel.SessionKey{TenantID: "tenant-a", BindingID: bot.id, ChatID: "oc_direct", SubjectID: "ou_alice"}
+		session, state, found, err := store.Get(ctx, key)
+		if err != nil || !found || state != channel.ConversationReady || session.Target.AgentConfigID != bot.agentID || agents.starts[key.String()] != 1 {
+			t.Fatalf("%s session crossed a Binding: session=%+v state=%s found=%t starts=%d err=%v", bot.id, session, state, found, agents.starts[key.String()], err)
+		}
+		delivery, found, err := store.GetDelivery(ctx, bot.id, channel.TurnDeliveryID(bot.id, "shared-event"))
+		if err != nil || !found || delivery.Phase != "complete" || delivery.Mode != bot.mode || delivery.Session != key {
+			t.Fatalf("%s delivery crossed a Binding: %+v found=%t err=%v", bot.id, delivery, found, err)
+		}
+		wantType := "text"
+		if bot.mode == ReplyFinalCard {
+			wantType = "interactive"
+		}
+		if len(apiCalls[bot.id]) != 1 || apiCalls[bot.id][0] != wantType {
+			t.Fatalf("%s used the wrong reply API mode: %v", bot.id, apiCalls[bot.id])
+		}
+	}
+}
+
+func TestCallbackReplyModesInDirectAndGroupSessions(t *testing.T) {
+	for _, mode := range []string{ReplyFinalText, ReplyFinalCard, ReplyStreaming} {
+		for _, chat := range []string{"direct", "group"} {
+			t.Run(string(mode)+"/"+chat, func(t *testing.T) {
+				agents, target := gatewayAgentFixture(t)
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer store.Close()
+				config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: mode})
+				binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
+					Config: config, CredentialRef: "local-test", Target: target, Enabled: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				secret, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
+				service, err := NewService(store, &testCredentialResolver{data: secret}, agents)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer service.Stop(ctx)
+				if err := service.Activate(ctx, binding); err != nil {
+					t.Fatal(err)
+				}
+				type outboundCall struct {
+					path string
+					body map[string]any
+				}
+				var calls []outboundCall
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/open-apis/auth/v3/tenant_access_token/internal":
+						_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+						return
+					case "/open-apis/bot/v3/info":
+						_, _ = io.WriteString(w, `{"code":0,"bot":{"open_id":"ou_this_bot"}}`)
+						return
+					}
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Errorf("decode outbound API request: %v", err)
+					}
+					calls = append(calls, outboundCall{path: r.URL.Path, body: body})
+					switch {
+					case r.URL.Path == "/open-apis/cardkit/v1/cards":
+						_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-1"}}`)
+					case r.URL.Path == "/open-apis/im/v1/messages" || strings.HasSuffix(r.URL.Path, "/reply"):
+						_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_answer"}}`)
+					case strings.HasPrefix(r.URL.Path, "/open-apis/cardkit/v1/cards/card-1/"):
+						_, _ = io.WriteString(w, `{"code":0}`)
+					default:
+						t.Errorf("unexpected outbound API path: %s", r.URL.Path)
+						http.Error(w, "unexpected", http.StatusNotFound)
+					}
+				}))
+				defer server.Close()
+				service.bindings[binding.ID].channel.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+				handler, err := service.CallbackHandler("tenant-a", binding.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var event []byte
+				subject, chatID, inputID := "ou_alice", "oc_direct", "om_direct"
+				if chat == "group" {
+					subject, chatID, inputID = "om_root", "oc_group", "om_root"
+					event = localGroupEvent("event-1", inputID, "ou_alice", "", "", true)
+				} else {
+					event = localDirectEvent("event-1", inputID, "ou_alice", "hello")
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, serviceSignedCallback(t, event, testEncryptKey))
+				if response.Code != http.StatusOK {
+					t.Fatalf("callback was not accepted: status=%d body=%q", response.Code, response.Body.String())
+				}
+				processor := channel.Processor{Work: store, Conversations: store, Deliveries: store, Bindings: service, Agents: agents}
+				if found, err := processor.ProcessOne(ctx); err != nil || !found {
+					t.Fatalf("callback was not processed: found=%t err=%v", found, err)
+				}
+				key := channel.SessionKey{TenantID: "tenant-a", BindingID: binding.ID, ChatID: chatID, SubjectID: subject}
+				session, state, found, err := store.Get(ctx, key)
+				if err != nil || !found || state != channel.ConversationReady {
+					t.Fatalf("session was not completed: state=%s found=%t err=%v", state, found, err)
+				}
+				defer agents.Stop(context.Background(), session, channel.AgentSession{Runtime: session.Runtime, ACPSessionID: session.ACPSessionID})
+				delivery, found, err := store.GetDelivery(ctx, binding.ID, channel.TurnDeliveryID(binding.ID, "event-1"))
+				if err != nil || !found || delivery.Phase != "complete" || !delivery.AgentTurnCompleted || delivery.Mode != string(mode) {
+					t.Fatalf("delivery was not durably completed: %+v found=%t err=%v", delivery, found, err)
+				}
+				messageCount, cardCreates, cardUpdates, cardCloses := 0, 0, 0, 0
+				var visible string
+				for _, call := range calls {
+					switch {
+					case call.path == "/open-apis/cardkit/v1/cards":
+						cardCreates++
+						if mode != ReplyStreaming || !strings.Contains(fmt.Sprint(call.body["data"]), `"streaming_mode":true`) {
+							t.Fatalf("unexpected CardKit create: %+v", call)
+						}
+					case call.path == "/open-apis/im/v1/messages" || strings.HasSuffix(call.path, "/reply"):
+						messageCount++
+						if call.body["uuid"] == "" {
+							t.Fatalf("message lacks idempotency UUID: %+v", call)
+						}
+						if chat == "group" {
+							if call.path != "/open-apis/im/v1/messages/"+inputID+"/reply" || call.body["reply_in_thread"] != true {
+								t.Fatalf("reply escaped group topic: %+v", call)
+							}
+						} else if call.path != "/open-apis/im/v1/messages" || call.body["receive_id"] != "ou_alice" {
+							t.Fatalf("reply escaped direct chat: %+v", call)
+						}
+						wantType := "text"
+						if mode != ReplyFinalText {
+							wantType = "interactive"
+						}
+						if call.body["msg_type"] != wantType {
+							t.Fatalf("wrong reply message type: %+v", call)
+						}
+						if mode != ReplyStreaming {
+							visible = fmt.Sprint(call.body["content"])
+						}
+					case strings.HasSuffix(call.path, "/elements/answer/content"):
+						cardUpdates++
+						visible = fmt.Sprint(call.body["content"])
+					case strings.HasSuffix(call.path, "/settings"):
+						cardCloses++
+						if !strings.Contains(fmt.Sprint(call.body["settings"]), `"streaming_mode":false`) {
+							t.Fatalf("streaming mode was not closed: %+v", call)
+						}
+					default:
+						t.Fatalf("unexpected outbound API request: %+v", call)
+					}
+				}
+				wantAnswer := "turn 1: hello"
+				if chat == "group" {
+					wantAnswer = "turn 1: question om_root"
+				}
+				if !strings.Contains(visible, wantAnswer) || strings.Contains(visible, "private thought") {
+					t.Fatalf("reply does not contain the ACP assistant answer: %q", visible)
+				}
+				if messageCount != 1 || (mode == ReplyStreaming && (cardCreates != 1 || cardUpdates == 0 || cardCloses != 1)) ||
+					(mode != ReplyStreaming && (cardCreates != 0 || cardUpdates != 0 || cardCloses != 0)) {
+					t.Fatalf("wrong API sequence for %s/%s: %+v", mode, chat, calls)
+				}
+			})
+		}
+	}
+}
+
+func TestCallbackRedeliveryAcrossBindingRevisionDoesNotRunOldAgentTurn(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyFinalText})
+	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
+		Config: config, CredentialRef: "local-test", Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "old-agent"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := json.Marshal(Credentials{AppSecret: "test-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
+	agents := &localAgentBackend{starts: map[string]int{}, attaches: map[string]int{}}
+	service, err := NewService(store, &testCredentialResolver{data: secret}, agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop(ctx)
+	if err := service.Activate(ctx, binding); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := service.CallbackHandler("tenant-a", "bot-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := localDirectEvent("event-old", "om_old", "ou_alice", "old question")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, serviceSignedCallback(t, event, testEncryptKey))
+	if first.Code != http.StatusOK {
+		t.Fatalf("old revision was not durably accepted: %d", first.Code)
+	}
+	binding.Target.AgentConfigID = "new-agent"
+	binding, err = store.Put(ctx, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Activate(ctx, binding); err != nil {
+		t.Fatal(err)
+	}
+	redelivery := httptest.NewRecorder()
+	handler.ServeHTTP(redelivery, serviceSignedCallback(t, event, testEncryptKey))
+	if redelivery.Code != http.StatusOK {
+		t.Fatalf("current revision did not ACK an identical redelivery: %d", redelivery.Code)
+	}
+	processor := channel.Processor{Work: store, Conversations: store, Deliveries: store, Bindings: service, Agents: agents}
+	if found, err := processor.ProcessOne(ctx); err != nil || !found {
+		t.Fatalf("old queued event was not consumed: found=%t err=%v", found, err)
+	}
+	if len(agents.starts) != 0 {
+		t.Fatalf("old queued event started an Agent under new Binding: %v", agents.starts)
+	}
+	if found, err := processor.ProcessOne(ctx); err != nil || found {
+		t.Fatalf("redelivery created a second work item: found=%t err=%v", found, err)
+	}
 }
 
 func TestCallbackRunWorkerSeparatesUsersAndReusesDirectSession(t *testing.T) {

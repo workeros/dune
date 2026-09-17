@@ -11,6 +11,7 @@ type BindingStats struct {
 	FailedEvents         int64 `json:"failed_events"`
 	UnknownEvents        int64 `json:"unknown_events"`
 	UnknownConversations int64 `json:"unknown_conversations"`
+	FailedDeliveries     int64 `json:"failed_deliveries"`
 	UnknownDeliveries    int64 `json:"unknown_deliveries"`
 }
 

@@ -28,6 +28,9 @@ func (s *Store) BindingStats(ctx context.Context, bindingID string) (channel.Bin
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM im_deliveries WHERE binding_id = ? AND json_extract(state_json, '$.phase') = 'unknown'`, bindingID).Scan(&stats.UnknownDeliveries); err != nil {
 		return channel.BindingStats{}, err
 	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM im_deliveries WHERE binding_id = ? AND json_extract(state_json, '$.phase') = 'failed'`, bindingID).Scan(&stats.FailedDeliveries); err != nil {
+		return channel.BindingStats{}, err
+	}
 	return stats, nil
 }
 

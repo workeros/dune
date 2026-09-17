@@ -16,6 +16,9 @@ import (
 )
 
 type ScopeResolver interface {
+	// ResolveAgentScope authorizes the persisted IM Binding target and maps
+	// its TenantID to Dune's OwnerID and trusted actor. IM senders must never
+	// supply this scope. The returned RunnerID must match the target.
 	ResolveAgentScope(context.Context, channel.ConversationSession) (host.AgentScope, error)
 }
 
@@ -32,8 +35,8 @@ func (b Backend) open(ctx context.Context, session channel.ConversationSession) 
 	if err != nil {
 		return nil, err
 	}
-	if scope.OwnerID != session.Key.TenantID || scope.RunnerID != session.Target.RunnerID {
-		return nil, errors.New("Dune IM Agent scope does not match conversation Tenant or Runner")
+	if scope.OwnerID == "" || scope.RunnerID != session.Target.RunnerID {
+		return nil, errors.New("Dune IM Agent scope lacks an owner or does not match the conversation Runner")
 	}
 	return b.Executor.Open(ctx, scope)
 }
@@ -186,12 +189,43 @@ func recoverSession(ctx context.Context, connection host.AgentConnection, conver
 }
 
 func (b Backend) Stop(ctx context.Context, session channel.ConversationSession, existing channel.AgentSession) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	connection, err := b.open(ctx, session)
 	if err != nil {
 		return err
 	}
 	defer connection.Close()
-	return connection.Stop(ctx, toRuntime(existing.Runtime))
+	runtime := toRuntime(existing.Runtime)
+	if err := connection.Stop(ctx, runtime); err != nil {
+		return fmt.Errorf("stop ACP Runtime (outcome may be unknown): %w", err)
+	}
+	// runtime.stop confirms the stop request; process exit is published
+	// asynchronously. Do not report destruction while Attach can still see
+	// the old process as running. Only these read-only queries are repeated.
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		current, err := connection.Get(ctx, runtime)
+		if err != nil {
+			var apiErr *api.Error
+			if errors.As(err, &apiErr) && apiErr.Code == "STALE_RUNTIME" {
+				return nil
+			}
+			return fmt.Errorf("confirm stopped ACP Runtime (outcome may be unknown): %w", err)
+		}
+		if current.ID != runtime.ID || current.Incarnation != runtime.Incarnation || current.Generation != runtime.Generation || current.Adapter != "acp" {
+			return errors.New("ACP Runtime identity changed while confirming stop")
+		}
+		if current.State == "exited" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for ACP Runtime exit (outcome may be unknown): %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func awaitState(ctx context.Context, connection host.AgentConnection, runtime api.Runtime, ready func(host.AgentState) bool) (host.AgentState, error) {

@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,15 +29,16 @@ func TestBindingStatsCountDurableUnknownStates(t *testing.T) {
 	if err := store.BeginTurn(ctx, lease, "event"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UnknownTurn(ctx, lease, "Agent outcome uncertain"); err != nil {
+	if err := store.UnknownTurn(ctx, lease, "private-user-question"); err != nil {
 		t.Fatal(err)
 	}
 	manager := channel.DeliveryManager{Store: store}
-	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: "delivery", Session: key, Mode: "final_text", ProviderStateVersion: 1})
+	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: "delivery", Session: key, Mode: "streaming_card", ProviderStateVersion: 2,
+		Address: channel.ReplyAddress{Provider: "feishu", Version: 1, Data: json.RawMessage(`{"reply_message_id":"private-reply-address"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	delivery, err = manager.Intent(ctx, delivery, "send", nil)
+	delivery, err = manager.Intent(ctx, delivery, "updating", json.RawMessage(`{"confirmed_text":"private-agent-answer","pending_text":"private-next-update"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +55,7 @@ func TestBindingStatsCountDurableUnknownStates(t *testing.T) {
 	if err := store.BeginSubmission(ctx, item); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkUnknown(ctx, item, "Agent outcome uncertain"); err != nil {
+	if err := store.MarkUnknown(ctx, item, "private-user-question"); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := store.BindingStats(ctx, "bot")
@@ -69,8 +72,20 @@ func TestBindingStatsCountDurableUnknownStates(t *testing.T) {
 	}
 	if issues.Events[0].EventID != "event" || issues.Events[0].State != "unknown" || issues.Events[0].Attempts != 1 ||
 		issues.Conversations[0].Key != key || issues.Conversations[0].CurrentEventID != "event" ||
-		issues.Deliveries[0].ID != "delivery" || issues.Deliveries[0].Phase != "unknown" || issues.Deliveries[0].Operation != "send" {
+		issues.Deliveries[0].ID != "delivery" || issues.Deliveries[0].Phase != "unknown" || issues.Deliveries[0].Operation != "updating" || issues.Deliveries[0].Session != key {
 		t.Fatalf("issue identity or pending operation missing: %+v", issues)
+	}
+	encodedIssues, err := json.Marshal(issues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sensitive := range []string{"private-agent-answer", "private-next-update", "private-reply-address", "private-user-question", "provider_state", "address"} {
+		if strings.Contains(string(encodedIssues), sensitive) {
+			t.Fatalf("recovery issue exposed private delivery state %q: %s", sensitive, encodedIssues)
+		}
+	}
+	if issues.Events[0].Failure != "details withheld; inspect server logs" || issues.Conversations[0].Failure != "details withheld; inspect server logs" {
+		t.Fatalf("untrusted error text was not redacted: %+v", issues)
 	}
 	otherIssues, err := store.ListIssues(ctx, "another-bot", 10)
 	if err != nil || len(otherIssues.Events)+len(otherIssues.Conversations)+len(otherIssues.Deliveries) != 0 {

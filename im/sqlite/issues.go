@@ -38,9 +38,11 @@ func (s *Store) listEventIssues(ctx context.Context, bindingID string, limit int
 	defer rows.Close()
 	for rows.Next() {
 		var issue channel.EventIssue
-		if err := rows.Scan(&issue.EventID, &issue.ChatID, &issue.State, &issue.Attempts, &issue.Failure); err != nil {
+		var rawFailure string
+		if err := rows.Scan(&issue.EventID, &issue.ChatID, &issue.State, &issue.Attempts, &rawFailure); err != nil {
 			return err
 		}
+		issue.Failure = safeIssueFailure(rawFailure)
 		issues.Events = append(issues.Events, issue)
 	}
 	return rows.Err()
@@ -56,9 +58,11 @@ func (s *Store) listConversationIssues(ctx context.Context, bindingID string, li
 	for rows.Next() {
 		var keyJSON []byte
 		var issue channel.ConversationIssue
-		if err := rows.Scan(&keyJSON, &issue.State, &issue.CurrentEventID, &issue.Failure); err != nil {
+		var rawFailure string
+		if err := rows.Scan(&keyJSON, &issue.State, &issue.CurrentEventID, &rawFailure); err != nil {
 			return err
 		}
+		issue.Failure = safeIssueFailure(rawFailure)
 		if err := json.Unmarshal(keyJSON, &issue.Key); err != nil {
 			return err
 		}
@@ -70,9 +74,21 @@ func (s *Store) listConversationIssues(ctx context.Context, bindingID string, li
 	return rows.Err()
 }
 
+// Backend and platform errors can quote a user's prompt or the Agent's
+// answer. Only reasons produced by our own fixed state transitions are safe
+// to expose through the read-only diagnostics API.
+func safeIssueFailure(raw string) string {
+	switch raw {
+	case "", "maximum claim attempts exceeded", "IM Agent or delivery outcome unknown; inspect the turn and delivery", "IM submission barrier outcome unknown", "IM outbound rejected before platform request":
+		return raw
+	default:
+		return "details withheld; inspect server logs"
+	}
+}
+
 func (s *Store) listDeliveryIssues(ctx context.Context, bindingID string, limit int, issues *channel.BindingIssues) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT delivery_id, state_json FROM im_deliveries
-		WHERE binding_id = ? AND json_extract(state_json, '$.phase') IN ('pending', 'unknown')
+		WHERE binding_id = ? AND json_extract(state_json, '$.phase') IN ('pending', 'unknown', 'failed')
 		ORDER BY delivery_id LIMIT ?`, bindingID, limit)
 	if err != nil {
 		return err
@@ -84,14 +100,18 @@ func (s *Store) listDeliveryIssues(ctx context.Context, bindingID string, limit 
 		if err := rows.Scan(&id, &data); err != nil {
 			return err
 		}
-		var issue channel.Delivery
-		if err := json.Unmarshal(data, &issue); err != nil {
+		var delivery channel.Delivery
+		if err := json.Unmarshal(data, &delivery); err != nil {
 			return err
 		}
-		if issue.ID != id || issue.Session.BindingID != bindingID || !validSessionKey(issue.Session) {
+		if delivery.ID != id || delivery.Session.BindingID != bindingID || !validSessionKey(delivery.Session) {
 			return fmt.Errorf("IM issue points to an invalid delivery %q", id)
 		}
-		issues.Deliveries = append(issues.Deliveries, issue)
+		issues.Deliveries = append(issues.Deliveries, channel.DeliveryIssue{
+			ID: delivery.ID, Session: delivery.Session, Mode: delivery.Mode,
+			Phase: delivery.Phase, Operation: delivery.Operation,
+			AgentTurnCompleted: delivery.AgentTurnCompleted,
+		})
 	}
 	return rows.Err()
 }

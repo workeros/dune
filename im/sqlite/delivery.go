@@ -62,6 +62,9 @@ func (s *Store) Commit(ctx context.Context, state channel.Delivery) (channel.Del
 	if previousState.ID != state.ID || previousState.Session != state.Session || previousState.Mode != state.Mode || previousState.ProviderStateVersion != state.ProviderStateVersion || !sameReplyAddress(previousState.Address, state.Address) {
 		return channel.Delivery{}, errors.New("IM delivery identity, address, mode or provider state version cannot change")
 	}
+	if previousState.AgentTurnCompleted && !state.AgentTurnCompleted {
+		return channel.Delivery{}, errors.New("IM Agent completion evidence cannot be removed")
+	}
 	if err := validateDeliveryTransition(previousState, state); err != nil {
 		return channel.Delivery{}, err
 	}
@@ -103,6 +106,9 @@ func validateDeliveryTransition(before, after channel.Delivery) error {
 	case "pending":
 		if before.Operation == "" {
 			break
+		}
+		if after.Phase == "failed" && after.Operation == "" && len(after.ProviderState) == 0 {
+			return nil
 		}
 		if after.Phase == "unknown" && after.Operation == before.Operation {
 			return nil

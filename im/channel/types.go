@@ -30,15 +30,16 @@ type AgentTarget struct {
 // InboundMessage is a verified, normalized event. Provider-specific fields in
 // Address remain opaque to the common router and are validated by the provider.
 type InboundMessage struct {
-	BindingID         string       `json:"binding_id"`
-	EventID           string       `json:"event_id"`
-	MessageID         string       `json:"message_id"`
-	SenderID          string       `json:"sender_id"`
-	ChatID            string       `json:"chat_id"`
-	ChatKind          ChatKind     `json:"chat_kind"`
-	BotMentionOpenIDs []string     `json:"bot_mention_open_ids,omitempty"`
-	Text              string       `json:"text"`
-	Address           ReplyAddress `json:"address"`
+	BindingID       string       `json:"binding_id"`
+	BindingRevision int64        `json:"binding_revision,omitempty"`
+	EventID         string       `json:"event_id"`
+	MessageID       string       `json:"message_id"`
+	SenderID        string       `json:"sender_id"`
+	ChatID          string       `json:"chat_id"`
+	ChatKind        ChatKind     `json:"chat_kind"`
+	MentionedIDs    []string     `json:"mentioned_ids,omitempty"`
+	Text            string       `json:"text"`
+	Address         ReplyAddress `json:"address"`
 }
 
 type ChatKind string
@@ -55,9 +56,10 @@ type ReplyAddress struct {
 }
 
 type OutboundMessage struct {
-	Text       string     `json:"text"`
-	DeliveryID string     `json:"delivery_id,omitempty"` // stable logical turn ID for idempotent delivery tracking
-	Session    SessionKey `json:"session"`
+	Text               string     `json:"text"`
+	DeliveryID         string     `json:"delivery_id,omitempty"` // stable logical turn ID for idempotent delivery tracking
+	Session            SessionKey `json:"session"`
+	AgentTurnCompleted bool       `json:"agent_turn_completed,omitempty"` // authoritative Agent final, not merely a closed reply
 }
 
 type Provider interface {

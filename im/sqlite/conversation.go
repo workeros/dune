@@ -49,6 +49,38 @@ func (s *Store) Ensure(ctx context.Context, key channel.SessionKey, target chann
 			return channel.ConversationSession{}, errors.New("provider thread ref conflicts with existing conversation")
 		}
 	}
+	var storedJSON []byte
+	var revision, leaseUntil int64
+	var state, leaseToken string
+	if err := tx.QueryRowContext(ctx, `SELECT session_json, revision, state, lease_token, lease_until FROM im_conversations WHERE key_hash = ?`, key.String()).
+		Scan(&storedJSON, &revision, &state, &leaseToken, &leaseUntil); err != nil {
+		return channel.ConversationSession{}, err
+	}
+	var stored channel.ConversationSession
+	if err := json.Unmarshal(storedJSON, &stored); err != nil {
+		return channel.ConversationSession{}, err
+	}
+	if stored.Key != key || stored.Revision != revision {
+		return channel.ConversationSession{}, errors.New("IM conversation storage identity mismatch")
+	}
+	// A turn rejected before Agent startup may leave an empty conversation.
+	// It has no Agent context to preserve, so a later Binding revision may
+	// retarget it. Established Runtime sessions always keep their snapshot.
+	if stored.Target != target && stored.Runtime.ID == "" && stored.ACPSessionID == "" && state == string(channel.ConversationReady) && (leaseToken == "" || leaseUntil < time.Now().UnixNano()) {
+		stored.Target, stored.Address, stored.Revision = target, address, revision+1
+		updatedJSON, err := json.Marshal(stored)
+		if err != nil {
+			return channel.ConversationSession{}, err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE im_conversations SET session_json = ?, revision = ? WHERE key_hash = ? AND revision = ?`,
+			updatedJSON, stored.Revision, key.String(), revision)
+		if err != nil {
+			return channel.ConversationSession{}, err
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			return channel.ConversationSession{}, errors.New("IM empty conversation target changed concurrently")
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return channel.ConversationSession{}, err
 	}

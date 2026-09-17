@@ -7,7 +7,9 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aiomni/dune/im/channel"
 	"github.com/aiomni/dune/pkg/api"
@@ -39,15 +41,34 @@ func (s *fakeSubscription) Recv() (*pb.Message, error) {
 }
 func (*fakeSubscription) Close() error { return nil }
 
+type blockingSubscription struct {
+	entered chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingSubscription) Recv() (*pb.Message, error) {
+	close(s.entered)
+	<-s.closed
+	return nil, io.EOF
+}
+
+func (s *blockingSubscription) Close() error {
+	s.once.Do(func() { close(s.closed) })
+	return nil
+}
+
 type fakeConnection struct {
 	config       api.AgentConfig
 	runtime      api.Runtime
 	state        host.AgentState
-	subscription *fakeSubscription
+	subscription host.AgentSubscription
 	profile      api.Profile
 	actions      []host.AgentAction
 	getErr       error
 	starts       int
+	stopErr      error
+	stops        int
 }
 
 func (f *fakeConnection) AgentConfig(_ context.Context, id string) (api.AgentConfig, error) {
@@ -83,8 +104,11 @@ func (f *fakeConnection) Action(_ context.Context, _ api.Runtime, action host.Ag
 	}
 	return nil
 }
-func (*fakeConnection) Stop(context.Context, api.Runtime) error { return nil }
-func (*fakeConnection) Close() error                            { return nil }
+func (f *fakeConnection) Stop(context.Context, api.Runtime) error {
+	f.stops++
+	return f.stopErr
+}
+func (*fakeConnection) Close() error { return nil }
 
 func testBackend() (Backend, channel.ConversationSession, *fakeConnection) {
 	connection := &fakeConnection{
@@ -93,7 +117,7 @@ func testBackend() (Backend, channel.ConversationSession, *fakeConnection) {
 		state:   host.AgentState{Ready: true, Revision: 3},
 	}
 	conversation := channel.ConversationSession{Key: channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a"}, Target: channel.AgentTarget{RunnerID: "runner-a", AgentConfigID: "agent-a", WorkingDirectory: "/tmp/im-test"}}
-	backend := Backend{Executor: fakeExecutor{connection: connection}, Scopes: fakeScopes{scope: host.AgentScope{OwnerID: "tenant-a", RunnerID: "runner-a"}}}
+	backend := Backend{Executor: fakeExecutor{connection: connection}, Scopes: fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", RunnerID: "runner-a"}}}
 	return backend, conversation, connection
 }
 
@@ -112,13 +136,13 @@ func TestStartCreatesManagedACPRuntimeAndSession(t *testing.T) {
 	}
 }
 
-func TestBackendRejectsWrongTenantOrRunnerScope(t *testing.T) {
+func TestBackendRejectsMissingOwnerOrWrongRunnerScope(t *testing.T) {
 	backend, conversation, _ := testBackend()
-	backend.Scopes = fakeScopes{scope: host.AgentScope{OwnerID: "other-tenant", RunnerID: "runner-a"}}
+	backend.Scopes = fakeScopes{scope: host.AgentScope{RunnerID: "runner-a"}}
 	if _, err := backend.Capabilities(context.Background(), conversation); err == nil {
-		t.Fatal("cross-tenant Agent scope accepted")
+		t.Fatal("Agent scope without a Dune Owner accepted")
 	}
-	backend.Scopes = fakeScopes{scope: host.AgentScope{OwnerID: "tenant-a", RunnerID: "other-runner"}}
+	backend.Scopes = fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", RunnerID: "other-runner"}}
 	if _, err := backend.Start(context.Background(), conversation); err == nil {
 		t.Fatal("different Runner Agent scope accepted")
 	}
@@ -193,6 +217,37 @@ func TestAttachDoesNotRestartOnUnknownRuntimeLookup(t *testing.T) {
 	}
 }
 
+func TestStopRequiresConfirmedExitWithoutReplayingRequest(t *testing.T) {
+	for _, scenario := range []string{"exited", "stale", "query-failed", "stop-failed", "still-running", "identity-changed"} {
+		t.Run(scenario, func(t *testing.T) {
+			backend, conversation, connection := testBackend()
+			session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "session-a"}
+			switch scenario {
+			case "exited":
+				connection.runtime.State = "exited"
+			case "stale":
+				connection.getErr = &api.Error{Code: "STALE_RUNTIME"}
+			case "query-failed":
+				connection.getErr = io.ErrUnexpectedEOF
+			case "stop-failed":
+				connection.stopErr = io.ErrUnexpectedEOF
+			case "identity-changed":
+				connection.runtime.Generation++
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			err := backend.Stop(ctx, conversation, session)
+			wantSuccess := scenario == "exited" || scenario == "stale"
+			if (err == nil) != wantSuccess || connection.stops != 1 {
+				t.Fatalf("stop must be sent once and confirmed: calls=%d err=%v", connection.stops, err)
+			}
+			if scenario == "still-running" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("stop did not respect the caller deadline: %v", err)
+			}
+		})
+	}
+}
+
 func TestPromptStreamsOnlyAssistantAnswerAndDoesNotDuplicateFullFinal(t *testing.T) {
 	backend, conversation, connection := testBackend()
 	connection.state.SessionID = "acp-session-a"
@@ -229,6 +284,40 @@ func TestPromptStreamInterruptionIsUnknownNotSuccess(t *testing.T) {
 	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	if _, err := backend.Prompt(context.Background(), conversation, session, "question", func(channel.AgentEvent) error { return nil }); err == nil {
 		t.Fatal("interrupted ACP stream was reported complete")
+	}
+}
+
+func TestPromptCancellationClosesBlockedObservation(t *testing.T) {
+	backend, conversation, connection := testBackend()
+	connection.state.SessionID = "acp-session-a"
+	subscription := &blockingSubscription{entered: make(chan struct{}), closed: make(chan struct{})}
+	connection.subscription = subscription
+	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := backend.Prompt(ctx, conversation, session, "question", func(channel.AgentEvent) error { return nil })
+		done <- err
+	}()
+	select {
+	case <-subscription.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ACP observation did not begin receiving")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled ACP observation was reported complete")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled ACP observation remained blocked in Recv")
+	}
+	select {
+	case <-subscription.closed:
+	default:
+		t.Fatal("canceled ACP observation was not closed")
 	}
 }
 

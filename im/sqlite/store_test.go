@@ -116,6 +116,43 @@ func TestInboxClaimRetriesAreBoundedAndReported(t *testing.T) {
 	}
 }
 
+func TestBusyClaimDeferralDoesNotConsumeRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenWithOptions(ctx, filepath.Join(t.TempDir(), "im.db"), Options{MaxClaimAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	message := channel.InboundMessage{BindingID: "bot", EventID: "event-1", MessageID: "message-1"}
+	if err := store.Insert(ctx, message); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := store.Claim(ctx, time.Minute)
+	if err != nil || !found {
+		t.Fatalf("initial claim: found=%t err=%v", found, err)
+	}
+	if err := store.DeferClaim(ctx, item, 30*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.Claim(ctx, time.Minute); err != nil || found {
+		t.Fatalf("busy event was reclaimed before delay: found=%t err=%v", found, err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	again, found, err := store.Claim(ctx, time.Minute)
+	if err != nil || !found || again.Message.EventID != message.EventID || again.Token == item.Token {
+		t.Fatalf("deferred event was not claimable with a fresh token: %+v found=%t err=%v", again, found, err)
+	}
+	if err := store.DeferClaim(ctx, item, time.Second); err == nil {
+		t.Fatal("stale claim token deferred a new owner's event")
+	}
+	if err := store.ReleaseClaim(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	if stats, err := store.BindingStats(ctx, "bot"); err != nil || stats.FailedEvents != 1 {
+		t.Fatalf("a real retry failure did not consume the remaining budget: %+v err=%v", stats, err)
+	}
+}
+
 func TestExpiredFinalClaimBecomesFailedWithoutWorkerRelease(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenWithOptions(ctx, filepath.Join(t.TempDir(), "im.db"), Options{MaxClaimAttempts: 1})
@@ -293,6 +330,42 @@ func TestDeliveryStoreEnforcesLifecycleAndImmutableIdentity(t *testing.T) {
 	invalid.Phase, invalid.Operation = "pending", "send"
 	if _, err := store.Commit(ctx, invalid); err == nil {
 		t.Fatal("unknown delivery was retried without reconciliation")
+	}
+}
+
+func TestDeliveryAgentCompletionEvidenceIsMonotonic(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := channel.DeliveryManager{Store: store}
+	state, _, err := manager.Reserve(ctx, channel.Delivery{ID: "turn", Session: channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}, Mode: "streaming_card", ProviderStateVersion: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = manager.Intent(ctx, state, "create", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = manager.Confirm(ctx, state, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.AgentTurnCompleted = true
+	state, err = manager.Intent(ctx, state, "close", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutEvidence := state
+	withoutEvidence.AgentTurnCompleted = false
+	if _, err := manager.Confirm(ctx, withoutEvidence, true, nil); err == nil {
+		t.Fatal("delivery removed durable Agent completion evidence")
+	}
+	state, err = manager.Confirm(ctx, state, true, nil)
+	if err != nil || !state.AgentTurnCompleted {
+		t.Fatalf("Agent completion evidence was lost: %+v %v", state, err)
 	}
 }
 

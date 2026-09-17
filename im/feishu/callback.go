@@ -38,6 +38,14 @@ func (c *Channel) serveCallback(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// A request may have begun reading before credential rotation or Stop.
+	// Do not verify and ACK it after its receiver has been retired.
+	select {
+	case <-c.stopped:
+		http.Error(w, "channel stopped", http.StatusServiceUnavailable)
+		return
+	default:
+	}
 	var envelope larkevent.EventEncryptMsg
 	if json.Unmarshal(data, &envelope) != nil || envelope.Encrypt == "" {
 		http.Error(w, "encrypted event required", http.StatusBadRequest)

@@ -17,6 +17,7 @@ import (
 type ServiceStore interface {
 	channel.BindingStore
 	channel.WorkQueue
+	channel.BindingGuardedInbox
 	channel.ConversationStore
 	channel.DeliveryStore
 	channel.StatusStore
@@ -43,11 +44,13 @@ type Service struct {
 }
 
 type runningBinding struct {
-	binding channel.BotBinding
-	config  Config
-	channel *Channel
-	cancel  context.CancelFunc
-	err     error
+	binding  channel.BotBinding
+	config   Config
+	channel  *Channel
+	stop     func(context.Context) error
+	cancel   context.CancelFunc
+	err      error
+	retiring bool
 }
 
 // BindingStatus contains no credentials or raw event text. A WebSocket state
@@ -118,6 +121,22 @@ func (s *Service) Issues(ctx context.Context, tenantID, bindingID string, perCat
 // an expired worker lease. It never resends a message or Agent prompt and
 // remains Tenant-scoped.
 func (s *Service) ReconcileConfirmedDelivery(ctx context.Context, tenantID string, key channel.SessionKey, eventID string) error {
+	if err := s.validateRecoveryScope(ctx, tenantID, key); err != nil {
+		return err
+	}
+	return s.store.ReconcileConfirmedDelivery(ctx, key, eventID)
+}
+
+// ReconcileRejectedDelivery unlocks a turn only after durable proof that its
+// reply was rejected locally before any Feishu request was made.
+func (s *Service) ReconcileRejectedDelivery(ctx context.Context, tenantID string, key channel.SessionKey, eventID string) error {
+	if err := s.validateRecoveryScope(ctx, tenantID, key); err != nil {
+		return err
+	}
+	return s.store.ReconcileRejectedDelivery(ctx, key, eventID)
+}
+
+func (s *Service) validateRecoveryScope(ctx context.Context, tenantID string, key channel.SessionKey) error {
 	if tenantID == "" || key.TenantID != tenantID || key.BindingID == "" {
 		return errors.New("Feishu recovery scope does not match Tenant or Binding")
 	}
@@ -128,7 +147,7 @@ func (s *Service) ReconcileConfirmedDelivery(ctx context.Context, tenantID strin
 	if !found || binding.Provider != Kind {
 		return errors.New("Feishu Binding not found in Tenant")
 	}
-	return s.store.ReconcileConfirmedDelivery(ctx, key, eventID)
+	return nil
 }
 
 func NewService(store ServiceStore, credentials CredentialResolver, agents channel.AgentBackend) (*Service, error) {
@@ -151,9 +170,6 @@ func (s *Service) LoadTenant(ctx context.Context, tenantID string) error {
 	for _, binding := range bindings {
 		if binding.Enabled && binding.Provider == Kind {
 			wanted[binding.ID] = struct{}{}
-			if err := s.Activate(ctx, binding); err != nil {
-				return fmt.Errorf("activate Feishu Binding %q: %w", binding.ID, err)
-			}
 		}
 	}
 	s.mu.RLock()
@@ -166,12 +182,33 @@ func (s *Service) LoadTenant(ctx context.Context, tenantID string) error {
 		}
 	}
 	s.mu.RUnlock()
+	var result error
+	// A malformed or temporarily unavailable new bot must not keep a removed
+	// bot's receiver alive. Deactivation is independent of activation success.
 	for _, entry := range obsolete {
 		if err := s.deactivate(ctx, tenantID, entry.binding.ID, entry); err != nil {
-			return err
+			result = errors.Join(result, fmt.Errorf("deactivate Feishu Binding %q: %w", entry.binding.ID, err))
 		}
 	}
-	return nil
+	for _, binding := range bindings {
+		if binding.Enabled && binding.Provider == Kind {
+			// A concurrent sync can install a newer revision while Activate is
+			// resolving credentials. On failure, clean up only the receiver this
+			// sync observed, never whichever receiver is current by ID.
+			s.mu.RLock()
+			previous := s.bindings[binding.ID]
+			s.mu.RUnlock()
+			if err := s.Activate(ctx, binding); err != nil {
+				result = errors.Join(result, fmt.Errorf("activate Feishu Binding %q: %w", binding.ID, err))
+				// The old revision must not keep receiving events if its
+				// replacement could not be activated.
+				if previous != nil {
+					result = errors.Join(result, s.deactivate(ctx, tenantID, binding.ID, previous))
+				}
+			}
+		}
+	}
+	return result
 }
 
 // Deactivate stops exactly one Tenant-owned Binding. It is idempotent for a
@@ -195,14 +232,24 @@ func (s *Service) deactivate(ctx context.Context, tenantID, bindingID string, ex
 		return nil // superseded by a newer activation
 	}
 	if entry != nil {
-		delete(s.bindings, bindingID)
-		entry.cancel()
+		entry.retiring = true
 	}
 	s.mu.Unlock()
 	if entry == nil {
 		return nil
 	}
-	return entry.channel.Stop(ctx)
+	// Close the SDK run before canceling its parent context. Otherwise a
+	// successful WebSocket shutdown is reported as context.Canceled.
+	err := entry.stop(ctx)
+	entry.cancel()
+	if err == nil {
+		s.mu.Lock()
+		if s.bindings[bindingID] == entry {
+			delete(s.bindings, bindingID)
+		}
+		s.mu.Unlock()
+	}
+	return err
 }
 
 // Activate replaces one Binding revision. The new channel is validated before
@@ -228,26 +275,64 @@ func (s *Service) Activate(ctx context.Context, binding channel.BotBinding) erro
 		return errors.New("Feishu service is closed")
 	}
 	previous := s.bindings[binding.ID]
-	if previous != nil && previous.binding.TenantID == binding.TenantID && previous.binding.Revision == binding.Revision && previous.err == nil {
-		s.mu.RUnlock()
-		return nil // repeated Tenant sync must not churn a healthy transport
-	}
+	sameHealthy := previous != nil && !previous.retiring && previous.binding.TenantID == binding.TenantID && previous.binding.Revision == binding.Revision && previous.err == nil
 	s.mu.RUnlock()
+	if sameHealthy {
+		if err := s.validateReplyAgent(ctx, binding, previous.config.ReplyMode); err != nil {
+			return errors.Join(err, s.deactivate(ctx, binding.TenantID, binding.ID, previous))
+		}
+		current, found, err := s.store.GetBinding(ctx, binding.TenantID, binding.ID)
+		if err != nil || !found || !current.Enabled || current.Provider != Kind || current.Revision != binding.Revision {
+			if err == nil {
+				err = errors.New("Feishu Binding changed during activation")
+			}
+			return errors.Join(err, s.deactivate(ctx, binding.TenantID, binding.ID, previous))
+		}
+		s.mu.RLock()
+		unchanged := !s.closed && s.bindings[binding.ID] == previous && previous.err == nil
+		s.mu.RUnlock()
+		if unchanged {
+			return nil
+		}
+	}
+	// A failed replacement must not leave the previous transport connected.
+	// The expected pointer prevents a slow failing activation from stopping a
+	// newer revision that another caller has already installed.
+	failReplacement := func(cause error) error {
+		if previous == nil {
+			return cause
+		}
+		return errors.Join(cause, s.deactivate(ctx, binding.TenantID, binding.ID, previous))
+	}
 	credentials, err := s.credentials.ResolveCredentials(ctx, binding)
 	if err != nil {
-		return fmt.Errorf("resolve Feishu credentials: %w", err)
+		return failReplacement(fmt.Errorf("resolve Feishu credentials: %w", err))
 	}
 	config, _, err := parseConfig(binding.Config, credentials)
 	if err != nil {
-		return err
+		return failReplacement(err)
 	}
-	opened, err := s.provider.Open(ctx, binding, credentials, channel.Ingress{Inbox: s.store})
+	if validationErr := s.validateReplyAgent(ctx, binding, config.ReplyMode); validationErr != nil {
+		return failReplacement(validationErr)
+	}
+	opened, err := s.provider.Open(ctx, binding, credentials, bindingIngress{store: s.store, binding: binding})
 	if err != nil {
-		return err
+		return failReplacement(err)
 	}
 	ch := opened.(*Channel)
+	// Credential resolution and Agent capability checks may take time. A
+	// concurrent Binding update must not leave an obsolete receiver active
+	// even though the guarded inbox would reject all of its events.
+	current, found, err := s.store.GetBinding(ctx, binding.TenantID, binding.ID)
+	if err != nil || !found || !current.Enabled || current.Provider != Kind || current.Revision != binding.Revision {
+		_ = ch.Stop(ctx)
+		if err == nil {
+			err = errors.New("Feishu Binding changed during activation")
+		}
+		return failReplacement(err)
+	}
 	entryCtx, cancel := context.WithCancel(s.lifetime)
-	entry := &runningBinding{binding: binding, config: config, channel: ch, cancel: cancel}
+	entry := &runningBinding{binding: binding, config: config, channel: ch, stop: ch.Stop, cancel: cancel}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -260,7 +345,7 @@ func (s *Service) Activate(ctx context.Context, binding channel.BotBinding) erro
 		cancel()
 		return errors.New("Feishu Binding ID already belongs to another Tenant")
 	}
-	if previous != nil && previous.binding.Revision == binding.Revision && previous.err == nil {
+	if previous != nil && !previous.retiring && previous.binding.Revision == binding.Revision && previous.err == nil {
 		s.mu.Unlock()
 		cancel()
 		return nil // another activation won while credentials were resolved
@@ -272,12 +357,15 @@ func (s *Service) Activate(ctx context.Context, binding channel.BotBinding) erro
 	}
 	// Hold the registry lock while stopping the old transport so callbacks
 	// never resolve a half-replaced Binding. Stop is bounded by caller ctx.
+	// Keep the SDK context live until its own CloseAndWait has finished.
 	if previous != nil {
+		previous.retiring = true
+		stopErr := previous.stop(ctx)
 		previous.cancel()
-		if err := previous.channel.Stop(ctx); err != nil {
+		if stopErr != nil {
 			s.mu.Unlock()
 			cancel()
-			return err
+			return fmt.Errorf("stop previous Feishu Binding: %w", stopErr)
 		}
 	}
 	s.bindings[binding.ID] = entry
@@ -297,13 +385,41 @@ func (s *Service) Activate(ctx context.Context, binding channel.BotBinding) erro
 	return nil
 }
 
+func (s *Service) validateReplyAgent(ctx context.Context, binding channel.BotBinding, mode string) error {
+	caps, err := s.agents.Capabilities(ctx, channel.ConversationSession{
+		Key: channel.SessionKey{TenantID: binding.TenantID, BindingID: binding.ID}, Target: binding.Target,
+	})
+	if err != nil {
+		return fmt.Errorf("validate Feishu reply Agent: %w", err)
+	}
+	if caps.Adapter != "acp" || !caps.ReliableFinal {
+		return errors.New("Feishu reply mode requires managed ACP and reliable final state")
+	}
+	if mode == ReplyStreaming && !caps.AssistantDeltas {
+		return errors.New("streaming_card requires managed ACP assistant deltas and reliable final state")
+	}
+	return nil
+}
+
+type bindingIngress struct {
+	store   ServiceStore
+	binding channel.BotBinding
+}
+
+func (i bindingIngress) Accept(ctx context.Context, message channel.InboundMessage) error {
+	if message.BindingID != i.binding.ID || message.BindingRevision != i.binding.Revision {
+		return errors.New("Feishu event does not match active Binding")
+	}
+	return i.store.InsertForBinding(ctx, i.binding, message)
+}
+
 // CallbackHandler is Feishu-specific; the common channel.EventSink interface
 // remains the sole inbound boundary. Mount this handler at a Binding-specific
 // public route and keep that route free of credentials.
 func (s *Service) CallbackHandler(tenantID, bindingID string) (http.Handler, error) {
 	s.mu.RLock()
 	entry := s.bindings[bindingID]
-	if entry == nil || entry.binding.TenantID != tenantID || entry.config.ReceiveMode != ReceiveCallback {
+	if s.closed || entry == nil || entry.retiring || entry.binding.TenantID != tenantID || entry.config.ReceiveMode != ReceiveCallback {
 		s.mu.RUnlock()
 		return nil, errors.New("Feishu callback Binding is not active")
 	}
@@ -312,10 +428,18 @@ func (s *Service) CallbackHandler(tenantID, bindingID string) (http.Handler, err
 	// follows credential rotation and never keeps the old handler alive.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
-		defer s.mu.RUnlock()
 		current := s.bindings[bindingID]
-		if current == nil || current.binding.TenantID != tenantID || current.config.ReceiveMode != ReceiveCallback || current.err != nil {
+		if s.closed || current == nil || current.retiring || current.binding.TenantID != tenantID || current.config.ReceiveMode != ReceiveCallback || current.err != nil {
+			s.mu.RUnlock()
 			http.Error(w, "Feishu callback Binding is not active", http.StatusServiceUnavailable)
+			return
+		}
+		s.mu.RUnlock()
+		// Do not hold the Service lock while reading an untrusted HTTP body.
+		// The Channel's stopped/ingress checks fence a receiver replaced here.
+		stored, found, err := s.store.GetBinding(r.Context(), tenantID, bindingID)
+		if err != nil || !found || !stored.Enabled || stored.Provider != Kind || stored.Revision != current.binding.Revision {
+			http.Error(w, "Feishu callback Binding is stale or disabled", http.StatusServiceUnavailable)
 			return
 		}
 		current.channel.CallbackHandler().ServeHTTP(w, r)
@@ -324,8 +448,13 @@ func (s *Service) CallbackHandler(tenantID, bindingID string) (http.Handler, err
 
 func (s *Service) LookupBinding(ctx context.Context, bindingID string) (channel.ActiveBinding, error) {
 	s.mu.RLock()
+	closed := s.closed
 	entry := s.bindings[bindingID]
+	retiring := entry != nil && entry.retiring
 	s.mu.RUnlock()
+	if closed || retiring {
+		return channel.ActiveBinding{}, errors.New("Feishu Binding is stopping or service is closed")
+	}
 	if entry == nil {
 		stored, found, err := s.store.GetBindingByID(ctx, bindingID)
 		if err != nil {
@@ -350,7 +479,7 @@ func (s *Service) LookupBinding(ctx context.Context, bindingID string) (channel.
 		return channel.ActiveBinding{}, errors.New("Feishu Binding revision changed; activate current revision before processing")
 	}
 	s.mu.RLock()
-	current := s.bindings[bindingID] == entry && entry.err == nil
+	current := !s.closed && s.bindings[bindingID] == entry && !entry.retiring && entry.err == nil
 	s.mu.RUnlock()
 	if !current {
 		return channel.ActiveBinding{}, errors.New("Feishu Binding is not active")
@@ -425,18 +554,28 @@ func (s *Service) Run(ctx context.Context, workers int, onError func(error)) err
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
-	s.cancel()
 	entries := make([]*runningBinding, 0, len(s.bindings))
 	for _, entry := range s.bindings {
+		entry.retiring = true
 		entries = append(entries, entry)
 	}
-	s.bindings = map[string]*runningBinding{}
 	s.mu.Unlock()
 	var result error
+	// A normal WebSocket close must win over cancellation of the service
+	// lifetime, which would otherwise make the SDK report context.Canceled.
 	for _, entry := range entries {
+		stopErr := entry.stop(ctx)
 		entry.cancel()
-		result = errors.Join(result, entry.channel.Stop(ctx))
+		result = errors.Join(result, stopErr)
+		if stopErr == nil {
+			s.mu.Lock()
+			if s.bindings[entry.binding.ID] == entry {
+				delete(s.bindings, entry.binding.ID)
+			}
+			s.mu.Unlock()
+		}
 	}
+	s.cancel()
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
