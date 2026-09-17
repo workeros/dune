@@ -209,7 +209,7 @@ func (a *acpController) applyResultLocked(action string, result json.RawMessage)
 		var value struct {
 			Reason string `json:"stopReason"`
 		}
-		if json.Unmarshal(result, &value) != nil || value.Reason == "" {
+		if json.Unmarshal(result, &value) != nil || value.Reason == "" || len(value.Reason) > 256 {
 			return "", &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent returned invalid prompt result"}
 		}
 		a.state.StopReason = value.Reason

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -78,6 +79,13 @@ func (l *operationLog) set(ref, state, reason, detail string) api.AgentOperation
 	record := l.records[ref]
 	if record == nil || record.status.Terminal() {
 		return api.AgentOperation{}
+	}
+	if len(detail) > 4096 {
+		end := 4096
+		for !utf8.ValidString(detail[:end]) {
+			end--
+		}
+		detail = detail[:end] + " [truncated]"
 	}
 	record.status.State, record.status.StopReason, record.status.Error = state, reason, detail
 	if record.status.Terminal() {
