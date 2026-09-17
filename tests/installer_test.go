@@ -25,6 +25,7 @@ import (
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/sdk"
 )
 
@@ -369,7 +370,7 @@ func TestInstallerReceiptGatesCleanupAndPTYTimeoutSurvivesUpgrade(t *testing.T) 
 	if got.State != "exited" || got.StopReason != "timed_out" || got.DeadlineAt == nil || !got.DeadlineAt.Equal(*rt.DeadlineAt) {
 		t.Fatal("new fabricd did not restore timed_out", got)
 	}
-	var capture tmux.Capture
+	var capture api.TerminalSnapshot
 	must(t, client.CallID(f.ctx, "runtime.capture", wire.ID(), struct{}{}, &capture, &rt))
 	if capture.HistoryLines < 40 || !strings.Contains(capture.Content, "UPGRADE_HISTORY_79") {
 		t.Fatal("upgrade or timeout destroyed history", capture)

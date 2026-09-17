@@ -15,6 +15,7 @@ import (
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/sdk"
 	"gopkg.in/yaml.v3"
 )
@@ -164,7 +165,7 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 			if len(list) != 1 || list[0].ID != rt.ID || list[0].Incarnation != rt.Incarnation || list[0].State != "running" {
 				t.Fatalf("lost original runtime: %+v", list)
 			}
-			var screen tmux.Capture
+			var screen api.TerminalSnapshot
 			err = client.CallID(ctx, "runtime.capture", wire.ID(), struct{}{}, &screen, &rt)
 			must(t, err)
 			if screen.HistoryLimit != 50000 || screen.HistoryLines < 50 || !strings.Contains(screen.Content, "offline-079") {
