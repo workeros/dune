@@ -1,6 +1,6 @@
 export type UnknownRecord = Record<string, unknown>;
 export type Permission = { id: string; params: { toolCall: { title?: string; [key: string]: unknown }; options: { optionId: string; name: string; kind: string }[] } };
-export type State = { revision: number; ready: boolean; busy: string; session_id: string; cwd: string; can_list: boolean; can_load: boolean; error?: string; stop_reason?: string; permissions: Permission[]; list?: { sessions: { sessionId: string; cwd: string; title?: string }[]; nextCursor?: string } };
+export type State = { pending?: number; operation_ref?: string; revision: number; ready: boolean; busy: string; session_id: string; cwd: string; can_list: boolean; can_load: boolean; error?: string; stop_reason?: string; permissions: Permission[]; list?: { sessions: { sessionId: string; cwd: string; title?: string }[]; nextCursor?: string } };
 export type Update = { sessionUpdate?: string; session_update?: string; messageId?: string; message_id?: string; content?: unknown; title?: string; toolCallId?: string; tool_call_id?: string; status?: string; kind?: string; rawInput?: unknown; raw_input?: unknown; rawOutput?: unknown; raw_output?: unknown; _meta?: unknown; meta?: unknown };
 export type MessageEntry = { type: "message"; key: string; role: "user" | "agent"; text: string; messageID?: string };
 export type ToolEntry = { type: "tool"; key: string; id: string; title?: string; name?: string; kind?: string; status: "running" | "complete" | "error"; content?: string; input?: string; output?: string };

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { ACPOperations, useACPOperations } from "./acp-operations";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
 import { socketURL, call, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
@@ -46,12 +47,13 @@ function ACPStream({ entries }: { entries: StreamEntry[] }) {
  })}</div></aside>;
 }
 
-export function ACPPane({ binding, runtime }: { binding: Binding; runtime: Runtime }) {
+export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: { binding: Binding; runtime: Runtime; agentRef?: string; prefix: string; onNativeChange: () => void }) {
  const [state, setState] = useState<State>(), [text, setText] = useState(""), [error, setError] = useState(""), [connected, setConnected] = useState(false), [sending, setSending] = useState(false), [sessionID, setSessionID] = useState("");
  const [conversation, dispatch] = useReducer(conversationReducer, initialConversation);
  const { entries, streamEntries, streamOpen, gap } = conversation;
  const scroll = useRef<HTMLDivElement>(null);
  const [ended, setEnded] = useState(runtime.state !== "running");
+ const requests = useACPOperations(prefix, true, onNativeChange);
  useEffect(() => {
   let disposed = false, finished = runtime.state !== "running", socket: WebSocket | undefined, retry: ReturnType<typeof setTimeout> | undefined;
   setEnded(finished);
@@ -90,26 +92,33 @@ export function ACPPane({ binding, runtime }: { binding: Binding; runtime: Runti
  }, [binding, runtime.id, runtime.incarnation, runtime.generation, runtime.state]);
  useEffect(() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight }); }, [entries]);
  const act = async (action: string, extra: Record<string, string> = {}) => {
+  if (sending) return;
   setSending(true); setError("");
-  try { await call(binding, "acp.action", { action, ...extra }, runtime); if (action === "prompt") setText(""); }
+  try {
+   if (action === "prompt" || action === "new" || action === "load") {
+    if (!agentRef) throw new Error("正在同步会话引用，请稍后提交。");
+    const accepted = await requests.submit(action, { agent_ref: agentRef, ...(action === "prompt" ? { text: extra.text } : { action, ...extra }), wait_ms: 0 });
+    if (accepted && action === "prompt") setText((current) => current === extra.text ? "" : current);
+   } else await call(binding, "acp.action", { action, ...extra }, runtime);
+  }
   catch (e) { setError(errorText(e)); } finally { setSending(false); }
  };
  const busy = !!state?.busy, disabled = ended || sending || !connected || !state?.ready;
  return <div className="flex min-h-0 flex-1 flex-col">
   <div className="flex flex-wrap items-center gap-2 border-b border-foreground/20 p-3 text-xs">
-   <span role="status">{ended ? "已退出" : connected ? state?.busy ? `执行中 · ${state.busy}` : "已连接" : "重连中"}{!ended && state?.stop_reason ? ` · ${state.stop_reason}` : ""}</span>
-   <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void act("new")}>新建对话</Button>
+   <span role="status">{ended ? "已退出" : connected ? state?.busy ? `执行中 · ${state.busy}` : "已连接" : "重连中"}{!!state?.pending && ` · 排队 ${state.pending}`} {!ended && state?.stop_reason ? ` · ${state.stop_reason}` : ""}</span>
+   <Button size="sm" variant="outline" disabled={disabled || !agentRef} onClick={() => void act("new")}>新建对话</Button>
    <Button size="sm" variant="ghost" disabled={disabled || busy || !state?.can_list} onClick={() => void act("list")}>Agent 历史</Button>
    {!ended && busy && <Button size="sm" variant="ghost" disabled={disabled || state?.busy !== "prompt"} onClick={() => void act("cancel")}>取消任务</Button>}
    <Button className="ml-auto" size="sm" variant={streamOpen ? "outline" : "ghost"} aria-pressed={streamOpen} onClick={() => dispatch({ type: "toggleStream" })}>ACP Stream{streamEntries.length ? ` · ${streamEntries.length}` : ""}</Button>
   </div>
   <div className="flex flex-wrap gap-2 border-b border-foreground/10 p-3">
    <Input className="min-w-40 flex-1 font-mono text-xs" aria-label="ACP 会话 ID" placeholder={state?.session_id || "输入 Agent 会话 ID"} value={sessionID} onChange={(event) => setSessionID(event.target.value)} />
-   <Button size="sm" variant="outline" disabled={disabled || busy || !state?.can_load || !(sessionID || state?.session_id)} onClick={() => void act("load", { session_id: sessionID || state!.session_id })}>从 Agent 加载历史</Button>
+   <Button size="sm" variant="outline" disabled={disabled || !agentRef || !state?.can_load || !(sessionID || state?.session_id)} onClick={() => void act("load", { session_id: sessionID || state!.session_id })}>从 Agent 加载历史</Button>
   </div>
-  {state?.list && <div className="max-h-40 overflow-auto border-b p-3 text-xs"><p className="mb-2 font-bold">Agent 原生历史 · 当前页</p>{state.list.sessions.length === 0 && <p>Agent 返回当前页无会话。</p>}{state.list.sessions.map((session) => <button className="block w-full truncate p-2 text-left underline" disabled={disabled || busy} key={session.sessionId} onClick={() => { setSessionID(session.sessionId); void act("load", { session_id: session.sessionId, cwd: session.cwd }); }}>{session.title || session.sessionId} · {session.cwd}</button>)}{state.list.nextCursor && <Button size="sm" disabled={disabled || busy} onClick={() => void act("list", { cursor: state.list!.nextCursor! })}>下一页</Button>}</div>}
+  {state?.list && <div className="max-h-40 overflow-auto border-b p-3 text-xs"><p className="mb-2 font-bold">Agent 原生历史 · 当前页</p>{state.list.sessions.length === 0 && <p>Agent 返回当前页无会话。</p>}{state.list.sessions.map((session) => <button className="block w-full truncate p-2 text-left underline" disabled={disabled || !agentRef} key={session.sessionId} onClick={() => { setSessionID(session.sessionId); void act("load", { session_id: session.sessionId, cwd: session.cwd }); }}>{session.title || session.sessionId} · {session.cwd}</button>)}{state.list.nextCursor && <Button size="sm" disabled={disabled || busy} onClick={() => void act("list", { cursor: state.list!.nextCursor! })}>下一页</Button>}</div>}
   {ended && <p className="bg-secondary px-4 py-2 text-xs leading-5">Agent 进程已退出。重新启动 Agent 后，可按其能力加载原生历史。</p>}
-  {!ended && gap && <p className="bg-secondary px-4 py-2 text-xs leading-5">这里显示当前连接收到的内容。离线期间的消息需等任务结束后从 Agent 加载；不支持 load 的 Agent 无法补回历史。</p>}
+  {!ended && gap && <p className="bg-secondary px-4 py-2 text-xs leading-5">这里显示当前连接收到的内容。本页提交的任务可按操作查看输出；更早的对话需从 Agent 原生历史加载。</p>}
   {!ended && !state?.session_id && !busy && <p className="p-4 text-sm">新建对话，或从 Agent 原生历史中加载一个会话。</p>}
   {(error || state?.error) && <div className="error-box m-3" role="alert">{error || state?.error}</div>}
   <div className={`acp-content${streamOpen ? " has-stream" : ""}`}>
@@ -117,6 +126,7 @@ export function ACPPane({ binding, runtime }: { binding: Binding; runtime: Runti
    {streamOpen && <ACPStream entries={streamEntries} />}
   </div>
   {!ended && !!state?.permissions.length && <div className="max-h-80 overflow-auto border-t bg-[#f6e5aa] p-4">{state.permissions.map((permission) => <section className="mb-3" key={permission.id}><h3 className="mb-2 text-sm font-bold">等待授权 · {permission.params.toolCall?.title || "Agent 工具请求"}</h3><pre aria-label="授权请求详情" className="mb-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-foreground/15 bg-card p-3 text-xs">{JSON.stringify(permission.params.toolCall, null, 2)}</pre><div className="flex flex-wrap gap-2">{permission.params.options.map((option) => <Button key={option.optionId} size="sm" variant="outline" disabled={disabled} onClick={() => void act("permission", { permission_id: permission.id, option_id: option.optionId })}>{option.name}</Button>)}</div></section>)}</div>}
-  <form className="flex gap-2 border-t border-foreground/20 p-3" onSubmit={(event) => { event.preventDefault(); void act("prompt", { text }); }}><Textarea aria-label="发送给 Agent 的任务" placeholder="描述编码任务…" value={text} onChange={(event) => setText(event.target.value)} maxLength={65536} className="min-h-16 flex-1" /><Button type="submit" disabled={disabled || busy || !state?.session_id || !text.trim()}>发送</Button></form>
+  <ACPOperations prefix={prefix} enabled={true} requests={requests} renderUpdates={(updates) => <Conversation entries={updates.reduce<typeof initialConversation>((model, update) => conversationReducer(model, isRecord(update) ? { type: "update", update: update as Update } : { type: "notice", value: "无法解析的操作输出" }), initialConversation).entries} />} />
+  <form className="flex gap-2 border-t border-foreground/20 p-3" onSubmit={(event) => { event.preventDefault(); void act("prompt", { text }); }}><Textarea aria-label="发送给 Agent 的任务" placeholder="描述编码任务…" value={text} onChange={(event) => setText(event.target.value)} maxLength={65536} className="min-h-16 flex-1" /><Button type="submit" disabled={disabled || !agentRef || (busy && state?.busy !== "prompt") || !state?.session_id || !text.trim()}>{busy ? "加入队列" : "发送"}</Button></form>
  </div>;
 }

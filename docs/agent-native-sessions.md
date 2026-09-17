@@ -6,6 +6,6 @@
 
 初始启动在保存实际配置和 Runtime 后签发本次调用凭据，配置 fabricd 的 MCP，再走同一提交路径自动创建原生会话。配置保留在 Runtime 内，后续 new/load 复用；详见 [MCP 注入](agent-mcp.md)。正常返回时可以直接 prompt；未完成时返回 pending/running 操作供查询。会话只在匹配 RPC 确认后入索引，new/load 失败、pending 或响应丢失不改变原来的原生 ID。成功 load 切换会话会建立独立恢复记录，保留原配置来源。
 
-操作 wait/read 与共享发现同样能保存可靠确认；这些操作只补索引，不重做 new/load。Runtime 消失前仍未观察到确认时不能声称可恢复。Web 的原生会话按钮仍待迁移到此共享入口，原始 ACP 透传继续由调用方编排。
+操作 wait/read 与共享发现同样能保存可靠确认；这些操作只补索引，不重做 new/load。Runtime 消失前仍未观察到确认时不能声称可恢复。两产品 Web 的 new/load/prompt 使用共享 Agent 引用和提交入口；list、permission、cancel 沿用 managed 控制路径，原始 ACP 透传继续由调用方编排。
 
 本地 Gateway/fabricd 验证覆盖启动即用、无发现请求时的索引保存、busy 时 load 排队、匹配操作确认后切换索引、旧原生引用拒绝、跨 Tenant 拒绝，以及初始 new 失败或回执丢失时保留 Runtime/操作且不重放。使用协议夹具，不代表厂商 Agent 或 MCP 注入验收。

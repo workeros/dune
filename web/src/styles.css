@@ -119,3 +119,11 @@ details[open] > summary > .acp-chevron { transform:rotate(180deg); }
 @media(max-width:1000px) { .workspace { grid-template-columns:210px minmax(0,1fr); } .session-layout { grid-template-columns:140px minmax(0,1fr); padding:12px; gap:10px; } .work-header { padding:16px; } }
 @media(max-width:760px) { .workspace { height:auto; min-height:100dvh; display:flex; flex-direction:column; } .sidebar { border-right:0; border-bottom:1px solid; padding:12px; gap:10px; } .sidebar .brand { width:180px; gap:5px; } .machine-nav { display:flex; overflow:auto; gap:8px; } .machine-row { min-width:180px; width:auto; margin:0; } .sidebar-footer { display:none; } .workbench { min-height:75vh; } .session-layout { display:flex; flex-direction:column; } .session-list { flex-direction:row; min-height:58px; } .session-row { flex-shrink:0; } .terminal-container { min-height:400px; } .work-header { flex-wrap:wrap; } .acp-content.has-stream { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(300px,1fr) minmax(280px,45vh); } .acp-stream { border-left:0; border-top:1px solid #35433e33; } .desert-horizon,.workbench .desert-horizon { width:150%; height:250px; transform:translateX(-22%); opacity:.78; } .desert-worm { right:-13%; bottom:36px; width:240px; opacity:.72; } .desert-sun,.workbench .desert-sun { top:72px; right:auto; left:calc(100vw - 68px); width:52px; height:52px; } .desert-sky-lines { height:74%; } .desert-sand i:nth-child(n+7) { display:none; } }
 @media(prefers-reduced-motion:reduce) { * { transition:none!important; scroll-behavior:auto!important; } .desert-sand i,.desert-worm,.desert-sun-rays { animation:none!important; } .desert-sand i { opacity:.28; } }
+
+.acp-operations { flex: 0 0 auto; border-top: 1px solid color-mix(in srgb, var(--ink) 20%, transparent); padding: 6px 12px; font-size: 12px; }
+.acp-operations summary { cursor: pointer; padding: 4px 0; }
+.acp-operation-list { max-height: 120px; overflow: auto; }
+.acp-operation-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 0; }
+.acp-operation-row p { flex-basis: 100%; overflow-wrap: anywhere; }
+.acp-operation-dialog { max-width: 800px; }
+.acp-operation-output { max-height: 50vh; overflow: auto; margin: 12px 0; overflow-wrap: anywhere; }

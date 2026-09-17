@@ -33,7 +33,7 @@
 - [x] managed ACP 自动 MCP 注入：确认 Runtime 后签发、新建/恢复前配置，原生切换复用，恢复轮换。
 - [ ] MCP 注入后的运行凭据脱敏验收：实际厂商日志和其他输出位置。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
-- [ ] 两产品协作交互：pending、操作进度、输出不完整与引用失效提示。
+- [x] 两产品协作交互：共享 ACP new/load/prompt、pending、按操作查询和读取、输出不完整与引用失效提示。
 - [ ] 集成验收：双入口同队列、宿主 / fabricd 重启、A / B 输出关联、恢复旧配置及真实 Agent 互操作。
 
 清单按产品交付顺序排列；底层依赖可先实现。一个功能涉及两仓库时各自提交，记录对应提交与验证。未通过的外部验收明确记录，不以 mock 或文档检查代替。
@@ -97,3 +97,5 @@
 - MCP 原文回显脱敏：fabricd/host 全量回归、定向 race 与 fabricd vet 通过；验证原生 RPC 保留真实 token、操作输出和纯文本错误遮盖 token，以及 stderr 在每个可能读取分界上的遮盖。初次测试发现 inspector 的 JSON 类型被转成字节数组，已修正并重跑，保持原有 JSON 展示合同。
 
 - managed ACP 自动注入：身份/授权/metadata/agentservice/webapp/host 回归（独立 PostgreSQL）、注入/原生会话/恢复定向 race 与相关 vet 通过；SandDance 全量 Go（本地 workspace/独立 PostgreSQL）通过。本地 Agent 进程收到真实配置后分别通过 HTTP 和实际 stdio bridge 调用 `agents_list`，并在 load/恢复中重验；覆盖新 Runtime 先入索引、切换不轮换、恢复轮换、重复恢复不重发，以及配置拒绝/MCP 不可达保留 Runtime 和操作。未据此声称厂商 Agent 或真实多 Pod 验收完成。
+
+- 两产品 ACP 操作交互：见 [界面合同](agent-operation-ui.md)。Dune 类型检查、4 项单元、生产构建、全量 16 项 Chromium 通过；最终 Runtime key / 输出输入校验 / 64 项上限调整后，恢复和操作场景分别重跑通过。SandDance 类型检查、生产构建通过；全量 148 项首次 145 项通过，两项导航测试因定位器竞态/多目标失败，一项文件搜索点击超时；修正导航测试并重跑操作、console、文件搜索的全部 42 项均通过。已检查两产品操作输出宽/窄截图。浏览器验证覆盖 A idle 不满足 B、共享新建/加载、unknown 保留引用且不重发、读取位置推进、缺口和失效提示；仍非真实厂商互操作证据。
