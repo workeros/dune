@@ -50,7 +50,7 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 		if req.SessionID == "" || req.Text == "" || len(req.Text) > 64*1024 {
 			return api.AgentOperation{}, fmt.Errorf("create/load a session and supply 1..65536 bytes of text")
 		}
-		if req.SessionID != a.state.SessionID {
+		if req.SessionID != a.state.SessionID || req.Cwd != a.state.Cwd {
 			return api.AgentOperation{}, &api.Error{Code: "STALE_SESSION", Detail: "native ACP session changed"}
 		}
 	default:
@@ -89,7 +89,7 @@ func (a *acpController) startNextLocked() {
 		req := operation.request
 		// A preceding new/load must not redirect a prompt admitted for a different
 		// native conversation, even though both share the same Runtime process.
-		if req.Action == "prompt" && req.SessionID != a.state.SessionID {
+		if req.Action == "prompt" && (req.SessionID != a.state.SessionID || req.Cwd != a.state.Cwd) {
 			a.publishOperation(a.operations.set(operation.ref, "failed", "", "native ACP session changed before execution"))
 			continue
 		}

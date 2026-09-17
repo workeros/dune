@@ -42,3 +42,5 @@ fabricd 为每个 PTY Runtime 持有一个共享输入客户端和最多 64 项�
 ## 本轮验证边界
 
 controller race 测试覆盖 A/B 分离、load 重放、原生会话变化、队列容量、取消与权限、控制写入边界、立即退出、输出裁剪和引用失效。多进程 SDK / Gateway / fabricd 测试使用可控 ACP Agent，验证两个独立连接统一排队、提交方断线后补读及 Runtime 校验。PTY 使用真实 tmux 和原生字节记录进程，检查粘贴 / Enter / 浏览器按键的顺序、前台 / blocked / 历史拒绝、队列上限，以及 fabricd 重启后 tmux 存活、旧操作引用失效。真实 Agent 和两个宿主 Pod 的验收仍在整体实施清单中，不由这些测试替代。
+
+ACP prompt 的原生目标同时固定 session ID 和 cwd；省略值在入队时从当前会话取得。受理与出队均检查两者，即使 session ID 没变，也拒绝在另一 cwd 执行旧 prompt。

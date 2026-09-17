@@ -195,6 +195,34 @@ func TestACPQueueCloseAndBoundedAdmission(t *testing.T) {
 	}
 }
 
+func TestACPQueuePinsDirectoryEvenWhenNativeIDDoesNotChange(t *testing.T) {
+	a, requests := queueFixture(t)
+	_, err := a.action(api.ACPAction{Action: "prompt", SessionID: "session-a", Cwd: "/other", Text: "wrong directory"})
+	var failure *api.Error
+	if !errors.As(err, &failure) || failure.Code != "STALE_SESSION" {
+		t.Fatal("admitted a prompt for another native directory", err)
+	}
+	first := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "first"})
+	firstRPC := takeRPC(t, requests)
+	load := submitAction(t, a, api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/other"})
+	queued := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "must remain in original directory"})
+	replyRPC(a, firstRPC, map[string]string{"stopReason": "end_turn"})
+	waitOperation(t, a, first)
+	replyRPC(a, takeRPC(t, requests), map[string]any{})
+	waitOperation(t, a, load)
+	if result := waitOperation(t, a, queued); result.State != "failed" {
+		t.Fatal("queued prompt followed a changed directory", result)
+	}
+	select {
+	case request := <-requests:
+		t.Fatal("stale prompt reached Agent", request)
+	default:
+	}
+	current := submitAction(t, a, api.ACPAction{Action: "prompt", SessionID: "session-a", Cwd: "/other", Text: "current directory"})
+	replyRPC(a, takeRPC(t, requests), map[string]string{"stopReason": "end_turn"})
+	waitOperation(t, a, current)
+}
+
 func TestACPQueuePermissionAndCancelBypassPending(t *testing.T) {
 	a, requests := queueFixture(t)
 	active := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "active"})

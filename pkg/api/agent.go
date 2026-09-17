@@ -2,8 +2,9 @@ package api
 
 import "encoding/json"
 
-// ACPAction is a managed request. Prompt SessionID pins the native conversation
-// observed by the caller; a queued prompt fails if an earlier new/load changes it.
+// ACPAction is a managed request. Prompt SessionID and Cwd pin the native
+// conversation observed by the caller; omitted values bind at admission. A
+// queued prompt fails if an earlier new/load changes either value.
 type ACPAction struct {
 	Action       string `json:"action"`
 	Text         string `json:"text,omitempty"`
