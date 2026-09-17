@@ -7,11 +7,11 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
-// ConfigureAgentMCP installs this launch's credential before the first native
-// session. An unconfirmed response must not trigger a new launch or token rotation.
+// ConfigureAgentMCP releases the ACP session gate or native PTY MCP bridge.
+// An unconfirmed response must not trigger a new launch or token rotation.
 func (c *Client) ConfigureAgentMCP(ctx context.Context, runtime api.Runtime, config api.AgentMCP) (api.AgentMCPStatus, error) {
 	var status api.AgentMCPStatus
-	err := c.CallID(ctx, "acp.mcp.configure", wire.ID(), config, &status, &runtime)
+	err := c.CallID(ctx, "agent.mcp.configure", wire.ID(), config, &status, &runtime)
 	return status, err
 }
 

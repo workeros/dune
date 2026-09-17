@@ -6,13 +6,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/aiomni/dune/internal/agentintegration"
+	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/tmux"
+	"github.com/aiomni/dune/pkg/api"
 )
 
 // Open restores persistent runtimes and exclusively locks stateDir for this
@@ -85,6 +88,27 @@ func RunHelper(args []string) (code int, handled bool) {
 		return 0, false
 	}
 	switch args[0] {
+	case mcpbridge.Command:
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, "MCP bridge accepts only launch configuration")
+			return 1, true
+		}
+		config := api.AgentMCP{URL: os.Getenv(mcpbridge.URLEnv), Token: os.Getenv(mcpbridge.TokenEnv)}
+		if config.Token == "" && os.Getenv(agentintegration.SessionDirEnv) != "" {
+			var err error
+			config, err = agentintegration.AwaitMCP(ctx, os.Getenv(agentintegration.SessionDirEnv))
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Agent MCP configuration was not confirmed")
+				return 1, true
+			}
+		}
+		if err := mcpbridge.Run(ctx, config.URL, config.Token, os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1, true
+		}
+		return 0, true
 	case agentintegration.SessionCommand:
 		// Native hooks are observational: no stdout, event echo or policy
 		// decision. A missing receipt must not block the Agent's own lifecycle.

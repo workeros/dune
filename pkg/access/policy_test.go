@@ -551,7 +551,7 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"git", api.Git{Action: "remotes"}, "remotes", ""},
 		{"git", api.Git{Action: "operation"}, "operation", ""},
 		{"acp.action", map[string]string{"action": "permission", "prompt": "secret"}, "permission", ""},
-		{"acp.mcp.configure", api.AgentMCP{URL: "https://host.test/mcp", Token: "secret"}, "", ""},
+		{"agent.mcp.configure", api.AgentMCP{URL: "https://host.test/mcp", Token: "secret"}, "", ""},
 		{"profile.status", api.ProfileStatusRequest{ExecutionID: "attempt-1"}, "", ""},
 	}
 	for _, tc := range cases {

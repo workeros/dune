@@ -12,7 +12,6 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	localidentity "github.com/aiomni/dune/internal/identity"
-	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
@@ -22,12 +21,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) == 2 && os.Args[1] == mcpbridge.Command {
-		if err := mcpbridge.Run(context.Background(), os.Getenv(mcpbridge.URLEnv), os.Getenv(mcpbridge.TokenEnv), os.Stdin, os.Stdout); err != nil {
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
 	if code, handled := fabricd.RunHelper(os.Args[1:]); handled {
 		os.Exit(code)
 	}

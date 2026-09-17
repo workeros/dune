@@ -128,7 +128,7 @@ func Report(ctx context.Context, dir, inheritedThread string, input io.Reader) e
 	}
 	native := api.NativeSession{ID: event.SessionID, Cwd: event.Cwd, Sequence: previous.Native.Sequence + 1,
 		Source: "pty-session-start", AgentVersion: binding.Version, ResumeSupported: true}
-	return writeReceipt(root, receipt{Binding: binding, Native: native})
+	return writeJSON(root, "session.json", receipt{Binding: binding, Native: native})
 }
 
 // Read returns only the trusted fields consumed by fabricd. The exact transcript
@@ -224,8 +224,8 @@ func readJSON(root *os.Root, name string, value any) error {
 	return json.Unmarshal(data, value)
 }
 
-func writeReceipt(root *os.Root, value receipt) error {
-	name := ".session-" + uuid.NewString()
+func writeJSON(root *os.Root, destination string, value any) error {
+	name := ".record-" + uuid.NewString()
 	f, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
@@ -235,7 +235,7 @@ func writeReceipt(root *os.Root, value receipt) error {
 	if err = errors.Join(err, f.Close()); err != nil {
 		return err
 	}
-	return root.Rename(name, "session.json")
+	return root.Rename(name, destination)
 }
 
 func acquire(ctx context.Context, f *os.File) error {

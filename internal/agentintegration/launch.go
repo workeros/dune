@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/aiomni/dune/internal/mcpbridge"
 )
 
 const HelperEnv = "DUNE_AGENT_HELPER"
@@ -35,9 +37,9 @@ func Agent(argv []string) string {
 	}
 }
 
-// Launch adds only Dune's SessionStart hook and private environment. It does not
-// edit user/project settings or bypass the native CLI's hook trust policy.
-func Launch(dir string, binding Binding, argv, env []string) ([]string, []string, error) {
+// Launch adds Dune's SessionStart hook and optional MCP bridge. It does not edit
+// user/project settings or bypass the native CLI's trust policy.
+func Launch(dir string, binding Binding, argv, env []string, requireMCP bool) ([]string, []string, error) {
 	if Agent(argv) != binding.Agent {
 		return nil, nil, fmt.Errorf("native integration requires a supported interactive launch")
 	}
@@ -60,9 +62,16 @@ func Launch(dir string, binding Binding, argv, env []string) ([]string, []string
 		value := "hooks.SessionStart=[{hooks=[{type=\"command\",command=" + strconv.Quote(command) + ",timeout=2}]}]"
 		argv = append(argv, "-c", value)
 	}
+	if requireMCP {
+		var err error
+		argv, err = prepareMCP(dir, binding.Agent, argv)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	resultEnv := make([]string, 0, len(env)+2)
 	for _, value := range env {
-		if !strings.HasPrefix(value, SessionDirEnv+"=") && !strings.HasPrefix(value, HelperEnv+"=") {
+		if !strings.HasPrefix(value, SessionDirEnv+"=") && !strings.HasPrefix(value, HelperEnv+"=") && !strings.HasPrefix(value, mcpbridge.URLEnv+"=") && !strings.HasPrefix(value, mcpbridge.TokenEnv+"=") {
 			resultEnv = append(resultEnv, value)
 		}
 	}

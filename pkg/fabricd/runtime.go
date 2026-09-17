@@ -685,7 +685,7 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 	r.cwd = p.WorkingDirectory
 	if p.Adapter == "pty" {
 		r.inc = wire.ID()
-		session, err := d.tmux.Create(r.info(), argv, environment(p.Env), tmux.CreateOptions{HistoryLines: p.HistoryLines, Timeout: time.Duration(p.Start.TimeoutSeconds) * time.Second, NativeAgent: agentintegration.Agent(p.Start.Argv)})
+		session, err := d.tmux.Create(r.info(), argv, environment(p.Env), tmux.CreateOptions{HistoryLines: p.HistoryLines, Timeout: time.Duration(p.Start.TimeoutSeconds) * time.Second, NativeAgent: agentintegration.Agent(p.Start.Argv), RequireMCP: p.RequireAgentMCP})
 		if err != nil {
 			s.Fail("START_FAILED", err)
 			return

@@ -18,7 +18,7 @@ func TestLaunchKeepsNativeSettingsAndStableHookDefinition(t *testing.T) {
 			}
 			originalArgs := []string{filepath.Join("/usr/local/bin", agent)}
 			originalEnv := []string{"CUSTOM=kept", SessionDirEnv + "=/wrong", HelperEnv + "=/wrong"}
-			argv, env, err := Launch(dir, Binding{RuntimeID: "runtime", Incarnation: "boot", Agent: agent}, originalArgs, originalEnv)
+			argv, env, err := Launch(dir, Binding{RuntimeID: "runtime", Incarnation: "boot", Agent: agent}, originalArgs, originalEnv, false)
 			if err != nil {
 				t.Fatal(err)
 			}

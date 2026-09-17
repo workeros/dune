@@ -56,7 +56,7 @@ type Profile struct {
 	Adapter      string  `json:"adapter" yaml:"adapter"`
 	HistoryLines int     `json:"history_lines,omitempty" yaml:"history_lines,omitempty"`
 	ManagedACP   bool    `json:"managed_acp,omitempty" yaml:"managed_acp,omitempty"`
-	// RequireAgentMCP gates native new/load until the host configures this Runtime.
+	// RequireAgentMCP gates ACP new/load or the native PTY MCP bridge until configured.
 	RequireAgentMCP bool `json:"require_agent_mcp,omitempty" yaml:"require_agent_mcp,omitempty"`
 }
 
@@ -175,8 +175,8 @@ func (p Profile) Validate() error {
 	if p.ManagedACP && p.Adapter != "acp" {
 		return fmt.Errorf("managed_acp requires ACP adapter")
 	}
-	if p.RequireAgentMCP && !p.ManagedACP {
-		return fmt.Errorf("require_agent_mcp requires managed ACP")
+	if p.RequireAgentMCP && p.Adapter == "acp" && !p.ManagedACP {
+		return fmt.Errorf("require_agent_mcp requires managed ACP or an integrated PTY launch")
 	}
 	if p.HistoryLines < 0 || p.HistoryLines > 200000 || (p.Adapter != "pty" && p.HistoryLines != 0) {
 		return fmt.Errorf("history_lines must be 0 (default) or 1..200000, PTY only")

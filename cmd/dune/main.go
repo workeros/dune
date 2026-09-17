@@ -14,7 +14,6 @@ import (
 	"github.com/aiomni/dune/internal/daemon"
 	internalgateway "github.com/aiomni/dune/internal/gateway"
 	"github.com/aiomni/dune/internal/install"
-	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/fabricd"
@@ -22,19 +21,6 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == mcpbridge.Command {
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-		if len(os.Args) != 2 {
-			fmt.Fprintln(os.Stderr, "MCP bridge accepts configuration only through its environment")
-			os.Exit(1)
-		}
-		if err := mcpbridge.Run(ctx, os.Getenv(mcpbridge.URLEnv), os.Getenv(mcpbridge.TokenEnv), os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
 	if code, handled := fabricd.RunHelper(os.Args[1:]); handled {
 		os.Exit(code)
 	}

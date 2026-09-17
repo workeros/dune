@@ -47,6 +47,7 @@ type CreateOptions struct {
 	HistoryLines int
 	Timeout      time.Duration
 	NativeAgent  string
+	RequireMCP   bool
 }
 type Pane struct {
 	Dead           bool
@@ -189,12 +190,15 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, options CreateOpti
 		return nil, fmt.Errorf("PTY timeout must be 0..24h")
 	}
 	r := &Session{Server: s, Runtime: meta, timed: timeout > 0}
+	if options.RequireMCP && options.NativeAgent == "" {
+		return nil, fmt.Errorf("Agent MCP requires a supported native CLI launch")
+	}
 	if options.NativeAgent != "" {
 		if err := PrivateDir(r.nativeDir()); err != nil {
 			return nil, err
 		}
 		var err error
-		argv, env, err = agentintegration.Launch(r.nativeDir(), agentintegration.Binding{RuntimeID: meta.ID, Incarnation: meta.Incarnation, Agent: options.NativeAgent}, argv, env)
+		argv, env, err = agentintegration.Launch(r.nativeDir(), agentintegration.Binding{RuntimeID: meta.ID, Incarnation: meta.Incarnation, Agent: options.NativeAgent}, argv, env, options.RequireMCP)
 		if err != nil {
 			_ = os.RemoveAll(r.nativeDir())
 			return nil, err

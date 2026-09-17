@@ -34,6 +34,7 @@
 - [x] fabricd MCP 配置：首次原生会话前固定配置、能力选择 HTTP/stdio、所有 managed new/load 复用与启动门禁。
 - [x] MCP 凭据原文回显脱敏：ACP 操作/错误和 stderr 字节流，覆盖 OS 分块边界。
 - [x] managed ACP 自动 MCP 注入：确认 Runtime 后签发、新建/恢复前配置，原生切换复用，恢复轮换。
+- [x] fabricd PTY MCP 配置：原生启动参数注入 bridge、凭据就绪等待、私有单次配置、tmux 生命周期保留与清理。
 - [ ] MCP 注入后的运行凭据脱敏验收：实际厂商日志和其他输出位置。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
 - [x] 两产品协作交互：共享 ACP new/load/prompt、pending、按操作查询和读取、输出不完整与引用失效提示。
@@ -112,3 +113,6 @@
 - PTY 原生继续后端：相关身份 / 授权 / metadata / agentintegration / agentservice / webapp / host 全量 Go（独立 PostgreSQL）通过，PTY / ACP 恢复定向 race 和相关 vet 通过；SandDance 全量 Go（本地 workspace / 独立 PostgreSQL）通过。验证 Claude / Codex 精确 resume 参数、原 Profile 修改 / 删除后仍使用旧配置、setup 一次、并发一次启动、错误或缺失原生确认、等待中的 Runtime 不重放、稍后退出后显式重试。原生 CLI 由本地可控进程模拟，真实厂商会话恢复仍待验收；页面 PTY 入口另行提交。
 
 - 两产品 PTY 继续界面：类型检查、生产构建及两端各四项 Chromium 恢复场景通过；Dune 四项前端单元测试通过。等待原生确认时打开已确认存活的终端，用户可处理登录或原生信任；确认后保持连接，未确认状态不会宣称恢复完成。两端待确认界面截图已检查，测试覆盖不重复恢复与不重连。厂商 CLI 与 MCP 验收仍待后续。
+
+- fabricd PTY MCP 配置：agentintegration / mcpbridge / api / access / client / fabricd / tmux / host 全量包检查通过，原生配置和 ACP 配置定向 race、相关 vet 通过。真实本地 tmux 中的可控 CLI 用生成的配置启动实际 bridge 并调用 HTTP MCP，覆盖配置前等待、一次配置、fabricd 重启保留、拒绝替换和停止清理；并发文件写入 / 清理与错误绑定、取消、过期、损坏配置通过。统一配置操作为 `agent.mcp.configure`，嵌入宿主的 `RunHelper` 分派 bridge，删除重复入口。厂商 UI、自动签发与真实 Tenant 通信验收继续推进。
+- 本轮 SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 回归通过，统一 MCP 操作名变更已覆盖共享宿主边界。

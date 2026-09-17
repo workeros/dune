@@ -72,7 +72,7 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 	if !slices.Contains(connection.Binding.Capabilities, "profile.start") {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent startup"}
 	}
-	if launch.Profile.RequireAgentMCP && !slices.Contains(connection.Binding.Capabilities, "acp.mcp.configure") {
+	if launch.Profile.RequireAgentMCP && !slices.Contains(connection.Binding.Capabilities, "agent.mcp.configure") {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent MCP configuration"}
 	}
 	var machine api.MachineInfo

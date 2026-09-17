@@ -56,7 +56,7 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	}
 	requiredCapabilities := []string{"runtime.get", "runtime.stop", "machine.info"}
 	if profile.Adapter == "acp" {
-		requiredCapabilities = append(requiredCapabilities, "acp.state", "acp.action", "acp.mcp.configure", "agent.operation.wait")
+		requiredCapabilities = append(requiredCapabilities, "acp.state", "acp.action", "agent.mcp.configure", "agent.operation.wait")
 	}
 	for _, required := range requiredCapabilities {
 		if !slices.Contains(connection.Binding.Capabilities, required) {

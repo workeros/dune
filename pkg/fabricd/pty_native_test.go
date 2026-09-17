@@ -17,7 +17,7 @@ import (
 // This fixture uses the actual generated Claude settings and executes the
 // configured hook as a native CLI would. It does not call any model provider.
 func runNativeCLIFixture() int {
-	if len(os.Args) != 3 || os.Args[1] != "--settings" {
+	if (len(os.Args) != 3 && len(os.Args) != 5) || os.Args[1] != "--settings" {
 		return 2
 	}
 	var settings struct {
@@ -35,6 +35,9 @@ func runNativeCLIFixture() int {
 	for {
 		data, err := os.ReadFile(os.Getenv("DUNE_TEST_NATIVE_EVENT"))
 		if err == nil && string(data) != previous {
+			if len(os.Args) == 5 && !exerciseNativeMCP(os.Args[3:]) {
+				return 7
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			child := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 			child.Stdin = strings.NewReader(string(data))

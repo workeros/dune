@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.mcp.configure", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -163,7 +163,24 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		if e == nil {
 			result, e = d.exec(a)
 		}
-	case "acp.state", "acp.action", "acp.mcp.configure":
+	case "agent.mcp.configure":
+		var r *runtime
+		r, e = d.lookup(m)
+		if e == nil {
+			var config api.AgentMCP
+			e = wire.Decode(m, &config)
+			if e == nil {
+				switch {
+				case r.acp != nil:
+					result, e = r.acp.configureMCP(config)
+				case r.tmux != nil:
+					result, e = r.tmux.ConfigureMCP(d.ctx, config)
+				default:
+					e = &api.Error{Code: "UNSUPPORTED", Detail: "Runtime has no managed MCP integration"}
+				}
+			}
+		}
+	case "acp.state", "acp.action":
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil && r.acp == nil {
@@ -172,12 +189,6 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		if e == nil {
 			if m.Operation == "acp.state" {
 				result = r.acp.snapshot()
-			} else if m.Operation == "acp.mcp.configure" {
-				var config api.AgentMCP
-				e = wire.Decode(m, &config)
-				if e == nil {
-					result, e = r.acp.configureMCP(config)
-				}
 			} else {
 				var a api.ACPAction
 				e = wire.Decode(m, &a)

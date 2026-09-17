@@ -41,6 +41,16 @@ bridge 固定目标 URL，不接受 userinfo、query 或 fragment，不跟随 HT
 
 ## fabricd managed ACP 配置
 
-SDK `ConfigureAgentMCP` 经 Gateway 调用 `acp.mcp.configure`，参数仅含宿主 endpoint 与本次凭据。fabricd 在 ACP initialize 确认后、首次原生会话之前接受一次配置；后续替换或并发第二次配置返回冲突。`agentCapabilities.mcpCapabilities.http` 为 true 时生成 HTTP 配置，否则使用当前 Runner 程序的内部 stdio bridge；宿主不指定 Runner 的 executable 路径。
+SDK `ConfigureAgentMCP` 经 Gateway 调用 `agent.mcp.configure`，参数仅含宿主 endpoint 与本次凭据。fabricd 在 ACP initialize 确认后、首次原生会话之前接受一次配置；后续替换或并发第二次配置返回冲突。`agentCapabilities.mcpCapabilities.http` 为 true 时生成 HTTP 配置，否则使用当前 Runner 程序的内部 stdio bridge；宿主不指定 Runner 的 executable 路径。
 
-Profile 的 `require_agent_mcp` 只适用于 managed ACP。设置后，未配置 MCP 的原生动作不会受理，因此 Runtime 出现在列表与宿主完成注入之间的竞态不会创建缺少 MCP 的会话。配置保存在 controller 内存，后续所有 new/load（含 Web 通用动作入口）复用；公开 state 只返回 `mcp_transport`。退出 Runtime 或 fabricd 后不恢复凭据配置。原始 ACP 透传仍由调用方自行提供配置。
+Profile 的 `require_agent_mcp` 对 managed ACP 门禁原生动作，未配置 MCP 时不会受理 new/load。配置保存在 controller 内存，后续所有 new/load（含 Web 通用动作入口）复用；公开 state 只返回 `mcp_transport`。退出 Runtime 或 fabricd 后不恢复 ACP 凭据配置。原始 ACP 透传仍由调用方自行提供配置。
+
+## fabricd 原生 PTY 配置
+
+直接启动的 Claude / Codex 及其精确 UUID 恢复命令支持 `require_agent_mcp`。Claude 通过 `--mcp-config`、Codex 通过本次 `-c mcp_servers.dune-agents=…` 配置 stdio bridge；保留 SessionStart hook，不修改用户或项目配置，也不绕过原生信任。启动参数只含本 Runtime 的私有目录和保留的 helper 路径，CLI 环境不含本次或继承的 MCP 凭据。
+
+同一个 `agent.mcp.configure` 经 SDK / Gateway 校验 Runtime 后，把一次性配置原子写入私有运行目录（目录 0700、文件 0600）。CLI 可以先启动；bridge 在连接宿主前等待配置，配置窗口为启动后的 90 秒，原生客户端自身也可能更早超时。未收到配置不发起未认证连接，过期或重复配置拒绝；不为此新建宿主队列或协调服务。
+
+PTY 配置随 tmux Runtime 保留，fabricd 重启不清除；`runtime stop` / forget 与配置写入共用文件锁并清理。运行目录只服务这个 Runtime，不是 Profile 或恢复数据库中的配置来源。新 Runtime 必须重新注入；宿主仍在每次调用验证凭据、执行实例和在线状态，保留文件不扩大权限。嵌入宿主统一调用 `fabricd.RunHelper` 即可分派 bridge 和原生 hook。
+
+本地真实 tmux、生成的 Claude 配置、实际 bridge 进程及 HTTP MCP 已验证首次等待、单次配置、重启后拒绝替换、配置保留和 stop 清理；文件锁 race 验证并发配置 / 清理。尚未由这些测试证明厂商 UI 工具已就绪，工作台启动服务的自动签发另行接入。
