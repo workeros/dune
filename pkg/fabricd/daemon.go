@@ -11,6 +11,7 @@ import (
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"os"
 	goruntime "runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -232,7 +233,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 	case "machine.info":
 		home, err := os.UserHomeDir()
 		e = err
-		result = map[string]string{"home": home, "os": goruntime.GOOS, "arch": goruntime.GOARCH}
+		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH}
 	case "runtime.forget":
 		var r *runtime
 		r, e = d.lookup(m)

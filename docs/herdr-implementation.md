@@ -12,6 +12,7 @@
 - [x] SandDance 并行工作台：接入共享合同，Tenant 内自由分屏与个人布局。
 - [x] worktree 准备能力：SDK / Gateway / fabricd 新建和列出 worktree，复用 Git 仓库锁；不覆盖目录 / 分支，不复制未提交内容。
 - [ ] 启动位置：已有就绪 Runner，当前目录 / worktree 选择、项目默认配置。
+- [x] 统一启动服务：固定配置解析、宿主环境默认值、当前目录 / 新 worktree、启动前快照与部分结果保留；待页面接入。
 - [x] 恢复索引数据库：不可变实际配置、原生 ID 绑定、最近启动 attempt、跨连接继续去重与未知结果屏障。
 - [ ] 原生会话恢复：实际启动快照、可靠 ID 采集、恢复索引与并发继续去重。
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
@@ -43,3 +44,5 @@
 - worktree 准备：新增 [API 合同](worktree-api.md)，定向 race 覆盖实际 Git 工作树、源目录脏文件保留、中文 / 空格路径、已有分支与目录拒绝、共享仓库并发创建；client / access 回归和相关包 vet 通过。`TestWorktreeCreationThroughGateway` 通过，覆盖 SDK 经 Gateway 到 fabricd 的真实 Git 创建与列出。两产品启动选择与实际配置快照仍随统一启动服务接入。
 
 - 恢复索引数据库：新增 [存储合同](agent-recovery.md)。SQLite / PostgreSQL 测试覆盖不可变快照、Profile 修改和删除、数据库重开、Owner 隔离、两连接并发继续、旧 attempt 迟到上报、未知结果拒绝接替和提交回执丢失；定向 race 通过。identity / authorization / metadata / webapp / host 回归及相关 vet 通过。尚未接入启动服务，不代表真实原生恢复已验收。
+
+- 统一启动服务：新增 [启动合同](agent-launch.md)，`App.AgentLauncher()` 通过 SDK / Gateway 启动。真实 tmux / Git 测试覆盖项目默认旧修订、合并环境与实际进程一致、cwd 覆盖、隔离工作树及脏文件保留、失效输入先拒绝、启动失败仍返回已建 worktree；定向 race 通过。fabricd / api / host / webapp 回归、相关 vet 和使用本地 workspace 的 SandDance 全量 Go 测试通过。页面尚未迁移到此入口，真实 Agent / MCP 验收仍待后续。

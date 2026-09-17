@@ -19,6 +19,7 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
@@ -59,6 +60,10 @@ type Options struct {
 	// AccessChecker selects enterprise policy instead of the default owner check.
 	// It must honor cancellation and must not retain credentials or work content.
 	AccessChecker access.Checker
+	// AgentEnvironment supplies existing environment defaults for new Agent
+	// launches. Dune saves the effective values before starting; resume uses
+	// that snapshot without re-resolving the current defaults.
+	AgentEnvironment agents.EnvironmentResolver
 	// Observer receives best-effort structured operational and audit events on
 	// a bounded asynchronous dispatcher. The caller retains Sink ownership.
 	Observer observe.Sink
@@ -83,26 +88,27 @@ type Options struct {
 // HTTP middleware must preserve Hijacker and ResponseController support (directly
 // or through Unwrap) for upgrades and cancellation of blocked request I/O.
 type App struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	web          *webapp.Server
-	core         *gateway.Gateway
-	publicPath   string
-	store        *metadata.Store
-	authorizer   *authorization.Service
-	peer         *peer.Transport
-	peerHandler  http.Handler
-	observer     *observationRecorder
-	mu           sync.Mutex
-	closed       bool
-	draining     bool
-	requests     int
-	requestsDone chan struct{}
-	servers      map[*http.Server]struct{}
-	active       sync.WaitGroup
-	once         sync.Once
-	done         chan struct{}
-	err          error
+	ctx              context.Context
+	cancel           context.CancelFunc
+	web              *webapp.Server
+	core             *gateway.Gateway
+	publicPath       string
+	store            *metadata.Store
+	authorizer       *authorization.Service
+	agentEnvironment agents.EnvironmentResolver
+	peer             *peer.Transport
+	peerHandler      http.Handler
+	observer         *observationRecorder
+	mu               sync.Mutex
+	closed           bool
+	draining         bool
+	requests         int
+	requestsDone     chan struct{}
+	servers          map[*http.Server]struct{}
+	active           sync.WaitGroup
+	once             sync.Once
+	done             chan struct{}
+	err              error
 }
 
 // Open assembles an application without opening a listener. Cancelling parent
@@ -197,7 +203,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, authorizer: authorizer, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
+	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, web: web, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	assembled = true
 	context.AfterFunc(ctx, func() { app.Close() })
 	return app, nil
