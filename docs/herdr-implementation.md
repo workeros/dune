@@ -127,3 +127,5 @@
 - Codex 原生验收入口：新增显式 opt-in 测试，普通检查跳过且编译 / vet 通过。实际运行用隔离的已登录目录，确认本机 Codex 0.140.0 的目录 / hook 信任、PTY 输入及首次提交后的 SessionStart。模型请求被账号 usage limit 拒绝（CLI 提示 2026-09-19 16:16 后再试），未观察到真实模型发起的 MCP 工具调用，完整原生恢复流程未计为通过。没有修改全局 Codex 配置，额度阻塞不重复触发模型请求。
 
 - 本地多宿主进程验收：`TestPostgresClusterWebProcesses` 普通及 race 通过，子 Web / fabricd 程序也以 race 构建。三 Web 进程使用共享 PostgreSQL 和独立 TLS peer，Web A / MCP C 经 Gateway owner B 提交到同一 ACP 队列；A 被杀并重启后 pending / wait / read 保持，A / B 输出独立。Gateway owner 被杀并重启后 fabricd 输出不变；fabricd 被杀并重启后 PTY 调用方仍能认证，原 ACP 操作明确返回失效。初次测试只观察 online 标记，遇到 owner 刚退出后的路由滞后；改为完整链路的只读 `agents_get` 等待，不重放写入。以上为同机多进程拓扑，未表述为实际 Kubernetes Pod 或跨主机部署验收。
+
+- 全量交付检查：`make check-go`（含 IM vet）和 `make build` 通过。`make test TEST_FLAGS='-count=1 -timeout=300s'` 的非 tests 包全部通过；tests 包六个前缀 / 企业 / PostgreSQL 复用场景因仍发送旧 Profile DTO 返回 400。已迁移公共测试 helper 到 `StartRequest / LaunchResult`，四组受影响测试（含所有子场景）重新通过，测试 vet 通过；随后独立运行 IM 全量测试通过。没有为旧 HTTP 合同添加兼容入口。

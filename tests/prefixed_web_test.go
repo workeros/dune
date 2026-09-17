@@ -25,6 +25,7 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
 	"github.com/aiomni/dune/pkg/runner"
@@ -279,8 +280,13 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	if executed.ExitCode != 0 || executed.Stdout != "web-call-exec" {
 		t.Fatalf("Web call did not forward exec: %+v", executed)
 	}
-	var runtime api.Runtime
-	do("POST", executionRoute("sessions"), profile(dir, "pty", "/bin/sh"), &runtime)
+	terminalProfile := profile(dir, "pty", "/bin/sh")
+	var started agents.LaunchResult
+	do("POST", executionRoute("sessions"), agents.StartRequest{Custom: &terminalProfile}, &started)
+	if started.Runtime == nil || started.Session == nil {
+		t.Fatal("Agent startup did not return its Runtime and saved launch")
+	}
+	runtime := *started.Runtime
 	eventRoute := strings.Replace(executionRoute("sessions/"+runtime.ID+"/events"), "api/v1/", "api/v1/ws/", 1)
 	eventURL, err := url.Parse(site + eventRoute)
 	must(t, err)
