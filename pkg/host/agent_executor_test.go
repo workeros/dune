@@ -27,7 +27,7 @@ func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
 	if _, err := connection.Start(context.Background(), api.Profile{Version: 1, Kind: "agent", Adapter: "pty"}); err == nil {
 		t.Fatal("non-managed ACP Agent started through IM executor")
 	}
-	if err := connection.Action(context.Background(), api.Runtime{}, AgentAction{Action: "permission"}); err == nil {
+	if _, err := connection.Submit(context.Background(), api.Runtime{}, AgentAction{Action: "permission"}); err == nil {
 		t.Fatal("IM executor allowed a permission action")
 	}
 	if err := connection.Close(); err != nil {
@@ -119,7 +119,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 		}
 	}
 	waitState(runtime, func(state AgentState) bool { return state.Ready && state.Busy == "" })
-	if err := connection.Action(ctx, runtime, AgentAction{Action: "new", Cwd: f.workspace}); err != nil {
+	if _, err := connection.Submit(ctx, runtime, AgentAction{Action: "new", Cwd: f.workspace}); err != nil {
 		t.Fatal(err)
 	}
 	waitState(runtime, func(state AgentState) bool { return state.SessionID == "fake-acp-session" && state.Busy == "" })
@@ -128,7 +128,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer subscription.Close()
-	if err := connection.Action(ctx, runtime, AgentAction{Action: "prompt", Text: "hello"}); err != nil {
+	if _, err := connection.Submit(ctx, runtime, AgentAction{Action: "prompt", Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	var answer, stopReason string
@@ -163,7 +163,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if !replacementState.CanLoad {
 		t.Fatal("fake ACP load capability was not published")
 	}
-	if err := connection.Action(ctx, replacement, AgentAction{Action: "load", Cwd: f.workspace, SessionID: "fake-acp-session"}); err != nil {
+	if _, err := connection.Submit(ctx, replacement, AgentAction{Action: "load", Cwd: f.workspace, SessionID: "fake-acp-session"}); err != nil {
 		t.Fatal(err)
 	}
 	waitState(replacement, func(state AgentState) bool {

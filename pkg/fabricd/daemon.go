@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -171,10 +171,28 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 			if m.Operation == "acp.state" {
 				result = r.acp.snapshot()
 			} else {
-				var a acpAction
+				var a api.ACPAction
 				e = wire.Decode(m, &a)
 				if e == nil {
 					result, e = r.acp.action(a)
+				}
+			}
+		}
+	case "agent.operation.wait", "agent.operation.read":
+		var r *runtime
+		r, e = d.lookup(m)
+		if e == nil {
+			if m.Operation == "agent.operation.wait" {
+				var request api.AgentOperationWait
+				e = wire.Decode(m, &request)
+				if e == nil {
+					result, e = r.operationLog().wait(s.ctx, request)
+				}
+			} else {
+				var request api.AgentOperationRead
+				e = wire.Decode(m, &request)
+				if e == nil {
+					result, e = r.operationLog().read(request)
 				}
 			}
 		}
@@ -278,9 +296,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 	}
 	d.mu.Lock()
-	if searchRequest {
-		// Retain idempotency without holding up to 256 large search responses.
-		d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "search response is not retained; start a new search"}
+	if searchRequest || m.Operation == "agent.operation.read" {
+		// Retain deduplication without duplicating up to 256 large read responses.
+		d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "read response is not retained; issue a new read"}
 	} else {
 		d.cache[m.RequestId].result = res
 	}
@@ -311,6 +329,17 @@ func (d *Engine) expire(ctx context.Context) {
 					delete(d.attempts, id)
 				}
 			}
+			for _, r := range d.runtimes {
+				r.mu.Lock()
+				log := r.operations
+				r.mu.Unlock()
+				if log != nil {
+					log.mu.Lock()
+					log.expireLocked(now)
+					log.mu.Unlock()
+				}
+			}
+
 			for id, u := range d.uploads {
 				u.mu.Lock()
 				if now.After(u.expires) {

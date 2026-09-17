@@ -128,8 +128,10 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	}
 	must(t, action(map[string]any{"action": "prompt", "text": "offline permission"}))
 	pending := await(func(s state) bool { return len(s.Permissions) == 1 })
-	if err := action(map[string]any{"action": "new"}); err == nil {
-		t.Fatal("concurrent new accepted")
+	var queued json.RawMessage
+	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), map[string]any{"action": "new"}, &queued, &rt))
+	if !strings.Contains(string(queued), `"state":"pending"`) {
+		t.Fatalf("concurrent new did not queue: %s", queued)
 	}
 	if _, err := h.client.Attach(h.ctx, rt, false); err == nil {
 		t.Fatal("raw ACP input was not rejected")

@@ -296,7 +296,7 @@ func TestACPCapabilityCombinationsAndLoad(t *testing.T) {
 				if action == "load" {
 					supported = s.CanLoad
 				}
-				_, err := a.action(acpAction{Action: action, SessionID: "old"})
+				_, err := a.action(api.ACPAction{Action: action, SessionID: "old"})
 				if supported && err != nil || !supported && err == nil {
 					t.Fatalf("%s capability mismatch: %v", action, err)
 				}
@@ -318,7 +318,7 @@ func TestACPCapabilityCombinationsAndLoad(t *testing.T) {
 				}
 			}
 			if s.CanLoad {
-				_, err := a.action(acpAction{Action: "load", SessionID: "fail"})
+				_, err := a.action(api.ACPAction{Action: "load", SessionID: "fail"})
 				if err != nil {
 					t.Fatal(err)
 				}

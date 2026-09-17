@@ -69,11 +69,11 @@ func TestActivityTracksACPWithoutContentSubscription(t *testing.T) {
 	initial := awaitActivity("working")
 	a.initialize()
 	awaitActivity("idle")
-	if _, err := a.action(acpAction{Action: "new"}); err != nil {
+	if _, err := a.action(api.ACPAction{Action: "new"}); err != nil {
 		t.Fatal(err)
 	}
 	awaitActivity("idle")
-	if _, err := a.action(acpAction{Action: "prompt", Text: "a task"}); err != nil {
+	if _, err := a.action(api.ACPAction{Action: "prompt", Text: "a task"}); err != nil {
 		t.Fatal(err)
 	}
 	blocked := awaitActivity("blocked")
@@ -84,7 +84,7 @@ func TestActivityTracksACPWithoutContentSubscription(t *testing.T) {
 	if len(permissions) != 1 {
 		t.Fatal(permissions)
 	}
-	if _, err := a.action(acpAction{Action: "permission", PermissionID: permissions[0].ID, OptionID: "allow"}); err != nil {
+	if _, err := a.action(api.ACPAction{Action: "permission", PermissionID: permissions[0].ID, OptionID: "allow"}); err != nil {
 		t.Fatal(err)
 	}
 	awaitActivity("working")

@@ -51,7 +51,9 @@ type AgentConnection interface {
 	Get(context.Context, api.Runtime) (api.Runtime, error)
 	Observe(context.Context, api.Runtime) (AgentSubscription, error)
 	State(context.Context, api.Runtime) (AgentState, error)
-	Action(context.Context, api.Runtime, AgentAction) error
+	Submit(context.Context, api.Runtime, AgentAction) (api.AgentOperation, error)
+	WaitOperation(context.Context, api.Runtime, api.AgentOperationWait) (api.AgentOperation, error)
+	ReadOperation(context.Context, api.Runtime, api.AgentOperationRead) (api.AgentOperationOutput, error)
 	Stop(context.Context, api.Runtime) error
 	Close() error
 }
@@ -92,7 +94,7 @@ func (e *agentExecutor) Open(ctx context.Context, scope AgentScope) (AgentConnec
 		finish()
 		return nil, err
 	}
-	for _, required := range []string{"profile.start", "runtime.get", "runtime.attach", "runtime.stop", "acp.state"} {
+	for _, required := range []string{"profile.start", "runtime.get", "runtime.attach", "runtime.stop", "acp.state", "agent.operation.wait", "agent.operation.read"} {
 		if !slices.Contains(sdk.Binding.Capabilities, required) {
 			closeClient()
 			finish()
@@ -148,26 +150,19 @@ func (c *agentConnection) State(ctx context.Context, runtime api.Runtime) (Agent
 	return state, err
 }
 
-func (c *agentConnection) Action(ctx context.Context, runtime api.Runtime, action AgentAction) error {
+func (c *agentConnection) Submit(ctx context.Context, runtime api.Runtime, action AgentAction) (api.AgentOperation, error) {
 	if action.Action != "new" && action.Action != "load" && action.Action != "prompt" {
-		return errors.New("IM Agent action must be new, load or prompt")
+		return api.AgentOperation{}, errors.New("IM Agent action must be new, load or prompt")
 	}
-	if action.Action == "prompt" && action.Text == "" {
-		return errors.New("IM Agent prompt text is required")
-	}
-	if action.Action == "load" && action.SessionID == "" {
-		return errors.New("IM Agent session ID is required for load")
-	}
-	var accepted struct {
-		Accepted bool `json:"accepted"`
-	}
-	if err := c.sdk.CallID(ctx, "acp.action", wire.ID(), action, &accepted, &runtime); err != nil {
-		return err
-	}
-	if !accepted.Accepted {
-		return errors.New("ACP action was not accepted")
-	}
-	return nil
+	return c.sdk.ACPSubmit(ctx, runtime, api.ACPAction{Action: action.Action, Text: action.Text, SessionID: action.SessionID, Cwd: action.Cwd})
+}
+
+func (c *agentConnection) WaitOperation(ctx context.Context, runtime api.Runtime, request api.AgentOperationWait) (api.AgentOperation, error) {
+	return c.sdk.WaitAgentOperation(ctx, runtime, request)
+}
+
+func (c *agentConnection) ReadOperation(ctx context.Context, runtime api.Runtime, request api.AgentOperationRead) (api.AgentOperationOutput, error) {
+	return c.sdk.ReadAgentOperation(ctx, runtime, request)
 }
 
 func (c *agentConnection) Stop(ctx context.Context, runtime api.Runtime) error {

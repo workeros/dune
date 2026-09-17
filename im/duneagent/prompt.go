@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aiomni/dune/im/channel"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
@@ -41,38 +41,25 @@ func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSe
 		}
 		return "", errors.New("IM ACP Runtime identity changed or process exited")
 	}
-	subscription, err := connection.Observe(ctx, runtime)
+	operation, err := connection.Submit(ctx, runtime, host.AgentAction{Action: "prompt", Text: input, SessionID: session.ACPSessionID})
 	if err != nil {
-		return "", err
-	}
-	// Recv has no context parameter. Close the observation explicitly when
-	// the turn is canceled, independent of the executor implementation.
-	var closeSubscription sync.Once
-	closeObserved := func() { closeSubscription.Do(func() { _ = subscription.Close() }) }
-	stopOnCancel := context.AfterFunc(ctx, closeObserved)
-	defer func() {
-		stopOnCancel()
-		closeObserved()
-	}()
-	state, err := connection.State(ctx, runtime)
-	if err != nil {
-		return "", err
-	}
-	if !state.Ready || state.Busy != "" || state.SessionID != session.ACPSessionID {
-		return "", errors.New("IM ACP session is not ready for this prompt")
-	}
-	if err := connection.Action(ctx, runtime, host.AgentAction{Action: "prompt", Text: input}); err != nil {
 		return "", fmt.Errorf("submit ACP prompt (outcome may be unknown): %w", err)
 	}
+	if operation.Ref == "" {
+		return "", errors.New("ACP prompt did not return an operation reference")
+	}
 	var answer string
+	var position int64
 	for {
-		message, err := subscription.Recv()
+		output, err := connection.ReadOperation(ctx, runtime, api.AgentOperationRead{Ref: operation.Ref, Position: position, Limit: 128})
 		if err != nil {
-			return "", fmt.Errorf("receive ACP prompt result (outcome may be unknown): %w", err)
+			return "", fmt.Errorf("read ACP operation (outcome may be unknown): %w", err)
 		}
-		switch message.Kind {
-		case "acp_update":
-			text, full, ok, err := assistantUpdate(message, session.ACPSessionID)
+		if output.Ref != operation.Ref || output.Incomplete || output.Position != position || output.NextPosition != position+int64(len(output.Output)) {
+			return "", errors.New("ACP operation output is incomplete or does not match the submitted prompt")
+		}
+		for _, update := range output.Output {
+			text, full, ok, err := assistantUpdate(&pb.Message{Payload: update}, session.ACPSessionID)
 			if err != nil {
 				return "", err
 			}
@@ -84,9 +71,6 @@ func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSe
 					return "", errors.New("ACP assistant answer exceeds one MiB")
 				}
 				if !strings.HasPrefix(text, answer) {
-					// A complete assistant message may revise previously streamed
-					// text. Keep it as the authoritative final, but do not emit
-					// replacement content as an append-only delta.
 					answer = text
 					continue
 				}
@@ -101,32 +85,24 @@ func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSe
 					return "", err
 				}
 			}
-		case "acp_state":
-			var next host.AgentState
-			if err := json.Unmarshal(message.Payload, &next); err != nil {
-				return "", fmt.Errorf("decode ACP state: %w", err)
+		}
+		position = output.NextPosition
+		// A full page may have a retained tail even when the RPC has completed.
+		if len(output.Output) == 128 {
+			continue
+		}
+		if output.Terminal() {
+			if output.State != "completed" || output.StopReason == "" || answer == "" {
+				return "", fmt.Errorf("ACP prompt ended without a completed answer: %s %s", output.State, output.Error)
 			}
-			if next.Revision <= state.Revision {
-				continue
+			if err := emit(channel.AgentEvent{Kind: channel.AgentFinal, Text: answer}); err != nil {
+				return "", err
 			}
-			state = next
-			if next.Error != "" {
-				return "", fmt.Errorf("ACP prompt failed: %s", next.Error)
-			}
-			if next.SessionID != session.ACPSessionID {
-				return "", errors.New("ACP session changed during IM prompt")
-			}
-			if next.Ready && next.Busy == "" && next.StopReason != "" {
-				if next.StopReason == "cancelled" || next.StopReason == "canceled" || answer == "" {
-					return "", fmt.Errorf("ACP prompt ended without an answer: %s", next.StopReason)
-				}
-				if err := emit(channel.AgentEvent{Kind: channel.AgentFinal, Text: answer}); err != nil {
-					return "", err
-				}
-				return answer, nil
-			}
-		case "acp_notice", "exit", "error":
-			return "", fmt.Errorf("ACP output is incomplete (%s); prompt outcome unknown", message.Kind)
+			return answer, nil
+		}
+		// Waiting on this exact operation cannot be satisfied by a preceding turn.
+		if _, err := connection.WaitOperation(ctx, runtime, api.AgentOperationWait{Ref: operation.Ref, TimeoutMS: 250}); err != nil {
+			return "", err
 		}
 	}
 }

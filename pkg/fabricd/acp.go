@@ -1,12 +1,10 @@
 package fabricd
 
-// ACP state lives beside the Agent on the development machine. Only pending
-// RPCs, capability/session metadata and permissions are retained; message
-// updates go straight to bounded live subscriptions, never to a transcript.
+// ACP scheduling and protocol state live beside the Agent. Operation output is
+// bounded in memory; the Agent remains responsible for its native transcript.
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,33 +16,26 @@ import (
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
-type acpAction struct {
-	Action       string `json:"action"`
-	Text         string `json:"text,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Cwd          string `json:"cwd,omitempty"`
-	Cursor       string `json:"cursor,omitempty"`
-	PermissionID string `json:"permission_id,omitempty"`
-	OptionID     string `json:"option_id,omitempty"`
-}
 type acpPermission struct {
 	ID     string          `json:"id"`
 	Params json.RawMessage `json:"params"`
 	rpcID  json.RawMessage
 }
 type acpState struct {
-	Revision    uint64          `json:"revision"`
-	Ready       bool            `json:"ready"`
-	Busy        string          `json:"busy"`
-	SessionID   string          `json:"session_id"`
-	Cwd         string          `json:"cwd"`
-	CanList     bool            `json:"can_list"`
-	CanLoad     bool            `json:"can_load"`
-	Agent       json.RawMessage `json:"agent,omitempty"`
-	Permissions []acpPermission `json:"permissions"`
-	List        json.RawMessage `json:"list,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	StopReason  string          `json:"stop_reason,omitempty"`
+	OperationRef string          `json:"operation_ref,omitempty"`
+	Pending      int             `json:"pending"`
+	Revision     uint64          `json:"revision"`
+	Ready        bool            `json:"ready"`
+	Busy         string          `json:"busy"`
+	SessionID    string          `json:"session_id"`
+	Cwd          string          `json:"cwd"`
+	CanList      bool            `json:"can_list"`
+	CanLoad      bool            `json:"can_load"`
+	Agent        json.RawMessage `json:"agent,omitempty"`
+	Permissions  []acpPermission `json:"permissions"`
+	List         json.RawMessage `json:"list,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	StopReason   string          `json:"stop_reason,omitempty"`
 }
 type acpReply struct {
 	Result json.RawMessage
@@ -59,6 +50,8 @@ const (
 
 type acpController struct {
 	mu          sync.Mutex
+	controlMu   sync.Mutex
+	controlling bool
 	r           *runtime
 	state       acpState
 	pending     map[string]chan acpReply
@@ -67,11 +60,14 @@ type acpController struct {
 	done        chan struct{}
 	once        sync.Once
 	replaying   atomic.Bool
+	queue       []*acpQueuedAction
+	active      *acpQueuedAction
+	operations  *operationLog
 }
 
 func newACPController(r *runtime) *acpController {
 	r.updateActivity("working", "acp", "", "")
-	return &acpController{r: r, state: acpState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	return &acpController{r: r, operations: r.operationLog(), state: acpState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
 }
 func (a *acpController) snapshotLocked() acpState {
 	s := a.state
@@ -101,16 +97,25 @@ func (a *acpController) send(v any) error {
 	}
 	return nil
 }
-func (a *acpController) rpc(method string, params any, timeout time.Duration) (json.RawMessage, error) {
+func (a *acpController) rpc(method string, params any, timeout time.Duration, operation *acpQueuedAction) (json.RawMessage, error) {
 	id := wire.ID()
 	ch := make(chan acpReply, 1)
 	a.mu.Lock()
+	select {
+	case <-a.done:
+		a.mu.Unlock()
+		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP Agent exited before RPC dispatch"}
+	default:
+	}
 	a.pending[id] = ch
 	a.methods[id] = method
+	if operation != nil {
+		operation.rpcID = id
+	}
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); delete(a.pending, id); delete(a.methods, id); a.mu.Unlock() }()
 	if err := a.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
-		return nil, err
+		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP write outcome unknown: " + err.Error()}
 	}
 	var expiry <-chan time.Time
 	if timeout > 0 {
@@ -122,18 +127,24 @@ func (a *acpController) rpc(method string, params any, timeout time.Duration) (j
 	case reply := <-ch:
 		return reply.Result, reply.Err
 	case <-a.done:
-		return nil, fmt.Errorf("ACP Agent exited; pending request is no longer valid")
+		select {
+		case reply := <-ch:
+			return reply.Result, reply.Err
+		default:
+		}
+		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP Agent exited before a matching RPC result"}
 	case <-expiry:
 		// A timed-out lifecycle call has an unknown result. Do not admit another
 		// operation to the same process and accidentally use the wrong session.
 		a.r.stop()
-		return nil, fmt.Errorf("ACP %s timed out; process stopped, request was not replayed", method)
+		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP " + method + " timed out; process stopped, request was not replayed"}
 	}
 }
 func (a *acpController) closed() {
 	a.once.Do(func() { close(a.done) })
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.closeQueueLocked()
 	a.state.Ready = false
 	a.state.Busy = ""
 	a.permissions = map[string]acpPermission{}
@@ -172,6 +183,9 @@ func (a *acpController) receive(data []byte) {
 		}
 		a.mu.Lock()
 		ch := a.pending[id]
+		if a.active != nil && a.active.rpcID == id {
+			a.active.responded = true
+		}
 		if ch != nil && a.methods[id] != "session/list" {
 			a.permissions = map[string]acpPermission{}
 			a.publishLocked()
@@ -252,6 +266,7 @@ func formatACPError(code int, message string, data json.RawMessage) error {
 }
 
 func (a *acpController) emitUpdate(params json.RawMessage) {
+	a.recordUpdate(params)
 	if len(params) <= acpBrowserUpdateBytes {
 		a.r.emit(&pb.Message{Kind: "acp_update", Payload: params})
 		return
@@ -344,7 +359,7 @@ func splitACPText(text string, limit int) []string {
 	return parts
 }
 func (a *acpController) initialize() {
-	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second)
+	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
 	var init struct {
 		Version      int             `json:"protocolVersion"`
 		Info         json.RawMessage `json:"agentInfo"`
@@ -367,6 +382,12 @@ func (a *acpController) initialize() {
 		a.r.stop()
 		return
 	}
+	select {
+	case <-a.done:
+		a.mu.Unlock()
+		return
+	default:
+	}
 	a.state.Ready = true
 	a.state.Busy = ""
 	a.state.Agent = init.Info
@@ -377,7 +398,11 @@ func (a *acpController) initialize() {
 	a.mu.Unlock()
 	// New session is explicit in the UI: users may instead load Agent history.
 }
-func (a *acpController) action(req acpAction) (any, error) {
+func (a *acpController) action(req api.ACPAction) (any, error) {
+	if req.Action == "permission" || req.Action == "cancel" {
+		a.controlMu.Lock()
+		defer a.controlMu.Unlock()
+	}
 	a.mu.Lock()
 	select {
 	case <-a.done:
@@ -408,9 +433,11 @@ func (a *acpController) action(req acpAction) (any, error) {
 			return nil, fmt.Errorf("invalid permission option")
 		}
 		delete(a.permissions, req.PermissionID)
+		a.controlling = true
 		a.publishLocked()
 		a.mu.Unlock()
 		err := a.send(map[string]any{"jsonrpc": "2.0", "id": p.rpcID, "result": map[string]any{"outcome": map[string]string{"outcome": "selected", "optionId": req.OptionID}}})
+		a.finishControl(err)
 		// The response is consumed before writing: failure is never auto-replayed.
 		if err != nil {
 			a.r.stop()
@@ -427,130 +454,19 @@ func (a *acpController) action(req acpAction) (any, error) {
 		permissions := a.permissions
 		a.permissions = map[string]acpPermission{}
 		a.state.Busy = "cancelling"
+		a.controlling = true
 		a.publishLocked()
 		a.mu.Unlock()
 		for _, p := range permissions {
 			if err := a.send(map[string]any{"jsonrpc": "2.0", "id": p.rpcID, "result": map[string]any{"outcome": map[string]string{"outcome": "cancelled"}}}); err != nil {
+				a.finishControl(err)
 				return nil, err
 			}
 		}
-		return map[string]bool{"accepted": true}, a.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]string{"sessionId": id}})
+		err := a.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]string{"sessionId": id}})
+		a.finishControl(err)
+		return map[string]bool{"accepted": true}, err
 	}
-	if !a.state.Ready || a.state.Busy != "" {
-		a.mu.Unlock()
-		return nil, fmt.Errorf("ACP busy (%s); wait before starting or loading history", a.snapshot().Busy)
-	}
-	if (req.Action == "list" && !a.state.CanList) || (req.Action == "load" && !a.state.CanLoad) {
-		a.mu.Unlock()
-		return nil, &api.Error{Code: "UNSUPPORTED", Detail: "Agent did not advertise session/" + req.Action}
-	}
-	cwd := a.state.Cwd
-	if req.Cwd != "" {
-		cwd = req.Cwd
-	}
-	if !filepath.IsAbs(cwd) || len(cwd) > 4096 || len(req.SessionID) > 4096 || len(req.Cursor) > 8192 {
-		a.mu.Unlock()
-		return nil, fmt.Errorf("invalid ACP session parameters")
-	}
-	params := map[string]any{}
-	switch req.Action {
-	case "new":
-		params = map[string]any{"cwd": cwd, "mcpServers": []any{}}
-	case "load":
-		if req.SessionID == "" {
-			a.mu.Unlock()
-			return nil, fmt.Errorf("session ID required")
-		}
-		params = map[string]any{"cwd": cwd, "sessionId": req.SessionID, "mcpServers": []any{}}
-	case "list":
-		params["cwd"] = cwd
-		if req.Cursor != "" {
-			params["cursor"] = req.Cursor
-		}
-	case "prompt":
-		if a.state.SessionID == "" || req.Text == "" || len(req.Text) > 64*1024 {
-			a.mu.Unlock()
-			return nil, fmt.Errorf("create/load a session and supply 1..65536 bytes of text")
-		}
-		params = map[string]any{"sessionId": a.state.SessionID, "prompt": []any{map[string]string{"type": "text", "text": req.Text}}}
-	default:
-		a.mu.Unlock()
-		return nil, fmt.Errorf("unsupported ACP action")
-	}
-	a.state.Busy = req.Action
-	a.state.Error = ""
-	a.state.StopReason = ""
-	if req.Action == "list" {
-		a.state.List = nil
-	}
-	if req.Action == "new" || req.Action == "load" {
-		a.state.SessionID = req.SessionID
-		a.state.Cwd = cwd
-	}
-	if req.Action == "load" {
-		a.replaying.Store(true)
-	}
-	a.publishLocked()
-	// A live replay boundary is distinct from a state snapshot. A browser
-	// attaching midway through load must keep its incomplete-history notice.
-	if req.Action == "new" || req.Action == "load" {
-		a.r.emit(&pb.Message{Kind: "acp_reset"})
-	}
-	a.mu.Unlock()
-	if req.Action == "prompt" {
-		a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": params["sessionId"], "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]string{"type": "text", "text": req.Text}}})})
-	}
-	go func() {
-		if req.Action == "load" {
-			defer a.replaying.Store(false)
-		}
-		timeout := 60 * time.Second
-		if req.Action == "prompt" {
-			timeout = 0
-		}
-		result, err := a.rpc("session/"+req.Action, params, timeout)
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		if err == nil {
-			switch req.Action {
-			case "new":
-				var s struct {
-					ID string `json:"sessionId"`
-				}
-				if json.Unmarshal(result, &s) != nil || s.ID == "" || len(s.ID) > 4096 {
-					err = fmt.Errorf("Agent returned invalid sessionId")
-				} else {
-					a.state.SessionID = s.ID
-				}
-			case "list":
-				var s struct {
-					Sessions []json.RawMessage `json:"sessions"`
-				}
-				if json.Unmarshal(result, &s) != nil || s.Sessions == nil {
-					err = fmt.Errorf("Agent returned invalid session list")
-				} else {
-					a.state.List = result
-				}
-			case "prompt":
-				var s struct {
-					Reason string `json:"stopReason"`
-				}
-				if json.Unmarshal(result, &s) != nil || s.Reason == "" {
-					err = fmt.Errorf("Agent returned invalid prompt result")
-				} else {
-					a.state.StopReason = s.Reason
-				}
-			}
-		}
-		if err != nil {
-			a.state.Error = err.Error()
-			if req.Action == "load" || req.Action == "new" {
-				a.state.SessionID = ""
-			}
-		}
-		a.state.Busy = ""
-		a.permissions = map[string]acpPermission{}
-		a.publishLocked()
-	}()
-	return map[string]bool{"accepted": true}, nil
+	defer a.mu.Unlock()
+	return a.enqueueLocked(req)
 }

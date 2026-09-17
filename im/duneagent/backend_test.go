@@ -7,7 +7,6 @@ import (
 	"io"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -35,39 +34,12 @@ func (f fakeExecutor) Open(context.Context, host.AgentScope) (host.AgentConnecti
 	return f.connection, nil
 }
 
-type fakeSubscription struct{ messages []*pb.Message }
-
-func (s *fakeSubscription) Recv() (*pb.Message, error) {
-	if len(s.messages) == 0 {
-		return nil, io.EOF
-	}
-	message := s.messages[0]
-	s.messages = s.messages[1:]
-	return message, nil
-}
-func (*fakeSubscription) Close() error { return nil }
-
-type blockingSubscription struct {
-	entered chan struct{}
-	closed  chan struct{}
-	once    sync.Once
-}
-
-func (s *blockingSubscription) Recv() (*pb.Message, error) {
-	close(s.entered)
-	<-s.closed
-	return nil, io.EOF
-}
-
-func (s *blockingSubscription) Close() error {
-	s.once.Do(func() { close(s.closed) })
-	return nil
-}
-
 type fakeConnection struct {
 	runtime      api.Runtime
 	state        host.AgentState
-	subscription host.AgentSubscription
+	outputs      []api.AgentOperationOutput
+	readStarted  chan struct{}
+	readReturned chan struct{}
 	profile      api.Profile
 	actions      []host.AgentAction
 	getErr       error
@@ -88,12 +60,12 @@ func (f *fakeConnection) Get(context.Context, api.Runtime) (api.Runtime, error) 
 	return f.runtime, nil
 }
 func (f *fakeConnection) Observe(context.Context, api.Runtime) (host.AgentSubscription, error) {
-	return f.subscription, nil
+	return nil, errors.New("IM prompt must use operation output")
 }
 func (f *fakeConnection) State(context.Context, api.Runtime) (host.AgentState, error) {
 	return f.state, nil
 }
-func (f *fakeConnection) Action(_ context.Context, _ api.Runtime, action host.AgentAction) error {
+func (f *fakeConnection) Submit(_ context.Context, _ api.Runtime, action host.AgentAction) (api.AgentOperation, error) {
 	f.actions = append(f.actions, action)
 	if action.Action == "new" {
 		f.state.SessionID = "acp-session-a"
@@ -101,7 +73,27 @@ func (f *fakeConnection) Action(_ context.Context, _ api.Runtime, action host.Ag
 	if action.Action == "load" {
 		f.state.SessionID = action.SessionID
 	}
-	return nil
+	if action.Action == "prompt" {
+		return api.AgentOperation{Ref: "prompt-operation", State: "pending"}, nil
+	}
+	return api.AgentOperation{Ref: "lifecycle-operation", State: "completed", NativeSessionID: f.state.SessionID}, nil
+}
+func (f *fakeConnection) WaitOperation(ctx context.Context, _ api.Runtime, request api.AgentOperationWait) (api.AgentOperation, error) {
+	return api.AgentOperation{Ref: request.Ref, State: "running"}, ctx.Err()
+}
+func (f *fakeConnection) ReadOperation(ctx context.Context, _ api.Runtime, request api.AgentOperationRead) (api.AgentOperationOutput, error) {
+	if f.readStarted != nil {
+		close(f.readStarted)
+		<-ctx.Done()
+		close(f.readReturned)
+		return api.AgentOperationOutput{}, ctx.Err()
+	}
+	if len(f.outputs) == 0 {
+		return api.AgentOperationOutput{}, io.ErrUnexpectedEOF
+	}
+	output := f.outputs[0]
+	f.outputs = f.outputs[1:]
+	return output, nil
 }
 func (f *fakeConnection) Stop(context.Context, api.Runtime) error {
 	f.stops++
@@ -256,15 +248,14 @@ func TestStopRequiresConfirmedExitWithoutReplayingRequest(t *testing.T) {
 func TestPromptStreamsOnlyAssistantAnswerAndDoesNotDuplicateFullFinal(t *testing.T) {
 	backend, conversation, connection := testBackend()
 	connection.state.SessionID = "acp-session-a"
-	connection.subscription = &fakeSubscription{messages: []*pb.Message{
+	connection.outputs = []api.AgentOperationOutput{outputPage("completed",
 		update("thought_message_chunk", "hidden"),
 		update("agent_message_chunk", "hello"),
 		update("tool_call", "tool output"),
 		update("agent_message_chunk", " "),
 		update("agent_message_chunk", "world"),
 		update("agent_message", "hello world"),
-		{Kind: "acp_state", Payload: jsonPayload(host.AgentState{Revision: 5, Ready: true, SessionID: "acp-session-a", StopReason: "end_turn"})},
-	}}
+	)}
 	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	var events []channel.AgentEvent
 	final, err := backend.Prompt(context.Background(), conversation, session, "question", func(event channel.AgentEvent) error {
@@ -282,21 +273,20 @@ func TestPromptStreamsOnlyAssistantAnswerAndDoesNotDuplicateFullFinal(t *testing
 	}
 }
 
-func TestPromptStreamInterruptionIsUnknownNotSuccess(t *testing.T) {
+func TestPromptOperationReadInterruptionIsUnknownNotSuccess(t *testing.T) {
 	backend, conversation, connection := testBackend()
 	connection.state.SessionID = "acp-session-a"
-	connection.subscription = &fakeSubscription{messages: []*pb.Message{update("agent_message_chunk", "partial")}}
+	connection.outputs = []api.AgentOperationOutput{outputPage("running", update("agent_message_chunk", "partial"))}
 	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	if _, err := backend.Prompt(context.Background(), conversation, session, "question", func(channel.AgentEvent) error { return nil }); err == nil {
 		t.Fatal("interrupted ACP stream was reported complete")
 	}
 }
 
-func TestPromptCancellationClosesBlockedObservation(t *testing.T) {
+func TestPromptCancellationStopsOperationRead(t *testing.T) {
 	backend, conversation, connection := testBackend()
 	connection.state.SessionID = "acp-session-a"
-	subscription := &blockingSubscription{entered: make(chan struct{}), closed: make(chan struct{})}
-	connection.subscription = subscription
+	connection.readStarted, connection.readReturned = make(chan struct{}), make(chan struct{})
 	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -306,35 +296,34 @@ func TestPromptCancellationClosesBlockedObservation(t *testing.T) {
 		done <- err
 	}()
 	select {
-	case <-subscription.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("ACP observation did not begin receiving")
+	case <-connection.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("operation read did not start")
 	}
 	cancel()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("canceled ACP observation was reported complete")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("canceled ACP observation remained blocked in Recv")
+		t.Fatal("operation read stayed blocked")
 	}
 	select {
-	case <-subscription.closed:
+	case <-connection.readReturned:
 	default:
-		t.Fatal("canceled ACP observation was not closed")
+		t.Fatal("read not canceled")
 	}
 }
 
 func TestPromptFullAssistantMessageCanReviseStreamedDeltas(t *testing.T) {
 	backend, conversation, connection := testBackend()
 	connection.state.SessionID = "acp-session-a"
-	connection.subscription = &fakeSubscription{messages: []*pb.Message{
+	connection.outputs = []api.AgentOperationOutput{outputPage("completed",
 		update("agent_message_chunk", "hel"),
 		update("agent_message_chunk", "lo"),
 		update("agent_message", "HELLO revised"),
-		{Kind: "acp_state", Payload: jsonPayload(host.AgentState{Revision: 5, Ready: true, SessionID: "acp-session-a", StopReason: "end_turn"})},
-	}}
+	)}
 	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	var events []channel.AgentEvent
 	final, err := backend.Prompt(context.Background(), conversation, session, "question", func(event channel.AgentEvent) error {
@@ -347,18 +336,37 @@ func TestPromptFullAssistantMessageCanReviseStreamedDeltas(t *testing.T) {
 	}
 }
 
-func TestPromptIgnoresOutOfOrderACPCompletionState(t *testing.T) {
-	backend, conversation, connection := testBackend()
-	connection.state.SessionID = "acp-session-a"
-	connection.subscription = &fakeSubscription{messages: []*pb.Message{
-		update("agent_message_chunk", "partial"),
-		{Kind: "acp_state", Payload: jsonPayload(host.AgentState{Revision: 5, Ready: true, Busy: "prompt", SessionID: "acp-session-a"})},
-		{Kind: "acp_state", Payload: jsonPayload(host.AgentState{Revision: 4, Ready: true, SessionID: "acp-session-a", StopReason: "end_turn"})},
-	}}
-	session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
-	if _, err := backend.Prompt(context.Background(), conversation, session, "question", func(channel.AgentEvent) error { return nil }); err == nil {
-		t.Fatal("out-of-order completion state ended the prompt")
+func TestPromptRejectsOutputFromAnotherOperationAndGaps(t *testing.T) {
+	for _, scenario := range []string{"reference", "incomplete", "position"} {
+		t.Run(scenario, func(t *testing.T) {
+			backend, conversation, connection := testBackend()
+			connection.state.SessionID = "acp-session-a"
+			output := outputPage("completed", update("agent_message_chunk", "wrong answer"))
+			switch scenario {
+			case "reference":
+				output.Ref = "previous-operation"
+			case "incomplete":
+				output.Incomplete = true
+			case "position":
+				output.Position = 1
+			}
+			connection.outputs = []api.AgentOperationOutput{output}
+			session := channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
+			var emitted bool
+			_, err := backend.Prompt(context.Background(), conversation, session, "question", func(channel.AgentEvent) error { emitted = true; return nil })
+			if err == nil || emitted {
+				t.Fatal("unrelated/incomplete output was accepted")
+			}
+		})
 	}
+}
+
+func outputPage(state string, updates ...*pb.Message) api.AgentOperationOutput {
+	output := api.AgentOperationOutput{AgentOperation: api.AgentOperation{Ref: "prompt-operation", State: state, StopReason: "end_turn"}, NextPosition: int64(len(updates))}
+	for _, update := range updates {
+		output.Output = append(output.Output, update.Payload)
+	}
+	return output
 }
 
 func update(kind, text string) *pb.Message {

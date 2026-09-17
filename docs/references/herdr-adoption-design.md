@@ -1,6 +1,6 @@
 # herdr 借鉴方案：Dune / SandDance 工作台与 Tenant Agent 通信
 
-> 更新：2026-09-17。配套来源：[herdr 源码调研](reference-project-analysis-herdr.md)。产品范围已通过设计访谈确认；本文据此给出实现方案、职责划分与验收要求。当前交付为研究和设计文档，产品代码尚未实现。
+> 更新：2026-09-17。配套来源：[herdr 源码调研](reference-project-analysis-herdr.md)。产品范围已通过设计访谈确认；本文据此给出实现方案、职责划分与验收要求。实施进行中，已交付范围与验证记录见 [实施清单](../herdr-implementation.md)。本文源码事实为方案形成时的基线，当前 API 以实施文档为准。
 >
 > 方案重点是 PTY / ACP 双核心入口、Tenant 范围自由分屏与 MCP 协作，以及保存在应用数据库中的个人工作现场。API 命名和表结构是实现建议，不能视为已存在的接口。
 
@@ -66,7 +66,7 @@ flowchart LR
 
 `operation_ref` 是 fabricd 为一次已受理操作生成的不透明引用，内部绑定原 fabricd / Runtime 执行身份与操作 ID。调用方保存并原样传回即可，不需要理解宿主 Pod、协调任期或全局事件流。操作记录和每操作的有界输出缓冲都保存在 fabricd 内存。
 
-首版的操作接口只暴露以下信息，读取响应另外包含实际输出内容：
+首版 prompt 操作接口暴露以下信息，读取响应另外包含实际输出内容与错误说明；成功的 new/load 额外返回已确认的 `native_session_id`，供恢复索引采集：
 
 | 字段 | 含义 |
 | --- | --- |

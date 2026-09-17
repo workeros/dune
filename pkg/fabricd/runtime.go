@@ -53,6 +53,7 @@ type runtime struct {
 	done             chan struct{}
 	acp              *acpController
 	activity         api.AgentActivity
+	operations       *operationLog
 }
 
 // ACP parsing and replay budgets scale with the development machine while the
@@ -337,6 +338,9 @@ func (r *runtime) readACP(rd io.Reader) {
 		}
 		if !more && (lineBytes > 0 || err == nil) {
 			if oversized {
+				if r.acp != nil {
+					r.acp.markOutputIncomplete()
+				}
 				r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
 					"code":          "MESSAGE_OMITTED",
 					"detail":        "ACP output exceeded this machine's per-message memory limit; content was omitted and the Runtime continues",
