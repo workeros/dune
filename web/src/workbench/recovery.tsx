@@ -37,7 +37,8 @@ export function SessionRecovery({ prefix, recordID, current, enabled, ready, onR
       if (!mounted.current) return;
       if (!result.session?.attempt) throw new Error("恢复响应不完整，请先检查恢复结果。");
       remember(result.session);
-      if (result.runtime && result.session?.status === "available" && result.session.attempt?.state === "ready" && result.session.selected) {
+      const pendingTerminal = result.runtime?.adapter === "pty" && result.runtime.state === "running" && result.session.attempt.state === "capturing";
+      if (result.runtime && (pendingTerminal || result.session.status === "available" && result.session.attempt.state === "ready" && result.session.selected)) {
         setFollowing(false); onRestored(result.runtime, result.session);
       }
     } catch (cause) {
@@ -51,7 +52,7 @@ export function SessionRecovery({ prefix, recordID, current, enabled, ready, onR
     }
   };
   const recovering = record?.attempt?.kind === "resume" && ["starting", "capturing"].includes(record.attempt.state);
-  const canResume = !!record?.native?.resume_supported && record.adapter === "acp" && record.status === "available" && ["ready", "failed"].includes(record.attempt?.state ?? "") && uncertainRevision === undefined;
+  const canResume = !!record?.native?.resume_supported && record.status === "available" && ["ready", "failed"].includes(record.attempt?.state ?? "") && uncertainRevision === undefined;
   const message = recovering ? "正在恢复原生会话，等待确认。" : record?.status === "unknown" || uncertainRevision !== undefined ? "恢复结果尚未确认，请检查结果后再继续。" : reconnect ? "原生会话已经恢复，可以重新连接。" : canResume ? "使用保存的启动配置继续原生会话。" : record ? "此会话暂不可恢复。" : error ? "读取会话恢复记录失败。" : "正在读取会话恢复记录…";
   return <section className="agent-recovery" aria-label="会话恢复"><p role="status">{message}</p>{record?.reason && <small>{record.reason}</small>}{error && <p role="alert">{error}</p>}<div>
     {(canResume || reconnect || busy) && <Button size="sm" variant="outline" disabled={!enabled || !ready || busy} onClick={() => void resume()}>{busy ? "恢复中…" : reconnect ? "连接已恢复会话" : "继续会话"}</Button>}

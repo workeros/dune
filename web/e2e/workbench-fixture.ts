@@ -52,8 +52,8 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
       state.resumeRequests.push({ id: session.id, revision: body.revision });
       session.revision++; session.attempt = { id: "resume-attempt", kind: "resume", state: state.resumeOutcome === "success" ? "ready" : state.resumeOutcome === "unknown" ? "unknown" : "capturing", base_revision: body.revision };
       session.status = state.resumeOutcome === "success" ? "available" : state.resumeOutcome === "unknown" ? "unknown" : "pending_capture";
-      if (state.resumeOutcome === "success") {
-        const runtime: AgentRuntime = { ...session.last_runtime!, id: "resumed-acp", incarnation: "resumed-boot", state: "running", title: "Restored ACP", working_directory: session.working_directory };
+      if (state.resumeOutcome === "success" || state.resumeOutcome === "pending" && session.adapter === "pty") {
+        const runtime: AgentRuntime = { ...session.last_runtime!, id: `resumed-${session.adapter}`, incarnation: "resumed-boot", state: "running", title: `Restored ${session.adapter.toUpperCase()}`, working_directory: session.working_directory };
         session.last_runtime = runtime; state.runtimes[session.binding.runner_id].push(runtime);
         return reply({ session, runtime });
       }

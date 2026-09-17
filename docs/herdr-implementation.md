@@ -21,7 +21,7 @@
 - [x] managed ACP 继续后端：实际启动快照、显式 load、数据库 claim、并发去重与未知结果屏障。
 - [x] 两产品 ACP 继续入口：保存 pane 显式恢复、并发 attempt 跟随、未知结果不重放，保持其他 pane 连接。
 - [x] PTY 原生恢复后端：快照、精确 UUID / cwd、数据库去重、等待原生确认与失败重试；厂商验收另行完成。
-- [ ] 两产品 PTY 继续入口：原生等待期间可打开终端，保留未确认状态。
+- [x] 两产品 PTY 继续入口：原生等待期间可打开终端，保留未确认状态。
 - [x] fabricd ACP 操作：Runtime 串行队列、操作引用、wait / read、有界输出与失效语义。
 - [x] fabricd PTY 投递：人工按键与文本 / Enter 统一排序、目标检查与投递状态。
 - [x] Tenant / Owner Agent 发现服务：分页、固定 Agent 引用、SDK / Gateway 读取与原生确认采集；两产品已挂载共享 HTTP 路由。
@@ -110,3 +110,5 @@
 - PTY 原生身份接入：直接 Claude / Codex 启动使用本次 hook 参数和环境，保留 helper 可执行文件，tmux 元数据恢复集成标记；SDK / Gateway 的 Runtime 摘要接入共享数据库索引。相关 agentintegration / tmux / agentservice / api / client / fabricd / host Go 回归通过（独立 PostgreSQL）；注入、离线切换、队列目标与并发清理定向 race / vet 通过，host 索引定向 race 通过。跨进程 PTY / tmux / terminal / input / AgentOperations 通过；SandDance 使用本地 workspace / 独立 PostgreSQL 的全量 Go 通过。验证了 A 到 B 切换保留历史、旧引用失效、ID / cwd 改变拒绝排队输入，以及粘贴后切换返回 unknown、不发送 Enter。安装的 Codex 0.140 接受生成的内联 hook 配置；厂商 CLI 回调、实际恢复及 MCP 尚未计为验收完成。
 
 - PTY 原生继续后端：相关身份 / 授权 / metadata / agentintegration / agentservice / webapp / host 全量 Go（独立 PostgreSQL）通过，PTY / ACP 恢复定向 race 和相关 vet 通过；SandDance 全量 Go（本地 workspace / 独立 PostgreSQL）通过。验证 Claude / Codex 精确 resume 参数、原 Profile 修改 / 删除后仍使用旧配置、setup 一次、并发一次启动、错误或缺失原生确认、等待中的 Runtime 不重放、稍后退出后显式重试。原生 CLI 由本地可控进程模拟，真实厂商会话恢复仍待验收；页面 PTY 入口另行提交。
+
+- 两产品 PTY 继续界面：类型检查、生产构建及两端各四项 Chromium 恢复场景通过；Dune 四项前端单元测试通过。等待原生确认时打开已确认存活的终端，用户可处理登录或原生信任；确认后保持连接，未确认状态不会宣称恢复完成。两端待确认界面截图已检查，测试覆盖不重复恢复与不重连。厂商 CLI 与 MCP 验收仍待后续。
