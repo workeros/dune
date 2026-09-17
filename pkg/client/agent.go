@@ -7,6 +7,14 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
+// ConfigureAgentMCP installs this launch's credential before the first native
+// session. An unconfirmed response must not trigger a new launch or token rotation.
+func (c *Client) ConfigureAgentMCP(ctx context.Context, runtime api.Runtime, config api.AgentMCP) (api.AgentMCPStatus, error) {
+	var status api.AgentMCPStatus
+	err := c.CallID(ctx, "acp.mcp.configure", wire.ID(), config, &status, &runtime)
+	return status, err
+}
+
 // ACPSubmit admits a new/load/list/prompt to the Runtime queue. Closing this
 // connection never cancels it. Unknown submissions must not be replayed.
 func (c *Client) ACPSubmit(ctx context.Context, runtime api.Runtime, action api.ACPAction) (api.AgentOperation, error) {

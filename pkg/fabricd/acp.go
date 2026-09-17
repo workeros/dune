@@ -31,6 +31,7 @@ type acpState struct {
 	Cwd          string          `json:"cwd"`
 	CanList      bool            `json:"can_list"`
 	CanLoad      bool            `json:"can_load"`
+	MCPTransport string          `json:"mcp_transport,omitempty"`
 	Agent        json.RawMessage `json:"agent,omitempty"`
 	Permissions  []acpPermission `json:"permissions"`
 	List         json.RawMessage `json:"list,omitempty"`
@@ -64,6 +65,9 @@ type acpController struct {
 	active         *acpQueuedAction
 	operations     *operationLog
 	nativeSequence int64
+	requireMCP     bool
+	mcpHTTP        bool
+	mcpServers     []any
 }
 
 func newACPController(r *runtime) *acpController {
@@ -366,7 +370,10 @@ func (a *acpController) initialize() {
 		Version      int             `json:"protocolVersion"`
 		Info         json.RawMessage `json:"agentInfo"`
 		Capabilities struct {
-			Load     bool `json:"loadSession"`
+			Load bool `json:"loadSession"`
+			MCP  struct {
+				HTTP bool `json:"http"`
+			} `json:"mcpCapabilities"`
 			Sessions struct {
 				List json.RawMessage `json:"list"`
 			} `json:"sessionCapabilities"`
@@ -394,6 +401,7 @@ func (a *acpController) initialize() {
 	a.state.Busy = ""
 	a.state.Agent = init.Info
 	a.state.CanLoad = init.Capabilities.Load
+	a.mcpHTTP = init.Capabilities.MCP.HTTP
 	var object map[string]any
 	a.state.CanList = json.Unmarshal(init.Capabilities.Sessions.List, &object) == nil && object != nil
 	a.publishLocked()

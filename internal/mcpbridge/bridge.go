@@ -9,9 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -38,10 +38,10 @@ func (b bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 // Run owns the stdio connection until EOF/cancellation. Secrets are supplied by
 // the launcher through environment variables, never command-line arguments.
 func Run(ctx context.Context, endpoint, token string, input io.ReadCloser, output io.WriteCloser) error {
-	address, err := url.Parse(endpoint)
-	if err != nil || address.Host == "" || (address.Scheme != "http" && address.Scheme != "https") || address.User != nil || address.RawQuery != "" || address.Fragment != "" || len(endpoint) > 4096 || token == "" || len(token) > 1024 || strings.ContainsAny(token, " \r\n\t") {
+	if err := (api.AgentMCP{URL: endpoint, Token: token}).Validate(); err != nil {
 		return errors.New("invalid MCP bridge configuration")
 	}
+	address, _ := url.Parse(endpoint)
 	client := mcp.NewClient(&mcp.Implementation{Name: "dune-mcp-bridge", Version: "1"}, nil)
 	httpClient := &http.Client{Transport: bearerTransport{endpoint: address, token: token}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)

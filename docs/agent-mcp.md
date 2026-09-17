@@ -34,3 +34,9 @@ ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/hea
 只支持 stdio MCP 的 Agent 可由启动适配器调用当前 Dune 程序的内部 `__agent-mcp` 入口。它在常规机器配置解析前启动，只从 `DUNE_AGENT_MCP_URL` / `DUNE_AGENT_MCP_TOKEN` 环境变量取配置，stdout 专用于 MCP。它不提供协作 CLI，也不持有队列或业务状态；工具 schema、说明和调用结果来自宿主 HTTP MCP。
 
 bridge 固定目标 URL，不接受 userinfo、query 或 fragment，不跟随 HTTP 重定向，凭据只发往配置的 endpoint。初始化和目录读取有超时，工具列表与输入帧有上限；失去调用回执时返回 `RESULT_UNKNOWN`，不重连重放。stdio EOF 或取消会释放上游连接。真实进程、HTTP MCP 与官方客户端测试覆盖了这些边界；厂商 Agent 的启动注入另行验收。
+
+## fabricd managed ACP 配置
+
+SDK `ConfigureAgentMCP` 经 Gateway 调用 `acp.mcp.configure`，参数仅含宿主 endpoint 与本次凭据。fabricd 在 ACP initialize 确认后、首次原生会话之前接受一次配置；后续替换或并发第二次配置返回冲突。`agentCapabilities.mcpCapabilities.http` 为 true 时生成 HTTP 配置，否则使用当前 Runner 程序的内部 stdio bridge；宿主不指定 Runner 的 executable 路径。
+
+Profile 的 `require_agent_mcp` 只适用于 managed ACP。设置后，未配置 MCP 的原生动作不会受理，因此 Runtime 出现在列表与宿主完成注入之间的竞态不会创建缺少 MCP 的会话。配置保存在 controller 内存，后续所有 new/load（含 Web 通用动作入口）复用；公开 state 只返回 `mcp_transport`。退出 Runtime 或 fabricd 后不恢复凭据配置。原始 ACP 透传仍由调用方自行提供配置。

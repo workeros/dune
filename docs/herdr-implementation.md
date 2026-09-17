@@ -28,6 +28,7 @@
 - [x] MCP HTTP 接入：九项工具、无状态协议请求、凭据与活 Runtime 校验、Tenant 隔离和部分结果保留。
 - [x] ACP MCP 配置诊断脱敏：inspector 请求/结构化响应和操作错误隐藏连接配置，原生 RPC 保留真实值。
 - [x] 原生 stdio MCP bridge：内部入口、环境凭据、官方协议转发、断线不重放和退出清理。
+- [x] fabricd MCP 配置：首次原生会话前固定配置、能力选择 HTTP/stdio、所有 managed new/load 复用与启动门禁。
 - [ ] MCP 注入后的运行凭据脱敏验收：实际厂商日志和其他输出位置。
 - [ ] MCP 注入：managed ACP 配置、受支持 PTY 适配器与必要的 stdio bridge。
 - [ ] 两产品协作交互：pending、操作进度、输出不完整与引用失效提示。
@@ -88,3 +89,5 @@
 - ACP MCP 诊断脱敏：fabricd / host 全量包回归、新增 inspector 原生 RPC 不变/URL/header/env/argv/结构化错误脱敏定向 race、fabricd vet 通过。生产注入与真实厂商日志仍待验证。
 
 - stdio MCP bridge：Go/race 与 vet 通过；真实 HTTP MCP 服务和官方 stdio 客户端验证初始化后 context 释放不破坏连接、schema/call 转发、EOF/取消退出、断线仅投递一次、重定向不转发凭据。编译后的 Dune 程序在无机器配置的目录完成 stdio initialize/list/call，stdout/stderr 无测试凭据。尚未注入厂商 Agent。
+
+- fabricd MCP 配置：api/access/client/fabricd/bridge 全量 Go 回归、配置/握手/并发/协议边界定向 race 和相关 vet 通过。验证 HTTP 能力解析、stdio argv/env、首次原生动作门禁、new/load 配置不变、并发唯一配置与公开状态/访问审计不包含凭据。宿主自动签发与生产启动接入另行提交。

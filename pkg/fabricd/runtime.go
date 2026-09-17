@@ -713,6 +713,7 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 	r.p = proc
 	if p.ManagedACP {
 		r.acp = newACPController(r)
+		r.acp.requireMCP = p.RequireAgentMCP
 	}
 	sub, _ := r.subscribe(true)
 	d.mu.Lock()

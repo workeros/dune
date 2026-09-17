@@ -28,6 +28,9 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 	if !a.state.Ready {
 		return api.AgentOperation{}, fmt.Errorf("ACP is not ready")
 	}
+	if a.requireMCP && a.state.MCPTransport == "" {
+		return api.AgentOperation{}, &api.Error{Code: "AGENT_NOT_READY", Detail: "Agent MCP configuration has not been confirmed"}
+	}
 	if (req.Action == "list" && !a.state.CanList) || (req.Action == "load" && !a.state.CanLoad) {
 		return api.AgentOperation{}, &api.Error{Code: "UNSUPPORTED", Detail: "Agent did not advertise session/" + req.Action}
 	}
@@ -99,7 +102,11 @@ func (a *acpController) startNextLocked() {
 		params := map[string]any{}
 		switch req.Action {
 		case "new", "load":
-			params = map[string]any{"cwd": req.Cwd, "mcpServers": []any{}}
+			servers := a.mcpServers
+			if servers == nil {
+				servers = []any{}
+			}
+			params = map[string]any{"cwd": req.Cwd, "mcpServers": servers}
 			if req.Action == "load" {
 				params["sessionId"] = req.SessionID
 			}

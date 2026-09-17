@@ -29,6 +29,12 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	var err error
 	switch m.Operation {
 	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
+	case "acp.mcp.configure":
+		var config api.AgentMCP
+		err = decode(&config)
+		if err == nil {
+			err = config.Validate()
+		}
 	case "profile.prepare", "profile.start":
 		var p api.Profile
 		err = decode(&p)
