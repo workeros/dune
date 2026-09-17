@@ -28,3 +28,9 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 入口已装配；生产启动尚未自动签发或注入凭据。接下来在 managed ACP 与受支持 PTY 的本次启动配置中注入 MCP，处理 ACP inspector 脱敏及仅支持 stdio 的 bridge，并验证 Runner 对宿主 HTTP 地址的可达性。
 
 ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/header 与 stdio argv/env；发给 Agent 的真实 RPC 保持原样。Agent 在结构化错误中回显这份配置时，inspector 和操作错误也会脱敏。注入后还需验证实际厂商日志和其他输出位置，不把这一检查等同于完整凭据防泄露验收。
+
+## 原生 stdio bridge
+
+只支持 stdio MCP 的 Agent 可由启动适配器调用当前 Dune 程序的内部 `__agent-mcp` 入口。它在常规机器配置解析前启动，只从 `DUNE_AGENT_MCP_URL` / `DUNE_AGENT_MCP_TOKEN` 环境变量取配置，stdout 专用于 MCP。它不提供协作 CLI，也不持有队列或业务状态；工具 schema、说明和调用结果来自宿主 HTTP MCP。
+
+bridge 固定目标 URL，不接受 userinfo、query 或 fragment，不跟随 HTTP 重定向，凭据只发往配置的 endpoint。初始化和目录读取有超时，工具列表与输入帧有上限；失去调用回执时返回 `RESULT_UNKNOWN`，不重连重放。stdio EOF 或取消会释放上游连接。真实进程、HTTP MCP 与官方客户端测试覆盖了这些边界；厂商 Agent 的启动注入另行验收。
