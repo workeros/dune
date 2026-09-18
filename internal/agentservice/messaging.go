@@ -61,14 +61,14 @@ func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents
 	if err != nil {
 		return agents.Operation{}, submissionError(err)
 	}
-	result := s.describeOperation(ctx, scope, ref.Target, accepted)
+	result := describeOperation(ref.Target, accepted)
 	if request.WaitMS > 0 && !accepted.Terminal() {
 		completed, waitErr := connection.WaitAgentOperation(ctx, runtime, api.AgentOperationWait{Ref: accepted.Ref, TimeoutMS: request.WaitMS})
 		if waitErr != nil {
 			// The accepted reference remains usable after a failed optional wait.
 			return result, waitErr
 		}
-		result = s.describeOperation(ctx, scope, ref.Target, completed)
+		result = describeOperation(ref.Target, completed)
 	}
 	return result, nil
 }
@@ -101,7 +101,7 @@ func (s *Service) SendKeys(ctx context.Context, scope agents.Scope, request agen
 	if err != nil {
 		return agents.Operation{}, submissionError(err)
 	}
-	return s.describeOperation(ctx, scope, ref.Target, accepted), nil
+	return describeOperation(ref.Target, accepted), nil
 }
 
 func nativePTYTarget(runtime api.Runtime) (string, string) {
@@ -149,7 +149,7 @@ func (s *Service) Wait(ctx context.Context, scope agents.Scope, request agents.W
 	if err != nil {
 		return agents.WaitResult{}, err
 	}
-	result := s.describeOperation(ctx, scope, ref.Target, operation)
+	result := describeOperation(ref.Target, operation)
 	return agents.WaitResult{Operation: &result, TimedOut: !operation.Terminal()}, nil
 }
 
@@ -180,14 +180,14 @@ func (s *Service) waitActivity(ctx context.Context, scope agents.Scope, request 
 			return agents.WaitResult{}, err
 		}
 		if activityMatches(runtime, request.Until) {
-			agent := s.describe(ctx, scope, resource.Runner, runtime)
+			agent := describe(resource.Runner, runtime)
 			return agents.WaitResult{Agent: &agent}, nil
 		}
 		select {
 		case <-ctx.Done():
 			return agents.WaitResult{}, ctx.Err()
 		case <-timer.C:
-			agent := s.describe(ctx, scope, resource.Runner, runtime)
+			agent := describe(resource.Runner, runtime)
 			return agents.WaitResult{Agent: &agent, TimedOut: true}, nil
 		case <-ticker.C:
 		}
@@ -232,9 +232,9 @@ func (s *Service) Read(ctx context.Context, scope agents.Scope, request agents.R
 	if err != nil {
 		return agents.ReadResult{}, err
 	}
-	operation := s.describeOperation(ctx, scope, ref.Target, output.AgentOperation)
+	operation := describeOperation(ref.Target, output.AgentOperation)
 	output.AgentOperation = operation.AgentOperation
-	return agents.ReadResult{Operation: &agents.OperationOutput{AgentOperationOutput: output, RecoveryError: operation.RecoveryError}}, nil
+	return agents.ReadResult{Operation: &agents.OperationOutput{AgentOperationOutput: output}}, nil
 }
 
 func (s *Service) readSnapshot(ctx context.Context, scope agents.Scope, request agents.ReadRequest) (agents.ReadResult, error) {
@@ -261,16 +261,10 @@ func (s *Service) readSnapshot(ctx context.Context, scope agents.Scope, request 
 	if err != nil {
 		return agents.ReadResult{}, err
 	}
-	return agents.ReadResult{Snapshot: &agents.Snapshot{Agent: s.describe(ctx, scope, resource.Runner, runtime), Terminal: terminal}}, nil
+	return agents.ReadResult{Snapshot: &agents.Snapshot{Agent: describe(resource.Runner, runtime), Terminal: terminal}}, nil
 }
 
-func (s *Service) describeOperation(ctx context.Context, scope agents.Scope, target workbench.AgentTarget, operation api.AgentOperation) agents.Operation {
+func describeOperation(target workbench.AgentTarget, operation api.AgentOperation) agents.Operation {
 	operation.Ref = operationRef(target, operation.Ref)
-	result := agents.Operation{AgentOperation: operation}
-	if operation.NativeSession != nil {
-		if _, err := s.Store.ObserveAgentSession(ctx, scope.OwnerID, target, *operation.NativeSession); captureFailed(err) {
-			result.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
-		}
-	}
-	return result
+	return agents.Operation{AgentOperation: operation}
 }

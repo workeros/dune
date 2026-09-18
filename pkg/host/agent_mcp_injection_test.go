@@ -91,7 +91,7 @@ func readInjectedMCP(t *testing.T, filename string) injectedMCPServer {
 	return server
 }
 
-func TestAgentMCPInjectionStartsSwitchesAndResumesWithUsableCredentials(t *testing.T) {
+func TestAgentMCPInjectionStartsSwitchesAndRejectsExitedCredentials(t *testing.T) {
 	for _, transport := range []string{"http", "stdio"} {
 		t.Run(transport, func(t *testing.T) {
 			f := openExecutorFixture(t)
@@ -110,9 +110,8 @@ func TestAgentMCPInjectionStartsSwitchesAndResumesWithUsableCredentials(t *testi
 			if err != nil || credential.Target.Runtime.ID != started.Runtime.ID {
 				t.Fatal("injected credential was not bound to the recorded Runtime", err)
 			}
-			stored, err := f.app.store.AgentSession(t.Context(), f.owner, started.Session.ID)
-			if err != nil || !stored.Launch.Profile.RequireAgentMCP || bytes.Contains(api.Payload(stored.Launch), []byte(token)) || bytes.Contains(api.Payload(started), []byte(token)) {
-				t.Fatal("launch snapshot or public response contains the credential")
+			if bytes.Contains(api.Payload(started), []byte(token)) {
+				t.Fatal("public response contains credential")
 			}
 			if _, err := connection.ConfigureAgentMCP(t.Context(), *started.Runtime, api.AgentMCP{URL: f.app.agentMCPURL, Token: token}); errorCode(err) != "CONFLICT" {
 				t.Fatal("configured running credential could be replaced", err)
@@ -121,35 +120,15 @@ func TestAgentMCPInjectionStartsSwitchesAndResumesWithUsableCredentials(t *testi
 			if readInjectedMCP(t, filename).token() != token {
 				t.Fatal("native switch rotated the process credential")
 			}
-			// Return to the saved conversation, then explicitly recover its process.
-			directoryAction(t, connection, *started.Runtime, api.ACPAction{Action: "load", SessionID: started.Session.Native.ID, Cwd: started.Session.Native.Cwd})
-			current, err := f.app.AgentDirectory().Get(t.Context(), f.agentScope(), started.AgentRef)
-			if err != nil {
-				t.Fatal(err)
+			stopAgentRuntime(t, connection, *started.Runtime)
+			if f.app.agentService().VerifyCaller(t.Context(), credential.Scope, credential.Target) == nil {
+				t.Fatal("exited caller remained authorized")
 			}
-			stopRecoveryRuntime(t, connection, *started.Runtime)
-			resumed, err := f.app.AgentRestorer().Resume(t.Context(), f.agentScope(), agents.ResumeRequest{SessionID: current.Session.ID, Revision: current.Session.Revision})
-			if err != nil || resumed.Operation == nil || resumed.Operation.State != "completed" {
-				t.Fatal("resume could not use the new injected credential", err)
+			page, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
+			if err != nil || len(page.Items) != 1 || page.Items[0].Runtime.State != "exited" {
+				t.Fatal("discovery restarted exited Agent", err)
 			}
-			nextToken := readInjectedMCP(t, filename).token()
-			if nextToken == token {
-				t.Fatal("native recovery reused the old process credential")
-			}
-			if old, err := f.app.store.ReadAgentCredential(t.Context(), token, ""); err == nil && f.app.agentService().VerifyCaller(t.Context(), old.Scope, old.Target) == nil {
-				t.Fatal("old credential remained valid after recovery")
-			}
-			currentCredential, err := f.app.store.ReadAgentCredential(t.Context(), nextToken, "")
-			if err != nil || currentCredential.Target.Runtime.ID != resumed.Runtime.ID {
-				t.Fatal("recovery credential has wrong Runtime", err)
-			}
-			// A repeated recovery request only follows the existing attempt.
-			if _, err := f.app.AgentRestorer().Resume(t.Context(), f.agentScope(), agents.ResumeRequest{SessionID: current.Session.ID, Revision: current.Session.Revision}); err != nil {
-				t.Fatal(err)
-			}
-			if readInjectedMCP(t, filename).token() != nextToken {
-				t.Fatal("duplicate resume rotated the current credential")
-			}
+
 		})
 	}
 }
@@ -173,7 +152,7 @@ func TestAgentMCPInjectionFailureRetainsRuntimeWithoutRepeatingNativeStart(t *te
 				code, newCount = "SESSION_FAILED", 1
 			}
 			result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
-			if errorCode(err) != code || result.Runtime == nil || result.Session == nil || result.AgentRef == "" {
+			if errorCode(err) != code || result.Runtime == nil || result.AgentRef == "" {
 				t.Fatal("MCP failure lost confirmed Runtime", err)
 			}
 			if newCount == 0 && result.Operation != nil || newCount == 1 && (result.Operation == nil || result.Operation.State != "failed") {

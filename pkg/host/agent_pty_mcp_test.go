@@ -82,7 +82,7 @@ func exerciseHostNativeMCP(args []string) bool {
 	return err == nil
 }
 
-func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
+func TestPTYMCPInjectionAuthenticatesAndRejectsExitedCaller(t *testing.T) {
 	for _, agent := range []string{"claude", "codex"} {
 		t.Run(agent, func(t *testing.T) {
 			f := openExecutorFixture(t)
@@ -96,13 +96,13 @@ func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
 			}))
 			defer host.Close()
 			f.app.agentMCPURL = host.URL + "/api/v1/agent-mcp"
-			profile := nativeRecoveryProfile(t, f, agent)
+			profile := nativeFixtureProfile(t, f, agent)
 			profile.Env["DUNE_HOST_NATIVE_MCP_RESULT"] = filepath.Join(f.workspace, "mcp-calls")
 			started, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
-			if err != nil || started.Runtime == nil || started.Session == nil {
+			if err != nil || started.Runtime == nil {
 				t.Fatal("native MCP launch failed", err)
 			}
-			session := awaitNativeIndex(t, f, started.Session.ID)
+			awaitNativeRuntime(t, f, started.Runtime.ID)
 			waitLaunchFile(t, profile.Env["DUNE_HOST_NATIVE_MCP_RESULT"], "ok\n")
 			mu.Lock()
 			token := received[0]
@@ -111,9 +111,8 @@ func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
 			if err != nil || credential.Target.Runtime.ID != started.Runtime.ID {
 				t.Fatal("MCP credential preceded or mismatched Runtime binding", err)
 			}
-			stored, err := f.app.store.AgentSession(t.Context(), f.owner, session.ID)
-			if err != nil || !stored.Launch.Profile.RequireAgentMCP || bytes.Contains(api.Payload(stored.Launch), []byte(token)) || bytes.Contains(api.Payload(started), []byte(token)) {
-				t.Fatal("native credential persisted in launch snapshot or public result")
+			if bytes.Contains(api.Payload(profile), []byte(token)) || bytes.Contains(api.Payload(started), []byte(token)) {
+				t.Fatal("native credential leaked into Profile or public response")
 			}
 			connection, closeConnection, err := (&runnerExecutor{app: f.app}).connect(t.Context(), f.principal, f.owner, f.binding, "runtime.stop")
 			if err != nil {
@@ -123,33 +122,15 @@ func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
 			if err := connection.Stop(t.Context(), *started.Runtime); err != nil {
 				t.Fatal(err)
 			}
-			request := agents.ResumeRequest{SessionID: session.ID, Revision: session.Revision}
-			resumed, err := f.app.AgentRestorer().Resume(t.Context(), f.agentScope(), request)
-			if err != nil || resumed.Session == nil || resumed.Session.Attempt.State != "ready" {
-				t.Fatal("native resume could not authenticate MCP", err)
+			if f.app.agentService().VerifyCaller(t.Context(), credential.Scope, credential.Target) == nil {
+				t.Fatal("exited native caller remained authorized")
 			}
-			waitLaunchFile(t, profile.Env["DUNE_HOST_NATIVE_MCP_RESULT"], "ok\nok\n")
-			mu.Lock()
-			nextToken := received[len(received)-1]
-			mu.Unlock()
-			if nextToken == token {
-				t.Fatal("resume reused old process credential")
+			page, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
+			if err != nil || len(page.Items) > 0 {
+				t.Fatal("discovery restarted exited native Agent", err)
 			}
-			if old, err := f.app.store.ReadAgentCredential(t.Context(), token, ""); err == nil && f.app.agentService().VerifyCaller(t.Context(), old.Scope, old.Target) == nil {
-				t.Fatal("old native credential remained usable")
-			}
-			credential, err = f.app.store.ReadAgentCredential(t.Context(), nextToken, "")
-			if err != nil || credential.Target.Runtime.ID != resumed.Runtime.ID {
-				t.Fatal("wrong recovered MCP Runtime", err)
-			}
-			duplicate, err := f.app.AgentRestorer().Resume(t.Context(), f.agentScope(), request)
-			if err != nil || duplicate.Runtime == nil || duplicate.Runtime.ID != resumed.Runtime.ID {
-				t.Fatal("duplicate request did not follow native resume", err)
-			}
-			if _, err := f.app.store.ReadAgentCredential(t.Context(), nextToken, ""); err != nil {
-				t.Fatal("duplicate resume rotated credential", err)
-			}
-			waitLaunchFile(t, profile.Env["DUNE_HOST_NATIVE_MCP_RESULT"], "ok\nok\n")
+			waitLaunchFile(t, profile.Env["DUNE_HOST_NATIVE_MCP_RESULT"], "ok\n")
+
 		})
 	}
 }
@@ -157,9 +138,9 @@ func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
 func TestPTYMCPConfigurationFailureKeepsOneDiscoverableRuntime(t *testing.T) {
 	f := openExecutorFixture(t)
 	f.app.agentMCPURL = "https://host.test/mcp?invalid=query"
-	profile := nativeRecoveryProfile(t, f, "claude")
+	profile := nativeFixtureProfile(t, f, "claude")
 	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
-	if errorCode(err) != "MCP_CONFIGURATION_FAILED" || result.Runtime == nil || result.Session == nil || result.AgentRef == "" {
+	if errorCode(err) != "MCP_CONFIGURATION_FAILED" || result.Runtime == nil || result.AgentRef == "" {
 		t.Fatal("native configuration failure lost Runtime", err)
 	}
 	page, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})

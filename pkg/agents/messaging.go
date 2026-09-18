@@ -21,12 +21,10 @@ type KeysRequest struct {
 // directly to fabricd. They grant no authority and do not imply persistence.
 type Operation struct {
 	api.AgentOperation
-	RecoveryError string `json:"recovery_error,omitempty"`
 }
 
 type OperationOutput struct {
 	api.AgentOperationOutput
-	RecoveryError string `json:"recovery_error,omitempty"`
 }
 
 // Select exactly one reference. Until applies only to Agent activity: idle,

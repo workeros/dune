@@ -17,7 +17,7 @@
 
 Agent 引用固定 Runner binding、Runtime 实例及已知原生 ID / cwd。prompt 先读取当前 Runtime，再把确认的原生 ID / cwd 一起交给 fabricd；fabricd 在入队与出队时再次检查。尚未创建 / 加载原生对话时返回 SESSION_REQUIRED。PTY 从可信活动摘要取得目标 CLI 类型，fabricd 在写入前检查前台及 blocked / bracketed-paste 状态。
 
-通信服务的 operation_ref 将完整目标与 fabricd 操作 ID 编码成不透明选择器，调用方原样保存即可。它不是凭据，不绑定某个宿主 Pod；每次使用重新授权。原生会话切换不影响旧操作的结果读取，Runtime / fabricd 失效或记录淘汰则返回明确错误，不能改读最新会话。读取结果中若有可靠原生确认，服务同时采集恢复索引；索引失败用 recovery_error 表示，不覆盖已经完成的执行结果。
+通信服务的 operation_ref 将完整目标与 fabricd 操作 ID 编码成不透明选择器，调用方原样保存即可。它不是凭据，不绑定某个宿主 Pod；每次使用重新授权。原生会话切换不影响旧操作的结果读取，Runtime / fabricd 失效或记录淘汰则返回明确错误，不能改读最新会话。操作结果保留该操作的原生确认；宿主不写恢复索引。
 
 PTY 的 delivered 只证明输入已投递。需要另外以 agent_ref 观察活动和屏幕，不提供逐 prompt 输出。ACP 的 completed 来自匹配 RPC，也不意味着用户的任务已通过验收。
 

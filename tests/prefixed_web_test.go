@@ -283,7 +283,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	terminalProfile := profile(dir, "pty", "/bin/sh")
 	var started agents.LaunchResult
 	do("POST", executionRoute("sessions"), agents.StartRequest{Custom: &terminalProfile}, &started)
-	if started.Runtime == nil || started.Session == nil {
+	if started.Runtime == nil {
 		t.Fatal("Agent startup did not return its Runtime and saved launch")
 	}
 	runtime := *started.Runtime

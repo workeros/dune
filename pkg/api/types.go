@@ -45,6 +45,9 @@ type Command struct {
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
 }
 type Profile struct {
+	// Informational project labels; they confer no authority.
+	ProjectID        string            `json:"project_id,omitempty" yaml:"project_id,omitempty"`
+	DirectoryID      string            `json:"directory_id,omitempty" yaml:"directory_id,omitempty"`
 	Version          int               `json:"version" yaml:"version"`
 	Kind             string            `json:"kind" yaml:"kind"`
 	WorkingDirectory string            `json:"working_directory" yaml:"working_directory"`
@@ -135,6 +138,14 @@ func (p Profile) Validate() error {
 	if err != nil || len(encoded) > MaxProfileBytes {
 		return fmt.Errorf("Profile exceeds %d bytes", MaxProfileBytes)
 	}
+	for _, label := range []string{p.ProjectID, p.DirectoryID} {
+		if len(label) > 256 || strings.ContainsFunc(label, unicode.IsControl) {
+			return fmt.Errorf("invalid project label")
+		}
+	}
+	if p.DirectoryID != "" && p.ProjectID == "" || p.Kind != "agent" && p.ProjectID != "" {
+		return fmt.Errorf("project labels require an Agent and a project")
+	}
 	if p.Version != 1 {
 		return fmt.Errorf("version: 1 required")
 	}
@@ -202,6 +213,8 @@ type ExecResult struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
+	ProjectID        string         `json:"project_id,omitempty"`
+	DirectoryID      string         `json:"directory_id,omitempty"`
 	Title            string         `json:"title,omitempty"`
 	WorkingDirectory string         `json:"working_directory,omitempty"`
 	ID               string         `json:"id"`
@@ -219,7 +232,7 @@ type Runtime struct {
 
 // AgentActivity is a lightweight observation, separate from process liveness.
 // Unknown is deliberate when a PTY has no supported activity integration.
-// Epoch/Sequence identify changes for per-user read markers, not prompt results.
+// Epoch/Sequence identify changes for browser unread indicators, not prompt results.
 type AgentActivity struct {
 	State      string `json:"state"`
 	Source     string `json:"source"`

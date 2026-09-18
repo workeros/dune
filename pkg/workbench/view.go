@@ -62,10 +62,9 @@ type SplitNode struct {
 }
 
 type Pane struct {
-	Target          AgentTarget `json:"target"`
-	ProjectID       string      `json:"project_id,omitempty"`
-	DirectoryID     string      `json:"directory_id,omitempty"`
-	SessionRecordID string      `json:"session_record_id,omitempty"`
+	Target      AgentTarget `json:"target"`
+	ProjectID   string      `json:"project_id,omitempty"`
+	DirectoryID string      `json:"directory_id,omitempty"`
 }
 
 // Panes validates structural limits before returning the leaf selections. At
@@ -87,7 +86,7 @@ func (v ViewSpec) Panes() ([]Pane, error) {
 			if err := pane.Target.Validate(); err != nil {
 				return err
 			}
-			for _, value := range []string{pane.ProjectID, pane.DirectoryID, pane.SessionRecordID} {
+			for _, value := range []string{pane.ProjectID, pane.DirectoryID} {
 				if value != "" && !validText(value, 256) {
 					return fmt.Errorf("invalid pane reference")
 				}

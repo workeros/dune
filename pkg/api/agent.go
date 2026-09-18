@@ -17,7 +17,7 @@ type ACPAction struct {
 
 // NativeSession is a confirmed native conversation, observed from a matching
 // new/load response or a supported native hook. Sequence orders confirmations
-// within one Runtime; it is internal recovery metadata, not an output cursor.
+// within one Runtime; it describes native state, not an output cursor.
 // A failed or pending session switch does not replace the last confirmation.
 type NativeSession struct {
 	ID              string `json:"id"`

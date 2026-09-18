@@ -19,16 +19,11 @@ import (
 
 // Opt in with an isolated, already authenticated Codex home. Ordinary tests
 // never invoke a model or change the developer's native CLI configuration.
-func TestRealNativeAgentMCPRecovery(t *testing.T) {
-	testRealNativeAgent(t, true)
-}
-
-// Native MCP initialization and /mcp do not submit a model request.
 func TestRealNativeAgentMCPStartup(t *testing.T) {
-	testRealNativeAgent(t, false)
+	testRealNativeAgent(t)
 }
 
-func testRealNativeAgent(t *testing.T, checkRecovery bool) {
+func testRealNativeAgent(t *testing.T) {
 	t.Helper()
 	if os.Getenv("DUNE_REAL_AGENT") != "1" || os.Getenv("DUNE_NATIVE_CODEX_HOME") == "" {
 		t.Skip("set DUNE_REAL_AGENT=1 and DUNE_NATIVE_CODEX_HOME for native Codex acceptance")
@@ -96,13 +91,9 @@ func testRealNativeAgent(t *testing.T, checkRecovery bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !checkRecovery && toolLists.Load() > 0 {
+		if toolLists.Load() > 0 {
 			t.Log("Native Codex initialized its injected bridge and loaded the MCP tool catalog without a model call")
 			return
-		}
-		if current.NativeSession != nil && toolCalls.Load() > 0 {
-			t.Log("Native SessionStart and MCP tool call confirmed")
-			break
 		}
 		snapshot, err := connection.CaptureTerminal(t.Context(), *started.Runtime)
 		if err != nil {
@@ -131,9 +122,6 @@ func testRealNativeAgent(t *testing.T, checkRecovery bool) {
 		}
 		if !submitted && strings.Contains(snapshot.Content, "OpenAI Codex") && strings.Contains(snapshot.Content, "model:") {
 			prompt := "/mcp"
-			if checkRecovery {
-				prompt = "Use the dune-agents MCP agents_list tool exactly once, then reply DUNE_MCP_VERIFIED. Do not run shell commands or read/write files."
-			}
 			operation, err := connection.PTYPrompt(t.Context(), *started.Runtime, api.PTYPrompt{Agent: "codex", Text: prompt})
 			if err != nil {
 				t.Fatal(err)
@@ -152,13 +140,4 @@ func testRealNativeAgent(t *testing.T, checkRecovery bool) {
 			t.Fatalf("Native acceptance incomplete (state %s):\n%s", current.State, snapshot.Content)
 		}
 	}
-	session := awaitNativeIndex(t, f, started.Session.ID)
-	if err := connection.Stop(t.Context(), *started.Runtime); err != nil {
-		t.Fatal(err)
-	}
-	resumed, err := f.app.AgentRestorer().Resume(t.Context(), f.agentScope(), agents.ResumeRequest{SessionID: session.ID, Revision: session.Revision})
-	if err != nil || resumed.Session == nil || resumed.Runtime == nil || resumed.Session.Attempt.State != "ready" || resumed.Session.Native == nil || resumed.Session.Native.ID != session.Native.ID {
-		t.Fatal("native CLI did not confirm recovery of the saved session", err)
-	}
-	t.Log("Native CLI recovered the exact saved session")
 }

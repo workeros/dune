@@ -1,11 +1,11 @@
 # managed ACP 原生会话编排
 
-`App.AgentNativeSessions().OpenSession(scope, request)` 在已有 Runtime 内执行明确的 `new` / `load`。请求包含 `agent_ref`、`action`、load 所需 `session_id`、可选绝对 `cwd` 和 `wait_ms`（0–30000）。Scope 来自宿主身份；PTY 不适用。两产品共享 `POST /api/v1[/tenants/{tenant}]/agents/open-session`。
+`App.AgentNativeSessions().OpenSession(scope, request)` 只在已有 Runtime 内执行显式 `new` / `load`。请求包含 `agent_ref`、`action`、load 的 `session_id`、可选绝对 `cwd` 和 `wait_ms`（0–30000）。两产品共享 `POST /api/v1[/tenants/{tenant}]/agents/open-session`，PTY 不适用。
 
-服务检查 Tenant / Owner、Runner binding、Runtime 和所选原生引用，确认 ACP 就绪后经 SDK / Gateway 提交给 fabricd。load 能力由 fabricd 验证，不调用 list，也不回退 new。排队与执行仍只发生在 fabricd。返回 [操作引用](agent-messaging.md)，可经 `agents/wait`、`agents/read` 查询；可选等待失败也保留已经受理的引用。
+服务校验身份、Tenant、Runner binding、Runtime 和原生会话引用，确认 ACP 就绪后经 SDK / Gateway 进入 fabricd 的同一队列。load 能力由 fabricd 检查，不要求 list，不回退 new。可选等待失败也保留操作引用，供 wait/read 查询。
 
-初始启动在保存实际配置和 Runtime 后签发本次调用凭据，配置 fabricd 的 MCP，再走同一提交路径自动创建原生会话。配置保留在 Runtime 内，后续 new/load 复用；详见 [MCP 注入](agent-mcp.md)。正常返回时可以直接 prompt；未完成时返回 pending/running 操作供查询。会话只在匹配 RPC 确认后入索引，new/load 失败、pending 或响应丢失不改变原来的原生 ID。成功 load 切换会话会建立独立恢复记录，保留原配置来源。
+初始启动在确认 Runtime 后配置 MCP，再提交一次 new。成功 RPC 才更新当前 `native_session`；pending、失败或未知结果不假称切换成功。输出中的原生确认属于该操作，Runtime 中保留最新确认。宿主不复制这些信息到恢复数据库。
 
-操作 wait/read 与共享发现同样能保存可靠确认；这些操作只补索引，不重做 new/load。Runtime 消失前仍未观察到确认时不能声称可恢复。两产品 Web 的 new/load/prompt 使用共享 Agent 引用和提交入口；list、permission、cancel 沿用 managed 控制路径，原始 ACP 透传继续由调用方编排。
+这项能力用于存活 ACP 进程中的原生对话切换；进程退出后没有重启和工作台恢复。两产品 new/load/prompt 使用共享引用，list、permission、cancel 沿用 managed 控制路径；原始 ACP 透传仍由调用方编排。
 
-本地 Gateway/fabricd 验证覆盖启动即用、无发现请求时的索引保存、busy 时 load 排队、匹配操作确认后切换索引、旧原生引用拒绝、跨 Tenant 拒绝，以及初始 new 失败或回执丢失时保留 Runtime/操作且不重放。使用协议夹具，不代表厂商 Agent 或 MCP 注入验收。
+本地协议回归覆盖启动后立即 prompt、busy 时 load 排队、按匹配操作确认切换、旧引用与跨 Tenant 拒绝，以及初始化失败时保留 Runtime / 操作且不重放。

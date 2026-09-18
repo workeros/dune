@@ -47,8 +47,8 @@ DUNE_TEST_POSTGRES='postgres://…' go test ./internal/metadata ./pkg/fabricd ./
 
 重点检查：
 
-- 本地登录 schema 包含 users、sessions、runners、enrollments、routes、profiles、profile_revisions；
-- 企业 identity 模式包含 runners、enrollments、routes、profiles、profile_revisions；
+- 本地登录 schema 包含 users、sessions、runners、enrollments、routes、profiles、profile_revisions、projects、views、agent_credentials；
+- 企业 identity 模式包含 runners、enrollments、routes、profiles、profile_revisions、projects、views、agent_credentials；
 - route 并发竞争只有一个 owner，失租后以更高 epoch 接管；
 - 旧 owner 的发布、续租和释放均被拒绝；
 - peer owner 重新验证 Session、Runner binding 与策略；
@@ -80,6 +80,5 @@ mock ACP 只验证协议，不证明真实 Agent 可用。涉及 ACP 行为、PT
 原生 Codex 验收使用专用且已登录的 `CODEX_HOME`；测试会信任其临时工作目录和唯一注入的 SessionStart hook，不修改日常 Codex 配置。两个入口均需显式设置 `DUNE_REAL_AGENT=1 DUNE_NATIVE_CODEX_HOME=/绝对路径/隔离且已登录的目录`，普通回归默认跳过。
 
 - 启动与工具发现：`go test ./pkg/host -run '^TestRealNativeAgentMCPStartup$' -count=1 -timeout=120s -v`。实际 CLI 启动注入的 bridge，完成宿主鉴权并读取包含 `agents_list` 的 MCP 工具目录；只使用原生初始化和 `/mcp`，不提交模型请求。
-- 模型工具调用与恢复：`go test ./pkg/host -run '^TestRealNativeAgentMCPRecovery$' -count=1 -timeout=210s -v`。要求实际 `agents_list` 调用及精确原生恢复；额度不足或配置不受支持会失败，不能记为通过。
 
-启动测试通过不代表模型已经调用工具或原生恢复成功。完成验收后清理专用目录中的复制凭据。
+启动测试通过不代表模型已经调用工具；工作台不支持进程退出后的恢复。完成验收后清理专用目录中的复制凭据。

@@ -46,7 +46,6 @@ type Options struct {
 	AgentLauncher       agents.Launcher
 	AgentDirectory      agents.Directory
 	AgentMessenger      agents.Messenger
-	AgentRestorer       agents.Restorer
 	// TrustedProxies contains CIDRs allowed to supply X-Forwarded-For.
 	TrustedProxies []string
 	Binaries       string
@@ -121,12 +120,10 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	if options.TenantScoped {
 		s.projectRoutes("/api/v1/tenants/{tenant}")
 		s.viewRoutes("/api/v1/tenants/{tenant}")
-		s.agentSessionRoutes("/api/v1/tenants/{tenant}")
 		s.agentDirectoryRoutes("/api/v1/tenants/{tenant}")
 	} else {
 		s.projectRoutes("/api/v1")
 		s.viewRoutes("/api/v1")
-		s.agentSessionRoutes("/api/v1")
 		s.agentDirectoryRoutes("/api/v1")
 	}
 	if !options.TenantScoped {

@@ -96,7 +96,7 @@ func TestPTYMCPBridgeWaitsAndSurvivesFabricdRestart(t *testing.T) {
 		mcpHandler.ServeHTTP(w, r)
 	}))
 	defer host.Close()
-	runtime, stream, err := connection.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", RequireAgentMCP: true, WorkingDirectory: dir, Start: api.Command{Argv: []string{agent}}, Env: map[string]string{"DUNE_TEST_NATIVE_CLI": "1", "DUNE_TEST_NATIVE_EVENT": eventPath}})
+	runtime, stream, err := connection.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", RequireAgentMCP: true, ProjectID: "project", DirectoryID: "directory", WorkingDirectory: dir, Start: api.Command{Argv: []string{agent}}, Env: map[string]string{"DUNE_TEST_NATIVE_CLI": "1", "DUNE_TEST_NATIVE_EVENT": eventPath}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +131,10 @@ func TestPTYMCPBridgeWaitsAndSurvivesFabricdRestart(t *testing.T) {
 	}
 	defer restored.Close()
 	current, ctx := timeoutClient(t, restored)
+	observed, err := current.Get(ctx, runtime)
+	if err != nil || observed.ID != runtime.ID || observed.Incarnation != runtime.Incarnation || observed.ProjectID != "project" || observed.DirectoryID != "directory" || observed.State != "running" {
+		t.Fatal("live Runtime lost identity or project after reconnect", observed, err)
+	}
 	if _, err := current.ConfigureAgentMCP(ctx, runtime, config); err == nil {
 		t.Fatal("fabricd restart allowed credential replacement")
 	}

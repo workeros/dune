@@ -16,37 +16,6 @@ import (
 
 type launchFunc func(context.Context, agents.Scope, agents.StartRequest) (agents.LaunchResult, error)
 
-type resumeFunc func(context.Context, agents.Scope, agents.ResumeRequest) (agents.ResumeResult, error)
-
-func (f resumeFunc) Resume(ctx context.Context, scope agents.Scope, request agents.ResumeRequest) (agents.ResumeResult, error) {
-	return f(ctx, scope, request)
-}
-
-func TestAgentResumeHTTPUsesSelectedRecordAndPreservesPartialProgress(t *testing.T) {
-	f := newWorkbenchFixture(t, true)
-	calls := 0
-	f.server.options.AgentRestorer = resumeFunc(func(_ context.Context, scope agents.Scope, request agents.ResumeRequest) (agents.ResumeResult, error) {
-		calls++
-		if scope.Principal.ID != f.users[0].ID || scope.OwnerID != f.owner || request.SessionID != "chosen" || request.Revision != 5 {
-			t.Fatal("resume scope or selected revision changed")
-		}
-		return agents.ResumeResult{Session: &agents.Summary{ID: "chosen"}, Runtime: &api.Runtime{ID: "started-runtime"}}, &api.Error{Code: "RESULT_UNKNOWN", Detail: "load outcome unknown"}
-	})
-	out := f.request(t, "POST", "/agent-sessions/chosen/resume", 0, map[string]int{"revision": 5})
-	if out.Code != 503 || !bytes.Contains(out.Body.Bytes(), []byte("started-runtime")) || calls != 1 {
-		t.Fatal("resume lost partial progress", out.Code, out.Body.String(), calls)
-	}
-	if out := f.request(t, "POST", "/agent-sessions/chosen/resume", 0, agents.ResumeRequest{SessionID: "other", Revision: 5}); out.Code != 400 || calls != 1 {
-		t.Fatal("body changed selected record", out.Code, calls)
-	}
-	if out := f.request(t, "POST", "/agent-sessions/chosen/resume", 2, map[string]int{"revision": 5}); out.Code != 403 || calls != 1 {
-		t.Fatal("cross-Tenant resume", out.Code, calls)
-	}
-	if out := f.request(t, "POST", "/agent-sessions/chosen/resume", -1, map[string]int{"revision": 5}); out.Code != 401 || calls != 1 {
-		t.Fatal("anonymous resume", out.Code, calls)
-	}
-}
-
 func (f launchFunc) Start(ctx context.Context, scope agents.Scope, request agents.StartRequest) (agents.LaunchResult, error) {
 	return f(ctx, scope, request)
 }
@@ -105,43 +74,6 @@ func TestAgentDirectoryHTTPAuthenticatesBeforeDiscovery(t *testing.T) {
 	}
 }
 
-func TestAgentSessionHTTPScopesAndOmitsPrivateSnapshots(t *testing.T) {
-	for _, tenant := range []bool{false, true} {
-		t.Run(map[bool]string{false: "personal", true: "tenant"}[tenant], func(t *testing.T) {
-			f := newWorkbenchFixture(t, tenant)
-			session, err := f.store.CreateAgentSession(t.Context(), f.owner, agents.LaunchSnapshot{
-				Binding: runner.Binding{RunnerID: "r", FabricID: "f", MachineID: "m", Revision: 1}, AgentType: "fixture", Storage: "uid:1000:home:/home/fixture",
-				Profile: api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: "/workspace", Env: map[string]string{"SECRET": "private-snapshot-value"}, Start: api.Command{Argv: []string{"/private/launch-command"}}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			reader := 0
-			if tenant {
-				reader = 1
-			}
-			for _, suffix := range []string{"/agent-sessions", "/agent-sessions/" + session.ID} {
-				out := f.request(t, "GET", suffix, reader, nil)
-				if out.Code != http.StatusOK || !bytes.Contains(out.Body.Bytes(), []byte(session.ID)) {
-					t.Fatal(out.Code, out.Body.String())
-				}
-				for _, secret := range []string{"private-snapshot-value", "SECRET", "/private/launch-command", "uid:1000"} {
-					if bytes.Contains(out.Body.Bytes(), []byte(secret)) {
-						t.Fatal("private launch data exposed", secret)
-					}
-				}
-				out = f.request(t, "GET", suffix, 2, nil)
-				if bytes.Contains(out.Body.Bytes(), []byte(session.ID)) {
-					t.Fatal("cross-owner read exposed session")
-				}
-				if out := f.request(t, "GET", suffix, -1, nil); out.Code != http.StatusUnauthorized {
-					t.Fatal("anonymous read", out.Code)
-				}
-			}
-		})
-	}
-}
-
 func TestAgentStartHTTPPinsScopeAndPreservesPartialResult(t *testing.T) {
 	f := newWorkbenchFixture(t, true)
 	_, token, _, err := f.store.IssueEnrollment(t.Context(), f.owner, "development")
@@ -159,7 +91,7 @@ func TestAgentStartHTTPPinsScopeAndPreservesPartialResult(t *testing.T) {
 		if scope.Principal.ID != f.users[0].ID || scope.OwnerID != f.owner || request.Binding != binding || request.Profile.ID != "chosen" || request.Profile.Revision != 3 || request.Worktree.Path != "/new-tree" {
 			t.Fatal("HTTP changed trusted scope or launch input")
 		}
-		return agents.LaunchResult{Worktree: &api.Worktree{Path: "/new-tree", Branch: "feat/helper"}, Session: &agents.Summary{ID: "saved-attempt"}}, &api.Error{Code: "RESULT_UNKNOWN", Detail: "startup result unknown"}
+		return agents.LaunchResult{Worktree: &api.Worktree{Path: "/new-tree", Branch: "feat/helper"}}, &api.Error{Code: "RESULT_UNKNOWN", Detail: "startup result unknown"}
 	})
 	send := func(user int, body any) *httptest.ResponseRecorder {
 		payload, _ := json.Marshal(body)
@@ -174,7 +106,7 @@ func TestAgentStartHTTPPinsScopeAndPreservesPartialResult(t *testing.T) {
 	}
 	request := agents.StartRequest{Profile: &profiles.Selection{ID: "chosen", Revision: 3}, Worktree: &agents.WorktreeLocation{Path: "/new-tree", Branch: "feat/helper"}}
 	out := send(0, request)
-	if out.Code != http.StatusServiceUnavailable || !bytes.Contains(out.Body.Bytes(), []byte("RESULT_UNKNOWN")) || !bytes.Contains(out.Body.Bytes(), []byte("saved-attempt")) || !bytes.Contains(out.Body.Bytes(), []byte("/new-tree")) || calls != 1 {
+	if out.Code != http.StatusServiceUnavailable || !bytes.Contains(out.Body.Bytes(), []byte("RESULT_UNKNOWN")) || !bytes.Contains(out.Body.Bytes(), []byte("/new-tree")) || calls != 1 {
 		t.Fatal("partial result lost or replayed", out.Code, out.Body.String(), calls)
 	}
 	request.Binding = binding
@@ -188,5 +120,15 @@ func TestAgentStartHTTPPinsScopeAndPreservesPartialResult(t *testing.T) {
 	}
 	if out := send(0, api.Profile{Version: 1, Kind: "agent"}); out.Code != http.StatusBadRequest || calls != 1 {
 		t.Fatal("obsolete raw Profile contract accepted", out.Code, calls)
+	}
+}
+
+func TestRemovedRecoveryRoutesDoNotStartAgents(t *testing.T) {
+	f := newWorkbenchFixture(t, true)
+	for _, route := range []struct{ method, path string }{{"GET", "/agent-sessions"}, {"GET", "/agent-sessions/old"}, {"POST", "/agent-sessions/old/resume"}} {
+		out := f.request(t, route.method, route.path, 0, nil)
+		if out.Code != http.StatusNotFound {
+			t.Fatalf("removed route %s returned %d", route.path, out.Code)
+		}
 	}
 }

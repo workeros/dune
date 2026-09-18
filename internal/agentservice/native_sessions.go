@@ -12,6 +12,7 @@ import (
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
+	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/workbench"
 )
 
@@ -60,53 +61,43 @@ func (s *Service) OpenSession(ctx context.Context, scope agents.Scope, request a
 		return agents.Operation{}, err
 	}
 	action := api.ACPAction{Action: request.Action, SessionID: request.SessionID, Cwd: request.Cwd}
-	return s.submitACP(ctx, scope, connection, ref.Target, runtime, action, request.WaitMS)
+	return submitACP(ctx, connection, ref.Target, runtime, action, request.WaitMS)
 }
 
 // Queue ownership and completion stay in fabricd. A failed optional wait still
 // returns the accepted reference, and a caller disconnect never resubmits it.
-func (s *Service) submitACP(ctx context.Context, scope agents.Scope, connection *client.Client, target workbench.AgentTarget, runtime api.Runtime, action api.ACPAction, waitMS int) (agents.Operation, error) {
+func submitACP(ctx context.Context, connection *client.Client, target workbench.AgentTarget, runtime api.Runtime, action api.ACPAction, waitMS int) (agents.Operation, error) {
 	accepted, err := connection.ACPSubmit(ctx, runtime, action)
 	if err != nil {
 		return agents.Operation{}, submissionError(err)
 	}
-	result := s.describeOperation(ctx, scope, target, accepted)
+	result := describeOperation(target, accepted)
 	if waitMS > 0 && !accepted.Terminal() {
 		completed, err := connection.WaitAgentOperation(ctx, runtime, api.AgentOperationWait{Ref: accepted.Ref, TimeoutMS: waitMS})
 		if err != nil {
 			return result, err
 		}
-		result = s.describeOperation(ctx, scope, target, completed)
+		result = describeOperation(target, completed)
 	}
 	return result, nil
 }
 
-func (s *Service) initializeACP(ctx context.Context, scope agents.Scope, connection *client.Client, result agents.LaunchResult) (agents.LaunchResult, error) {
+func (s *Service) initializeACP(ctx context.Context, scope agents.Scope, connection *client.Client, binding runner.Binding, result agents.LaunchResult) (agents.LaunchResult, error) {
 	runtime := *result.Runtime
 	if _, err := awaitACPReady(ctx, connection, runtime); err != nil {
 		return result, &api.Error{Code: "AGENT_NOT_READY", Detail: "Runtime started but ACP initialization was not confirmed; inspect it before another start"}
 	}
-	if err := s.configureMCP(ctx, scope, connection, runtime, result.Session.Binding); err != nil {
+	if err := s.configureMCP(ctx, scope, connection, runtime, binding); err != nil {
 		return result, err
 	}
-	target := targetFor(result.Session.Binding, runtime)
-	operation, err := s.submitACP(ctx, scope, connection, target, runtime, api.ACPAction{Action: "new", Cwd: runtime.WorkingDirectory}, 30000)
+	target := targetFor(binding, runtime)
+	operation, err := submitACP(ctx, connection, target, runtime, api.ACPAction{Action: "new", Cwd: runtime.WorkingDirectory}, 30000)
 	if operation.Ref != "" {
 		result.Operation = &operation
 	}
 	if operation.NativeSession != nil {
 		runtime.NativeSession = operation.NativeSession
 		result.Runtime = &runtime
-		// The successful RPC is authoritative even when the caller disconnected.
-		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		session, saveErr := s.Store.ObserveAgentSession(saveCtx, scope.OwnerID, target, *operation.NativeSession)
-		if saveErr != nil {
-			return result, &api.Error{Code: "RECOVERY_INDEX_FAILED", Detail: "native session exists but its recovery confirmation could not be saved; do not start it again"}
-		}
-		summary := session.Summary()
-		result.Session = &summary
-		result.Operation.RecoveryError = ""
 	}
 	if err != nil {
 		return result, err
@@ -122,12 +113,8 @@ func (s *Service) initializeACP(ctx context.Context, scope agents.Scope, connect
 }
 
 type readyACP struct {
-	Ready   bool   `json:"ready"`
-	CanLoad bool   `json:"can_load"`
-	Error   string `json:"error"`
-	Agent   struct {
-		Version string `json:"version"`
-	} `json:"agent"`
+	Ready bool   `json:"ready"`
+	Error string `json:"error"`
 }
 
 func awaitACPReady(ctx context.Context, connection *client.Client, runtime api.Runtime) (readyACP, error) {

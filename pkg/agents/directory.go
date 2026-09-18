@@ -8,15 +8,13 @@ import (
 	"github.com/aiomni/dune/pkg/workbench"
 )
 
-// Agent is a live observation and optional recovery metadata. Ref fixes the
+// Agent is an observation of current fabricd state. Ref fixes the
 // concrete Runtime and its confirmed native conversation; it grants no access.
 type Agent struct {
-	Ref           string                `json:"agent_ref"`
-	Target        workbench.AgentTarget `json:"target"`
-	Runtime       api.Runtime           `json:"runtime"`
-	Runner        runner.Runner         `json:"runner"`
-	Session       *Summary              `json:"session,omitempty"`
-	RecoveryError string                `json:"recovery_error,omitempty"`
+	Ref     string                `json:"agent_ref"`
+	Target  workbench.AgentTarget `json:"target"`
+	Runtime api.Runtime           `json:"runtime"`
+	Runner  runner.Runner         `json:"runner"`
 }
 
 type RunnerAvailability struct {

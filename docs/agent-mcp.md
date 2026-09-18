@@ -2,7 +2,7 @@
 
 Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过现有 Dune 路由挂载同一入口。协议使用官方 Go MCP SDK 的 Streamable HTTP、stateless 和 JSON response 模式；宿主不持有 MCP 连接状态、任务队列或输出副本。每次请求都重新认证，协议 session ID 不授予权限。
 
-仅接受 `Authorization: Bearer <本次 Agent 凭据>`，拒绝 URL query 中的凭据、浏览器 cookie 替代认证及跨站 Origin。凭据从数据库取得调用方身份、Tenant 与启动 attempt，并经 SDK / Gateway 验证原 Runner binding 和 Runtime 仍在运行。身份命名空间变化、撤销、到期、调用 Runtime 退出均拒绝继续使用；认证依赖临时不可用时返回 503，不误报为已执行。
+仅接受 `Authorization: Bearer <本次 Agent 凭据>`，拒绝 URL query 中的凭据、浏览器 cookie 替代认证及跨站 Origin。凭据从数据库取得调用方身份、Tenant 与完整执行目标，并经 SDK / Gateway 验证原 Runner binding 和 Runtime 仍在运行。身份命名空间变化、撤销、到期、调用 Runtime 退出均拒绝继续使用；认证依赖临时不可用时返回 503，不误报为已执行。
 
 ## 工具
 
@@ -11,7 +11,7 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 | `runners_list` | 返回 Tenant 内已有 Runner、就绪状态、部分失败和分页游标 |
 | `profiles_list` | 只返回 Agent Profile 的名称、描述、固定修订与 PTY/ACP 类型；分页，不返回命令、环境或凭据 |
 | `agents_list` / `agents_get` | 共享 AgentDirectory 摘要与明确引用 |
-| `agents_start` | 选择已就绪 Runner、固定 Profile 或项目默认值、当前目录 / 新 worktree；返回 `agent_ref`、Runtime、恢复摘要和 ACP 初始操作 |
+| `agents_start` | 选择已就绪 Runner、固定 Profile 或项目默认值、当前目录 / 新 worktree；返回 `agent_ref`、Runtime、worktree 和 ACP 初始操作 |
 | `agents_prompt` | 返回本次操作引用，可选等待；PTY delivered 仅证明投递 |
 | `agents_wait` | 按 operation_ref 等待该操作，或明确按 agent_ref 观察活动；两者互斥 |
 | `agents_read` | ACP 按操作位置读有界输出；PTY 读取当前会话屏幕 |
@@ -25,11 +25,9 @@ Dune 宿主在部署前缀下提供 `POST /api/v1/agent-mcp`，SandDance 通过�
 
 真实 HTTP MCP 客户端配合本地 Gateway / fabricd 协议进程已验证：九项工具 schema、Profile 分页与 Tenant 过滤、启动 ACP 后直接提交任务、操作 wait/read、轮流进入两个独立 HTTP handler、撤销后原连接被拒绝、调用 Runtime 退出、cookie / query / Origin 拒绝以及未知结果保留引用且不重发。它证明协议与本地执行链路，不代表两个实际 Pod 或厂商 Agent 已验收。
 
-managed ACP 从工作台或 MCP 启动时，先保存 Runtime 回执，再签发凭据并配置 fabricd，最后提交初始 new；显式恢复在 load 前签发新凭据。受支持的 PTY 启动和精确恢复也先保存 Runtime 再签发配置，原生 bridge 等待此配置后才连接宿主。两产品复用同一宿主装配，endpoint 来自部署 PublicURL，保留部署路径前缀。普通终端内手动启动与原始 ACP 透传不自动改造。
+managed ACP 在确认 Runtime 后签发凭据、配置 fabricd，再提交初始 new；受支持 PTY 的 bridge 等待同样的配置。原生会话切换复用进程凭据。进程退出后不自动重启或提供工作台恢复；显式新建使用独立目标与凭据。配置不进入 Profile 或公共结果。endpoint 来自部署 PublicURL，保留路径前缀。普通终端中手动启动与原始 ACP 透传不自动改造。
 
-原生会话切换不轮换调用进程的凭据；显式恢复启动新的进程时轮换，旧 attempt 的凭据失效。凭据和 endpoint 不进入保存的 Profile 或恢复配置快照，也不返回给页面。恢复使用原配置快照，当前宿主的 MCP 地址与本次凭据作为运行注入单独处理。
-
-配置失败保留已确认的 Runtime，未提交 native new/load 时不假称已有原生会话。厂商连接 MCP 失败时依其 ACP 响应返回失败或状态，Runtime 在线不等于 MCP 工具就绪；不会因配置或 new 失败而重启/重发。真实本地 ACP 协议进程已在 HTTP 与 stdio 两条注入路径中完成 `agents_list`，验证凭据先绑定 Runtime 再使用、原生切换与恢复轮换、不可达时保留部分结果。仍需验证实际厂商客户端及目标部署网络。
+配置失败保留已确认的 Runtime，未提交 native new/load 时不假称已有原生会话。厂商连接 MCP 失败时依其 ACP 响应返回失败或状态，Runtime 在线不等于 MCP 工具就绪；不会因配置或 new 失败而重启/重发。真实本地 ACP 协议进程已在 HTTP 与 stdio 两条注入路径中完成 `agents_list`，验证凭据先绑定 Runtime 再使用、原生切换和退出拒绝、不可达时保留部分结果。仍需验证实际厂商客户端及目标部署网络。
 
 ACP inspector 已隐藏所有结构化 `mcpServers` 配置，包含 HTTP URL/header 与 stdio argv/env；发给 Agent 的真实 RPC 保持原样。fabricd 也会在接收 ACP JSON 时遮盖本次生成凭据的原文，覆盖操作输出、权限参数和错误信息；stderr 按字节流处理，跨读取边界的完整凭据仍会被遮盖。此保护不识别任意编码或拆成多条协议消息的变形回显；实际厂商日志另需验收。
 
@@ -51,7 +49,7 @@ Profile 的 `require_agent_mcp` 对 managed ACP 门禁原生动作，未配置 M
 
 同一个 `agent.mcp.configure` 经 SDK / Gateway 校验 Runtime 后，把一次性配置原子写入私有运行目录（目录 0700、文件 0600）。CLI 可以先启动；bridge 在连接宿主前等待配置，配置窗口为启动后的 90 秒，原生客户端自身也可能更早超时。未收到配置不发起未认证连接，过期或重复配置拒绝；不为此新建宿主队列或协调服务。
 
-PTY 配置随 tmux Runtime 保留，fabricd 重启不清除；`runtime stop` / forget 与配置写入共用文件锁并清理。运行目录只服务这个 Runtime，不是 Profile 或恢复数据库中的配置来源。新 Runtime 必须重新注入；宿主仍在每次调用验证凭据、执行实例和在线状态，保留文件不扩大权限。嵌入宿主统一调用 `fabricd.RunHelper` 即可分派 bridge 和原生 hook。
+PTY 配置随 tmux Runtime 保留，fabricd 重启不清除；`runtime stop` / forget 与配置写入共用文件锁并清理。运行目录只服务这个 Runtime，不是 Profile 中的配置来源。新 Runtime 必须重新注入；宿主仍在每次调用验证凭据、执行实例和在线状态，保留文件不扩大权限。嵌入宿主统一调用 `fabricd.RunHelper` 即可分派 bridge 和原生 hook。
 
 本地真实 tmux、生成的 Claude 配置、实际 bridge 进程及 HTTP MCP 已验证首次等待、单次配置、重启后拒绝替换、配置保留和 stop 清理；文件锁 race 验证并发配置 / 清理。共享启动 / 恢复服务的自动签发通过本地 CLI 协议进程验证：首次 `agents_list` 已能通过活 Runtime 鉴权，恢复轮换 token，重复恢复不轮换，配置失败保留唯一已启动 Runtime。
 

@@ -1,21 +1,13 @@
 # PTY 原生会话确认
 
-原生身份与画面活动独立。内部 `__agent-session` 回调只处理 Claude / Codex 的 `SessionStart`，读取官方事件中的 UUID、cwd 和 transcript path，不读取或猜测“最新会话文件”。回调不保存 prompt / transcript path，也不向 Agent 输出事件内容。
+原生身份与画面活动独立。内部 `__agent-session` 回调只处理 Claude / Codex 的 `SessionStart`，从官方事件读取 UUID 和 cwd，不猜测最新会话，不保存 prompt 或 transcript 内容。
 
-Runner 预先创建私有目录和不可替换的 Runtime 绑定；回调从环境变量 `DUNE_AGENT_SESSION_DIR` 找到绑定，事件本身不能指定 Runtime。确认采用本机文件锁和原子替换：同 ID / cwd 的重复通知不推进序号，切换时递增；损坏或错误绑定的记录拒绝覆盖。序号和最后确认保留在 tmux 的运行目录内，fabricd 重启不会重置。最终产品恢复索引仍保存于应用数据库，此文件仅用于本机原生回调与 fabricd 之间传递最后确认。
+回调使用本 Runtime 的私有绑定校验来源。子 Agent 的事件、其他生命周期事件以及 Codex 中与 `CODEX_THREAD_ID` 不匹配的事件不会改变主会话身份。确认写入 Runtime 的私有运行目录，供 fabricd 读取；它不建立应用数据库恢复索引。Runtime 的完整引用仍需经过 Gateway 和宿主授权。
 
-子 Agent 的 `agent_id`、其他生命周期事件，以及 Codex 中与继承的 `CODEX_THREAD_ID` 不匹配的事件不会修改主会话身份。回调由宿主的 `fabricd.RunHelper` 分派，无需 machine config 或 HTTP 服务。整个子进程最多等待一秒，失败保持静默，避免妨碍 Agent 自己的生命周期；没有确认就不能声明恢复已就绪。
+直接 `argv: ["claude"]` / `["codex"]` 启动时注入 SessionStart hook，Claude 使用 `--settings`，Codex 使用本次 `-c` 配置，不修改全局或项目配置、不绕过原生信任。MCP 注入见 [MCP 接入](agent-mcp.md)。内部 helper 由 `fabricd.RunHelper` 分派，保留的可执行文件链接使已启动进程不受安装器清理旧 release 影响。
 
-直接以 `argv: ["claude"]` 或 `argv: ["codex"]`（也可为完整可执行文件路径）启动的 PTY Agent 会自动注入本次 SessionStart hook。Claude 使用 `--settings` JSON，Codex 使用 `-c hooks.SessionStart=…`，不修改用户或项目配置；同时支持下述恢复入口生成的精确 resume 命令。shell 启动、其他子命令或额外参数暂不适配，以免重写单次任务或自定义配置语义。这里的注入提供身份采集，PTY MCP 另行交付。
+fabricd 启动、轮询和 runtime.get 读取最后确认。连接服务重启时存活 tmux 会话及其元数据保留；stop / forget 清理对应私有目录。工作台不支持进程退出后的原生恢复。
 
-Runtime 的私有目录保存 hook helper 的硬链接，跨文件系统时才复制可执行文件。安装器清理旧 release 后，已启动 Agent 的 hook 仍可调用；hook 定义通过环境定位 helper，定义本身不随 Runtime 路径改变。tmux 元数据保存集成标记，fabricd 启动、轮询和 `runtime.get` 读取最后确认，经过共享 Agent Directory 保存到应用数据库。停止 / forget Runtime 清理原生目录，fabricd 重启则保留。
+PTY prompt / keys 的 session ID 与 cwd 固定原生目标，省略时在受理时绑定当前确认。出队及粘贴后的 Enter 前再次核验；已知会话变化拒绝旧输入，文本已粘贴后变化则返回 unknown，不把屏幕内容当作身份。
 
-PTY prompt / keys 的 `session_id` 与 `cwd` 固定目标；省略时在 fabricd 受理时绑定当前确认。排队和文本发送后的 Enter 前再次检查，已知会话切换会拒绝旧输入。文本已粘贴后发现会话变化时返回 unknown，不能声称整个请求从未投递。此检查依赖原生回调已报告的状态，不把画面内容当作会话身份。
-
-原生继续复用共享 `/agent-sessions/{id}/resume`、数据库 attempt claim、Runner 绑定与存储校验。`pty-claude` / `pty-codex` 适配器只为原始直接启动保存；使用不可变快照的可执行文件和环境，不重跑 setup、不读取修改后的 Profile。Claude 运行 `--resume UUID`，Codex 运行 `resume UUID`，不接受 latest / picker 或看似命令行参数的 ID。PTY 的进程 cwd 使用已确认的原生 cwd；原快照不改写。
-
-恢复最多等待五秒的 SessionStart。匹配保存的 ID / cwd 才将 attempt 置为 ready；确认不同会话则停止本次新 Runtime，并记录失败；无确认退出也记录失败。原生登录 / 信任尚未完成时返回已知 Runtime 和 capturing 状态，后续发现可采集确认；如果随后退出，发现服务记录失败，供用户显式重试。等待结束、页面刷新或重复请求都不创建第二个进程，也不重发旧 prompt。PTY 恢复没有伪造 ACP 操作引用。
-
-回归覆盖生成配置、实际回调子进程、fabricd 离线期间切换及重新读取、应用数据库索引 / 历史记录、旧引用失效、队列内目标检查。安装的 Codex 0.140 已接受生成的内联 hook 配置；这只证明配置解析，不能代替真实 Agent 会话 / 任务验收。
-
-合同参考：[Codex hooks](https://developers.openai.com/codex/hooks/)、[herdr Claude integration](https://github.com/herdrdev/herdr/blob/e7e3dfa60e359404def46503dd105c165d02a561/src/integration/assets/claude/herdr-agent-state.sh) 和 [Codex integration](https://github.com/herdrdev/herdr/blob/e7e3dfa60e359404def46503dd105c165d02a561/src/integration/assets/codex/herdr-agent-state.sh)。Codex 的原生 hook 信任流程仍适用，启动适配器不得通过全局 bypass 开启其他尚未信任的 hook。
+本地回归覆盖生成配置、实际回调子进程、fabricd 离线期间切换与重读、旧引用失效以及队列目标校验。厂商的模型执行与目标部署验证不由这些协议测试替代。

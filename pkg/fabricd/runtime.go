@@ -40,25 +40,26 @@ type subscription struct {
 	space           chan struct{}
 }
 type runtime struct {
-	mu               sync.Mutex
-	id, inc, adapter string
-	title, cwd       string
-	p                *process.Process
-	subs             map[*subscription]bool
-	exit             *int
-	failure          string
-	stopReason       string
-	startedAt        *time.Time
-	deadlineAt       *time.Time
-	tmux             *tmux.Session
-	done             chan struct{}
-	acp              *acpController
-	activity         api.AgentActivity
-	nativeSession    *api.NativeSession
-	ptyActivityMu    sync.Mutex
-	ptyProbeAfter    time.Time
-	operations       *operationLog
-	ptyInput         *ptyInputQueue
+	mu                     sync.Mutex
+	id, inc, adapter       string
+	title, cwd             string
+	projectID, directoryID string
+	p                      *process.Process
+	subs                   map[*subscription]bool
+	exit                   *int
+	failure                string
+	stopReason             string
+	startedAt              *time.Time
+	deadlineAt             *time.Time
+	tmux                   *tmux.Session
+	done                   chan struct{}
+	acp                    *acpController
+	activity               api.AgentActivity
+	nativeSession          *api.NativeSession
+	ptyActivityMu          sync.Mutex
+	ptyProbeAfter          time.Time
+	operations             *operationLog
+	ptyInput               *ptyInputQueue
 }
 
 // ACP parsing and replay budgets scale with the development machine while the
@@ -104,7 +105,7 @@ func (r *runtime) info() api.Runtime {
 	if r.exit != nil {
 		activity.State = "unknown"
 	}
-	return api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
+	return api.Runtime{ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
 }
 
 // The timeout helper owns these facts. fabricd only publishes its record; it
@@ -683,6 +684,7 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 	argv, _ := p.Start.Args()
 	r.title = filepath.Base(argv[0])
 	r.cwd = p.WorkingDirectory
+	r.projectID, r.directoryID = p.ProjectID, p.DirectoryID
 	if p.Adapter == "pty" {
 		r.inc = wire.ID()
 		session, err := d.tmux.Create(r.info(), argv, environment(p.Env), tmux.CreateOptions{HistoryLines: p.HistoryLines, Timeout: time.Duration(p.Start.TimeoutSeconds) * time.Second, NativeAgent: agentintegration.Agent(p.Start.Argv), RequireMCP: p.RequireAgentMCP})

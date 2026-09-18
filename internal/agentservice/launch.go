@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"path"
 	"slices"
 	"time"
 
@@ -34,8 +33,8 @@ type Service struct {
 func invalid(detail string) error { return &api.Error{Code: "INVALID_ARGUMENT", Detail: detail} }
 
 // Start resolves the fixed Profile/project revisions before any mutation. The
-// optional worktree is created once, followed by a committed launch snapshot,
-// then a single profile.start over SDK/Gateway. Errors never trigger a replay.
+// optional worktree is created once, then a single profile.start is sent over
+// SDK/Gateway. Errors never trigger a replay.
 func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.StartRequest) (result agents.LaunchResult, err error) {
 	defer func() {
 		if result.Runtime != nil {
@@ -54,15 +53,18 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 	if resource.Runner.Binding == nil || *resource.Runner.Binding != request.Binding {
 		return result, runner.ErrBindingChanged
 	}
-	launch, err := s.resolveLaunch(ctx, scope.OwnerID, request)
+	profile, err := s.resolveLaunch(ctx, scope.OwnerID, request)
 	if err != nil {
 		return result, err
 	}
 	if s.Environment != nil {
-		launch.Profile.Env, err = s.Environment(ctx, scope, request.Binding, maps.Clone(launch.Profile.Env))
+		profile.Env, err = s.Environment(ctx, scope, request.Binding, maps.Clone(profile.Env))
 		if err != nil {
 			return result, err
 		}
+	}
+	if err := profile.Validate(); err != nil {
+		return result, invalid(err.Error())
 	}
 	connection, closeConnection, err := s.Dial(ctx, scope, request.Binding, "profile.start")
 	if err != nil {
@@ -72,90 +74,44 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 	if !slices.Contains(connection.Binding.Capabilities, "profile.start") {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent startup"}
 	}
-	if launch.Profile.RequireAgentMCP && !slices.Contains(connection.Binding.Capabilities, "agent.mcp.configure") {
+	if profile.RequireAgentMCP && !slices.Contains(connection.Binding.Capabilities, "agent.mcp.configure") {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent MCP configuration"}
-	}
-	var machine api.MachineInfo
-	if err := connection.Call(ctx, "machine.info", struct{}{}, &machine); err != nil {
-		return result, err
-	}
-	if machine.UserID == "" || machine.Home == "" {
-		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not report its execution user/storage"}
-	}
-	launch.Storage = storageIdentity(machine, launch.Profile)
-	if err := launch.Validate(); err != nil {
-		return result, invalid(err.Error())
 	}
 	if request.Worktree != nil {
 		if !slices.Contains(connection.Binding.Capabilities, "worktree.create") {
 			return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support worktree creation"}
 		}
 		location := request.Worktree
-		created, err := connection.CreateWorktree(ctx, api.WorktreeCreate{Directory: launch.Profile.WorkingDirectory, Path: location.Path, Branch: location.Branch, Ref: location.Ref})
+		created, err := connection.CreateWorktree(ctx, api.WorktreeCreate{Directory: profile.WorkingDirectory, Path: location.Path, Branch: location.Branch, Ref: location.Ref})
 		if err != nil {
 			return result, err
 		}
 		result.Worktree = &created
-		launch.Profile.WorkingDirectory = created.Path
+		profile.WorkingDirectory = created.Path
 		// The project still owns this session, but a new worktree is not the
 		// source directory. Do not rewrite the shared project behind the user.
-		launch.DirectoryID = ""
+		profile.DirectoryID = ""
 	}
-	session, err := s.Store.CreateAgentSession(ctx, scope.OwnerID, launch)
-	if err != nil {
-		return result, err
-	}
-	setSession := func(value agents.Session) { summary := value.Summary(); result.Session = &summary }
-	setSession(session)
-	runtime, stream, startErr := connection.Start(ctx, session.Launch.Profile)
+	runtime, stream, startErr := connection.Start(ctx, profile)
 	if stream != nil {
 		_ = stream.Close()
 	}
-	// Save a confirmed result even if the browser disconnected meanwhile.
-	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer saveCancel()
 	if startErr != nil {
-		outcome := startOutcome(startErr)
-		failed, saveErr := s.Store.FailAgentAttempt(saveCtx, scope.OwnerID, session.ID, session.Attempt.ID, outcome, "Agent startup did not return a confirmed Runtime; inspect the saved attempt before another start")
-		if saveErr == nil {
-			setSession(failed)
-		}
-		if outcome == "unknown" {
-			return result, &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent startup result is unknown; it was not replayed"}
+		if startOutcome(startErr) == "unknown" {
+			return result, &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent startup result is unknown; inspect current Runtimes before another start; the request was not replayed"}
 		}
 		return result, &api.Error{Code: "START_FAILED", Detail: "Runner rejected Agent startup; inspect the configured command and Runner prerequisites"}
 	}
 	result.Runtime = &runtime
-	ref := workbench.RuntimeRef{ID: runtime.ID, Incarnation: runtime.Incarnation, Generation: runtime.Generation, Adapter: runtime.Adapter}
-	session, err = s.Store.RecordAgentRuntime(saveCtx, scope.OwnerID, session.ID, session.Attempt.ID, ref)
-	if err != nil {
-		return result, &api.Error{Code: "RECOVERY_INDEX_FAILED", Detail: "Agent is running, but its Runtime could not be saved in the recovery index; do not start it again"}
-	}
-	setSession(session)
-	if launch.Profile.Adapter == "pty" && agentintegration.Agent(launch.Profile.Start.Argv) == "" {
-		session, err = s.Store.AgentCaptureUnavailable(saveCtx, scope.OwnerID, session.ID, session.Attempt.ID, "This launch has no native session capture adapter")
-		if err != nil {
-			return result, &api.Error{Code: "RECOVERY_INDEX_FAILED", Detail: "Agent is running, but recovery availability could not be saved"}
-		}
-		setSession(session)
-	}
 	if runtime.Adapter == "acp" {
-		return s.initializeACP(ctx, scope, connection, result)
+		return s.initializeACP(ctx, scope, connection, request.Binding, result)
 	}
-	if launch.Profile.RequireAgentMCP {
-		if err := s.configureMCP(ctx, scope, connection, runtime, result.Session.Binding); err != nil {
+	if profile.RequireAgentMCP {
+		if err := s.configureMCP(ctx, scope, connection, runtime, request.Binding); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
-}
-
-func storageIdentity(machine api.MachineInfo, profile api.Profile) string {
-	home := machine.Home
-	if configured, ok := profile.Env["HOME"]; ok {
-		home = configured
-	}
-	return "uid:" + machine.UserID + ":home:" + home
 }
 
 func startOutcome(err error) string {
@@ -169,95 +125,71 @@ func startOutcome(err error) string {
 	return "unknown"
 }
 
-func (s *Service) resolveLaunch(ctx context.Context, owner string, request agents.StartRequest) (agents.LaunchSnapshot, error) {
-	launch := agents.LaunchSnapshot{Binding: request.Binding}
+func (s *Service) resolveLaunch(ctx context.Context, owner string, request agents.StartRequest) (api.Profile, error) {
+	profile := api.Profile{}
+	projectID, directoryID := "", ""
 	if request.Profile != nil && request.Custom != nil {
-		return launch, invalid("choose a saved Profile or a custom launch")
+		return profile, invalid("choose a saved Profile or a custom launch")
 	}
 	selection := request.Profile
 	directory := request.WorkingDirectory
 	if request.Project != nil {
 		selected := request.Project
 		if selected.ID == "" || selected.Revision < 1 {
-			return launch, invalid("project requires a fixed revision")
+			return profile, invalid("project requires a fixed revision")
 		}
 		project, err := s.Store.Project(ctx, owner, selected.ID)
 		if err != nil {
-			return launch, err
+			return profile, err
 		}
 		if project.Revision != selected.Revision {
-			return launch, metadata.ErrConflict
+			return profile, metadata.ErrConflict
 		}
-		launch.ProjectID = project.ID
+		projectID = project.ID
 		if selection == nil && request.Custom == nil {
 			selection = project.DefaultProfile
 		}
 		if request.DirectoryID != "" {
 			index := slices.IndexFunc(project.Directories, func(item workbench.Directory) bool { return item.ID == request.DirectoryID })
 			if index < 0 {
-				return launch, metadata.ErrNotFound
+				return profile, metadata.ErrNotFound
 			}
 			selectedDirectory := project.Directories[index]
 			if selectedDirectory.Binding != request.Binding {
-				return launch, runner.ErrBindingChanged
+				return profile, runner.ErrBindingChanged
 			}
 			if directory != "" && directory != selectedDirectory.Path {
-				return launch, invalid("selected directory differs from the requested working directory")
+				return profile, invalid("selected directory differs from the requested working directory")
 			}
-			directory, launch.DirectoryID = selectedDirectory.Path, selectedDirectory.ID
+			directory, directoryID = selectedDirectory.Path, selectedDirectory.ID
 		}
 	} else if request.DirectoryID != "" {
-		return launch, invalid("a saved directory requires a project")
+		return profile, invalid("a saved directory requires a project")
 	}
 	if request.Custom != nil {
-		launch.Profile = *request.Custom
+		profile = *request.Custom
 	} else {
 		if selection == nil || selection.Revision < 1 {
-			return launch, invalid("select a fixed Agent Profile revision")
+			return profile, invalid("select a fixed Agent Profile revision")
 		}
 		record, err := s.Store.Profiles().Get(ctx, owner, *selection)
 		if err != nil {
-			return launch, err
+			return profile, err
 		}
-		launch.Profile, launch.SourceProfile = record.Profile, selection
+		profile = record.Profile
 	}
 	if directory != "" {
-		launch.Profile.WorkingDirectory = directory
+		profile.WorkingDirectory = directory
 	}
-	launch.Profile.ManagedACP = launch.Profile.Adapter == "acp"
-	launch.Profile.RequireAgentMCP = launch.Profile.ManagedACP || launch.Profile.Adapter == "pty" && agentintegration.Agent(launch.Profile.Start.Argv) != ""
-	if err := launch.Profile.Validate(); err != nil {
-		return launch, invalid(err.Error())
+	// Project labels are resolved by the host, never inherited from a Profile.
+	profile.ProjectID, profile.DirectoryID = projectID, directoryID
+	profile.ManagedACP = profile.Adapter == "acp"
+	profile.RequireAgentMCP = profile.ManagedACP || profile.Adapter == "pty" && agentintegration.Agent(profile.Start.Argv) != ""
+	if err := profile.Validate(); err != nil {
+		return profile, invalid(err.Error())
 	}
-	if launch.Profile.Kind != "agent" {
-		return launch, invalid("an Agent Profile is required")
+	if profile.Kind != "agent" {
+		return profile, invalid("an Agent Profile is required")
 	}
-	launch.AgentType = "custom"
-	if len(launch.Profile.Start.Argv) > 0 {
-		launch.AgentType = path.Base(launch.Profile.Start.Argv[0])
-	}
-	launch.Recovery = recoveryAdapter(launch.Profile)
-	return launch, nil
-}
-
-// Opaque shell commands or arbitrary extra CLI arguments may include a one-shot
-// task. Only recognized transport-only launches can be resumed automatically.
-func recoveryAdapter(profile api.Profile) agents.RecoveryAdapter {
-	argv := profile.Start.Argv
-	if len(argv) == 0 || profile.Start.Run != "" {
-		return agents.RecoveryAdapter{}
-	}
-	if profile.Adapter == "pty" && len(argv) == 1 {
-		if agent := agentintegration.Agent(argv); agent != "" {
-			return agents.RecoveryAdapter{ID: "pty-" + agent, Version: 1}
-		}
-	}
-	if profile.Adapter != "acp" {
-		return agents.RecoveryAdapter{}
-	}
-	executable := path.Base(argv[0])
-	if (len(argv) == 2 && (argv[1] == "--acp" || executable == "opencode" && argv[1] == "acp" || executable == "gemini" && argv[1] == "--experimental-acp")) || (len(argv) == 1 && (executable == "codex-acp" || executable == "claude-agent-acp")) {
-		return agents.RecoveryAdapter{ID: "acp-load", Version: 1}
-	}
-	return agents.RecoveryAdapter{}
+	return profile, nil
 }

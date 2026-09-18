@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/pkg/agents"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/profiles"
 	"github.com/aiomni/dune/pkg/workbench"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,9 +50,9 @@ func callMCP[Out any](t *testing.T, session *mcp.ClientSession, name string, arg
 	return out
 }
 
-func issueMCPFixture(t *testing.T, f executorFixture, session agents.Summary) string {
+func issueMCPFixture(t *testing.T, f executorFixture, runtime api.Runtime) string {
 	t.Helper()
-	token, err := f.app.store.IssueAgentCredential(t.Context(), f.agentScope(), workbench.AgentTarget{Binding: session.Binding, Runtime: *session.LastRuntime}, time.Now().Add(time.Hour))
+	token, err := f.app.store.IssueAgentCredential(t.Context(), f.agentScope(), fixtureTarget(f, runtime), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func issueMCPFixture(t *testing.T, f executorFixture, session agents.Summary) st
 func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testing.T) {
 	f := openExecutorFixture(t)
 	started, _ := directoryACP(t, f)
-	token := issueMCPFixture(t, f, *started.Session)
+	token := issueMCPFixture(t, f, *started.Runtime)
 	profile := directoryACPProfile(t, f)
 	for _, name := range []string{"Assistant one", "Assistant two"} {
 		if _, err := f.app.store.Profiles().Create(t.Context(), profiles.Record{OwnerID: f.owner, Name: name, Profile: profile, CreatedBy: profiles.Actor{Type: "user", Subject: f.principal.ID}}); err != nil {
@@ -134,7 +135,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	if err == nil && !bad.IsError {
 		t.Fatal("tool accepted caller-provided Tenant")
 	}
-	if err := f.app.store.RevokeAgentCredential(t.Context(), f.owner, workbench.AgentTarget{Binding: f.binding, Runtime: *started.Session.LastRuntime}); err != nil {
+	if err := f.app.store.RevokeAgentCredential(t.Context(), f.owner, fixtureTarget(f, *started.Runtime)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "agents_list", Arguments: map[string]any{}}); err == nil {
@@ -145,7 +146,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 func TestAgentMCPRejectsUntrustedHTTPAndExitedCaller(t *testing.T) {
 	f := openExecutorFixture(t)
 	started, connection := directoryACP(t, f)
-	token := issueMCPFixture(t, f, *started.Session)
+	token := issueMCPFixture(t, f, *started.Runtime)
 	invoke := func(path, bearer, origin string) int {
 		r := httptest.NewRequest("POST", path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
 		r.Header.Set("Content-Type", "application/json")
@@ -175,8 +176,12 @@ func TestAgentMCPRejectsUntrustedHTTPAndExitedCaller(t *testing.T) {
 			t.Fatal("unexpected MCP admission", got, test.status)
 		}
 	}
-	stopRecoveryRuntime(t, connection, *started.Runtime)
+	stopAgentRuntime(t, connection, *started.Runtime)
 	if got := invoke("/api/v1/agent-mcp", token, ""); got != http.StatusUnauthorized {
 		t.Fatal("exited Runtime retained MCP authority", got)
 	}
+}
+
+func fixtureTarget(f executorFixture, runtime api.Runtime) workbench.AgentTarget {
+	return workbench.AgentTarget{Binding: f.binding, Runtime: workbench.RuntimeRef{ID: runtime.ID, Incarnation: runtime.Incarnation, Generation: runtime.Generation, Adapter: runtime.Adapter}}
 }

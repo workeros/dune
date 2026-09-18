@@ -83,18 +83,18 @@ func directoryAction(t *testing.T, connection *client.Client, runtime api.Runtim
 	}
 }
 
-func TestAgentDirectoryCapturesNativeSessionsThroughGateway(t *testing.T) {
+func TestAgentDirectoryReadsCurrentNativeSessionsThroughGateway(t *testing.T) {
 	f := openExecutorFixture(t)
 	launched, connection := directoryACP(t, f)
 	directory := f.app.AgentDirectory()
 	page, err := directory.List(t.Context(), f.agentScope(), runner.Query{})
-	if err != nil || len(page.Items) != 1 || len(page.Runners) != 1 || !page.Runners[0].Ready || page.Items[0].Session.Status != "available" {
+	if err != nil || len(page.Items) != 1 || len(page.Runners) != 1 || !page.Runners[0].Ready || page.Items[0].Runtime.NativeSession == nil {
 		t.Fatal("initial discovery", page, err)
 	}
 	initial := page.Items[0]
 	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "new"})
 	created, err := directory.Get(t.Context(), f.agentScope(), initial.Ref)
-	if err != nil || created.Session == nil || created.Session.ID != launched.Session.ID || created.Session.Status != "available" || created.Ref != initial.Ref {
+	if err != nil || created.Runtime.NativeSession == nil || created.Runtime.NativeSession.ID != launched.Runtime.NativeSession.ID || created.Ref != initial.Ref {
 		t.Fatal("confirmed native session not captured", created, err)
 	}
 	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "load", SessionID: "other-native", Cwd: "/other-session"})
@@ -107,12 +107,8 @@ func TestAgentDirectoryCapturesNativeSessionsThroughGateway(t *testing.T) {
 		}
 	}
 	page, err = directory.List(t.Context(), f.agentScope(), runner.Query{})
-	if err != nil || len(page.Items) != 1 || page.Items[0].Session == nil || page.Items[0].Session.ID == created.Session.ID || page.Items[0].Session.Native.ID != "other-native" {
+	if err != nil || len(page.Items) != 1 || page.Items[0].Runtime.NativeSession == nil || page.Items[0].Runtime.NativeSession.ID != "other-native" {
 		t.Fatal("switched session was not indexed", page, err)
-	}
-	old, err := f.app.store.AgentSession(t.Context(), f.owner, created.Session.ID)
-	if err != nil || old.Selected || old.Native.ID != "fake-acp-session" {
-		t.Fatal("old native recovery lost", err)
 	}
 	encoded, _ := json.Marshal(page)
 	if strings.Contains(string(encoded), "TEST_LAUNCH_SECRET") || strings.Contains(string(encoded), "not-for-discovery") || strings.Contains(string(encoded), "-test.run") {
@@ -132,8 +128,8 @@ func TestAgentDirectoryCapturesNativeSessionsThroughGateway(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		stopped, err := directory.Get(t.Context(), f.agentScope(), page.Items[0].Ref)
-		if err != nil || stopped.Session == nil {
-			t.Fatal("stopped Runtime lost recovery discovery", err)
+		if err != nil {
+			t.Fatal("stopped Runtime lost exit status", err)
 		}
 		if stopped.Runtime.State == "exited" {
 			break

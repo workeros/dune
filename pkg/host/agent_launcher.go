@@ -9,7 +9,7 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 )
 
-// AgentLauncher shares fixed-revision startup and recovery metadata between the
+// AgentLauncher shares fixed-revision Agent startup between the
 // workbench and Agent tools. It only uses existing authorized Runner bindings.
 func (a *App) AgentLauncher() agents.Launcher { return &agentLauncher{app: a} }
 

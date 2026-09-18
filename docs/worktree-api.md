@@ -11,4 +11,4 @@ SDK 对应 `Worktrees` / `CreateWorktree`。创建会先解析 ref 到具体 com
 
 ref、分支和路径通过结构化 argv 交给 Git，不拼接 shell。Git 执行和最终检查失败时不自动重做；超时或创建后无法确认返回 `RESULT_UNKNOWN`，可通过 list 检查实际目录。共享仓库的两个工作区使用同一 Git 锁；外部 Git 进程仍由 Git 自己的锁约束。
 
-API 只准备目录。后续统一启动服务将把选择的 cwd 写入实际启动快照、关联项目目录，并用于 PTY / ACP 原生恢复；本提交不表示两产品启动表单或恢复索引已经交付。
+API 只准备目录。统一启动服务选择该 cwd，Runtime 保留项目标签；没有进程退出后的恢复档案。

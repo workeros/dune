@@ -61,8 +61,7 @@ type Options struct {
 	// It must honor cancellation and must not retain credentials or work content.
 	AccessChecker access.Checker
 	// AgentEnvironment supplies existing environment defaults for new Agent
-	// launches. Dune saves the effective values before starting; resume uses
-	// that snapshot without re-resolving the current defaults.
+	// launches. Dune validates the effective Profile before starting.
 	AgentEnvironment agents.EnvironmentResolver
 	// Observer receives best-effort structured operational and audit events on
 	// a bounded asynchronous dispatcher. The caller retains Sink ownership.
@@ -210,7 +209,6 @@ func Open(parent context.Context, options Options) (*App, error) {
 		AgentLauncher:       app.AgentLauncher(),
 		AgentDirectory:      app.AgentDirectory(),
 		AgentMessenger:      app.AgentMessenger(),
-		AgentRestorer:       app.AgentRestorer(),
 		Assets:              options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway:            dial,

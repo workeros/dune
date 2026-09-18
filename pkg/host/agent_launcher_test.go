@@ -40,7 +40,7 @@ func waitLaunchFile(t *testing.T, filename, expected string) {
 	t.Fatal("Agent did not produce expected startup file", filename)
 }
 
-func TestAgentLauncherFreezesProjectProfileAndEffectiveEnvironment(t *testing.T) {
+func TestAgentLauncherUsesFixedProjectProfileAndEffectiveEnvironment(t *testing.T) {
 	f := openExecutorFixture(t)
 	profile := launchShell("/unused/profile/path", `printf '%s:%s' "$DEFAULT_VALUE" "$CHOICE" > launched`)
 	profile.Env = map[string]string{"CHOICE": "old-profile"}
@@ -64,16 +64,16 @@ func TestAgentLauncherFreezesProjectProfileAndEffectiveEnvironment(t *testing.T)
 		return overrides, nil
 	}
 	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Project: &agents.ProjectSelection{ID: project.ID, Revision: project.Revision}, DirectoryID: "original"})
-	if err != nil || result.Runtime == nil || result.Session == nil {
+	if err != nil || result.Runtime == nil {
 		t.Fatal(result, err)
 	}
 	waitLaunchFile(t, filepath.Join(f.workspace, "launched"), "saved-environment:old-profile")
-	if result.Session.SourceProfile.Revision != 1 || result.Session.WorkingDirectory != f.workspace || result.Session.Status != "unavailable" || result.Session.ProjectID != project.ID || result.Session.DirectoryID != "original" {
-		t.Fatal(result.Session)
+	if result.Runtime.ProjectID != project.ID || result.Runtime.DirectoryID != "original" || result.Runtime.WorkingDirectory != f.workspace {
+		t.Fatal("launch lost project association", result.Runtime)
 	}
-	saved, err := f.app.store.AgentSession(t.Context(), f.owner, result.Session.ID)
-	if err != nil || saved.Launch.Profile.Env["CHOICE"] != "old-profile" || saved.Launch.Profile.Env["DEFAULT_VALUE"] != "saved-environment" || saved.Launch.Storage == "" || saved.LastRuntime.ID != result.Runtime.ID {
-		t.Fatal("snapshot does not match actual startup", err)
+	observed, err := f.app.AgentDirectory().Get(t.Context(), f.agentScope(), result.AgentRef)
+	if err != nil || observed.Runtime.ProjectID != project.ID || observed.Runtime.DirectoryID != "original" {
+		t.Fatal("discovery lost project association", err)
 	}
 	encoded, _ := json.Marshal(result)
 	if strings.Contains(string(encoded), "saved-environment") || strings.Contains(string(encoded), "DEFAULT_VALUE") || strings.Contains(string(encoded), "sleep 60") {
@@ -103,7 +103,11 @@ func TestAgentLauncherCreatesWorktreeWithoutCopyingDirtySource(t *testing.T) {
 	}
 	profile := launchShell(f.workspace, "cat tracked > observed")
 	destination := filepath.Join(t.TempDir(), "isolated worktree")
-	request := agents.StartRequest{Binding: f.binding, Custom: &profile, Worktree: &agents.WorktreeLocation{Path: destination, Branch: "feat/helper"}}
+	project, err := f.app.store.SaveProject(t.Context(), f.owner, "", 0, workbench.ProjectSpec{Name: "worktree project", Directories: []workbench.Directory{{ID: "source", Binding: f.binding, Path: f.workspace}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := agents.StartRequest{Binding: f.binding, Custom: &profile, Project: &agents.ProjectSelection{ID: project.ID, Revision: project.Revision}, DirectoryID: "source", Worktree: &agents.WorktreeLocation{Path: destination, Branch: "feat/helper"}}
 	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), request)
 	if err != nil || result.Runtime == nil || result.Worktree == nil {
 		t.Fatal(result, err)
@@ -119,17 +123,18 @@ func TestAgentLauncherCreatesWorktreeWithoutCopyingDirtySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Runtime.WorkingDirectory != canonical || result.Session.WorkingDirectory != canonical {
+	if result.Runtime.WorkingDirectory != canonical || result.Runtime.ProjectID != project.ID || result.Runtime.DirectoryID != "" {
 		t.Fatal("worktree and launch location differ", result)
 	}
 	// Retrying the same start cannot reuse an existing checkout/branch.
 	if duplicate, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), request); err == nil || duplicate.Runtime != nil {
 		t.Fatal("duplicate worktree created another Agent", duplicate, err)
 	}
-	items, err := f.app.store.AgentSessions(t.Context(), f.owner, "", 10)
-	if err != nil || len(items) != 1 {
-		t.Fatal("duplicate persisted a launch", len(items), err)
+	items, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
+	if err != nil || len(items.Items) != 1 || items.Items[0].Runtime.ProjectID != project.ID || items.Items[0].Runtime.DirectoryID != "" {
+		t.Fatal("duplicate worktree started another Runtime", err)
 	}
+
 }
 
 func TestAgentLauncherRejectsScopeAndStaleInputsBeforeMutations(t *testing.T) {
@@ -164,10 +169,11 @@ func TestAgentLauncherRejectsScopeAndStaleInputsBeforeMutations(t *testing.T) {
 	if _, err := os.Stat(request.Worktree.Path); !os.IsNotExist(err) {
 		t.Fatal("rejected start created worktree", err)
 	}
-	items, err := f.app.store.AgentSessions(t.Context(), f.owner, "", 10)
-	if err != nil || len(items) != 0 {
-		t.Fatal("rejected start persisted a launch", len(items), err)
+	items, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
+	if err != nil || len(items.Items) != 0 {
+		t.Fatal("rejected input started a Runtime", err)
 	}
+
 }
 
 func TestAgentLauncherKeepsPreparedWorktreeOnStartFailure(t *testing.T) {
@@ -176,14 +182,10 @@ func TestAgentLauncherKeepsPreparedWorktreeOnStartFailure(t *testing.T) {
 	runLaunchGit(t, f.workspace, "commit", "--allow-empty", "-qm", "initial")
 	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: f.workspace, Start: api.Command{Argv: []string{"/does-not-exist/agent", "--acp"}}}
 	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile, Worktree: &agents.WorktreeLocation{Path: filepath.Join(t.TempDir(), "prepared"), Branch: "feat/prepared"}})
-	if err == nil || result.Runtime != nil || result.Worktree == nil || result.Session == nil || result.Session.Attempt.State != "failed" {
+	if err == nil || result.Runtime != nil || result.Worktree == nil {
 		t.Fatal(result, err)
 	}
 	if _, err := os.Stat(result.Worktree.Path); err != nil {
 		t.Fatal("prepared worktree lost", err)
-	}
-	saved, err := f.app.store.AgentSession(t.Context(), f.owner, result.Session.ID)
-	if err != nil || saved.Status != "unavailable" || saved.Launch.Profile.WorkingDirectory != result.Worktree.Path || saved.Launch.Recovery.ID != "acp-load" {
-		t.Fatal("failed startup lost its actual configuration", err)
 	}
 }

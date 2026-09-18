@@ -99,7 +99,7 @@ func (s *Service) runnerAgents(ctx context.Context, scope agents.Scope, resource
 	}
 	items := make([]agents.Agent, 0, len(runtimes))
 	for _, runtime := range runtimes {
-		items = append(items, s.describe(ctx, scope, resource.Runner, runtime))
+		items = append(items, describe(resource.Runner, runtime))
 	}
 	return items, nil
 }
@@ -120,7 +120,7 @@ func (s *Service) Get(ctx context.Context, scope agents.Scope, value string) (ag
 	if err != nil {
 		return agents.Agent{}, err
 	}
-	return s.describe(ctx, scope, resource.Runner, runtime), nil
+	return describe(resource.Runner, runtime), nil
 }
 
 func currentRuntime(ctx context.Context, connection *client.Client, ref agentReference) (api.Runtime, error) {
@@ -152,42 +152,10 @@ func (s *Service) connect(ctx context.Context, scope agents.Scope, target workbe
 	return resource, connection, closeConnection, err
 }
 
-// All values here came from an authorized fabricd reply, never from a browser
-// or model-supplied observation. Index failures preserve the actual Runtime.
-func (s *Service) describe(ctx context.Context, scope agents.Scope, logical runner.Runner, runtime api.Runtime) agents.Agent {
+// Discovery reads current fabricd state; it never creates a Runtime or a database record.
+func describe(logical runner.Runner, runtime api.Runtime) agents.Agent {
 	target := targetFor(*logical.Binding, runtime)
-	item := agents.Agent{Ref: agentRef(target, runtime.NativeSession), Target: target, Runtime: runtime, Runner: logical}
-	if runtime.NativeSession != nil {
-		if _, err := s.Store.ObserveAgentSession(ctx, scope.OwnerID, target, *runtime.NativeSession); captureFailed(err) {
-			item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
-		}
-	}
-	session, err := s.Store.RuntimeAgentSession(ctx, scope.OwnerID, target)
-	if err == nil {
-		if runtime.Adapter == "pty" && runtime.State == "exited" && session.Attempt.Kind == "resume" && session.Attempt.State == "capturing" && (runtime.NativeSession == nil || session.Native != nil && (runtime.NativeSession.ID != session.Native.ID || runtime.NativeSession.Cwd != session.Native.Cwd)) {
-			// A bounded resume wait may return while the native CLI is asking for
-			// login/trust. A later confirmed exit makes that attempt retryable.
-			failed, saveErr := s.Store.FailAgentAttempt(ctx, scope.OwnerID, session.ID, session.Attempt.ID, "failed", "native CLI exited without confirming the saved session")
-			if saveErr == nil {
-				session = failed
-			} else {
-				item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
-			}
-		}
-		if runtime.NativeSession == nil || session.Native != nil && session.Native.ID == runtime.NativeSession.ID && session.Native.Cwd == runtime.NativeSession.Cwd {
-			summary := session.Summary()
-			item.Session = &summary
-		} else {
-			item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
-		}
-	} else if !errors.Is(err, metadata.ErrNotFound) {
-		item.RecoveryError = "RECOVERY_INDEX_UNAVAILABLE"
-	}
-	return item
-}
-
-func captureFailed(err error) bool {
-	return err != nil && !errors.Is(err, metadata.ErrNotFound) && !errors.Is(err, metadata.ErrStaleAgentObservation)
+	return agents.Agent{Ref: agentRef(target, runtime.NativeSession), Target: target, Runtime: runtime, Runner: logical}
 }
 
 func discoveryError(err error) string {
