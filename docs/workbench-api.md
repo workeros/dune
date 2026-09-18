@@ -42,7 +42,7 @@ Dune 个人模式的前缀为 `/api/v1`，SandDance / Tenant 模式为 `/api/v1/
 
 两个接口从认证上下文取得身份命名空间与用户 ID，不接受正文指定用户。同 Tenant 的其他成员拥有各自的布局。建议工作台默认使用布局 ID `main`。
 
-`root` 为 null 或二叉分屏树。叶子格式为 `{id, pane: {target, project_id?, directory_id?, session_record_id?}}`；分屏格式为 `{id, direction: "horizontal" | "vertical", ratio, children: [first, second]}`，ratio 为 0.1..0.9。最多 32 个 pane、16 层深度，节点 ID 唯一；焦点和固定审阅目标必须指向当前树内的 pane。`review_pane` 为空时由界面跟随焦点，不固定审阅目标。
+`root` 为 null 或二叉分屏树。叶子格式为 `{id, pane: {target, project_id?, directory_id?}}`；分屏格式为 `{id, direction: "horizontal" | "vertical", ratio, children: [first, second]}`，ratio 为 0.1..0.9。最多 32 个 pane、16 层深度，节点 ID 唯一；焦点和固定审阅目标必须指向当前树内的 pane。`review_pane` 为空时由界面跟随焦点，不固定审阅目标。
 
 `target` 包含完整 Runner `binding` 和 `{id, incarnation, generation, adapter}` 形式的 `runtime`。同一执行身份不能出现两次；再次打开时界面定位原 pane。保存只检查 Runner 的 Tenant 归属，允许保留已禁用或已替换 Runner 的旧引用以显示失效项；重新连接和任何输入仍必须校验实际绑定、Runtime 和权限，保存布局不会自动创建执行。
 

@@ -1,5 +1,7 @@
 # herdr 借鉴方案实施记录
 
+> 历史调研 / 实施记录：2026-09-18 已收窄范围。当前实现以 [存储精简方案](herdr-simplification.md) 为准；下文退出恢复、持久已读、六张新增表等内容不再属于当前目标，旧验收缺口不阻塞精简目标。
+
 目标：[已确认方案](references/herdr-adoption-design.md)。逐功能实现、验证、提交，遵守 SOLID / KISS；不引入宿主队列协调系统，不保留原型旧合同的兼容层。
 
 截至 2026-09-18，两个产品的功能实现已分项提交，本地协议、浏览器、多进程故障测试及真实 Codex MCP 工具发现已通过。完整厂商模型调用、原生恢复和目标部署验收仍未完成，Goal 保留这些缺口。SandDance 已固定到本次验证过的 Dune / IM 提交；尚未 push 或验证远端模块下载。
@@ -66,7 +68,7 @@
 
 - worktree 准备：新增 [API 合同](worktree-api.md)，定向 race 覆盖实际 Git 工作树、源目录脏文件保留、中文 / 空格路径、已有分支与目录拒绝、共享仓库并发创建；client / access 回归和相关包 vet 通过。`TestWorktreeCreationThroughGateway` 通过，覆盖 SDK 经 Gateway 到 fabricd 的真实 Git 创建与列出。两产品启动选择与实际配置快照仍随统一启动服务接入。
 
-- 恢复索引数据库：新增 [存储合同](agent-recovery.md)。SQLite / PostgreSQL 测试覆盖不可变快照、Profile 修改和删除、数据库重开、Owner 隔离、两连接并发继续、旧 attempt 迟到上报、未知结果拒绝接替和提交回执丢失；定向 race 通过。identity / authorization / metadata / webapp / host 回归及相关 vet 通过。尚未接入启动服务，不代表真实原生恢复已验收。
+- 恢复索引数据库：新增 [存储合同](herdr-simplification.md)。SQLite / PostgreSQL 测试覆盖不可变快照、Profile 修改和删除、数据库重开、Owner 隔离、两连接并发继续、旧 attempt 迟到上报、未知结果拒绝接替和提交回执丢失；定向 race 通过。identity / authorization / metadata / webapp / host 回归及相关 vet 通过。尚未接入启动服务，不代表真实原生恢复已验收。
 
 - 统一启动服务：新增 [启动合同](agent-launch.md)，`App.AgentLauncher()` 通过 SDK / Gateway 启动。真实 tmux / Git 测试覆盖项目默认旧修订、合并环境与实际进程一致、cwd 覆盖、隔离工作树及脏文件保留、失效输入先拒绝、启动失败仍返回已建 worktree；定向 race 通过。fabricd / api / host / webapp 回归、相关 vet 和使用本地 workspace 的 SandDance 全量 Go 测试通过。页面尚未迁移到此入口，真实 Agent / MCP 验收仍待后续。
 
