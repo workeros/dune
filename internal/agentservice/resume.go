@@ -115,7 +115,7 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	}
 	setSession(session)
 	if runtime.Adapter == "pty" {
-		if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+		if err := s.configureMCP(ctx, scope, connection, runtime, result.Session.Binding); err != nil {
 			return s.failResume(ctx, scope, result, session, "failed", "MCP configuration was not confirmed for the recovery Runtime", true, connection)
 		}
 		return s.awaitPTYResume(ctx, scope, connection, result, session)
@@ -127,7 +127,7 @@ func (s *Service) Resume(ctx context.Context, scope agents.Scope, request agents
 	if !ready.CanLoad || session.Native.AgentVersion != "" && ready.Agent.Version != "" && session.Native.AgentVersion != ready.Agent.Version {
 		return s.failResume(ctx, scope, result, session, "failed", "recovery Agent no longer supports the saved native session version or session/load", true, connection)
 	}
-	if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+	if err := s.configureMCP(ctx, scope, connection, runtime, result.Session.Binding); err != nil {
 		return s.failResume(ctx, scope, result, session, "failed", "MCP configuration was not confirmed; no native recovery was submitted", true, connection)
 	}
 	accepted, err := connection.ACPSubmit(ctx, runtime, api.ACPAction{Action: "load", SessionID: session.Native.ID, Cwd: session.Native.Cwd})

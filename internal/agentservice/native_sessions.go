@@ -86,7 +86,7 @@ func (s *Service) initializeACP(ctx context.Context, scope agents.Scope, connect
 	if _, err := awaitACPReady(ctx, connection, runtime); err != nil {
 		return result, &api.Error{Code: "AGENT_NOT_READY", Detail: "Runtime started but ACP initialization was not confirmed; inspect it before another start"}
 	}
-	if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+	if err := s.configureMCP(ctx, scope, connection, runtime, result.Session.Binding); err != nil {
 		return result, err
 	}
 	target := targetFor(result.Session.Binding, runtime)

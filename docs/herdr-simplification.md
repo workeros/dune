@@ -15,9 +15,11 @@ MCP 凭据直接绑定已确认的 Tenant、调用方、Runner 和完整 Runtime
 ## 实施与验证
 
 - [x] 删除已读位置表、存储类型和 HTTP API；两产品改用浏览器内存。
-- [ ] MCP 凭据直接绑定调用方和执行实例，移除会话恢复依赖。
+- [x] MCP 凭据直接绑定调用方和执行实例，移除会话恢复依赖。
 - [ ] 删除持久会话档案及 Runtime 会话索引、退出恢复服务和界面入口。
 - [ ] 两产品启动及发现只使用当前 Runtime；保留项目关联、部分失败结果及未知结果不重放。
 - [ ] 同步文档和 SandDance 依赖，完成 Go / Web / 多进程与浏览器验收。
 
 已读改动验证：SQLite / PostgreSQL 的 metadata、webapp、workbench 回归与 vet 通过；两端类型检查通过；各一项 Chromium 用例验证查看、新活动、重新加载和零已读 API 请求。SandDance 共享工作台路由回归使用当前 Dune workspace 通过。完整构建与整体验收随其余裁剪完成后执行。
+
+凭据改动验证：SQLite / PostgreSQL 的签发、轮换、撤销、跨租户隔离、绑定校验及数据库重开回归通过；身份、授权、metadata、webapp、host 全包回归通过，凭据与 MCP 定向 race 和相关 vet 通过。凭据直接保存完整调用方与目标，每个 MCP 请求再经 Gateway 校验当前执行实例。

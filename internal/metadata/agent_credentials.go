@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -18,12 +19,10 @@ import (
 const agentCredentialPrefix = "dune_agent_"
 const AgentCredentialLifetime = 30 * 24 * time.Hour
 
-// AgentCredential identifies the calling launch, not a browser login or a
-// target selected in tool arguments. Liveness and access still require Gateway.
+// AgentCredential binds a caller to one execution instance. Runtime liveness
+// and current access are checked through Gateway on every MCP request.
 type AgentCredential struct {
 	Scope     agents.Scope
-	SessionID string
-	AttemptID string
 	Target    workbench.AgentTarget
 	ExpiresAt time.Time
 }
@@ -40,27 +39,19 @@ func credentialIdentityValid(user identity.User) bool {
 	return true
 }
 
-// IssueAgentCredential is called by trusted launch/injection code after scope
-// authorization. It rotates this record's credential and returns the secret
-// once, after a confirmed commit. Only its hash is stored, never in the Profile.
-// Issuing before startup is allowed; use is denied until Runtime is recorded.
-func (s *Store) IssueAgentCredential(ctx context.Context, scope agents.Scope, sessionID, attemptID string, expiresAt time.Time) (string, error) {
-	if !credentialIdentityValid(scope.Principal) || scope.OwnerID == "" || !expiresAt.After(time.Now()) || expiresAt.After(time.Now().Add(AgentCredentialLifetime)) {
+// IssueAgentCredential accepts only a confirmed Runtime returned by trusted
+// startup code. It does not infer authority from a native session or recovery
+// record. Reissuing for the same target atomically replaces its previous token.
+func (s *Store) IssueAgentCredential(ctx context.Context, scope agents.Scope, target workbench.AgentTarget, expiresAt time.Time) (string, error) {
+	if !credentialIdentityValid(scope.Principal) || scope.OwnerID == "" || len(scope.OwnerID) > 256 || target.Validate() != nil || !expiresAt.After(time.Now()) || expiresAt.After(time.Now().Add(AgentCredentialLifetime)) {
+		return "", ErrInvalidArgument
+	}
+	payload, err := json.Marshal(target)
+	if err != nil {
 		return "", ErrInvalidArgument
 	}
 	token := agentCredentialPrefix + rand.Text() + rand.Text()
-	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		query := `SELECT ` + agentSessionColumns + ` FROM dune_agent_sessions WHERE owner_id=$1 AND id=$2`
-		if s.postgres {
-			query += ` FOR UPDATE`
-		}
-		session, err := scanAgentSession(tx.QueryRowContext(ctx, query, scope.OwnerID, sessionID))
-		if err != nil {
-			return err
-		}
-		if attemptID == "" || session.Attempt.ID != attemptID || session.Attempt.State == "failed" || session.Attempt.State == "unknown" {
-			return ErrConflict
-		}
+	err = s.transaction(ctx, func(tx *sql.Tx) error {
 		if s.localIdentity {
 			if scope.Principal.Namespace != "" {
 				return identity.ErrUnauthorized
@@ -69,10 +60,20 @@ func (s *Store) IssueAgentCredential(ctx context.Context, scope agents.Scope, se
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_agent_credentials WHERE expires_at<=$1 OR session_id=$2`, time.Now().Unix(), sessionID); err != nil {
+		var found int
+		b := target.Binding
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM dune_runners WHERE owner_id=$1 AND id=$2 AND machine_id=$3 AND fabric_id=$4 AND binding_revision=$5 AND enabled=TRUE AND suspended=FALSE`, scope.OwnerID, b.RunnerID, b.MachineID, b.FabricID, b.Revision).Scan(&found)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO dune_agent_credentials(hash,session_id,attempt_id,principal_id,namespace,subject,kind,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, tokenHash(token), sessionID, attemptID, scope.Principal.ID, scope.Principal.Namespace, scope.Principal.Subject, scope.Principal.Kind, expiresAt.Unix())
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dune_agent_credentials WHERE expires_at<=$1`, time.Now().Unix()); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO dune_agent_credentials(hash,owner_id,target_key,target,principal_id,namespace,subject,kind,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			ON CONFLICT(owner_id,target_key) DO UPDATE SET hash=excluded.hash,target=excluded.target,principal_id=excluded.principal_id,namespace=excluded.namespace,subject=excluded.subject,kind=excluded.kind,expires_at=excluded.expires_at`, tokenHash(token), scope.OwnerID, target.Key(), string(payload), scope.Principal.ID, scope.Principal.Namespace, scope.Principal.Subject, scope.Principal.Kind, expiresAt.Unix())
 		return err
 	})
 	if err != nil {
@@ -81,34 +82,23 @@ func (s *Store) IssueAgentCredential(ctx context.Context, scope agents.Scope, se
 	return token, nil
 }
 
-// ReadAgentCredential rechecks expiry, identity namespace and launch attempt.
-// A later resume invalidates the old token even before the new Runtime exists.
+// ReadAgentCredential reads the caller's identity and target from the token
+// binding alone. It never accepts an Owner or Runtime supplied by a tool call.
 func (s *Store) ReadAgentCredential(ctx context.Context, token, namespace string) (AgentCredential, error) {
 	var result AgentCredential
 	if !strings.HasPrefix(token, agentCredentialPrefix) || len(token) != len(agentCredentialPrefix)+52 {
 		return result, identity.ErrUnauthorized
 	}
 	var expires int64
-	err := s.db.QueryRowContext(ctx, `SELECT session_id,attempt_id,principal_id,namespace,subject,kind,expires_at FROM dune_agent_credentials WHERE hash=$1 AND expires_at>$2`, tokenHash(token), time.Now().Unix()).Scan(&result.SessionID, &result.AttemptID, &result.Scope.Principal.ID, &result.Scope.Principal.Namespace, &result.Scope.Principal.Subject, &result.Scope.Principal.Kind, &expires)
+	var targetKey, payload string
+	err := s.db.QueryRowContext(ctx, `SELECT owner_id,target_key,target,principal_id,namespace,subject,kind,expires_at FROM dune_agent_credentials WHERE hash=$1 AND expires_at>$2`, tokenHash(token), time.Now().Unix()).Scan(&result.Scope.OwnerID, &targetKey, &payload, &result.Scope.Principal.ID, &result.Scope.Principal.Namespace, &result.Scope.Principal.Subject, &result.Scope.Principal.Kind, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentCredential{}, identity.ErrUnauthorized
 	}
 	if err != nil {
 		return AgentCredential{}, err
 	}
-	if result.Scope.Principal.Namespace != namespace || !credentialIdentityValid(result.Scope.Principal) {
-		return AgentCredential{}, identity.ErrUnauthorized
-	}
-	// The session lookup takes no Owner supplied by the caller. Owner and target
-	// are recovered exclusively from the record named by the credential hash.
-	session, err := scanAgentSession(s.db.QueryRowContext(ctx, `SELECT `+agentSessionColumns+` FROM dune_agent_sessions WHERE id=$1`, result.SessionID))
-	if errors.Is(err, ErrNotFound) {
-		return AgentCredential{}, identity.ErrUnauthorized
-	}
-	if err != nil {
-		return AgentCredential{}, err
-	}
-	if session.Attempt.ID != result.AttemptID || session.Attempt.Runtime == nil || session.Attempt.State == "failed" || session.Attempt.State == "unknown" {
+	if result.Scope.OwnerID == "" || result.Scope.Principal.Namespace != namespace || !credentialIdentityValid(result.Scope.Principal) || json.Unmarshal([]byte(payload), &result.Target) != nil || result.Target.Validate() != nil || result.Target.Key() != targetKey {
 		return AgentCredential{}, identity.ErrUnauthorized
 	}
 	if s.localIdentity {
@@ -123,13 +113,14 @@ func (s *Store) ReadAgentCredential(ctx context.Context, token, namespace string
 			return AgentCredential{}, identity.ErrUnauthorized
 		}
 	}
-	result.Scope.OwnerID = session.OwnerID
-	result.Target = workbench.AgentTarget{Binding: session.Launch.Binding, Runtime: *session.Attempt.Runtime}
 	result.ExpiresAt = time.Unix(expires, 0)
 	return result, nil
 }
 
-func (s *Store) RevokeAgentCredential(ctx context.Context, owner, sessionID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM dune_agent_credentials WHERE session_id IN (SELECT id FROM dune_agent_sessions WHERE id=$1 AND owner_id=$2)`, sessionID, owner)
+func (s *Store) RevokeAgentCredential(ctx context.Context, owner string, target workbench.AgentTarget) error {
+	if owner == "" || target.Validate() != nil {
+		return ErrInvalidArgument
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM dune_agent_credentials WHERE owner_id=$1 AND target_key=$2`, owner, target.Key())
 	return err
 }

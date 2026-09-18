@@ -8,12 +8,13 @@ import (
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
-// The Runtime receipt is already saved before issuing a usable credential.
-// Credentials never enter the immutable launch snapshot or a public result.
-func (s *Service) configureMCP(ctx context.Context, scope agents.Scope, connection *client.Client, runtime api.Runtime, session agents.Summary) error {
-	token, err := s.Store.IssueAgentCredential(ctx, scope, session.ID, session.Attempt.ID, time.Now().Add(metadata.AgentCredentialLifetime))
+// The Runtime receipt is confirmed before issuing a usable credential.
+// Credentials never enter a Profile or a public result.
+func (s *Service) configureMCP(ctx context.Context, scope agents.Scope, connection *client.Client, runtime api.Runtime, binding runner.Binding) error {
+	token, err := s.Store.IssueAgentCredential(ctx, scope, targetFor(binding, runtime), time.Now().Add(metadata.AgentCredentialLifetime))
 	if err != nil {
 		return &api.Error{Code: "MCP_CONFIGURATION_FAILED", Detail: "Runtime started but its Agent credential could not be issued; inspect this Runtime before another start"}
 	}

@@ -20,7 +20,7 @@ var localIdentitySchema = []string{
 var executionSchema = []string{
 	`CREATE TABLE dune_agent_sessions (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>0),launch TEXT NOT NULL,state TEXT NOT NULL,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL)`,
 	`CREATE INDEX dune_agent_sessions_owner ON dune_agent_sessions(owner_id,id)`,
-	`CREATE TABLE dune_agent_credentials (hash TEXT PRIMARY KEY,session_id TEXT NOT NULL UNIQUE REFERENCES dune_agent_sessions(id) ON DELETE CASCADE,attempt_id TEXT NOT NULL,principal_id TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,kind TEXT NOT NULL,expires_at BIGINT NOT NULL)`,
+	`CREATE TABLE dune_agent_credentials (hash TEXT PRIMARY KEY,owner_id TEXT NOT NULL,target_key TEXT NOT NULL,target TEXT NOT NULL,principal_id TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,kind TEXT NOT NULL,expires_at BIGINT NOT NULL,UNIQUE(owner_id,target_key))`,
 	`CREATE INDEX dune_agent_credentials_expiry ON dune_agent_credentials(expires_at)`,
 	`CREATE TABLE dune_agent_runtime_sessions (owner_id TEXT NOT NULL,target TEXT NOT NULL,source_id TEXT NOT NULL,source_attempt TEXT NOT NULL,session_id TEXT NOT NULL,sequence BIGINT NOT NULL CHECK(sequence>=0),PRIMARY KEY(owner_id,target))`,
 	`CREATE INDEX dune_agent_runtime_sessions_selected ON dune_agent_runtime_sessions(owner_id,session_id)`,
@@ -43,7 +43,7 @@ type schemaQueryer interface {
 }
 
 var schemaColumns = map[string][]string{
-	"dune_agent_credentials":      {"hash", "session_id", "attempt_id", "principal_id", "namespace", "subject", "kind", "expires_at"},
+	"dune_agent_credentials":      {"hash", "owner_id", "target_key", "target", "principal_id", "namespace", "subject", "kind", "expires_at"},
 	"dune_agent_runtime_sessions": {"owner_id", "target", "source_id", "source_attempt", "session_id", "sequence"},
 	"dune_agent_sessions":         {"id", "owner_id", "revision", "launch", "state", "created_at", "updated_at"},
 	"dune_views":                  {"owner_id", "user_namespace", "user_id", "id", "revision", "spec", "updated_at"},

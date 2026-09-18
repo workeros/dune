@@ -107,7 +107,7 @@ func TestAgentMCPInjectionStartsSwitchesAndResumesWithUsableCredentials(t *testi
 			injected := readInjectedMCP(t, filename)
 			token := injected.token()
 			credential, err := f.app.store.ReadAgentCredential(t.Context(), token, "")
-			if err != nil || credential.SessionID != started.Session.ID || credential.Target.Runtime.ID != started.Runtime.ID {
+			if err != nil || credential.Target.Runtime.ID != started.Runtime.ID {
 				t.Fatal("injected credential was not bound to the recorded Runtime", err)
 			}
 			stored, err := f.app.store.AgentSession(t.Context(), f.owner, started.Session.ID)
@@ -136,7 +136,7 @@ func TestAgentMCPInjectionStartsSwitchesAndResumesWithUsableCredentials(t *testi
 			if nextToken == token {
 				t.Fatal("native recovery reused the old process credential")
 			}
-			if _, err := f.app.store.ReadAgentCredential(t.Context(), token, ""); err == nil {
+			if old, err := f.app.store.ReadAgentCredential(t.Context(), token, ""); err == nil && f.app.agentService().VerifyCaller(t.Context(), old.Scope, old.Target) == nil {
 				t.Fatal("old credential remained valid after recovery")
 			}
 			currentCredential, err := f.app.store.ReadAgentCredential(t.Context(), nextToken, "")

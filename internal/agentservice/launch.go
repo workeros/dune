@@ -143,7 +143,7 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 		return s.initializeACP(ctx, scope, connection, result)
 	}
 	if launch.Profile.RequireAgentMCP {
-		if err := s.configureMCP(ctx, scope, connection, runtime, *result.Session); err != nil {
+		if err := s.configureMCP(ctx, scope, connection, runtime, result.Session.Binding); err != nil {
 			return result, err
 		}
 	}

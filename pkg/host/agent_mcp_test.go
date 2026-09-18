@@ -12,6 +12,7 @@ import (
 
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/profiles"
+	"github.com/aiomni/dune/pkg/workbench"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -50,7 +51,7 @@ func callMCP[Out any](t *testing.T, session *mcp.ClientSession, name string, arg
 
 func issueMCPFixture(t *testing.T, f executorFixture, session agents.Summary) string {
 	t.Helper()
-	token, err := f.app.store.IssueAgentCredential(t.Context(), f.agentScope(), session.ID, session.Attempt.ID, time.Now().Add(time.Hour))
+	token, err := f.app.store.IssueAgentCredential(t.Context(), f.agentScope(), workbench.AgentTarget{Binding: session.Binding, Runtime: *session.LastRuntime}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	if err == nil && !bad.IsError {
 		t.Fatal("tool accepted caller-provided Tenant")
 	}
-	if err := f.app.store.RevokeAgentCredential(t.Context(), f.owner, started.Session.ID); err != nil {
+	if err := f.app.store.RevokeAgentCredential(t.Context(), f.owner, workbench.AgentTarget{Binding: f.binding, Runtime: *started.Session.LastRuntime}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "agents_list", Arguments: map[string]any{}}); err == nil {

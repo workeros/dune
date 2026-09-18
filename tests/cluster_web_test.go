@@ -27,6 +27,8 @@ import (
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/identity"
+	"github.com/aiomni/dune/pkg/runner"
+	"github.com/aiomni/dune/pkg/workbench"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
 )
@@ -206,7 +208,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	defer store.Close()
 	// Fixture provisioning only: subsequent MCP authentication and every target
 	// operation go through the real HTTP -> SDK -> peer Gateway -> fabricd path.
-	token, err := store.IssueAgentCredential(ctx, agents.Scope{Principal: principal, OwnerID: principal.ID}, caller.Session.ID, caller.Session.Attempt.ID, time.Now().Add(time.Hour))
+	token, err := store.IssueAgentCredential(ctx, agents.Scope{Principal: principal, OwnerID: principal.ID}, workbench.AgentTarget{Binding: runner.Binding{RunnerID: enrollment.Runner.ID, MachineID: machine.Target, FabricID: "attached", Revision: 1}, Runtime: workbench.RuntimeRef{ID: caller.Runtime.ID, Incarnation: caller.Runtime.Incarnation, Generation: caller.Runtime.Generation, Adapter: caller.Runtime.Adapter}}, time.Now().Add(time.Hour))
 	must(t, err)
 	client, err := mcp.NewClient(&mcp.Implementation{Name: "cluster-test-agent", Version: "1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: sites[2] + "api/v1/agent-mcp", HTTPClient: &http.Client{Transport: clusterMCPTransport{token: token}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
 	must(t, err)

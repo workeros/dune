@@ -108,7 +108,7 @@ func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
 			token := received[0]
 			mu.Unlock()
 			credential, err := f.app.store.ReadAgentCredential(t.Context(), token, "")
-			if err != nil || credential.Target.Runtime.ID != started.Runtime.ID || credential.SessionID != session.ID {
+			if err != nil || credential.Target.Runtime.ID != started.Runtime.ID {
 				t.Fatal("MCP credential preceded or mismatched Runtime binding", err)
 			}
 			stored, err := f.app.store.AgentSession(t.Context(), f.owner, session.ID)
@@ -135,7 +135,7 @@ func TestPTYMCPInjectionAuthenticatesAndRotatesOnResume(t *testing.T) {
 			if nextToken == token {
 				t.Fatal("resume reused old process credential")
 			}
-			if _, err := f.app.store.ReadAgentCredential(t.Context(), token, ""); err == nil {
+			if old, err := f.app.store.ReadAgentCredential(t.Context(), token, ""); err == nil && f.app.agentService().VerifyCaller(t.Context(), old.Scope, old.Target) == nil {
 				t.Fatal("old native credential remained usable")
 			}
 			credential, err = f.app.store.ReadAgentCredential(t.Context(), nextToken, "")
