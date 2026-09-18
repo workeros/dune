@@ -57,27 +57,6 @@ func TestViewHTTPKeepsPersonalScopeAndValidatesTree(t *testing.T) {
 	if out := f.request(t, "PUT", "/workbench/views/main", 0, view); out.Code != 404 {
 		t.Fatal("foreign Runner in layout", out.Code, out.Body.String())
 	}
-	marker := workbench.ReadMarker{Target: target, Epoch: "events", Sequence: 9}
-	if out := f.request(t, "PUT", "/workbench/read-markers", 0, marker); out.Code != 200 {
-		t.Fatal(out.Code, out.Body.String())
-	}
-	marker.Sequence = 0
-	for _, user := range []int{0, 1} {
-		out := f.request(t, "POST", "/workbench/read-markers/query", user, map[string]any{"items": []workbench.ReadMarker{marker}})
-		var got struct {
-			Items []workbench.ReadMarker `json:"items"`
-		}
-		if out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &got) != nil {
-			t.Fatal(out.Code, out.Body.String())
-		}
-		want := int64(9)
-		if user == 1 {
-			want = 0
-		}
-		if len(got.Items) != 1 || got.Items[0].Sequence != want {
-			t.Fatal("read state scope", got)
-		}
-	}
 	if out := f.request(t, "GET", "/workbench/views/main", 2, nil); out.Code != 403 {
 		t.Fatal("cross-tenant read", out.Code)
 	}

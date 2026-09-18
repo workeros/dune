@@ -11,7 +11,6 @@ export type LayoutNode = Leaf | Split;
 export type ViewSpec = { root: LayoutNode | null; focus_pane?: string; review_pane?: string };
 export type SavedView = ViewSpec & { id: string; revision: number };
 export type Agent = { ref?: string; target: AgentTarget; runtime: AgentRuntime; runner: Runner; session?: AgentSession };
-export type ReadMarker = { target: AgentTarget; epoch: string; sequence: number };
 export const emptyView: ViewSpec = { root: null };
 
 export function targetKey(target: AgentTarget): string {

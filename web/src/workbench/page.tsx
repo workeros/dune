@@ -29,7 +29,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   const panes = leaves(saved.view.root), project = projects.projects.find((item) => item.id === projectID);
   const agentFor = (leaf: Leaf | undefined) => leaf && directory.agents.find((agent) => targetKey(agent.target) === targetKey(leaf.pane.target));
   const focused = agentFor(panes.find((pane) => pane.id === saved.view.focus_pane));
-  const read = useReadMarkers(prefix, directory.agents, focused);
+  const read = useReadMarkers(prefix, focused);
   const reviewLeaf = panes.find((pane) => pane.id === (saved.view.review_pane || saved.view.focus_pane)), reviewAgent = agentFor(reviewLeaf);
   const open = (agent: Agent) => {
     if (!saved.loaded) return;
@@ -68,7 +68,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   return <div className="parallel-workbench">
     <header className="parallel-header"><div><h1>并行工作台</h1><p className="muted" role="status">{saved.error ? "布局未保存" : !saved.loaded ? "读取个人布局…" : saved.saving ? "保存布局中…" : "布局已保存"}</p></div><div className="flex flex-wrap gap-2"><label className="split-choice">新会话打开方向<select value={direction} onChange={(event) => setDirection(event.target.value as Split["direction"])}><option value="horizontal">左右分屏</option><option value="vertical">上下分屏</option></select></label><Button size="sm" variant={review === "files" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "files" ? "" : "files")}>文件</Button><Button size="sm" variant={review === "git" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "git" ? "" : "git")}>Git diff</Button></div></header>
     {saved.error && <div className="error-box mx-3" role="alert">{saved.error}<Button variant="outline" size="sm" onClick={() => void saved.reload()}>加载已保存布局</Button></div>}
-    {(error || projects.error || read.error) && <p className="error-box mx-3" role="alert">{error || projects.error || read.error}</p>}
+    {(error || projects.error) && <p className="error-box mx-3" role="alert">{error || projects.error}</p>}
     <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime, session) => { const agent = directory.add(runner, runtime, session); if (agent) open(agent); }} />
     <div className="parallel-body"><aside className="agent-navigation">
       <div className="nav-heading"><h2>项目</h2><Button size="sm" variant="ghost" onClick={() => setEditing("new")}>新建项目</Button></div>

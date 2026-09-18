@@ -21,7 +21,6 @@ var localTables = []struct{ name, columns string }{
 	{"dune_profile_revisions", "profile_id,revision,name,description,profile,created_at"},
 	{"dune_projects", "id,owner_id,revision,spec,created_at,updated_at"},
 	{"dune_views", "owner_id,user_namespace,user_id,id,revision,spec,updated_at"},
-	{"dune_read_markers", "owner_id,user_namespace,user_id,target,epoch,sequence"},
 }
 
 func TestLocalSQLiteSchemaContainsCurrentTables(t *testing.T) {

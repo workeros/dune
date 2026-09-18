@@ -120,19 +120,3 @@ func (v ViewSpec) Panes() ([]Pane, error) {
 	}
 	return panes, nil
 }
-
-type ReadMarker struct {
-	Target   AgentTarget `json:"target"`
-	Epoch    string      `json:"epoch"`
-	Sequence int64       `json:"sequence"`
-}
-
-func (m ReadMarker) Validate() error {
-	if err := m.Target.Validate(); err != nil {
-		return err
-	}
-	if !validText(m.Epoch, 256) || m.Sequence < 0 {
-		return fmt.Errorf("read marker requires an event epoch and nonnegative sequence")
-	}
-	return nil
-}

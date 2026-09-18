@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { AgentRuntime, ProfileRecord, Runner } from "../src/lib/api";
-import { targetFor, targetKey, type Project, type ReadMarker, type SavedView } from "../src/workbench/model";
+import { targetFor, targetKey, type Project, type SavedView } from "../src/workbench/model";
 import type { AgentSession, LaunchRequest, LaunchResult } from "../src/workbench/launch";
 
 export function workbenchState() {
@@ -9,7 +9,7 @@ export function workbenchState() {
   const projects: Project[] = runners.map((runner, index) => ({ id: `project-${index}`, revision: 1, name: `Project ${index ? "B" : "A"}`, directories: [{ id: `directory-${index}`, binding: runner.binding!, path: `/repo-${index ? "b" : "a"}` }] }));
   return {
     runners, runtimes, projects, view: { id: "main", revision: 0, root: null } as SavedView,
-    markers: new Map<string, number>(), inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
+    inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
     connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>, recoveryError: false,
     resumeRequests: [] as { id: string; revision: number }[], resumeOutcome: "success" as "success" | "unknown" | "pending",
     profiles: [] as ProfileRecord[], sessions: [] as AgentSession[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "index",
@@ -76,9 +76,6 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
       if (state.conflict || body.revision !== state.view.revision) return reply({ code: "CONFLICT", error: "metadata conflict" }, 409);
       state.view = { ...body, id: "main", revision: body.revision + 1 }; return reply(state.view);
     }
-    const key = (marker: ReadMarker) => JSON.stringify([marker.target, marker.epoch]);
-    if (path.endsWith("/read-markers/query")) return reply({ items: body.items.map((marker: ReadMarker) => ({ ...marker, sequence: state.markers.get(key(marker)) ?? 0 })) });
-    if (path.endsWith("/read-markers")) { state.markers.set(key(body), Math.max(state.markers.get(key(body)) ?? 0, body.sequence)); return reply({ ...body, sequence: state.markers.get(key(body)) }); }
     const runner = path.match(/\/runners\/([^/]+)\/(call|sessions)$/);
     if (runner) {
       if (runner[2] === "sessions") {

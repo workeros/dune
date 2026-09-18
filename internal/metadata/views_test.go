@@ -11,7 +11,7 @@ import (
 	"github.com/aiomni/dune/pkg/workbench"
 )
 
-func TestPersonalViewsAndReadMarkers(t *testing.T) {
+func TestPersonalViews(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
@@ -75,29 +75,6 @@ func TestPersonalViewsAndReadMarkers(t *testing.T) {
 			if success != 1 || conflicts != 1 {
 				t.Fatal("view revision race", success, conflicts)
 			}
-			marker := workbench.ReadMarker{Target: target, Epoch: "events-a", Sequence: 17}
-			if _, err := s.MarkRead(t.Context(), owner, marker); err != nil {
-				t.Fatal(err)
-			}
-			marker.Sequence = 3
-			if got, err := peer.MarkRead(t.Context(), owner, marker); err != nil || got.Sequence != 17 {
-				t.Fatal("read position went backwards", got, err)
-			}
-			marker.Sequence, marker.Epoch = 1, "events-b"
-			if got, err := peer.MarkRead(t.Context(), owner, marker); err != nil || got.Sequence != 1 {
-				t.Fatal("new epoch inherited old position", got, err)
-			}
-			other := owner
-			other.UserID = "two"
-			if got, err := s.ReadMarkers(t.Context(), other, []workbench.ReadMarker{marker}); err != nil || got[0].Sequence != 0 {
-				t.Fatal("reading for one user read it for another", got, err)
-			}
-			oldTarget := marker.Target
-			marker.Target.Runtime.Generation++
-			if got, err := s.ReadMarkers(t.Context(), owner, []workbench.ReadMarker{marker}); err != nil || got[0].Sequence != 0 {
-				t.Fatal("new execution inherited old read state", got, err)
-			}
-			marker.Target = oldTarget
 			if err := s.Revoke(t.Context(), owner.OwnerID, machine.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -119,9 +96,7 @@ func TestPersonalViewsAndReadMarkers(t *testing.T) {
 			if err != nil || got.Revision != 3 || got.Root.Pane.Target != target || got.ReviewPane != "pane-one" {
 				t.Fatal("reopen lost view", got, err)
 			}
-			if markers, err := s.ReadMarkers(t.Context(), owner, []workbench.ReadMarker{marker}); err != nil || markers[0].Sequence != 1 {
-				t.Fatal("reopen lost markers", markers, err)
-			}
+
 		})
 	}
 }

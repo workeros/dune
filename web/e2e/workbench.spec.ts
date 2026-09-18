@@ -151,3 +151,25 @@ test("four panes remain readable with long labels, and a saved view without focu
   await page.screenshot({ path: testInfo.outputPath("narrow.png"), fullPage: true });
   expect(errors).toEqual([]);
 });
+
+
+test("unread activity stays in this browser without metadata requests", async ({ page }) => {
+  const state = workbenchState(), requests: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("read-markers")) requests.push(request.url()); });
+  await mockWorkbench(page, state); await page.goto("/");
+  const agent = page.getByRole("button", { name: "打开 A-PTY · Runner one", exact: true });
+  await expect(agent.getByLabel("未读活动")).toBeVisible();
+  await agent.click();
+  await expect(agent.getByLabel("未读活动")).toHaveCount(0);
+  await page.getByRole("button", { name: "打开 B-PTY · Runner two", exact: true }).click();
+  state.runtimes.one[0].activity!.sequence++;
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(agent.getByLabel("未读活动")).toBeVisible();
+  await agent.click();
+  await expect(agent.getByLabel("未读活动")).toHaveCount(0);
+  await page.getByRole("button", { name: "打开 B-PTY · Runner two", exact: true }).click();
+  await expect(page.getByText("布局已保存", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(agent.getByLabel("未读活动")).toBeVisible();
+  expect(requests).toEqual([]);
+});
