@@ -2,13 +2,12 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
 import { bindingKey, call, errorText, listAll, type ProfileRecord, type Runner } from "../lib/api";
-import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, restorePane, syncSessionRecords, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
+import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
 import { useView } from "./use-view";
 import { useAgents } from "./use-agents";
 import { useReadMarkers } from "./use-read-markers";
 import { ProjectEditor, useProjects } from "./projects";
 import { SplitCanvas } from "./splits";
-import { SessionRecovery } from "./recovery";
 import { StartAgent } from "./start-agent";
 import { Diff } from "./diff";
 import { Files } from "./files";
@@ -21,7 +20,6 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   runners: Runner[]; runnersLoading: boolean; selectedRunner?: Runner; onSelectRunner: (runner: Runner) => void; profileVersion: number; onManageProfiles: () => void;
 }) {
   const prefix = "/api/v1", saved = useView(prefix), directory = useAgents(runners), projects = useProjects(prefix);
-  useEffect(() => { if (saved.loaded) saved.change((view) => syncSessionRecords(view, directory.agents)); }, [saved.loaded, saved.change, directory.agents]);
   const [projectID, setProjectID] = useState(""), [editing, setEditing] = useState<Project | "new">(), [profiles, setProfiles] = useState<ProfileRecord[]>([]);
   const [direction, setDirection] = useState<Split["direction"]>("horizontal"), [error, setError] = useState(""), [review, setReview] = useState<"files" | "git" | "">("");
   const [stopping, setStopping] = useState<Agent>(), [stopBusy, setStopBusy] = useState(false);
@@ -34,7 +32,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   const open = (agent: Agent) => {
     if (!saved.loaded) return;
     const association = projectFor(agent, projects.projects);
-    try { saved.change((current) => addPane(current, { target: agent.target, project_id: association?.project.id, directory_id: association?.directory?.id, session_record_id: agent.session?.id }, direction, () => crypto.randomUUID())); setError(""); }
+    try { saved.change((current) => addPane(current, { target: agent.target, project_id: association?.project.id, directory_id: association?.directory?.id }, direction, () => crypto.randomUUID())); setError(""); }
     catch (cause) { setError(errorText(cause)); }
   };
   const focus = (id: string) => saved.change((old) => old.focus_pane === id ? old : { ...old, focus_pane: id });
@@ -55,21 +53,21 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     else if (runner && !bindingValid) unavailable = "原环境绑定已失效，请从列表选择当前会话。";
     else if (runner && !runner.online) unavailable = "开发环境离线，等待重新连接。";
     else if (discoveryError) unavailable = `暂时无法核验会话：${discoveryError}`;
-    else if (directory.checked.has(key) && !agent) unavailable = leaf.pane.session_record_id ? "原运行会话已结束，可以检查原生恢复记录。" : "原会话已失效，当前还没有可用的恢复索引。可以新建 Agent。";
+    else if (directory.checked.has(key) && !agent) unavailable = "原会话已结束，可以新建 Agent。";
     return <div className="agent-pane-card"><header>
       <button className="pane-title" onClick={() => focus(leaf.id)} title={`${projectName} · ${runner?.name ?? leaf.pane.target.binding.runner_id}`}><strong>{agent?.runtime.title ?? leaf.pane.target.runtime.adapter.toUpperCase()}</strong><small>{projectName} · {runner?.name ?? "原环境"}</small></button>
       <span className="pane-status">{agent ? activityLabel(agent.runtime) : "待核验"} · {leaf.pane.target.runtime.adapter.toUpperCase()}</span>
       <Button size="sm" variant="ghost" aria-label={`固定审阅 ${agent?.runtime.title ?? leaf.id}`} onClick={() => { saved.change((old) => ({ ...old, review_pane: old.review_pane === leaf.id ? undefined : leaf.id })); setReview((old) => old || "git"); }}>{saved.view.review_pane === leaf.id ? "取消固定" : "固定审阅"}</Button>
       {available && <Button size="sm" variant="ghost" aria-label={`${agent.runtime.state === "running" ? "停止" : "删除"} ${agent.runtime.title ?? leaf.id}`} onClick={() => setStopping(agent)}>{agent.runtime.state === "running" ? "停止" : "删除"}</Button>}
       <Button size="sm" variant="ghost" aria-label={`移出 ${agent?.runtime.title ?? leaf.id}`} title="移出视图，Agent 继续运行" onClick={() => saved.change((old) => removePane(old, leaf.id))}>移出</Button>
-    </header>{leaf.pane.session_record_id && (agent?.runtime.state !== "running" || agent.runtime.adapter === "pty" && agent.session?.attempt?.kind === "resume" && ["capturing", "unknown"].includes(agent.session.attempt.state)) && <SessionRecovery key={leaf.pane.session_record_id} prefix={prefix} recordID={leaf.pane.session_record_id} current={directory.agents.find((item) => item.session?.id === leaf.pane.session_record_id && item.session?.selected)} enabled={true} ready={!!bindingValid && !!runner?.online && directory.checked.has(key)} onRefresh={directory.refresh} onRestored={(runtime, session) => { if (!runner) return; const restored = directory.add(runner, runtime, session); if (restored) saved.change((view) => restorePane(view, leaf.id, restored, session)); }} />}<div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane key={targetKey(agent.target)} binding={leaf.pane.target.binding} runtime={agent.runtime} agentRef={agent.ref} prefix={prefix} onNativeChange={directory.refresh} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
+    </header><div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane key={targetKey(agent.target)} binding={leaf.pane.target.binding} runtime={agent.runtime} agentRef={agent.ref} prefix={prefix} onNativeChange={directory.refresh} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
   };
   const visibleAgents = directory.agents.filter((agent) => !projectID || projectFor(agent, projects.projects)?.project.id === projectID);
   return <div className="parallel-workbench">
     <header className="parallel-header"><div><h1>并行工作台</h1><p className="muted" role="status">{saved.error ? "布局未保存" : !saved.loaded ? "读取个人布局…" : saved.saving ? "保存布局中…" : "布局已保存"}</p></div><div className="flex flex-wrap gap-2"><label className="split-choice">新会话打开方向<select value={direction} onChange={(event) => setDirection(event.target.value as Split["direction"])}><option value="horizontal">左右分屏</option><option value="vertical">上下分屏</option></select></label><Button size="sm" variant={review === "files" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "files" ? "" : "files")}>文件</Button><Button size="sm" variant={review === "git" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "git" ? "" : "git")}>Git diff</Button></div></header>
     {saved.error && <div className="error-box mx-3" role="alert">{saved.error}<Button variant="outline" size="sm" onClick={() => void saved.reload()}>加载已保存布局</Button></div>}
     {(error || projects.error) && <p className="error-box mx-3" role="alert">{error || projects.error}</p>}
-    <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime, session) => { const agent = directory.add(runner, runtime, session); if (agent) open(agent); }} />
+    <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime) => { const agent = directory.add(runner, runtime); if (agent) open(agent); }} />
     <div className="parallel-body"><aside className="agent-navigation">
       <div className="nav-heading"><h2>项目</h2><Button size="sm" variant="ghost" onClick={() => setEditing("new")}>新建项目</Button></div>
       <nav aria-label="项目列表"><button className={!projectID ? "selected" : ""} onClick={() => setProjectID("")}>全部项目</button>{projects.projects.map((item) => <div className="project-nav-row" key={item.id}><button className={projectID === item.id ? "selected" : ""} title={item.name} onClick={() => setProjectID(item.id)}>{item.name}</button><Button size="sm" variant="ghost" aria-label={`编辑项目 ${item.name}`} onClick={() => setEditing(item)}>编辑</Button></div>)}</nav>

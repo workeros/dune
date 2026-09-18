@@ -21,11 +21,9 @@ test("starts from a fixed project Profile in a new worktree and restores its pro
   await expect(page.locator(".agent-pane")).toHaveCount(1);
   expect(state.launchRequests[0]).toMatchObject({ profile: { id: "chosen", revision: 2 }, project: { id: "project-0", revision: 1 }, directory_id: "directory-0", working_directory: "/repo-a", worktree: { path: "/worktrees/helper", branch: "feat/helper", ref: "main" } });
   expect(state.launchRequests[0].custom).toBeUndefined();
-  await expect.poll(() => leaves(state.view.root)[0]?.pane.session_record_id).toBe("record-1");
-  expect(leaves(state.view.root)[0].pane.project_id).toBe("project-0");
+  await expect.poll(() => leaves(state.view.root)[0]?.pane.project_id).toBe("project-0");
   expect(leaves(state.view.root)[0].pane.directory_id).toBeUndefined();
   await expect(page.getByRole("navigation", { name: "Agent 列表" }).getByRole("button", { name: "打开 New acp · Runner one" })).toBeVisible();
-  state.sessions.push({ ...state.sessions[0], id: "historical-native", selected: false, project_id: state.projects[1].id });
   const context = await browser.newContext();
   const second = await context.newPage(); await mockWorkbench(second, state); await second.goto("/");
   await second.getByRole("button", { name: "Project A", exact: true }).click();
@@ -55,8 +53,8 @@ test("keeps a prepared worktree after startup failure and only retries on an exp
   expect(state.launchRequests[1].working_directory).toBe("/worktrees/prepared");
 });
 
-test("attaches a confirmed Runtime after recovery-index failure without starting again", async ({ page }) => {
-  const state = workbenchState(); state.launchFailure = "index";
+test("attaches a confirmed Runtime after MCP configuration failure without starting again", async ({ page }) => {
+  const state = workbenchState(); state.launchFailure = "mcp";
   await mockWorkbench(page, state); await page.goto("/");
   await page.getByRole("button", { name: "普通终端", exact: true }).click();
   await expect(page.locator(".agent-pane")).toHaveCount(1);

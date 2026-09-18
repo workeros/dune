@@ -3,10 +3,9 @@ import { APIError, bindingKey, errorText, request, type AgentRuntime, type Runne
 const isAccessError = (error: unknown) => error instanceof APIError && [401, 403].includes(error.status);
 
 import { targetFor, type Agent, type AgentTarget } from "./model";
-import type { AgentSession } from "./launch";
 
 type DirectoryPage = {
-  items: { agent_ref: string; target: AgentTarget; runtime: AgentRuntime; session?: AgentSession; recovery_error?: string }[];
+  items: { agent_ref: string; target: AgentTarget; runtime: AgentRuntime }[];
   runners: { runner: Pick<Runner, "id" | "binding">; online: boolean; ready: boolean }[];
   issues: { runner_id: string; code: string }[]; next_cursor?: string;
 };
@@ -40,8 +39,7 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
         for (const item of page.items) {
           const runner = selected.find((runner) => bindingKey(runner.binding) === bindingKey(item.target.binding));
           if (!runner) continue;
-          agents.push({ runner, target: item.target, runtime: item.runtime, session: item.session, ref: item.agent_ref });
-          if (item.recovery_error) errors.sessions = "会话恢复索引暂不可用，已运行的 Agent 可以继续使用。";
+          agents.push({ runner, target: item.target, runtime: item.runtime, ref: item.agent_ref });
         }
         cursor = page.next_cursor ?? "";
         if (cursor && seen.has(cursor)) throw new Error("Agent 列表分页未前进，请刷新重试。");
@@ -69,10 +67,10 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
     const timer = setInterval(() => { if (!document.hidden) void tick(); }, 4000);
     return () => { disposed = true; epoch.current++; clearInterval(timer); };
   }, [signature, refresh]);
-  const add = (runner: Runner, runtime: AgentRuntime, session?: AgentSession) => {
+  const add = (runner: Runner, runtime: AgentRuntime) => {
     epoch.current++;
     if (!runner.binding) return;
-    const agent = { runner, runtime, target: targetFor(runner.binding, runtime), session };
+    const agent = { runner, runtime, target: targetFor(runner.binding, runtime) };
     setDiscovery((old) => ({ ...old, agents: [...old.agents.filter((item) => item.runtime.id !== runtime.id || bindingKey(item.target.binding) !== bindingKey(runner.binding)), agent], checked: new Set([...old.checked, bindingKey(runner.binding)]) }));
     return agent;
   };

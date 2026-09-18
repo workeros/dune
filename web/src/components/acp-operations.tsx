@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dial
 
 export type ACPOperation = {
  operation_ref: string; state: "pending" | "running" | "completed" | "failed" | "cancelled" | "unknown";
- stop_reason?: string; error?: string; native_session?: { id: string; cwd: string }; recovery_error?: string;
+ stop_reason?: string; error?: string; native_session?: { id: string; cwd: string };
 };
 type Submission = { operation: ACPOperation; label: string; queryError?: string };
 type Output = ACPOperation & { position: number; next_position: number; incomplete: boolean; output: { update: unknown }[] | null };
@@ -75,7 +75,7 @@ export function ACPOperations({ prefix, enabled, requests, renderUpdates }: { pr
   {!!requests.items.length && <details open><summary>本页提交 · {requests.items.length} 项（最多保留 64 项）{requests.items.some((item) => pending(item.operation)) ? " · 仍有任务处理中" : ""}</summary><div className="acp-operation-list">{requests.items.map((item) => <div className="acp-operation-row" key={item.operation.operation_ref} aria-label={item.label}>
    <strong>{item.label}</strong><span role="status">{operationLabel(item.operation)}{item.operation.stop_reason ? ` · ${item.operation.stop_reason}` : ""}</span>
    <Button size="sm" variant="ghost" disabled={!enabled} onClick={() => setSelected(item)}>查看本次输出</Button>
-   {(item.queryError || item.operation.error || item.operation.recovery_error) && <p role="alert">{item.queryError || item.operation.error || "会话恢复索引暂未确认"}</p>}
+   {(item.queryError || item.operation.error) && <p role="alert">{item.queryError || item.operation.error}</p>}
    {item.operation.state === "unknown" && <p>结果未确认，未自动重发。可查看已保留的输出。</p>}
    {item.queryError && <Button size="sm" variant="outline" disabled={!enabled} onClick={() => requests.retry(item.operation.operation_ref)}>重新查询</Button>}
   </div>)}</div></details>}

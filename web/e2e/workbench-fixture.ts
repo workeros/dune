@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { AgentRuntime, ProfileRecord, Runner } from "../src/lib/api";
-import { targetFor, targetKey, type Project, type SavedView } from "../src/workbench/model";
-import type { AgentSession, LaunchRequest, LaunchResult } from "../src/workbench/launch";
+import { targetFor, type Project, type SavedView } from "../src/workbench/model";
+import type { LaunchRequest, LaunchResult } from "../src/workbench/launch";
 
 export function workbenchState() {
   const runners: Runner[] = ["one", "two"].map((id) => ({ id, name: `Runner ${id}`, online: true, kind: "attached", binding: { runner_id: id, machine_id: `machine-${id}`, fabric_id: "attached", revision: 1 } }));
@@ -10,9 +10,8 @@ export function workbenchState() {
   return {
     runners, runtimes, projects, view: { id: "main", revision: 0, root: null } as SavedView,
     inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
-    connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>, recoveryError: false,
-    resumeRequests: [] as { id: string; revision: number }[], resumeOutcome: "success" as "success" | "unknown" | "pending",
-    profiles: [] as ProfileRecord[], sessions: [] as AgentSession[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "index",
+    connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>,
+    profiles: [] as ProfileRecord[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "mcp",
   };
 }
 export type WorkbenchState = ReturnType<typeof workbenchState>;
@@ -39,25 +38,9 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
       const runners = state.runners.slice(start, end), issues = runners.flatMap((runner) => state.discoveryError || state.discoveryIssues[runner.id] ? [{ runner_id: runner.id, code: state.discoveryIssues[runner.id] ?? "RUNNER_UNAVAILABLE" }] : []);
       const items = runners.flatMap((runner) => !runner.binding || !runner.online || issues.some((issue) => issue.runner_id === runner.id) ? [] : (state.runtimes[runner.id] ?? []).map((runtime) => {
         const target = targetFor(runner.binding!, runtime);
-        return { agent_ref: `ref-${runtime.id}`, target, runtime, recovery_error: state.recoveryError ? "RECOVERY_INDEX_UNAVAILABLE" : undefined, session: state.sessions.find((session) => session.selected && session.last_runtime && targetKey(targetFor(session.binding, session.last_runtime)) === targetKey(target)) };
+        return { agent_ref: `ref-${runtime.id}`, target, runtime };
       }));
       return reply({ items, runners: runners.map((runner) => ({ runner, online: runner.online, ready: runner.online })), issues, next_cursor: end < state.runners.length ? String(end) : undefined });
-    }
-    if (path === "/api/v1/agent-sessions") return reply({ items: state.sessions });
-    const recoveryRoute = path.match(/^\/api\/v1\/agent-sessions\/([^/]+)(\/resume)?$/);
-    if (recoveryRoute) {
-      const session = state.sessions.find((item) => item.id === recoveryRoute[1]);
-      if (!session) return reply({ code: "NOT_FOUND", error: "session missing" }, 404);
-      if (method === "GET") return reply(session);
-      state.resumeRequests.push({ id: session.id, revision: body.revision });
-      session.revision++; session.attempt = { id: "resume-attempt", kind: "resume", state: state.resumeOutcome === "success" ? "ready" : state.resumeOutcome === "unknown" ? "unknown" : "capturing", base_revision: body.revision };
-      session.status = state.resumeOutcome === "success" ? "available" : state.resumeOutcome === "unknown" ? "unknown" : "pending_capture";
-      if (state.resumeOutcome === "success" || state.resumeOutcome === "pending" && session.adapter === "pty") {
-        const runtime: AgentRuntime = { ...session.last_runtime!, id: `resumed-${session.adapter}`, incarnation: "resumed-boot", state: "running", title: `Restored ${session.adapter.toUpperCase()}`, working_directory: session.working_directory };
-        session.last_runtime = runtime; state.runtimes[session.binding.runner_id].push(runtime);
-        return reply({ session, runtime });
-      }
-      return state.resumeOutcome === "unknown" ? reply({ code: "RESULT_UNKNOWN", error: "load result unknown", result: { session } }, 503) : reply({ session });
     }
     if (path === "/api/v1/projects") {
       if (method === "GET") return reply({ items: state.projects });
@@ -80,14 +63,11 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     if (runner) {
       if (runner[2] === "sessions") {
         state.starts++; state.launchRequests.push(body);
-        const binding = state.runners.find((item) => item.id === runner[1])!.binding!;
         const profile = body.custom ?? state.profiles.find((item) => item.id === body.profile?.id)?.profile;
-        const runtime: AgentRuntime = { id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
-        const session: AgentSession = { id: `record-${state.starts}`, revision: 2, selected: state.launchFailure !== "start", binding, project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, working_directory: runtime.working_directory!, adapter: runtime.adapter, agent_type: "fixture", status: "pending_capture", last_runtime: state.launchFailure === "start" ? undefined : runtime };
-        const result: LaunchResult = { session, worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
+        const runtime: AgentRuntime = { id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
+        const result: LaunchResult = { worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
         if (state.launchFailure !== "start") { result.runtime = runtime; state.runtimes[runner[1]].push(runtime); }
-        state.sessions.push(session);
-        if (state.launchFailure) return reply({ code: state.launchFailure === "start" ? "START_FAILED" : "RECOVERY_INDEX_FAILED", error: "startup confirmation failed", result }, 503);
+        if (state.launchFailure) return reply({ code: state.launchFailure === "start" ? "START_FAILED" : "MCP_CONFIGURATION_FAILED", error: "startup confirmation failed", result }, 503);
         return reply(result, 201);
       }
       state.calls.push({ runner: runner[1], operation: body.operation, payload: body.payload });

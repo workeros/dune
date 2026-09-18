@@ -4,11 +4,11 @@ import { Input } from "../components/ui/input";
 import { APIError, bindingKey, call, errorText, post, runnerPath, type AgentRuntime, type ProfileRecord, type Runner } from "../lib/api";
 import { DirectoryPicker } from "./directory-picker";
 import type { Project } from "./model";
-import type { AgentSession, LaunchRequest, LaunchResult } from "./launch";
+import type { LaunchRequest, LaunchResult } from "./launch";
 
 export function StartAgent({ runners, selected, onSelect, profiles, project, onStarted, onManageProfiles }: {
   runners: Runner[]; selected?: Runner; onSelect: (runner: Runner) => void; profiles: ProfileRecord[]; project?: Project;
-  onStarted: (runner: Runner, runtime: AgentRuntime, session?: AgentSession) => void; onManageProfiles: () => void;
+  onStarted: (runner: Runner, runtime: AgentRuntime) => void; onManageProfiles: () => void;
 }) {
   const [profileID, setProfileID] = useState(""), [cwd, setCwd] = useState(""), [directoryID, setDirectoryID] = useState("");
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [browsing, setBrowsing] = useState(false);
@@ -48,7 +48,7 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
     setBusy(true); setError("");
     const accept = (result: LaunchResult | undefined) => {
       if (result?.worktree) { setCwd(result.worktree.path); setDirectoryID(""); setLocation("current"); }
-      if (result?.runtime) onStarted(runner, result.runtime, result.session);
+      if (result?.runtime) onStarted(runner, result.runtime);
     };
     try {
       const body: LaunchRequest = {

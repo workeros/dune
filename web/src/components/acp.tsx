@@ -117,7 +117,7 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
    <Button size="sm" variant="outline" disabled={disabled || !agentRef || !state?.can_load || !(sessionID || state?.session_id)} onClick={() => void act("load", { session_id: sessionID || state!.session_id })}>从 Agent 加载历史</Button>
   </div>
   {state?.list && <div className="max-h-40 overflow-auto border-b p-3 text-xs"><p className="mb-2 font-bold">Agent 原生历史 · 当前页</p>{state.list.sessions.length === 0 && <p>Agent 返回当前页无会话。</p>}{state.list.sessions.map((session) => <button className="block w-full truncate p-2 text-left underline" disabled={disabled || !agentRef} key={session.sessionId} onClick={() => { setSessionID(session.sessionId); void act("load", { session_id: session.sessionId, cwd: session.cwd }); }}>{session.title || session.sessionId} · {session.cwd}</button>)}{state.list.nextCursor && <Button size="sm" disabled={disabled || busy} onClick={() => void act("list", { cursor: state.list!.nextCursor! })}>下一页</Button>}</div>}
-  {ended && <p className="bg-secondary px-4 py-2 text-xs leading-5">Agent 进程已退出。重新启动 Agent 后，可按其能力加载原生历史。</p>}
+  {ended && <p className="bg-secondary px-4 py-2 text-xs leading-5">Agent 进程已退出，可以新建 Agent。</p>}
   {!ended && gap && <p className="bg-secondary px-4 py-2 text-xs leading-5">这里显示当前连接收到的内容。本页提交的任务可按操作查看输出；更早的对话需从 Agent 原生历史加载。</p>}
   {!ended && !state?.session_id && !busy && <p className="p-4 text-sm">新建对话，或从 Agent 原生历史中加载一个会话。</p>}
   {(error || state?.error) && <div className="error-box m-3" role="alert">{error || state?.error}</div>}

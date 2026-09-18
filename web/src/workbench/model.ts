@@ -1,16 +1,15 @@
 import type { AgentRuntime, Binding, Runner, Runtime } from "../lib/api";
-import type { AgentSession } from "./launch";
 
 export type AgentTarget = { binding: Binding; runtime: Pick<Runtime, "id" | "incarnation" | "generation" | "adapter"> };
 export type ProjectDirectory = { id: string; binding: Binding; path: string; repository?: string };
 export type Project = { id: string; revision: number; name: string; directories: ProjectDirectory[]; default_profile?: { id: string; revision: number } };
-export type Pane = { target: AgentTarget; project_id?: string; directory_id?: string; session_record_id?: string };
+export type Pane = { target: AgentTarget; project_id?: string; directory_id?: string };
 export type Leaf = { id: string; pane: Pane };
 export type Split = { id: string; direction: "horizontal" | "vertical"; ratio: number; children: [LayoutNode, LayoutNode] };
 export type LayoutNode = Leaf | Split;
 export type ViewSpec = { root: LayoutNode | null; focus_pane?: string; review_pane?: string };
 export type SavedView = ViewSpec & { id: string; revision: number };
-export type Agent = { ref?: string; target: AgentTarget; runtime: AgentRuntime; runner: Runner; session?: AgentSession };
+export type Agent = { ref?: string; target: AgentTarget; runtime: AgentRuntime; runner: Runner };
 export const emptyView: ViewSpec = { root: null };
 
 export function targetKey(target: AgentTarget): string {
@@ -65,9 +64,9 @@ export function geometry(root: LayoutNode | null) {
   return { panes, dividers };
 }
 export function projectFor(agent: Agent, projects: Project[]) {
-  if (agent.session?.project_id) {
-    const project = projects.find((item) => item.id === agent.session!.project_id);
-    if (project) return { project, directory: project.directories.find((item) => item.id === agent.session!.directory_id) };
+  if (agent.runtime.project_id) {
+    const project = projects.find((item) => item.id === agent.runtime.project_id);
+    if (project) return { project, directory: project.directories.find((item) => item.id === agent.runtime.directory_id) };
   }
   return projects.flatMap((project) => project.directories.map((directory) => ({ project, directory }))).find(({ directory }) => {
     const a = agent.target.binding, b = directory.binding;
@@ -77,31 +76,4 @@ export function projectFor(agent: Agent, projects: Project[]) {
 export function activityLabel(runtime: AgentRuntime): string {
   if (runtime.state !== "running") return runtime.stop_reason === "timed_out" ? "已超时" : "已退出";
   return ({ working: "执行中", idle: "空闲", blocked: "等待回应", unknown: "状态未知" } as const)[runtime.activity?.state ?? "unknown"];
-}
-
-// Update only the recovery record attached to each exact Runtime. Keeping
-// unchanged nodes stable preserves the terminal/ACP connection in each pane.
-export function syncSessionRecords(view: ViewSpec, agents: Agent[]): ViewSpec {
-  const sessions = new Map(agents.filter((agent) => agent.session?.selected).map((agent) => [targetKey(agent.target), agent.session!.id]));
-  const visit = (node: LayoutNode): LayoutNode => {
-    if ("pane" in node) {
-      const id = sessions.get(targetKey(node.pane.target));
-      return id && id !== node.pane.session_record_id ? { ...node, pane: { ...node.pane, session_record_id: id } } : node;
-    }
-    const children = node.children.map(visit) as Split["children"];
-    return children.every((child, index) => child === node.children[index]) ? node : { ...node, children };
-  };
-  const root = view.root ? visit(view.root) : null;
-  return root === view.root ? view : { ...view, root };
-}
-
-export function restorePane(view: ViewSpec, id: string, agent: Agent, session: AgentSession): ViewSpec {
-  const original = leaves(view.root).find((leaf) => leaf.id === id);
-  if (!original || original.pane.session_record_id !== session.id) return view;
-  const existing = leaves(view.root).find((leaf) => leaf.id !== id && targetKey(leaf.pane.target) === targetKey(agent.target));
-  if (existing) {
-    const removed = removePane(view, id);
-    return { ...removed, focus_pane: view.focus_pane === id ? existing.id : removed.focus_pane, review_pane: view.review_pane === id ? existing.id : removed.review_pane };
-  }
-  return { ...view, root: mapNode(view.root!, id, () => ({ ...original, pane: { target: agent.target, session_record_id: session.id, project_id: session.project_id, directory_id: session.directory_id } })) };
 }

@@ -28,7 +28,8 @@ export function runnerPath(binding: Binding, suffix: string): string {
   const query = new URLSearchParams({ machine_id: binding.machine_id, fabric_id: binding.fabric_id, revision: String(binding.revision) });
   return `/api/v1/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
 }
-export type Runtime = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };
+export type Runtime = {
+ project_id?: string; directory_id?: string; id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };
 export type AgentActivity = { state: "unknown" | "working" | "idle" | "blocked"; source: string; agent?: string; foreground?: string; epoch: string; sequence: number };
 export type AgentRuntime = Runtime & { activity?: AgentActivity };
 export function runtimeKey(runtime: Runtime): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }
