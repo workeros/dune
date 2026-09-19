@@ -6,7 +6,7 @@ option go_package = "github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1";
 // This MVP wire format is dune-mvp/2, not the historical DTP/1 Frame.
 // kind: hello, welcome, request, accepted, result, error, data, input,
 // written, resize, signal, eof, exit, stderr, lease_request, lease_grant,
-// lease_ready. payload is UTF-8 JSON with
+// lease_ready, control, history, input_rejected. payload is UTF-8 JSON with
 // operation-specific schemas defined by pkg/api; data is uninterpreted bytes.
 // Stream IDs and transport acknowledgements belong exclusively to Yamux.
 message Message {
@@ -33,4 +33,6 @@ message Message {
   // Opaque application authorization, mandatory only on a peer's first request.
   // Never accepted from SDK clients or delivered to fabricd.
   bytes access_context = 18;
+  // PTY input ownership term. Zero has no input authority; independent of routes.
+  uint64 control_epoch = 19;
 }

@@ -25,7 +25,7 @@ const (
 // This MVP wire format is dune-mvp/2, not the historical DTP/1 Frame.
 // kind: hello, welcome, request, accepted, result, error, data, input,
 // written, resize, signal, eof, exit, stderr, lease_request, lease_grant,
-// lease_ready. payload is UTF-8 JSON with
+// lease_ready, control, history, input_rejected. payload is UTF-8 JSON with
 // operation-specific schemas defined by pkg/api; data is uninterpreted bytes.
 // Stream IDs and transport acknowledgements belong exclusively to Yamux.
 type Message struct {
@@ -51,6 +51,8 @@ type Message struct {
 	// Opaque application authorization, mandatory only on a peer's first request.
 	// Never accepted from SDK clients or delivered to fabricd.
 	AccessContext []byte `protobuf:"bytes,18,opt,name=access_context,json=accessContext,proto3" json:"access_context,omitempty"`
+	// PTY input ownership term. Zero has no input authority; independent of routes.
+	ControlEpoch  uint64 `protobuf:"varint,19,opt,name=control_epoch,json=controlEpoch,proto3" json:"control_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -204,11 +206,18 @@ func (x *Message) GetAccessContext() []byte {
 	return nil
 }
 
+func (x *Message) GetControlEpoch() uint64 {
+	if x != nil {
+		return x.ControlEpoch
+	}
+	return 0
+}
+
 var File_dune_dtp_v1_message_proto protoreflect.FileDescriptor
 
 const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\n" +
-	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xbc\x04\n" +
+	"\x19dune/dtp/v1/message.proto\x12\vdune.dtp.v1\"\xe1\x04\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +
@@ -230,7 +239,8 @@ const file_dune_dtp_v1_message_proto_rawDesc = "" +
 	"\x0einput_lease_ms\x18\x0f \x01(\rR\finputLeaseMs\x12\x1f\n" +
 	"\vroute_epoch\x18\x11 \x01(\x04R\n" +
 	"routeEpoch\x12%\n" +
-	"\x0eaccess_context\x18\x12 \x01(\fR\raccessContextJ\x04\b\x10\x10\x11B0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
+	"\x0eaccess_context\x18\x12 \x01(\fR\raccessContext\x12#\n" +
+	"\rcontrol_epoch\x18\x13 \x01(\x04R\fcontrolEpochJ\x04\b\x10\x10\x11B0Z.github.com/aiomni/dune/proto/dune/dtp/v1;dtpv1b\x06proto3"
 
 var (
 	file_dune_dtp_v1_message_proto_rawDescOnce sync.Once

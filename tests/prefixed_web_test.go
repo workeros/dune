@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -331,40 +330,60 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 		request.Header.Set("Origin", origin)
 		wsURL, _ := url.Parse(events)
 		wsURL.Scheme = "ws"
-		var connection *websocket.Conn
-		// Creating a PTY releases its initial input subscription asynchronously.
-		// As the browser does, retry only subscription to the same Runtime after an
-		// explicit INPUT_OWNED refusal; never repeat creation or a submitted input.
-		deadline := time.Now().Add(3 * time.Second)
-		for {
-			var response *http.Response
-			connection, response, err = websocket.DefaultDialer.DialContext(ctx, wsURL.String(), request.Header)
-			if err == nil {
-				break
+		connection, response, err := websocket.DefaultDialer.DialContext(ctx, wsURL.String(), request.Header)
+		if err != nil {
+			if response != nil {
+				response.Body.Close()
 			}
-			if response == nil {
-				t.Fatal(err)
-			}
-			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			response.Body.Close()
-			var failure struct{ Code string }
-			_ = json.Unmarshal(body, &failure)
-			if response.StatusCode != 422 || failure.Code != "INPUT_OWNED" || time.Now().After(deadline) {
-				t.Fatalf("terminal handshake: %v (%d): %s", err, response.StatusCode, body)
-			}
-			select {
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			case <-time.After(25 * time.Millisecond):
-			}
+			t.Fatal(err)
 		}
 		return connection
 	}
 	connection := connect()
 	defer func() { connection.Close() }()
 	must(t, connection.SetReadDeadline(time.Now().Add(5*time.Second)))
-	must(t, connection.WriteJSON(map[string]string{"type": "input", "data": "printf 'PREFIX_TERMINAL_%s\\n' OK\n"}))
+	must(t, connection.WriteJSON(map[string]string{"type": "control", "action": "take"}))
+	var controlEpoch uint64
+	for controlEpoch == 0 {
+		var event struct {
+			Type         string
+			ControlEpoch uint64 `json:"control_epoch"`
+		}
+		must(t, connection.ReadJSON(&event))
+		if event.Type == "control" {
+			controlEpoch = event.ControlEpoch
+		}
+	}
+	must(t, connection.WriteJSON(map[string]any{"type": "input", "data": "printf 'PREFIX_TERMINAL_%s\\n' OK\n", "control_epoch": controlEpoch}))
 	readPrefixedTerminalMarker(t, connection)
+	// A second browser must complete its handshake while the first owns input.
+	// After takeover the bridge must preserve (not replace) the old browser's
+	// epoch, and a rejected input must leave that browser's output stream open.
+	other := connect()
+	must(t, other.SetReadDeadline(time.Now().Add(5*time.Second)))
+	must(t, other.WriteJSON(map[string]string{"type": "control", "action": "take"}))
+	for {
+		var event struct {
+			Type         string
+			ControlEpoch uint64 `json:"control_epoch"`
+		}
+		must(t, other.ReadJSON(&event))
+		if event.Type == "control" && event.ControlEpoch != 0 {
+			break
+		}
+	}
+	must(t, connection.WriteJSON(map[string]any{"type": "input", "data": "printf STALE_INPUT\n", "control_epoch": controlEpoch}))
+	for {
+		var event struct{ Type, Code string }
+		must(t, connection.ReadJSON(&event))
+		if event.Type == "input_rejected" {
+			if event.Code != "READ_ONLY" {
+				t.Fatalf("unexpected rejection: %+v", event)
+			}
+			break
+		}
+	}
+	other.Close()
 	awaitRevocation := func() {
 		must(t, connection.SetReadDeadline(time.Now().Add(3*time.Second)))
 		for {

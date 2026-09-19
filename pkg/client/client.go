@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 type Client struct {
@@ -57,10 +58,11 @@ func (c *Client) Close() error { return c.s.Close() }
 // Stream owns one business subscription. EOF before result/exit is interruption.
 // Recv has one reader. Send/Input may be called concurrently with it.
 type Stream struct {
-	s        *wire.Stream
-	cancel   func() bool
-	once     sync.Once
-	terminal bool
+	s            *wire.Stream
+	cancel       func() bool
+	once         sync.Once
+	terminal     bool
+	controlEpoch atomic.Uint64
 }
 
 func (s *Stream) Close() error { s.once.Do(func() { s.cancel(); s.s.Close() }); return nil }
@@ -81,6 +83,9 @@ func (s *Stream) Recv() (*pb.Message, error) {
 	if m.Kind == "exit" || m.Kind == "result" {
 		s.terminal = true
 	}
+	if m.Kind == "accepted" || m.Kind == "result" || m.Kind == "control" {
+		s.controlEpoch.Store(m.ControlEpoch)
+	}
 	if e = wire.Error(m); e != nil {
 		return nil, e
 	}
@@ -91,13 +96,19 @@ func (s *Stream) Input(b []byte) (string, error) {
 	if len(b) > wire.ChunkSize {
 		return id, fmt.Errorf("input exceeds 32768 bytes")
 	}
-	return id, s.Send(&pb.Message{Kind: "input", RequestId: id, Data: b})
+	return id, s.Send(&pb.Message{Kind: "input", RequestId: id, Data: b, ControlEpoch: s.controlEpoch.Load()})
 }
 func (s *Stream) Resize(rows, cols uint16) error {
-	return s.Send(&pb.Message{Kind: "resize", RequestId: wire.ID(), Payload: api.Payload(api.Resize{Rows: rows, Cols: cols})})
+	return s.Send(&pb.Message{Kind: "resize", RequestId: wire.ID(), Payload: api.Payload(api.Resize{Rows: rows, Cols: cols}), ControlEpoch: s.controlEpoch.Load()})
 }
 func (s *Stream) Signal(name string) error {
-	return s.Send(&pb.Message{Kind: "signal", RequestId: wire.ID(), Data: []byte(name)})
+	return s.Send(&pb.Message{Kind: "signal", RequestId: wire.ID(), Data: []byte(name), ControlEpoch: s.controlEpoch.Load()})
+}
+
+// Control requests a PTY ownership change. Keep receiving until the control
+// event confirms the result; do not retry a take automatically on reconnect.
+func (s *Stream) Control(action string) error {
+	return s.Send(&pb.Message{Kind: "control", RequestId: wire.ID(), Payload: api.Payload(api.TerminalControl{Action: action})})
 }
 func (c *Client) open(ctx context.Context, op, id string, payload any, r *api.Runtime) (*Stream, *pb.Message, error) {
 	if e := ctx.Err(); e != nil {
@@ -298,6 +309,10 @@ func (c *Client) Get(ctx context.Context, r api.Runtime) (api.Runtime, error) {
 func (c *Client) Stop(ctx context.Context, r api.Runtime) error {
 	return c.CallID(ctx, "runtime.stop", wire.ID(), struct{}{}, nil, &r)
 }
+
+// Attach always permits PTY output viewing. With observe=false it also acquires
+// input if available; otherwise use Stream.Control("take") to explicitly take
+// over. Observe-only streams can never acquire input. ACP semantics are separate.
 func (c *Client) Attach(ctx context.Context, r api.Runtime, observe bool) (*Stream, error) {
 	s, _, e := c.open(ctx, "runtime.attach", wire.ID(), api.Attach{Observe: observe}, &r)
 	return s, e

@@ -245,6 +245,17 @@ type Attach struct {
 	Observe bool `json:"observe"`
 }
 
+// TerminalControl is scoped to one attached stream. Acquire never preempts;
+// take is an explicit user action. Observe-only streams cannot acquire control.
+type TerminalControl struct {
+	Action string `json:"action"`
+}
+
+type TerminalControlState struct {
+	Writable  bool `json:"writable"`
+	Available bool `json:"available"`
+}
+
 type Resize struct {
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`

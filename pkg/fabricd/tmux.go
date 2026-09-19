@@ -1,6 +1,7 @@
 package fabricd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -76,13 +77,15 @@ func (r *runtime) readNativeSession() {
 	}
 }
 func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription) {
-	defer func() { r.mu.Lock(); delete(r.subs, sub); r.mu.Unlock() }()
-	view, err := r.tmux.Attach(!sub.owner)
+	// Display clients never write or determine pane size. The shared input
+	// client below is the only writer, guarded by the current control epoch.
+	view, err := r.tmux.Attach(true)
 	if err != nil {
+		r.unsubscribe(sub)
 		s.Fail("TERMINAL_FAILED", err)
 		return
 	}
-	defer view.Close()
+	defer func() { r.unsubscribe(sub); view.Close() }()
 	outputDone := make(chan error, 1)
 	go func() {
 		buf := make([]byte, wire.ChunkSize)
@@ -108,35 +111,51 @@ func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription)
 				inputDone <- e
 				return
 			}
-			if !sub.owner {
-				inputDone <- fmt.Errorf("observer cannot send input")
-				return
+			write := func(fn func(*tmux.Viewer) error) error {
+				return r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error {
+					return r.control.write(sub, m.ControlEpoch, func() error { return fn(input) })
+				})
 			}
 			switch m.Kind {
+			case "control":
+				var request api.TerminalControl
+				if e = wire.Decode(m, &request); e == nil {
+					e = r.control.change(sub, request.Action)
+				}
+			case "history":
+				var request api.TerminalControl
+				if e = wire.Decode(m, &request); e == nil {
+					e = write(func(*tmux.Viewer) error { return r.tmux.History(request.Action) })
+				}
 			case "input":
 				if len(m.Data) > wire.ChunkSize {
 					e = fmt.Errorf("input exceeds chunk limit")
 				} else {
 					data := append([]byte(nil), m.Data...)
-					e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return writePTY(input, data) })
+					e = write(func(input *tmux.Viewer) error { return writePTY(input, data) })
 				}
 			case "resize":
 				var a api.Resize
 				e = wire.Decode(m, &a)
 				if e == nil {
 					e = view.Resize(a.Rows, a.Cols)
-					if e == nil {
-						e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return input.Resize(a.Rows, a.Cols) })
+					if e == nil && m.ControlEpoch != 0 {
+						e = write(func(input *tmux.Viewer) error { return input.Resize(a.Rows, a.Cols) })
 					}
 				}
 			case "signal":
 				switch string(m.Data) {
 				case "INT":
-					e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return writePTY(input, []byte{3}) })
+					e = write(func(input *tmux.Viewer) error { return writePTY(input, []byte{3}) })
 				case "QUIT":
-					e = r.inputQueue(d.ctx).write(s.ctx, func(input *tmux.Viewer) error { return writePTY(input, []byte{28}) })
+					e = write(func(input *tmux.Viewer) error { return writePTY(input, []byte{28}) })
 				case "TERM", "HUP":
-					e = d.stop(r)
+					// Admit the stop before cancelling the queue; stopping while
+					// holding its control lock would wait on that same queue.
+					e = r.control.write(sub, m.ControlEpoch, func() error { return nil })
+					if e == nil {
+						e = d.stop(r)
+					}
 				default:
 					e = fmt.Errorf("unsupported signal")
 				}
@@ -144,6 +163,14 @@ func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription)
 				e = fmt.Errorf("unsupported terminal input")
 			}
 			if e != nil {
+				var denied *api.Error
+				if errors.As(e, &denied) && denied.Code == "READ_ONLY" {
+					if s.Send(&pb.Message{Kind: "input_rejected", RequestId: m.RequestId, Code: denied.Code, Detail: denied.Detail}) != nil {
+						inputDone <- e
+						return
+					}
+					continue
+				}
 				inputDone <- e
 				return
 			}
@@ -156,6 +183,11 @@ func (d *Engine) interactTmux(s *executionStream, r *runtime, sub *subscription)
 	exit := r.done
 	for {
 		select {
+		case <-sub.controlChanged:
+			state, epoch := r.control.state(sub)
+			if s.Send(&pb.Message{Kind: "control", Payload: api.Payload(state), ControlEpoch: epoch}) != nil {
+				return
+			}
 		case <-exit:
 			// A dead pane remains available for native tmux history browsing. Consumers
 			// interested only in process completion can close after receiving exit.

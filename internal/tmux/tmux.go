@@ -432,7 +432,7 @@ func (r *Session) Attach(observe bool) (*Viewer, error) {
 
 	args := []string{"attach-session", "-t", r.target()}
 	if observe {
-		args = append(args, "-r")
+		args = append(args, "-f", "read-only,ignore-size")
 	}
 	cmd := exec.Command(r.Server.Binary, r.Server.args(args...)...)
 	cmd.Env = clientEnv()

@@ -563,13 +563,14 @@ func operationError(w http.ResponseWriter, err error) {
 }
 
 type browserEvent struct {
-	Type      string          `json:"type"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Data      string          `json:"data,omitempty"`
-	Binary    bool            `json:"binary,omitempty"`
-	RequestID string          `json:"request_id,omitempty"`
-	Code      string          `json:"code,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	ControlEpoch uint64          `json:"control_epoch"`
+	Type         string          `json:"type"`
+	Payload      json.RawMessage `json:"payload,omitempty"`
+	Data         string          `json:"data,omitempty"`
+	Binary       bool            `json:"binary,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	Code         string          `json:"code,omitempty"`
+	Error        string          `json:"error,omitempty"`
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -660,32 +661,40 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		for {
 			var input struct {
-				Type   string `json:"type"`
-				Data   string `json:"data"`
-				Binary bool   `json:"binary"`
-				Rows   uint16 `json:"rows"`
-				Cols   uint16 `json:"cols"`
+				Type         string `json:"type"`
+				Data         string `json:"data"`
+				Binary       bool   `json:"binary"`
+				Rows         uint16 `json:"rows"`
+				Cols         uint16 `json:"cols"`
+				ControlEpoch uint64 `json:"control_epoch"`
+				Action       string `json:"action"`
 			}
 			if err := wc.ReadJSON(&input); err != nil {
 				inputDone <- err
 				return
 			}
 			var err error
+			message := &pb.Message{Kind: input.Type, RequestId: wire.ID(), ControlEpoch: input.ControlEpoch}
 			switch input.Type {
 			case "input":
 				data := []byte(input.Data)
 				if input.Binary {
 					data, err = base64.StdEncoding.DecodeString(input.Data)
 				}
-				if err == nil {
-					_, err = stream.Input(data)
-				}
+				message.Data = data
 			case "resize":
-				err = stream.Resize(input.Rows, input.Cols)
+				message.Payload = api.Payload(api.Resize{Rows: input.Rows, Cols: input.Cols})
 			case "signal":
-				err = stream.Signal(input.Data)
+				message.Data = []byte(input.Data)
+			case "control", "history":
+				message.Payload = api.Payload(api.TerminalControl{Action: input.Action})
 			default:
 				err = fmt.Errorf("invalid browser input")
+			}
+			// Preserve the browser's epoch. Replacing it with the SDK's latest
+			// epoch would grant delayed input authority after a takeover.
+			if err == nil {
+				err = stream.Send(message)
 			}
 			if err != nil {
 				inputDone <- err
@@ -732,7 +741,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			m := frame.message
-			event := browserEvent{Type: m.Kind, Payload: m.Payload, Data: string(m.Data), RequestID: m.RequestId, Code: m.Code, Error: m.Detail}
+			event := browserEvent{Type: m.Kind, Payload: m.Payload, Data: string(m.Data), RequestID: m.RequestId, Code: m.Code, Error: m.Detail, ControlEpoch: m.ControlEpoch}
 			if runtime.Adapter == "pty" && m.Kind == "data" {
 				event.Binary = true
 				event.Data = base64.StdEncoding.EncodeToString(m.Data)

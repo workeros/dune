@@ -4,23 +4,26 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Icon } from "@iconify/react";
 import historyIcon from "@iconify-icons/ri/history-line";
 import { Button } from "./ui/button";
-import { socketURL, call, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
+import { socketURL, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
 
 export function TerminalPane({ binding, runtime, focused = true }: { binding: Binding; runtime: Runtime; focused?: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<XTerm | undefined>(undefined);
   const [status, setStatus] = useState("连接中"), [error, setError] = useState("");
   const [connected, setConnected] = useState(false);
+  const [control, setControl] = useState({ writable: false, available: false });
+  const sendAction = useRef<(type: string, action: string) => void>(() => {});
   const focusedRef = useRef(focused); focusedRef.current = focused;
   useEffect(() => { if (focused && (document.activeElement === document.body || (document.activeElement && container.current?.contains(document.activeElement)))) terminal.current?.focus(); }, [focused]);
   useEffect(() => {
     if (!container.current) return;
-    const term = new XTerm({ fontFamily: '"SFMono-Regular",Consolas,monospace', fontSize: 14, lineHeight: 1.2, scrollback: 0, cursorBlink: true, theme: { background: "#202923", foreground: "#f1eedf", cursor: "#ef887e", selectionBackground: "#607363" } });
+    const term = new XTerm({ disableStdin: true, fontFamily: '"SFMono-Regular",Consolas,monospace', fontSize: 14, lineHeight: 1.2, scrollback: 0, cursorBlink: true, theme: { background: "#202923", foreground: "#f1eedf", cursor: "#ef887e", selectionBackground: "#607363" } });
     terminal.current = term;
     const fit = new FitAddon(); term.loadAddon(fit); term.open(container.current);
-    let socket: WebSocket | undefined, disposed = false, exited = false, retry = 300;
+    let socket: WebSocket | undefined, disposed = false, exited = false, retry = 300, epoch = 0;
     let reconnect: ReturnType<typeof setTimeout> | undefined;
-    const send = (value: unknown) => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); };
+    const send = (value: object) => { if (!disposed && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...value, control_epoch: epoch })); };
+    sendAction.current = (type, action) => { if (type === "control" || epoch) send({ type, action }); };
     const resize = () => { if (disposed || !container.current?.clientWidth || !container.current.clientHeight) return; const size = fit.proposeDimensions(); if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return; const cols = Math.min(400, Math.max(2, Math.floor(size.cols))), rows = Math.min(200, Math.max(2, Math.floor(size.rows))); term.resize(cols, rows); send({ type: "resize", cols, rows }); };
     const connect = () => {
       if (disposed) return;
@@ -31,31 +34,36 @@ export function TerminalPane({ binding, runtime, focused = true }: { binding: Bi
       socket.onopen = () => { retry = 300; setConnected(true); setStatus("已连接"); setError(""); term.reset(); resize(); if (focusedRef.current && (!document.activeElement || document.activeElement === document.body || container.current?.contains(document.activeElement))) term.focus(); };
       socket.onmessage = (event) => {
         try {
-          const message = JSON.parse(event.data) as { type: string; data?: string; binary?: boolean; payload?: number; error?: string };
+          const message = JSON.parse(event.data) as { type: string; data?: string; binary?: boolean; payload?: number | { writable: boolean; available: boolean }; control_epoch?: number; error?: string };
           if (message.type === "data" && message.data) term.write(message.binary ? Uint8Array.from(atob(message.data), (char) => char.charCodeAt(0)) : message.data);
+          if (message.type === "control" && typeof message.payload === "object") {
+            epoch = message.payload.writable ? message.control_epoch ?? 0 : 0;
+            term.options.disableStdin = !epoch; setControl(message.payload); resize();
+          }
+          if (message.type === "input_rejected") setError("输入权已变更，这次输入未发送。");
           if (message.type === "exit") { exited = true; setStatus(`已退出 · ${message.payload} · 可浏览保留历史`); }
           if (message.type === "error") setError(message.error ?? "连接中断，未确认的输入不会自动重发。");
         } catch { setError("收到无效终端响应"); }
       };
       socket.onclose = () => {
         if (disposed) return;
-        setConnected(false);
+        epoch = 0; term.options.disableStdin = true; setControl({ writable: false, available: false }); setConnected(false);
         if (exited) setStatus("已退出");
         else { setStatus("已断开，正在重连"); reconnect = setTimeout(connect, retry); retry = Math.min(retry * 2, 5000); }
       };
     };
-    const input = term.onData((data) => send({ type: "input", data }));
-    const binary = term.onBinary((data) => send({ type: "input", data: btoa(data), binary: true }));
+    const input = term.onData((data) => { if (epoch) send({ type: "input", data }); });
+    const binary = term.onBinary((data) => { if (epoch) send({ type: "input", data: btoa(data), binary: true }); });
     const observer = new ResizeObserver(resize); observer.observe(container.current);
     connect();
-    return () => { disposed = true; clearTimeout(reconnect); observer.disconnect(); input.dispose(); binary.dispose(); socket?.close(); term.dispose(); terminal.current = undefined; };
+    return () => { disposed = true; sendAction.current = () => {}; clearTimeout(reconnect); observer.disconnect(); input.dispose(); binary.dispose(); socket?.close(); term.dispose(); terminal.current = undefined; };
   }, [binding, runtime.id, runtime.incarnation, runtime.generation]);
   const browse = async (action: "older" | "newer" | "close") => {
-    try { await call(binding, "runtime.history", { action }, runtime); setError(""); terminal.current?.focus(); }
+    try { sendAction.current("history", action); setError(""); terminal.current?.focus(); }
     catch (e) { setError(errorText(e)); }
   };
   return <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl">
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-foreground/20 px-4 py-2 text-xs"><span role="status">{runtime.stop_reason === "timed_out" ? "已超时 · 可浏览保留历史" : status}</span><div className="flex gap-1"><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("older")}><Icon icon={historyIcon} />历史 / 更早一页</Button><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("newer")}>更新一页</Button><Button variant="ghost" size="sm" disabled={!connected} onClick={() => void browse("close")}>返回终端</Button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-foreground/20 px-4 py-2 text-xs"><span role="status">{runtime.stop_reason === "timed_out" ? "已超时 · 可浏览保留历史" : status}</span><div className="flex gap-1">{connected && <Button variant="outline" size="sm" onClick={() => sendAction.current("control", control.writable ? "release" : control.available ? "acquire" : "take")}>{control.writable ? "释放输入权" : control.available ? "只读 · 获取输入权" : "只读 · 接管输入"}</Button>}<Button variant="ghost" size="sm" disabled={!connected || !control.writable} onClick={() => void browse("older")}><Icon icon={historyIcon} />历史 / 更早一页</Button><Button variant="ghost" size="sm" disabled={!connected || !control.writable} onClick={() => void browse("newer")}>更新一页</Button><Button variant="ghost" size="sm" disabled={!connected || !control.writable} onClick={() => void browse("close")}>返回终端</Button></div></div>
     <p className="bg-secondary px-4 py-2 text-xs">使用滚轮或 Page Up / Page Down 浏览历史，按 Esc 返回终端。</p>
     {error && <div className="error-box m-2" role="alert">{error}</div>}
     <div ref={container} className="terminal-container" aria-label="远端终端" />

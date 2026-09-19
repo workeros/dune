@@ -8,10 +8,20 @@ PTY 使用单一、私有的 tmux server。结构为：浏览器 xterm → HTTP/
 - 每个 session directory 对应一个短路径 Unix socket，位于当前用户专有的 0700 目录；fabricd 文件锁防止同配置双开。不会连接用户默认 tmux server，也不加载用户 tmux 配置。
 - 会话名字为随机 Runtime ID。tmux 的 `@dune-runtime` option 保存 Runtime 元数据；新 fabricd 从该私有 server 恢复列表。连接 incarnation 与 runtime incarnation 分别校验。
 - 创建命令和环境逐项引用，使用 `env -i`，清除 TMUX/TMUX_PANE；不同会话的环境互不继承。工作目录与有效 PATH 中的命令在创建前检查；后台环境缺少 TERM 时补为 xterm-256color。
-- 浏览器连接仅创建 viewer；离开、断开和 fabricd/Gateway 重启不结束 PTY。一个输入 owner，观察者使用只读 attach。
+- 浏览器连接仅创建 viewer；离开、断开和 fabricd/Gateway 重启不结束 PTY。所有显示客户端使用 `read-only,ignore-size`；共享输入客户端独自负责输入和 pane 尺寸。
 - 原始终端字节以 base64 帧传至 xterm，避免 UTF-8 在网络块边界损坏。resize 作用于 viewer PTY，尺寸再由 tmux 传至 pane。
 - 默认历史上限 50,000 行，可配置 1..200,000。采用 tmux 原生批量淘汰；这是上限，并非总能精确保留 50,000 行。`runtime.history` 和远端鼠标滚轮使用 copy-mode；`runtime.scrollback` 提供有界只读快照供客户端本地滚动，不维护额外历史存储或游标。
 - 程序自然退出保留 pane 和退出码，可继续查看历史；显式结束销毁 session、移除 Runtime 及历史。机器或 tmux server 退出不恢复进程/历史。
+
+## 多页面查看与输入接管
+
+PTY 的输出订阅与输入权分离。`Attach(..., false)` 在空闲时获取输入权，已有输入者时仍成功接入并只读查看，不再返回 `INPUT_OWNED`。`Attach(..., true)` 是权限受限的观察订阅，不能提升为输入者。原始 ACP 的独占输入语义不变。
+
+附着流使用 `control` 消息请求 `acquire`（仅空闲时获取）、`take`（用户主动接管）、`release`（释放）。服务端广播各连接自己的 `{writable, available}` 和 `control_epoch`。接管只变更输入者，旧连接继续收输出；重连不自动发送 `take`。断开释放输入权，旧连接的延迟清理不能清掉新输入者。WebSocket 沿用 ping/pong 和 45 秒读超时处理失联连接。
+
+键盘、鼠标、signal 和远端 history 请求携带输入 epoch，并在实际写入共享 PTY 队列时校验。旧 epoch 即使来自后来重新接管的同一连接也会被拒绝；已执行的输入不回滚，不重放未确认输入。拒绝返回非致命 `input_rejected`，输出订阅保持可用。resize 总能更新自己的只读 viewer，只有当前输入者能改变 pane 尺寸。程序化 Agent 操作仍经独立授权并与浏览器共用输入队列。
+
+Web 界面显示只读状态，提供“接管输入 / 获取输入权”和“释放输入权”。本地选择、复制、历史快照保持可用；远端鼠标和 copy-mode 操作需要输入权。该协议需 Web、宿主和 fabricd 同步升级，不提供旧终端协议兼容层。
 
 ## 只读历史快照
 

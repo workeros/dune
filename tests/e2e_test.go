@@ -205,10 +205,10 @@ func TestExecProfilePTY(t *testing.T) {
 	_, e = s.Input([]byte("stty size\n"))
 	must(t, e)
 	receive(t, s, "data", "40 100")
-	_, e = h.client.Attach(h.ctx, rt, false)
-	if e == nil {
-		t.Fatal("two input owners")
-	}
+	second, e := h.client.Attach(h.ctx, rt, false)
+	must(t, e)
+	terminalControlEvent(t, second, false, false)
+	second.Close()
 	observer, e := h.client.Attach(h.ctx, rt, true)
 	must(t, e)
 	observer.Close()

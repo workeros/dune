@@ -191,6 +191,16 @@ func continuation(base Request, runtime RuntimeIdentity, m *pb.Message) (Request
 		return r, ErrDenied
 	}
 	switch m.Kind {
+	case "control", "history":
+		var action api.TerminalControl
+		if runtime.Adapter != "pty" || json.Unmarshal(m.Payload, &action) != nil {
+			return r, ErrDenied
+		}
+		if (m.Kind == "control" && !oneOf(action.Action, "acquire", "take", "release")) || (m.Kind == "history" && !oneOf(action.Action, "older", "newer", "close")) {
+			return r, ErrDenied
+		}
+		r.Suboperation = m.Kind
+		r.Mode = action.Action
 	case "input":
 		if runtime.Adapter == "acp" {
 			r.Operation = "acp.raw"

@@ -32,7 +32,8 @@ type subscription struct {
 	q               chan *pb.Message
 	failed          chan struct{}
 	once            sync.Once
-	owner           bool
+	canInput        bool
+	controlChanged  chan struct{}
 	queueMu         sync.Mutex
 	queuedMessages  int
 	queuedBytes     int
@@ -60,6 +61,7 @@ type runtime struct {
 	ptyProbeAfter          time.Time
 	operations             *operationLog
 	ptyInput               *ptyInputQueue
+	control                terminalControl
 }
 
 // ACP parsing and replay budgets scale with the development machine while the
@@ -187,11 +189,11 @@ func (r *runtime) subscribe(owner bool) (*subscription, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.subs) >= 8 {
-		return nil, fmt.Errorf("subscription limit")
+		return nil, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "Runtime subscription limit reached"}
 	}
-	if owner {
+	if owner && r.tmux == nil {
 		for s := range r.subs {
-			if s.owner {
+			if s.canInput {
 				return nil, &api.Error{Code: "INPUT_OWNED", Detail: "Runtime already has input owner"}
 			}
 		}
@@ -201,8 +203,12 @@ func (r *runtime) subscribe(owner bool) (*subscription, error) {
 		queueSize = acpReplayQueueMessages
 	}
 	_, replayByteLimit := acpMemoryLimits(machineMemoryBytes())
-	s := &subscription{q: make(chan *pb.Message, queueSize), failed: make(chan struct{}), owner: owner, replayByteLimit: replayByteLimit, space: make(chan struct{}, 1)}
+	s := &subscription{q: make(chan *pb.Message, queueSize), failed: make(chan struct{}), canInput: owner, replayByteLimit: replayByteLimit, space: make(chan struct{}, 1)}
 	r.subs[s] = true
+	if r.tmux != nil {
+		s.controlChanged = make(chan struct{}, 1)
+		r.control.add(s)
+	}
 	if r.exit != nil {
 		m := &pb.Message{Kind: "exit", Payload: api.Payload(r.exit)}
 		if r.acp != nil {
@@ -262,9 +268,16 @@ func (s *subscription) release(m *pb.Message) {
 
 func (r *runtime) failSubscription(s *subscription) {
 	s.once.Do(func() { close(s.failed) })
+	r.unsubscribe(s)
+}
+
+func (r *runtime) unsubscribe(s *subscription) {
 	r.mu.Lock()
 	delete(r.subs, s)
 	r.mu.Unlock()
+	if r.tmux != nil {
+		r.control.remove(s)
+	}
 }
 
 func (r *runtime) emit(m *pb.Message) {
@@ -705,10 +718,9 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 		d.runtimes[r.id] = r
 		releaseSlot()
 		d.mu.Unlock()
-		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info())}) != nil {
-			r.mu.Lock()
-			delete(r.subs, sub)
-			r.mu.Unlock()
+		_, epoch := r.control.state(sub)
+		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info()), ControlEpoch: epoch}) != nil {
+			r.unsubscribe(sub)
 			return
 		}
 		d.interact(s, r, sub)
@@ -794,11 +806,10 @@ func (d *Engine) attach(s *executionStream, m *pb.Message) {
 		s.Fail(code, e)
 		return
 	}
-	if s.Send(&pb.Message{Kind: "accepted", Payload: api.Payload(r.info())}) != nil {
-		r.mu.Lock()
-		delete(r.subs, sub)
+	_, epoch := r.control.state(sub)
+	if s.Send(&pb.Message{Kind: "accepted", Payload: api.Payload(r.info()), ControlEpoch: epoch}) != nil {
+		r.unsubscribe(sub)
 		sub.once.Do(func() { close(sub.failed) })
-		r.mu.Unlock()
 		return
 	}
 	d.interact(s, r, sub)
@@ -822,7 +833,7 @@ func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 				done <- e
 				return
 			}
-			if !sub.owner {
+			if !sub.canInput {
 				done <- fmt.Errorf("observer cannot send input")
 				return
 			}
