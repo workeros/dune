@@ -55,3 +55,9 @@ func (c *Client) CaptureTerminal(ctx context.Context, runtime api.Runtime) (api.
 	err := c.CallID(ctx, "runtime.capture", wire.ID(), struct{}{}, &snapshot, &runtime)
 	return snapshot, err
 }
+
+func (c *Client) ScrollbackTerminal(ctx context.Context, runtime api.Runtime, request api.TerminalScrollbackRequest) (api.TerminalScrollback, error) {
+	var snapshot api.TerminalScrollback
+	err := c.CallID(ctx, "runtime.scrollback", wire.ID(), request, &snapshot, &runtime)
+	return snapshot, err
+}

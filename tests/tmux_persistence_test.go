@@ -171,6 +171,11 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 			if screen.HistoryLimit != 50000 || screen.HistoryLines < 50 || !strings.Contains(screen.Content, "offline-079") {
 				t.Fatalf("native screen/history lost: %+v", screen)
 			}
+			scrollback, err := client.ScrollbackTerminal(ctx, rt, api.TerminalScrollbackRequest{})
+			must(t, err)
+			if !strings.Contains(scrollback.Content, "offline-000") || !strings.Contains(scrollback.Content, "offline-079") || scrollback.Truncated || scrollback.CapturedLines != scrollback.HistoryLines+scrollback.Rows {
+				t.Fatalf("retained scrollback lost after reconnect: %+v", scrollback)
+			}
 			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "close"}, nil, &rt))
 			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "older"}, nil, &rt))
 			must(t, client.CallID(ctx, "runtime.history", wire.ID(), map[string]string{"action": "close"}, nil, &rt))

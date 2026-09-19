@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -285,16 +285,23 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 			}
 			result = r.info()
 		}
-	case "runtime.capture", "runtime.history":
+	case "runtime.capture", "runtime.scrollback", "runtime.history":
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil && r.tmux == nil {
 			e = &api.Error{Code: "UNSUPPORTED", Detail: "terminal operation requires PTY"}
 		}
 		if e == nil {
-			if m.Operation == "runtime.capture" {
+			switch m.Operation {
+			case "runtime.capture":
 				result, e = r.tmux.Capture()
-			} else {
+			case "runtime.scrollback":
+				var req api.TerminalScrollbackRequest
+				e = wire.Decode(m, &req)
+				if e == nil {
+					result, e = r.tmux.Scrollback(req.Limit)
+				}
+			case "runtime.history":
 				var req struct {
 					Action string `json:"action"`
 				}
@@ -352,7 +359,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 	}
 	d.mu.Lock()
-	if searchRequest || m.Operation == "agent.operation.read" {
+	if searchRequest || m.Operation == "agent.operation.read" || m.Operation == "runtime.scrollback" {
 		// Retain deduplication without duplicating up to 256 large read responses.
 		d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "read response is not retained; issue a new read"}
 	} else {

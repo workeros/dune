@@ -91,3 +91,29 @@ type TerminalSnapshot struct {
 	HistoryLines int    `json:"history_lines"`
 	HistoryLimit int    `json:"history_limit"`
 }
+
+const (
+	DefaultTerminalScrollbackLines = 5000
+	MaxTerminalScrollbackLines     = 10000
+	// Even worst-case JSON escaping fits within the protocol message limit.
+	MaxTerminalScrollbackBytes = 512 * 1024
+)
+
+type TerminalScrollbackRequest struct {
+	// Limit counts physical rows, including the current screen. Zero uses the default.
+	Limit int `json:"limit,omitempty"`
+}
+
+// TerminalScrollback is a read-only snapshot of tmux's retained history and
+// active screen. Content contains the newest complete physical rows, each with
+// a trailing LF, without ANSI sequences. Soft wraps remain separate rows.
+type TerminalScrollback struct {
+	Content       string `json:"content"`
+	Cols          int    `json:"cols"`
+	Rows          int    `json:"rows"`
+	HistoryLines  int    `json:"history_lines"`  // Retained history, excluding the screen.
+	CapturedLines int    `json:"captured_lines"` // Rows actually returned, including blank rows.
+	// True if rows/bytes were omitted or tmux may have evicted older history.
+	// False does not guarantee a complete process transcript (for example after clear or reflow).
+	Truncated bool `json:"truncated"`
+}

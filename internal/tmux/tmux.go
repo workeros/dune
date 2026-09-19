@@ -126,21 +126,29 @@ func (b *output) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func (s *Server) run(args ...string) (string, error) {
+	out := &output{limit: 2 * 1024 * 1024}
+	err := s.runOutput(out, args...)
+	if err != nil {
+		return "", err
+	}
+	return out.String(), err
+}
+
+func (s *Server) runOutput(out io.Writer, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.Binary, s.args(args...)...)
 	cmd.Env = clientEnv()
-	out := &output{limit: 2 * 1024 * 1024}
 	var stderr bytes.Buffer
 	cmd.Stdout = out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return "", fmt.Errorf("tmux did not confirm operation: %w", ctx.Err())
+			return fmt.Errorf("tmux did not confirm operation: %w", ctx.Err())
 		}
-		return "", fmt.Errorf("tmux: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("tmux: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return out.String(), nil
+	return nil
 }
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 

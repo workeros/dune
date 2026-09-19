@@ -28,7 +28,7 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	decode := func(out any) error { return json.Unmarshal(m.Payload, out) }
 	var err error
 	switch m.Operation {
-	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
+	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
 	case "agent.mcp.configure":
 		var config api.AgentMCP
 		err = decode(&config)
