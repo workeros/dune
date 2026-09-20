@@ -23,22 +23,23 @@ import (
 )
 
 const (
-	acpLiveQueueMessages   = 16
-	acpLiveQueueBytes      = wire.MaxMessage
-	acpReplayQueueMessages = 1024
+	acpLiveQueueMessages = 16
+	acpLiveQueueBytes    = wire.MaxMessage
 )
 
 type subscription struct {
-	q               chan *pb.Message
-	failed          chan struct{}
-	once            sync.Once
-	canInput        bool
-	controlChanged  chan struct{}
-	queueMu         sync.Mutex
-	queuedMessages  int
-	queuedBytes     int
-	replayByteLimit int
-	space           chan struct{}
+	q                chan *pb.Message
+	failed           chan struct{}
+	once             sync.Once
+	canInput         bool
+	controlChanged   chan struct{}
+	queueMu          sync.Mutex
+	queuedMessages   int
+	queuedBytes      int
+	space            chan struct{}
+	conversationOnly bool
+	changed          chan struct{}
+	pendingChange    *api.ACPConversationChanged
 }
 type runtime struct {
 	mu                     sync.Mutex
@@ -71,15 +72,15 @@ type runtime struct {
 // ACP parsing and replay budgets scale with the development machine while the
 // wire frame stays fixed across peers. The caps keep one Runtime from turning
 // a large native transcript into an unbounded process allocation.
-func acpMemoryLimits(total uint64) (lineBytes, replayBytes int) {
+func acpInputLimit(total uint64) int {
 	const gib = uint64(1024 * 1024 * 1024)
 	switch {
 	case total > 0 && total < 4*gib:
-		return 2 * 1024 * 1024, 8 * 1024 * 1024
+		return 2 * 1024 * 1024
 	case total >= 16*gib:
-		return 8 * 1024 * 1024, 32 * 1024 * 1024
+		return 8 * 1024 * 1024
 	default:
-		return 4 * 1024 * 1024, 16 * 1024 * 1024
+		return 4 * 1024 * 1024
 	}
 }
 
@@ -196,7 +197,7 @@ func (r *runtime) finish(code int) {
 		r.emit(&pb.Message{Kind: "exit", Payload: api.Payload(code)})
 	}
 }
-func (r *runtime) subscribe(owner bool) (*subscription, error) {
+func (r *runtime) subscribe(owner bool, conversationOnly bool) (*subscription, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.subs) >= 8 {
@@ -209,12 +210,7 @@ func (r *runtime) subscribe(owner bool) (*subscription, error) {
 			}
 		}
 	}
-	queueSize := acpLiveQueueMessages
-	if r.acp != nil {
-		queueSize = acpReplayQueueMessages
-	}
-	_, replayByteLimit := acpMemoryLimits(machineMemoryBytes())
-	s := &subscription{q: make(chan *pb.Message, queueSize), failed: make(chan struct{}), canInput: owner, replayByteLimit: replayByteLimit, space: make(chan struct{}, 1)}
+	s := &subscription{conversationOnly: conversationOnly, changed: make(chan struct{}, 1), q: make(chan *pb.Message, acpLiveQueueMessages), failed: make(chan struct{}), canInput: owner}
 	r.subs[s] = true
 	if r.tmux != nil {
 		s.controlChanged = make(chan struct{}, 1)
@@ -245,36 +241,12 @@ func (s *subscription) tryEnqueue(m *pb.Message, messageLimit, byteLimit int) bo
 	return true
 }
 
-func (s *subscription) enqueueReplay(m *pb.Message) bool {
-	if s.tryEnqueue(m, acpReplayQueueMessages, s.replayByteLimit) {
-		return true
-	}
-	timer := time.NewTimer(wire.WriteTimeout)
-	defer timer.Stop()
-	for {
-		select {
-		case <-s.failed:
-			return false
-		case <-s.space:
-			if s.tryEnqueue(m, acpReplayQueueMessages, s.replayByteLimit) {
-				return true
-			}
-		case <-timer.C:
-			return false
-		}
-	}
-}
-
 func (s *subscription) release(m *pb.Message) {
 	size := proto.Size(m)
 	s.queueMu.Lock()
 	s.queuedMessages--
 	s.queuedBytes -= size
 	s.queueMu.Unlock()
-	select {
-	case s.space <- struct{}{}:
-	default:
-	}
 }
 
 func (r *runtime) failSubscription(s *subscription) {
@@ -298,19 +270,25 @@ func (r *runtime) emit(m *pb.Message) {
 		subs = append(subs, s)
 	}
 	r.mu.Unlock()
-	replaying := r.acp != nil && r.acp.replaying.Load()
 	for _, s := range subs {
 		if r.acp != nil {
-			queued := false
-			if replaying {
-				// session/load can synchronously replay hundreds of updates. Let a
-				// bounded queue absorb the burst, then slow the Agent stdout reader
-				// until the browser catches up instead of truncating valid history.
-				queued = s.enqueueReplay(m)
-			} else {
-				queued = s.tryEnqueue(m, acpLiveQueueMessages, acpLiveQueueBytes)
+			if m.Kind == "acp_conversation_changed" {
+				if s.enqueueConversationChange(m) {
+					r.conversations.mu.Lock()
+					r.conversations.usage.NotificationMerges++
+					r.conversations.mu.Unlock()
+				}
+				continue
 			}
+			if s.conversationOnly && m.Kind != "acp_state" && m.Kind != "exit" && m.Kind != "error" {
+				continue
+			}
+			// Diagnostics never backpressure model ingestion, including load replay.
+			queued := s.tryEnqueue(m, acpLiveQueueMessages, acpLiveQueueBytes)
 			if !queued {
+				r.conversations.mu.Lock()
+				r.conversations.usage.SlowConsumerClosures++
+				r.conversations.mu.Unlock()
 				r.failSubscription(s)
 			}
 			continue
@@ -357,7 +335,7 @@ func (r *runtime) read(rd io.Reader, kind string, wg *sync.WaitGroup) {
 func (r *runtime) readACP(rd io.Reader) { r.readACPConnection(rd, nil) }
 
 func (r *runtime) readACPConnection(rd io.Reader, connection *process.Process) {
-	lineLimit, _ := acpMemoryLimits(machineMemoryBytes())
+	lineLimit := acpInputLimit(machineMemoryBytes())
 	reader := bufio.NewReaderSize(rd, 64*1024)
 	line := make([]byte, 0, 64*1024)
 	lineBytes := 0
@@ -738,7 +716,7 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 			return
 		}
 		r.readTimeoutState(state)
-		sub, _ := r.subscribe(true)
+		sub, _ := r.subscribe(true, false)
 		d.mu.Lock()
 		d.runtimes[r.id] = r
 		releaseSlot()
@@ -763,7 +741,7 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 		r.acp = newACPController(r)
 		r.acp.requireMCP = p.RequireAgentMCP
 	}
-	sub, _ := r.subscribe(true)
+	sub, _ := r.subscribe(true, false)
 	d.mu.Lock()
 	d.runtimes[r.id] = r
 	releaseSlot()
@@ -801,11 +779,15 @@ func (d *Engine) attach(s *executionStream, m *pb.Message) {
 		s.Fail("INVALID_ARGUMENT", e)
 		return
 	}
+	if a.Conversation && (r.acp == nil || !a.Observe) {
+		s.Fail("UNSUPPORTED", fmt.Errorf("conversation subscription requires managed ACP observation"))
+		return
+	}
 	if r.acp != nil && !a.Observe {
 		s.Fail("UNSUPPORTED", fmt.Errorf("managed ACP input must use acp.action"))
 		return
 	}
-	sub, e := r.subscribe(!a.Observe)
+	sub, e := r.subscribe(!a.Observe, a.Conversation)
 	if e != nil {
 		code := "INPUT_OWNED"
 		if ae, ok := e.(*api.Error); ok {
@@ -900,6 +882,12 @@ func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 		case <-sub.failed:
 			s.Fail("SLOW_CONSUMER", fmt.Errorf("subscription queue full; output incomplete"))
 			return
+		case <-sub.changed:
+			if change := sub.takeConversationChange(); change != nil {
+				if e := s.Send(change); e != nil {
+					return
+				}
+			}
 		case m := <-sub.q:
 			e := s.Send(m)
 			if r.acp != nil {

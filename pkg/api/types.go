@@ -243,7 +243,9 @@ type AgentActivity struct {
 	Sequence   int64  `json:"sequence"`
 }
 type Attach struct {
-	Observe bool `json:"observe"`
+	// Conversation selects state and model invalidations, without raw diagnostics.
+	Conversation bool `json:"conversation,omitempty"`
+	Observe      bool `json:"observe"`
 }
 
 // TerminalControl is scoped to one attached stream. Acquire never preempts;

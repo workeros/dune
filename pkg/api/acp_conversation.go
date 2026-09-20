@@ -6,14 +6,15 @@ import (
 )
 
 const (
-	DefaultACPConversationLimit     = 50
-	MaxACPConversationLimit         = 200
-	MaxACPConversationBytes         = 8 * 1024 * 1024
-	MaxACPConversationEntries       = 5000
-	MaxACPConversationsBytes        = 128 * 1024 * 1024
-	MaxACPEntryBytes                = 256 * 1024
-	MaxACPConversationStateBytes    = 64 * 1024
-	MaxACPConversationResponseBytes = 512 * 1024
+	DefaultACPConversationLimit         = 50
+	MaxACPConversationLimit             = 200
+	MaxACPConversationBytes             = 8 * 1024 * 1024
+	MaxACPConversationEntries           = 5000
+	MaxACPConversationsBytes            = 128 * 1024 * 1024
+	MaxACPEntryBytes                    = 256 * 1024
+	MaxACPConversationStateBytes        = 64 * 1024
+	MaxACPConversationResponseBytes     = 512 * 1024
+	MaxACPConversationNotificationBytes = 16 * 1024
 )
 
 // ACPState describes the live controller. Conversation describes retained data,
@@ -156,15 +157,18 @@ func (r *ACPConversationRead) UnmarshalJSON(data []byte) error {
 // ACPConversationUsage is aggregate, bounded diagnostic data. EncodedBytes is
 // retained JSON accounting, not an estimate of process RSS.
 type ACPConversationUsage struct {
-	Models          int    `json:"models"`
-	EncodedBytes    int    `json:"encoded_bytes"`
-	Entries         int    `json:"entries"`
-	Evictions       uint64 `json:"evictions"`
-	OmittedUpdates  uint64 `json:"omitted_updates"`
-	ReadCount       uint64 `json:"read_count"`
-	ReadBytes       uint64 `json:"read_bytes"`
-	ReadNanoseconds uint64 `json:"read_nanoseconds"`
-	InFlightLoads   int    `json:"in_flight_loads"`
+	NotificationMerges   uint64            `json:"notification_merges"`
+	SlowConsumerClosures uint64            `json:"slow_consumer_closures"`
+	MergeFailures        map[string]uint64 `json:"merge_failures,omitempty"`
+	Models               int               `json:"models"`
+	EncodedBytes         int               `json:"encoded_bytes"`
+	Entries              int               `json:"entries"`
+	Evictions            uint64            `json:"evictions"`
+	OmittedUpdates       uint64            `json:"omitted_updates"`
+	ReadCount            uint64            `json:"read_count"`
+	ReadBytes            uint64            `json:"read_bytes"`
+	ReadNanoseconds      uint64            `json:"read_nanoseconds"`
+	InFlightLoads        int               `json:"in_flight_loads"`
 }
 
 type ACPConversationPage struct {

@@ -10,6 +10,10 @@ func (s *conversationStore) statistics() *api.ACPConversationUsage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	usage := s.usage
+	usage.MergeFailures = make(map[string]uint64, len(s.usage.MergeFailures))
+	for reason, count := range s.usage.MergeFailures {
+		usage.MergeFailures[reason] = count
+	}
 	usage.EncodedBytes = s.bytes
 	for slot := range s.slots {
 		if slot.model == nil {
@@ -30,4 +34,14 @@ func (s *conversationStore) recordRead(bytes int, elapsed time.Duration) {
 	s.usage.ReadCount++
 	s.usage.ReadBytes += uint64(bytes)
 	s.usage.ReadNanoseconds += uint64(max(0, elapsed))
+}
+
+// Call only with fixed reason names, never protocol IDs or message text.
+func (s *conversationStore) mergeFailure(reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.usage.MergeFailures == nil {
+		s.usage.MergeFailures = map[string]uint64{}
+	}
+	s.usage.MergeFailures[reason]++
 }

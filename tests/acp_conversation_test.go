@@ -135,4 +135,37 @@ func TestACPConversationReadWithoutSubscription(t *testing.T) {
 	if len(encoded["revision"]) == 0 || encoded["revision"][0] != '"' {
 		t.Fatal("revision must be a decimal JSON string")
 	}
+	// Ordinary subscription acknowledgement precedes the read; no history or
+	// browser restoration handshake is sent to fabricd or the Agent.
+	subscription, err := h.client.SubscribeACPConversation(h.ctx, runtime)
+	must(t, err)
+	defer subscription.Close()
+	observedPage, err := h.client.ReadACPConversation(h.ctx, runtime, api.ACPConversationRead{ConversationID: loaded.Conversation.ID})
+	must(t, err)
+	submit(api.ACPAction{Action: "prompt", ExpectedConversationID: loaded.Conversation.ID, Text: "subscribed model marker"})
+	for {
+		message, err := subscription.Recv()
+		must(t, err)
+		if message.Kind == "acp_update" || message.Kind == "acp_stream" {
+			t.Fatal("model observer received raw ACP chunks")
+		}
+		if message.Kind != "acp_conversation_changed" {
+			continue
+		}
+		var change api.ACPConversationChanged
+		must(t, json.Unmarshal(message.Payload, &change))
+		if change.ConversationID != loaded.Conversation.ID || change.Revision <= observedPage.Conversation.Revision {
+			continue
+		}
+		if change.PreviousRevision > observedPage.Conversation.Revision && !change.InvalidatesAll {
+			t.Fatal("subscriber missed an invalidation interval")
+		}
+		current, err := h.client.ReadACPConversation(h.ctx, runtime, api.ACPConversationRead{ConversationID: loaded.Conversation.ID})
+		must(t, err)
+		if current.Conversation.Revision < change.Revision || !strings.Contains(string(api.Payload(current.Entries)), "subscribed model marker") {
+			t.Fatal("notified model was not atomically readable")
+		}
+		break
+	}
+
 }

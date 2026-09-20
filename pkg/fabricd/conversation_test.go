@@ -12,7 +12,7 @@ import (
 
 func conversationFixture(t *testing.T) *conversationSlot {
 	t.Helper()
-	slot := newConversationStore().register("runtime-test", "incarnation-test")
+	slot := newConversationStore().register("runtime-test", "incarnation-test", nil)
 	slot.begin(api.ACPAction{Action: "new", Cwd: "/work"})
 	slot.opened("session-test", "/work", "succeeded", nil)
 	return slot
@@ -174,8 +174,8 @@ func TestConversationByteLimitedReadAndGetProgress(t *testing.T) {
 
 func TestConversationGlobalEvictionAndForgetRelease(t *testing.T) {
 	store := newConversationStore()
-	first := store.register("one", "inc")
-	second := store.register("two", "inc")
+	first := store.register("one", "inc", nil)
+	second := store.register("two", "inc", nil)
 	for _, slot := range []*conversationSlot{first, second} {
 		slot.begin(api.ACPAction{Action: "new", Cwd: "/work"})
 	}

@@ -211,6 +211,7 @@ func (a *acpController) recordConversationUpdate(params json.RawMessage) {
 		Update    map[string]json.RawMessage `json:"update"`
 	}
 	if json.Unmarshal(params, &envelope) != nil || envelope.Update == nil {
+		a.conversation.store.mergeFailure("invalid_update")
 		return
 	}
 	a.mu.Lock()
@@ -224,6 +225,7 @@ func (a *acpController) recordConversationUpdate(params json.RawMessage) {
 		return
 	}
 	if envelope.SessionID == "" || envelope.SessionID != a.state.SessionID {
+		a.conversation.store.mergeFailure("session_mismatch")
 		a.conversation.mutate(func(m *conversationModel) { m.description.ContextIncomplete = true })
 		return
 	}

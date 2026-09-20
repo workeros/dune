@@ -48,7 +48,6 @@ type acpController struct {
 	methods         map[string]string
 	done            chan struct{}
 	once            sync.Once
-	replaying       atomic.Bool
 	queue           []*acpQueuedAction
 	active          *acpQueuedAction
 	operations      *operationLog
@@ -65,7 +64,9 @@ func newACPController(r *runtime) *acpController {
 	if r.conversations == nil {
 		r.conversations = newConversationStore()
 	}
-	a := &acpController{connection: r.p, r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	a := &acpController{connection: r.p, r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc, func(change api.ACPConversationChanged) {
+		r.emit(&pb.Message{Kind: "acp_conversation_changed", Payload: api.Payload(change)})
+	}), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
 	a.renewConnection = a.reconnect
 	return a
 }

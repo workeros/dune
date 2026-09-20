@@ -38,8 +38,8 @@ default to 50 and cap at 200; explicit zero is invalid. At most eight conversati
 read/get responses are in flight per engine. Capacity eviction removes a
 contiguous insertion-order prefix and does not depend on readership.
 
-The implementation is being delivered in vertical slices. Notification delivery,
-consumer model migration are subsequent slices; this document is not a completion
+The implementation is being delivered in vertical slices. Consumer model
+migration and full acceptance are subsequent slices; this document is not a completion
 report for the full conversation requirements.
 
 Validation of the initial slice:
@@ -100,3 +100,19 @@ the Agent to support native load across processes. A failure to establish the
 new connection fails the open without replaying a prompt. Normal read/state/
 subscribe operations never use this path. The configured Runtime timeout is
 not extended by reopening a native session.
+
+`SubscribeACPConversation(ctx, runtime)` acknowledges an ordinary observation
+stream (`runtime.attach` with `observe:true, conversation:true`). After it
+returns, read the required pages. `acp_conversation_changed` carries a covered
+`(previous_revision, revision]` interval and the union of changed IDs; at more
+than 200 IDs or 16 KiB it uses `invalidates_all`. Generations and uncovered
+intervals also force full invalidation. The stream contains live controller
+state and exit/error events, without raw diagnostic chunks. Raw `Attach`
+remains available for the protocol inspector. The capability is
+`acp.conversation.changed`.
+
+Notification publishers and individual subscribers each retain one bounded
+pending interval. Slow raw diagnostics close with `SLOW_CONSUMER`; even load
+replay never waits for a subscriber. Model changes caused by global eviction
+also notify the affected Runtime. A latest-page read only satisfies IDs present
+in that response; it cannot clear updates to previously loaded older entries.

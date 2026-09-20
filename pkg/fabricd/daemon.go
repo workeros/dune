@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -56,7 +56,9 @@ type Engine struct {
 
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
-	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
+	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
+	go engine.conversations.run(ctx)
+	return engine
 }
 
 // Close stops the connector and owned ACP processes and releases its state lock.

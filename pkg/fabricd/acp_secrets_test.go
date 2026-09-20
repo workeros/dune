@@ -42,7 +42,7 @@ func TestACPCredentialStderrRedactionAcrossEveryReadBoundary(t *testing.T) {
 	for split := 1; split < len(secret); split++ {
 		a, _ := queueFixture(t)
 		a.mcpSecret.Store(&secret)
-		sub, err := a.r.subscribe(false)
+		sub, err := a.r.subscribe(false, false)
 		if err != nil {
 			t.Fatal(err)
 		}

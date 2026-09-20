@@ -633,6 +633,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	var stream *sdk.Stream
 	if runtime.Adapter == "pty" {
 		stream, err = client.Attach(r.Context(), runtime, false)
+	} else if r.URL.Query().Get("acp_events") == "conversation" {
+		stream, err = client.SubscribeACPConversation(r.Context(), runtime)
 	} else {
 		stream, err = client.Attach(r.Context(), runtime, true)
 	}

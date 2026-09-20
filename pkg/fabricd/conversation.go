@@ -21,6 +21,7 @@ type conversationStore struct {
 	maxModelBytes int
 	maxEntries    int
 	usage         api.ACPConversationUsage
+	wake          chan struct{}
 }
 
 type conversationSlot struct {
@@ -28,6 +29,8 @@ type conversationSlot struct {
 	runtimeID   string
 	incarnation string
 	model       *conversationModel
+	pending     *api.ACPConversationChanged
+	publish     func(api.ACPConversationChanged)
 }
 
 type conversationModel struct {
@@ -38,6 +41,8 @@ type conversationModel struct {
 	updated        uint64
 	entryBytes     int
 	omittedUpdates uint64
+	changed        map[string]bool
+	invalidatesAll bool
 }
 
 type conversationEntry struct {
@@ -47,14 +52,14 @@ type conversationEntry struct {
 }
 
 func newConversationStore() *conversationStore {
-	return &conversationStore{slots: map[*conversationSlot]struct{}{}, maxBytes: api.MaxACPConversationsBytes,
+	return &conversationStore{slots: map[*conversationSlot]struct{}{}, wake: make(chan struct{}, 1), maxBytes: api.MaxACPConversationsBytes,
 		maxModelBytes: api.MaxACPConversationBytes, maxEntries: api.MaxACPConversationEntries}
 }
 
-func (s *conversationStore) register(runtimeID, incarnation string) *conversationSlot {
+func (s *conversationStore) register(runtimeID, incarnation string, publish func(api.ACPConversationChanged)) *conversationSlot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	slot := &conversationSlot{store: s, runtimeID: runtimeID, incarnation: incarnation}
+	slot := &conversationSlot{store: s, runtimeID: runtimeID, incarnation: incarnation, publish: publish}
 	s.slots[slot] = struct{}{}
 	return slot
 }
@@ -66,6 +71,7 @@ func (s *conversationSlot) remove() {
 		s.store.bytes -= s.model.bytes
 		s.model = nil
 	}
+	s.pending = nil
 	delete(s.store.slots, s)
 }
 
@@ -139,6 +145,7 @@ func (s *conversationSlot) mutate(change func(*conversationModel)) {
 
 func (s *conversationSlot) commitLocked() {
 	m := s.model
+	previous := m.description.Revision
 	m.description.Revision++
 	s.store.clock++
 	m.updated = s.store.clock
@@ -152,6 +159,7 @@ func (s *conversationSlot) commitLocked() {
 	s.store.bytes += m.bytes
 	for s.store.bytes > s.store.maxBytes {
 		var victim *conversationModel
+		var victimSlot *conversationSlot
 		for slot := range s.store.slots {
 			candidate := slot.model
 			if candidate == nil || len(candidate.entries) == 0 {
@@ -159,7 +167,7 @@ func (s *conversationSlot) commitLocked() {
 			}
 			if victim == nil || (candidate.description.Phase == "exited" && victim.description.Phase != "exited") ||
 				((candidate.description.Phase == "exited") == (victim.description.Phase == "exited") && candidate.updated < victim.updated) {
-				victim = candidate
+				victim, victimSlot = candidate, slot
 			}
 		}
 		if victim == nil {
@@ -169,11 +177,14 @@ func (s *conversationSlot) commitLocked() {
 		victim.evictFirst()
 		s.store.usage.Evictions++
 		if victim != m {
+			prior := victim.description.Revision
 			victim.description.Revision++
+			victimSlot.notifyLocked(prior)
 		}
 		victim.measure()
 		s.store.bytes += victim.bytes
 	}
+	s.notifyLocked(previous)
 }
 
 func (m *conversationModel) measure() {
@@ -194,6 +205,7 @@ func (m *conversationModel) evictFirst() {
 	m.entries[0] = conversationEntry{}
 	m.entries = m.entries[1:]
 	m.description.PrefixEvicted = true
+	m.invalidatesAll = true
 }
 
 func (m *conversationModel) put(entry api.ACPEntry, key string) {
@@ -202,6 +214,16 @@ func (m *conversationModel) put(entry api.ACPEntry, key string) {
 		m.description.HeadOrder++
 		entry.Order = m.description.HeadOrder
 		entry.ID = "e-" + strconv.FormatUint(entry.Order, 10)
+	}
+	if !m.invalidatesAll {
+		if m.changed == nil {
+			m.changed = map[string]bool{}
+		}
+		m.changed[entry.ID] = true
+		if len(m.changed) > api.MaxACPConversationLimit {
+			m.changed = nil
+			m.invalidatesAll = true
+		}
 	}
 	data := api.Payload(entry)
 	tooManyFields := entry.Tool != nil && len(entry.Tool.Fields) > 128

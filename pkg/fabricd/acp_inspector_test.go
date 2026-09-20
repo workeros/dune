@@ -14,7 +14,7 @@ func TestACPInspectorRedactsMCPConfigWithoutChangingNativeRPC(t *testing.T) {
 	r := &runtime{cwd: "/tmp", subs: map[*subscription]bool{}, p: &process.Process{Input: input}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -141,7 +141,6 @@ func (a *acpController) startNextLocked() {
 				params["sessionId"] = req.SessionID
 			}
 			a.state.SessionID, a.state.Cwd = req.SessionID, req.Cwd
-			a.replaying.Store(req.Action == "load")
 		case "list":
 			params["cwd"] = req.Cwd
 			if req.Cursor != "" {
@@ -196,7 +195,6 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	if a.active != operation {
 		return
 	}
-	a.replaying.Store(false)
 	state, reason, detail := "completed", "", ""
 	if err == nil {
 		reason, err = a.applyResultLocked(operation.request.Action, result)

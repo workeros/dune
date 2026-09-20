@@ -25,7 +25,7 @@ func TestACPStreamPublishesInputAndOutputRPCs(t *testing.T) {
 	r := &runtime{cwd: "/tmp", subs: map[*subscription]bool{}, p: &process.Process{Input: input}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,15 +53,14 @@ func TestACPStreamPublishesInputAndOutputRPCs(t *testing.T) {
 	}
 }
 
-func TestACPReplayBackpressuresInsteadOfDroppingBurst(t *testing.T) {
+func TestACPReplayClosesSlowDiagnosticsWithoutBlockingAgent(t *testing.T) {
 	r := &runtime{subs: map[*subscription]bool{}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.replaying.Store(true)
 
 	payload := bytes.Repeat([]byte("x"), 256*1024)
 	done := make(chan struct{})
@@ -72,26 +71,15 @@ func TestACPReplayBackpressuresInsteadOfDroppingBurst(t *testing.T) {
 		}
 	}()
 
-	// Sixteen MiB cannot hold this whole burst. The producer must wait for the
-	// consumer to release byte budget, while the subscription stays attached.
-	select {
-	case <-done:
-		t.Fatal("replay producer did not apply byte backpressure")
-	case <-time.After(10 * time.Millisecond):
-	}
-	for i := 0; i < 160; i++ {
-		m := <-s.q
-		s.release(m)
-	}
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("replay remained blocked after queue drained")
+		t.Fatal("slow diagnostic subscriber blocked model ingestion")
 	}
 	select {
 	case <-s.failed:
-		t.Fatal("replay burst detached a live subscriber")
 	default:
+		t.Fatal("unbounded replay buffer retained a stalled subscriber")
 	}
 }
 
@@ -99,7 +87,7 @@ func TestACPLiveBurstKeepsSmallQueueLimit(t *testing.T) {
 	r := &runtime{subs: map[*subscription]bool{}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +111,7 @@ func TestACPScannerAcceptsAndCompactsLargeHistoryUpdate(t *testing.T) {
 	r := &runtime{adapter: "acp", subs: map[*subscription]bool{}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +129,7 @@ func TestACPScannerAcceptsAndCompactsLargeHistoryUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lineLimit, _ := acpMemoryLimits(machineMemoryBytes())
+	lineLimit := acpInputLimit(machineMemoryBytes())
 	if len(update) <= acpBrowserUpdateBytes || len(update) >= lineLimit {
 		t.Fatalf("test update size %d does not exercise the raised scanner limit", len(update))
 	}
@@ -159,7 +147,7 @@ func TestACPLargeMessageTextIsChunkedWithoutLoss(t *testing.T) {
 	r := &runtime{subs: map[*subscription]bool{}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +183,11 @@ func TestACPOversizedLineIsOmittedAndFollowingRPCContinues(t *testing.T) {
 	r := &runtime{adapter: "acp", subs: map[*subscription]bool{}}
 	a := newACPController(r)
 	r.acp = a
-	s, err := r.subscribe(false)
+	s, err := r.subscribe(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lineLimit, _ := acpMemoryLimits(machineMemoryBytes())
+	lineLimit := acpInputLimit(machineMemoryBytes())
 	tooLarge := `{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","content":"` + strings.Repeat("x", lineLimit) + `"}}}`
 	following := `{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"after"}}}}`
 	var wg sync.WaitGroup
@@ -218,17 +206,13 @@ func TestACPOversizedLineIsOmittedAndFollowingRPCContinues(t *testing.T) {
 	}
 }
 
-func TestACPMemoryLimitsScaleWithMachineSize(t *testing.T) {
+func TestACPInputLimitScalesWithMachineSize(t *testing.T) {
 	for _, test := range []struct {
-		memory, line, replay uint64
-	}{
-		{2 << 30, 2 << 20, 8 << 20},
-		{8 << 30, 4 << 20, 16 << 20},
-		{32 << 30, 8 << 20, 32 << 20},
-	} {
-		line, replay := acpMemoryLimits(test.memory)
-		if uint64(line) != test.line || uint64(replay) != test.replay {
-			t.Fatalf("memory %d: got line=%d replay=%d", test.memory, line, replay)
+		memory uint64
+		line   int
+	}{{2 << 30, 2 << 20}, {8 << 30, 4 << 20}, {32 << 30, 8 << 20}} {
+		if got := acpInputLimit(test.memory); got != test.line {
+			t.Fatalf("memory %d: got %d", test.memory, got)
 		}
 	}
 }

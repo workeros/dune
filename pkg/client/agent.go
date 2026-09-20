@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"slices"
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -79,4 +80,15 @@ func (c *Client) ScrollbackTerminal(ctx context.Context, runtime api.Runtime, re
 	var snapshot api.TerminalScrollback
 	err := c.CallID(ctx, "runtime.scrollback", wire.ID(), request, &snapshot, &runtime)
 	return snapshot, err
+}
+
+// SubscribeACPConversation acknowledges an ordinary observer subscription. Read
+// state/pages after this call succeeds. Notifications invalidate retained entry
+// values; they contain no transcript and do not acknowledge browser progress.
+func (c *Client) SubscribeACPConversation(ctx context.Context, runtime api.Runtime) (*Stream, error) {
+	if !slices.Contains(c.Binding.Capabilities, "acp.conversation.changed") {
+		return nil, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not advertise conversation notifications"}
+	}
+	stream, _, err := c.open(ctx, "runtime.attach", wire.ID(), api.Attach{Observe: true, Conversation: true}, &runtime)
+	return stream, err
 }

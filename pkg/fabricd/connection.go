@@ -56,6 +56,8 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	b.Limits["acp_entry_bytes"] = api.MaxACPEntryBytes
 	b.Limits["acp_conversation_response_bytes"] = api.MaxACPConversationResponseBytes
 	b.Limits["acp_conversation_read_limit"] = api.MaxACPConversationLimit
+	b.Limits["acp_conversation_notification_bytes"] = api.MaxACPConversationNotificationBytes
+	b.Limits["acp_conversation_notification_ids"] = api.MaxACPConversationLimit
 	b.Limits["acp_conversation_reads"] = cap(d.conversationReads)
 
 	input := wire.NewInputWindow()
