@@ -26,7 +26,7 @@ in this environment; qualification in the last column is part of the result.
 | A04 | `TestConversationPagingEvictionAndRecreatedTool`; SDK conversation test; Web latest-page gap tests | Fixed member upper bound, ascending order, new insertions excluded from old cursor. Web refresh retains a cursor into unread middle ranges. |
 | A05 | tool patch test; browser model restoration case | Stable tool identity; get refreshes an older loaded page. |
 | A06 | `web/src/components/acp-model.test.mjs` older-page case | Older response adds unseen entries without overwriting newer values. |
-| A07 | `tests/TestACPConversationIndependentCursorsAcrossConnections` and invalid-cursor tests | Six parallel requests across two connections reuse the same cursor; older/end-page traversal does not consume it. Multiple deployed host Pods not exercised. |
+| A07 | `tests/TestACPConversationIndependentCursorsAcrossConnections`; `TestPostgresClusterWebProcesses`; invalid-cursor tests | Six parallel requests reuse a cursor through three independent local host processes, then traverse/rewind and reuse it after Gateway owner restart. Cross-machine/Pod deployment not exercised. |
 | A08 | `TestConversationByteLimitedReadAndGetProgress`; oversized tests | Final JSON size bound; page/get advance, explicit unprocessed IDs. |
 | A09 | `TestConversationPagingEvictionAndRecreatedTool` | Partly and fully evicted cursor windows are distinguished and terminate. |
 | A10 | model reducer eviction test | Old response cannot revive entries below the current retention boundary. |
@@ -195,7 +195,8 @@ service; this project does not distribute a separate default fabricd binary.
 | Adjacent SandDance Go suite with temporary local replacements | PASS; no dependency/source changes made there. |
 | Opt-in resource test and read/get benchmarks | PASS within the workload boundaries recorded above. |
 | `TestRealACPConversationLoad` | SKIP, Agent command/account environment not configured. |
-| PostgreSQL, multi-host/Pod deployment and vendor Agent tests | Not exercised without their dedicated environment; skipped tests are not counted as passed deployments. |
+| PostgreSQL cluster process test | PASS in an isolated local PostgreSQL 17.11 instance; see the three-host follow-up below. |
+| Cross-machine/Pod deployment and vendor Agent tests | Not exercised without their dedicated environment; local processes are not counted as passed deployments. |
 
 Earlier full attempts exposed an obsolete prompt fixture, a package-level
 180-second timeout, a Gateway rejection/connection-close test race, and one PTY
@@ -307,3 +308,39 @@ Validation passed:
 
 Web sources were unchanged by this follow-up. The real-Agent load acceptance
 still requires its dedicated configuration.
+
+## Conversation cursors through three host processes
+
+`TestPostgresClusterWebProcesses` now also exercises conversation read/get over
+three independent Web/host processes sharing PostgreSQL routes. The fabricd
+connector belongs to host B; requests to A and C cross the actual authenticated
+peer Gateway path. All processes run on the same macOS arm64 machine. The test
+uses a controlled ACP child and a journal of actual Agent RPC methods.
+
+The added assertions cover:
+
+- Six simultaneous uses of the same cursor through A, B and C, with identical
+  bounded results after a newer turn has been appended.
+- Full backward traversal alternating hosts, matching retained entry content
+  exactly once within the original member upper bound, followed by rewind.
+- A get through another host preserving complete entry values and request order.
+- Unchanged model state/retention and Agent RPC journal across the reads.
+- Reuse of the original cursor after restarting Gateway owner B, with the same
+  retained content and no new Agent control RPCs.
+
+Both ordinary and race runs passed (26.77 and 26.34 seconds for the test body).
+The process fixture always builds its child Dune binary with `-race`; the race
+run also instruments the test's concurrent HTTP clients. `go vet ./tests` passed.
+
+```sh
+DUNE_TEST_POSTGRES='<dedicated PostgreSQL URL>' go test ./tests -run '^TestPostgresClusterWebProcesses$' -count=1 -timeout=180s -v
+DUNE_TEST_POSTGRES='<dedicated PostgreSQL URL>' go test -race ./tests -run '^TestPostgresClusterWebProcesses$' -count=1 -timeout=180s -v
+go vet ./tests
+```
+
+The measured environment used PostgreSQL 17.11 (Homebrew), a temporary private
+data/socket directory and a Unix socket with TCP listening disabled. The test
+created and removed its own schema. After each run the server stopped and the
+temporary data/socket directories were removed. This provides local multi-host
+process evidence; it does not validate a cross-machine or Kubernetes deployment,
+or vendor native-history behavior.

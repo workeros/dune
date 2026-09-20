@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -230,6 +231,8 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 		t.Fatalf("mock ACP build failed: %v %s", err, output)
 	}
 	agentProfile := profile(dir, "acp", mock)
+	journal := filepath.Join(dir, "acp-rpc.log")
+	agentProfile.Env = map[string]string{"DUNE_MOCK_RPC_LOG": journal}
 	var target agents.LaunchResult
 	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{Custom: &agentProfile}, &target)
 	var first, second agents.Operation
@@ -301,6 +304,109 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	if a.Operation == nil || b.Operation == nil || a.Operation.Incomplete || b.Operation.Incomplete || strings.Contains(string(api.Payload(a)), "CLUSTER_SECOND_OPERATION") || !strings.Contains(string(api.Payload(b)), "CLUSTER_SECOND_OPERATION") {
 		t.Fatal("cross-host operation output boundaries changed")
 	}
+
+	// A cursor belongs to fabricd's retained model, not the host that issued it.
+	readConversation := func(entry int, selection api.ACPConversationRead) api.ACPConversationPage {
+		t.Helper()
+		var page api.ACPConversationPage
+		request(sites[entry], "POST", runnerBase+"/call"+query, map[string]any{"operation": "acp.conversation.read", "runtime": target.Runtime, "payload": selection}, &page)
+		return page
+	}
+	two := 2
+	latest := readConversation(0, api.ACPConversationRead{ConversationID: target.Runtime.ConversationID, Limit: &two})
+	if len(latest.Entries) != 2 || !latest.HasMore || latest.NextCursor == "" {
+		t.Fatal("missing initial conversation window", latest)
+	}
+	var appended agents.Operation
+	callMCP("agents_prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_CURSOR_APPEND"}, &appended)
+	callMCP("agents_wait", agents.WaitRequest{OperationRef: appended.Ref, TimeoutMS: 5000}, &waited)
+	if waited.Operation == nil || waited.Operation.State != "completed" {
+		t.Fatal("cursor fixture append did not complete")
+	}
+	current := readConversation(1, api.ACPConversationRead{ConversationID: target.Runtime.ConversationID})
+	if current.Conversation.HeadOrder <= latest.ThroughOrder || current.HasMore || !strings.Contains(string(api.Payload(current.Entries)), "CLUSTER_CURSOR_APPEND") {
+		t.Fatal("new entries are absent from the fresh window")
+	}
+	journalBefore, err := os.ReadFile(journal)
+	must(t, err)
+	selection := api.ACPConversationRead{Cursor: latest.NextCursor, Limit: &two}
+	responses := make(chan api.ACPConversationPage, 6)
+	var readers sync.WaitGroup
+	beginReads := make(chan struct{})
+	for _, entry := range []int{0, 1, 2, 0, 1, 2} {
+		readers.Go(func() {
+			<-beginReads
+			responses <- readConversation(entry, selection)
+		})
+	}
+	close(beginReads)
+	readers.Wait()
+	close(responses)
+	var firstPage string
+	count := 0
+	for page := range responses {
+		count++
+		if page.ThroughOrder != latest.ThroughOrder || len(page.Entries) != 2 || page.Entries[0].Order >= page.Entries[1].Order {
+			t.Fatal("cross-host cursor lost its member boundary or order")
+		}
+		encoded := string(api.Payload(page))
+		if firstPage != "" && firstPage != encoded {
+			t.Fatal("concurrent hosts consumed or changed the cursor")
+		}
+		firstPage = encoded
+	}
+	if count != 6 {
+		t.Fatal("not all cross-host reads completed")
+	}
+	expected := map[string]api.ACPEntry{}
+	for _, entry := range current.Entries {
+		if entry.Order <= latest.ThroughOrder {
+			expected[entry.ID] = entry
+		}
+	}
+	seen := map[string]bool{}
+	page := latest
+	for entryHost := 0; ; entryHost = (entryHost + 1) % len(sites) {
+		for _, entry := range page.Entries {
+			if seen[entry.ID] || string(api.Payload(entry)) != string(api.Payload(expected[entry.ID])) {
+				t.Fatal("cross-host traversal duplicated, changed or added an entry", entry.ID)
+			}
+			seen[entry.ID] = true
+		}
+		if !page.HasMore {
+			break
+		}
+		next := readConversation(entryHost, api.ACPConversationRead{Cursor: page.NextCursor, Limit: &two})
+		if next.HasMore && (next.NextCursor == "" || next.NextCursor == page.NextCursor) {
+			t.Fatal("cross-host traversal made no progress")
+		}
+		page = next
+	}
+	if len(seen) != len(expected) || len(seen) != int(latest.ThroughOrder) {
+		t.Fatal("cross-host traversal lost retained content")
+	}
+	if rewound := readConversation(2, selection); string(api.Payload(rewound)) != firstPage {
+		t.Fatal("another host could not reuse the cursor after traversal")
+	}
+	var refreshed api.ACPConversationEntries
+	ids := []string{latest.Entries[1].ID, latest.Entries[0].ID}
+	request(sites[2], "POST", runnerBase+"/call"+query, map[string]any{"operation": "acp.conversation.get", "runtime": target.Runtime, "payload": api.ACPConversationGet{ConversationID: latest.Conversation.ID, EntryIDs: ids}}, &refreshed)
+	if len(refreshed.Entries) != len(ids) || len(refreshed.Missing) != 0 || len(refreshed.UnprocessedEntryIDs) != 0 {
+		t.Fatal("cross-host get did not return retained entries")
+	}
+	for index, entry := range refreshed.Entries {
+		if string(api.Payload(entry)) != string(api.Payload(expected[ids[index]])) {
+			t.Fatal("cross-host get changed entry content or request order")
+		}
+	}
+	if afterReads := readConversation(0, api.ACPConversationRead{ConversationID: target.Runtime.ConversationID}); string(api.Payload(afterReads)) != string(api.Payload(current)) {
+		t.Fatal("reading through different hosts changed model state or retention")
+	}
+	journalAfter, err := os.ReadFile(journal)
+	must(t, err)
+	if !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatal("cross-host conversation reads sent Agent control RPCs")
+	}
 	// Read-only probes verify the full path. A database route can remain online
 	// briefly after its owner dies, before its lease or connection is replaced.
 	awaitCaller := func() {
@@ -324,6 +430,14 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	callMCP("agents_read", agents.ReadRequest{OperationRef: second.Ref}, &after)
 	if string(api.Payload(after)) != string(api.Payload(b)) {
 		t.Fatal("Gateway owner restart lost fabricd output")
+	}
+	if restored := readConversation(0, selection); string(api.Payload(restored)) != firstPage {
+		t.Fatal("Gateway owner restart invalidated the conversation cursor")
+	}
+	journalAfter, err = os.ReadFile(journal)
+	must(t, err)
+	if !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatal("Gateway owner restart replayed Agent control RPCs")
 	}
 	// A fabricd process restart is a different lifetime: ACP and its operations
 	// disappear while the PTY caller remains valid. Old reads cannot fall back.
