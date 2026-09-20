@@ -102,17 +102,26 @@ func (p *sessionProxy) connect(ctx context.Context) error {
 
 func (p *sessionProxy) open(ctx context.Context, request *pb.Message) (*wire.Stream, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if err := p.connect(ctx); err != nil {
+		p.mu.Unlock()
 		return nil, &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "ACP host could not be verified: " + err.Error()}
 	}
-	raw, err := p.connection.OpenStream()
+	connection, connector, term := p.connection, p.connector, p.term
+	p.mu.Unlock()
+	// A slow ordinary write must not hold the connection mutex while stop or
+	// another reserved control opens its own stream. Never redial/replay here.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	raw, err := connection.OpenStream()
 	if err != nil {
 		return nil, err
 	}
 	stream := wire.Wrap(raw)
+	stop := context.AfterFunc(ctx, func() { stream.Close() })
+	defer stop()
 	message := proto.Clone(request).(*pb.Message)
-	message.Incarnation, message.ConnectionGeneration = p.connector, p.term
+	message.Incarnation, message.ConnectionGeneration = connector, term
 	message.RouteEpoch, message.InputLeaseId = 0, ""
 	if err := stream.Send(message); err != nil {
 		stream.Close()

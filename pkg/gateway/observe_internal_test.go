@@ -99,8 +99,11 @@ func TestGatewayEmitsPeerAndBackpressureEvents(t *testing.T) {
 	t.Run("observer panic", func(t *testing.T) {
 		g := New()
 		g.SetObserver(func(observe.Event) { panic("diagnostic failure") })
-		g.streams = make(chan struct{})
-		if g.acquireStream("busy") {
+		for range g.streams.Snapshot()[string(wire.StreamOpening)].Limit {
+			lease := g.streams.Acquire(wire.StreamOpening)
+			t.Cleanup(lease.Release)
+		}
+		if g.acquireStream("busy") != nil {
 			t.Fatal("zero stream capacity was accepted")
 		}
 	})

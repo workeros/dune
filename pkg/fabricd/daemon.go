@@ -35,6 +35,8 @@ type Engine struct {
 	registry          *sessionregistry.Registry
 	submissionReads   chan struct{}
 	stateReads        chan struct{}
+	operationWaits    chan struct{}
+	streams           *wire.StreamCapacity
 	starts            chan struct{}
 	mu                sync.Mutex
 	inc               string
@@ -67,6 +69,8 @@ func newEngine(parent context.Context) *Engine {
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
 	engine.submissionReads = make(chan struct{}, 8)
 	engine.stateReads = make(chan struct{}, 16)
+	engine.operationWaits = make(chan struct{}, 16)
+	engine.streams = wire.NewStreamCapacity(1)
 	engine.cleanups = make(map[api.SubmissionKey]*cleanupExecution)
 	go engine.conversations.run(ctx)
 	return engine
@@ -111,7 +115,7 @@ func (d *Engine) Close() {
 		}
 	})
 }
-func (d *Engine) handle(s *executionStream, target string, gen uint64) {
+func (d *Engine) handle(s *executionStream, target string, gen uint64, lease *wire.StreamLease) {
 	defer s.Close()
 	_ = s.SetReadDeadline(time.Now().Add(5 * time.Second))
 	m, e := s.Recv()
@@ -128,6 +132,10 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 	}
 	if len(m.RequestId) > 128 {
 		s.Fail("INVALID_ARGUMENT", fmt.Errorf("request ID too long"))
+		return
+	}
+	if class := wire.RequestClass(m); !lease.Move(class) {
+		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("fabricd %s stream capacity exhausted", class))
 		return
 	}
 	d.dispatch(s, m, target)
@@ -173,9 +181,13 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	}
 	retainResult := !sessionRead(m.Operation)
 	if !retainResult {
+		readers := d.stateReads
+		if m.Operation == "agent.operation.wait" {
+			readers = d.operationWaits
+		}
 		select {
-		case d.stateReads <- struct{}{}:
-			defer func() { <-d.stateReads }()
+		case readers <- struct{}{}:
+			defer func() { <-readers }()
 		default:
 			s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("state read concurrency limit reached"))
 			return
@@ -334,7 +346,7 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	case "machine.info":
 		home, err := os.UserHomeDir()
 		e = err
-		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics()}
+		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics(), StreamCapacity: d.streams.Snapshot()}
 	case "runtime.get":
 		var r *runtime
 		r, e = d.lookup(m)

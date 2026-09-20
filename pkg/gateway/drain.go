@@ -1,6 +1,12 @@
 package gateway
 
-import "github.com/aiomni/dune/pkg/observe"
+import (
+	"fmt"
+
+	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/observe"
+)
 
 // Status describes this core's intake and current work, without target IDs.
 // Connections include idle control sessions; Streams counts accepted requests
@@ -8,16 +14,17 @@ import "github.com/aiomni/dune/pkg/observe"
 // counts locally owned, confirmed routes whose input permission is still valid;
 // it does not query the directory or imply that every request will succeed.
 type Status struct {
-	Accepting    bool `json:"accepting"`
-	Connections  int  `json:"connections"`
-	OnlineRoutes int  `json:"online_routes"`
-	Streams      int  `json:"streams"`
+	Accepting      bool                         `json:"accepting"`
+	Connections    int                          `json:"connections"`
+	OnlineRoutes   int                          `json:"online_routes"`
+	Streams        int                          `json:"streams"`
+	StreamCapacity map[string]api.CapacityUsage `json:"stream_capacity"`
 }
 
 func (g *Gateway) Status() Status {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	status := Status{Accepting: !g.closed && !g.draining, Connections: len(g.sessions), Streams: len(g.streams)}
+	status := Status{Accepting: !g.closed && !g.draining, Connections: len(g.sessions), Streams: g.activeStreams, StreamCapacity: g.streams.Snapshot()}
 	for _, route := range g.routes {
 		if !route.s.IsClosed() && route.inputAlive() {
 			status.OnlineRoutes++
@@ -41,41 +48,57 @@ func (g *Gateway) Drain() <-chan struct{} {
 func (g *Gateway) beginDrainLocked() {
 	if !g.draining {
 		g.draining = true
-		if len(g.streams) == 0 {
+		if g.activeStreams == 0 {
 			close(g.drained)
 		}
 	}
 }
 
-func (g *Gateway) acquireStream(target string) bool {
+func (g *Gateway) acquireStream(target string) *wire.StreamLease {
 	g.mu.Lock()
 	_, targetBlocked := g.blocked[target]
 	if g.closed || g.draining || targetBlocked {
 		g.mu.Unlock()
-		return false
+		return nil
 	}
-	select {
-	case g.streams <- struct{}{}:
+	if lease := g.streams.Acquire(wire.StreamOpening); lease != nil {
 		g.targetStreams[target]++
+		g.activeStreams++
 		g.mu.Unlock()
-		return true
-	default:
+		return lease
+	} else {
 		g.mu.Unlock()
 		g.emit(observe.Event{Name: observe.GatewayBackpressure, Outcome: "gateway_stream_limit", Target: target})
-		return false
+		return nil
 	}
 }
 
-func (g *Gateway) releaseStream(target string) {
+func (g *Gateway) classifyStream(target string, class wire.StreamClass, local, global *wire.StreamLease) error {
+	g.mu.Lock()
+	_, blocked := g.blocked[target]
+	available := !g.closed && !g.draining && !blocked
+	if available {
+		available = local.Move(class) && global.Move(class)
+	}
+	g.mu.Unlock()
+	if !available {
+		g.emit(observe.Event{Name: observe.GatewayBackpressure, Outcome: string(class) + "_stream_limit", Target: target})
+		return fmt.Errorf("Gateway %s stream capacity unavailable", class)
+	}
+	return nil
+}
+
+func (g *Gateway) releaseStream(target string, lease *wire.StreamLease) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	<-g.streams
+	lease.Release()
+	g.activeStreams--
 	g.targetStreams[target]--
 	if g.targetStreams[target] == 0 {
 		delete(g.targetStreams, target)
 	}
 	g.finishDisconnectLocked(target)
-	if g.draining && len(g.streams) == 0 {
+	if g.draining && g.activeStreams == 0 {
 		close(g.drained)
 	}
 }

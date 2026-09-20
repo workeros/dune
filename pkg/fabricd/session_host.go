@@ -237,18 +237,16 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 	}
 	timer.Stop()
 	go func() { _, _ = ctrl.Recv(); cancel() }()
-	sem := make(chan struct{}, 64)
 	for {
 		raw, err := sess.AcceptStream()
 		if err != nil {
 			return
 		}
-		select {
-		case sem <- struct{}{}:
+		if lease := d.streams.Acquire(wire.StreamOpening); lease != nil {
 			requests.Add(1)
 			go func() {
 				defer requests.Done()
-				defer func() { <-sem }()
+				defer lease.Release()
 				s := &executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d}
 				defer s.Close()
 				check := func(m *pb.Message) error {
@@ -272,6 +270,10 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 					s.Fail("UNSUPPORTED", fmt.Errorf("operation is outside the ACP host contract"))
 					return
 				}
+				if class := wire.RequestClass(message); !lease.Move(class) {
+					s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("ACP host %s stream capacity exhausted", class))
+					return
+				}
 				if sessionMutation(message.Operation) {
 					// Serialize takeover with validation and durable queue admission.
 					// An operation admitted first continues after this lock releases.
@@ -284,7 +286,7 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 				}
 				d.dispatch(s, message, reg.Machine)
 			}()
-		default:
+		} else {
 			raw.Close()
 		}
 	}

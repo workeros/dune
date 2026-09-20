@@ -39,14 +39,15 @@ type Gateway struct {
 	blocked              map[string]chan struct{}
 	targetStreams        map[string]int
 	slots                chan struct{}
-	streams              chan struct{}
+	streams              *wire.StreamCapacity
+	activeStreams        int
 }
 
 func New() *Gateway {
 	return &Gateway{
 		routes: map[string]*route{}, sessions: map[*yamux.Session]BindingContext{},
 		blocked: map[string]chan struct{}{}, targetStreams: map[string]int{},
-		slots: make(chan struct{}, 256), streams: make(chan struct{}, 512), drained: make(chan struct{}),
+		slots: make(chan struct{}, 256), streams: wire.NewStreamCapacity(8), drained: make(chan struct{}),
 	}
 }
 
@@ -285,29 +286,32 @@ func (g *Gateway) ServeConn(ctx context.Context, conn net.Conn, binding BindingC
 	closed := g.observeConnection(binding.Target, h.Role, r.b.Incarnation, r.b.Generation)
 	defer closed()
 	go func() { _, _ = st.Recv(); s.Close() }()
-	sem := make(chan struct{}, wire.MaxStreams)
+	capacity := wire.NewStreamCapacity(1)
 	for {
 		raw, e := s.AcceptStream()
 		if e != nil {
 			return nil
 		}
-		select {
-		case sem <- struct{}{}:
-		default:
+		local := capacity.Acquire(wire.StreamOpening)
+		if local == nil {
 			g.emit(observe.Event{Name: observe.GatewayBackpressure, Outcome: "connection_stream_limit", Target: binding.Target, Role: h.Role})
 			raw.Close()
 			continue
 		}
-		if !g.acquireStream(binding.Target) {
-			<-sem
+		global := g.acquireStream(binding.Target)
+		if global == nil {
+			local.Release()
 			raw.Close()
 			continue
 		}
 		streamBinding := binding
 		streamBinding.Role = h.Role
 		go func() {
-			defer func() { <-sem; g.releaseStream(binding.Target) }()
-			g.forward(ctx, wire.Wrap(raw), r, streamBinding, handler)
+			defer local.Release()
+			defer g.releaseStream(binding.Target, global)
+			g.forward(ctx, wire.Wrap(raw), r, streamBinding, handler, func(m *pb.Message) error {
+				return g.classifyStream(binding.Target, wire.RequestClass(m), local, global)
+			})
 		}()
 	}
 }

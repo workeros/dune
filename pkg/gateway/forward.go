@@ -12,7 +12,7 @@ import (
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
-func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, binding BindingContext, handler ConnectionHandler) {
+func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, binding BindingContext, handler ConnectionHandler, classify func(*pb.Message) error) {
 	started := time.Now()
 	var err error
 	route := "local"
@@ -60,6 +60,12 @@ func (g *Gateway) forward(parent context.Context, c *wire.Stream, r *route, bind
 	}
 	if failure := g.routeError(binding.Target, r); failure != nil {
 		c.Fail(failure.Code, failure)
+		return
+	}
+	// Decode and validate the fixed binding before reserving execution capacity.
+	// Application authorization still runs for every class, including controls.
+	if err = classify(m); err != nil {
+		c.Fail("RESOURCE_EXHAUSTED", err)
 		return
 	}
 	flow := &Stream{ctx: ctx, cancel: cancel, client: c, peer: r.peer, admission: binding.Admission}

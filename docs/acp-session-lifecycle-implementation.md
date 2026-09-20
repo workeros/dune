@@ -495,3 +495,66 @@ and affected-package vet pass. Dune builds for Linux/macOS amd64/arm64 using the
 new platform-specific non-replacing rename operations; these are compile checks,
 not Linux or service-manager runtime acceptance. The real-Agent/PostgreSQL/native
 Agent acceptance environment switches remain unset.
+
+## Slice 14 — protected transport capacity through the public route
+
+Ordinary in-flight streams no longer occupy the first-message readers. A shared
+wire admission component bounds undecoded first requests separately and computes
+the execution class from the actual decoded operation/envelope and exact Runtime
+selector. Permission/cancel, stop, forget, immediate reads and long polls each
+have independent concurrency budgets. All classes still pass binding, policy,
+target and business admission checks. First-message bodies remain bounded at
+4 MiB with a five-second read deadline; excess intake is closed without claiming
+business rejection. No unbounded reader goroutine or priority hint was introduced.
+
+Ordinary concurrency stays 64 per SDK/Gateway connection and per fabricd/host
+Engine, 512 globally in Gateway. Each protected class has 16 slots (128 globally
+in Gateway); first-message readers have 8 (64 globally). Engine budgets span old
+and new connections while accepted handlers drain. Gateway Drain/Disconnect still
+wait for classified forwarding and callbacks. SDK reserves the class before
+opening a stream and releases it on close/cancellation. The Yamux backlog now
+covers these bounded reservations instead of enforcing the old ordinary-only
+ceiling. Binding limits, machine.info and Gateway status expose the categories.
+
+Long operation waits have a separate handler budget, so waiting for permission
+cannot consume all current-state readers. The session proxy no longer holds its
+connection mutex while opening or writing an ordinary stream; a separate stop
+can be delivered while a large ordinary message is blocked at its Yamux window.
+Cancellation closes that original stream; it does not redial or replay it.
+
+Evidence added for this slice:
+
+- Gateway exercises eight connections with 64 real forwarded streams each,
+  rejects additional ordinary work at both connection/global limits, then
+  fills permission/cancel/wait classes and still forwards reads, stop and forget.
+  Forged control envelopes cannot borrow reservations, denied controls never
+  reach fabricd, all classes drain, and unread first-message slots remain bounded.
+- A process test starts eight independent managed hosts with eight existing
+  observation slots apiece. It fills all 64 ordinary streams, SIGKILLs fabricd,
+  reconnects to the same hosts and refills those streams. A second SDK confirms
+  that the fabricd-wide ordinary gate also rejects excess work. Original receipt
+  and state queries remain readable with 16 pending operation waits, eligible
+  forget completes, a valid permission is answered, cancel reaches the original
+  prompt and stop proves process exit. Repeated/invalid permission requests do
+  not produce additional Agent responses. RPC/process logs confirm one Agent,
+  one initialize/new, two original prompts and one cancel.
+- A blocked 512 KiB IPC request exceeds its 256 KiB Yamux window; the same proxy
+  delivers stop before consuming any of that request. Context cancellation then
+  unblocks the original writer. The test would time out with the old mutex scope.
+
+The new process and wire/Gateway tests pass with race enabled. This establishes
+transport saturation behavior, not the complete L53/L54 matrix. Separate process
+evidence for queue/results/retained-key/machine-registration exhaustion and
+completed control evidence exhaustion is still required. Raw ACP host/input
+integrity, discovery completeness and diagnostics, pinned dependencies and safe
+upgrades, remaining consumer recovery/SandDance integration, full L01–L55 audit,
+target-platform service-manager acceptance and real-Agent evidence remain open.
+
+Final validation for slice 14: `go test -race ./internal/wire ./pkg/client
+./pkg/gateway ./pkg/transport/... ./pkg/sdk ./pkg/fabricd ./pkg/host -count=1
+-timeout=180s` passes (sdk and ws contain no tests). The affected-package vet run
+passes. The existing original-process reconnect, host-loss, lost-stop-response
+and explicit conversation-generation-barrier process tests pass together via
+`go test -race ./tests` with those four test names selected. No Web files changed;
+browser tests were not rerun. External Agent/PostgreSQL/native-Agent environment
+switches remain unset; these results use isolated local mock Agents only.

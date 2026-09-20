@@ -50,11 +50,14 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	d.generation++
 	gen := d.generation
 	d.mu.Unlock()
-	b := api.Binding{Capabilities: capabilities, Limits: map[string]int{"message_bytes": wire.MaxMessage, "streams": wire.MaxStreams, "bulk": 4, "runtimes": sessionregistry.MaxLiveRuntimes, "uploads": 64, "dedup_entries": 256, "chunk_bytes": wire.ChunkSize, "profile_bytes": api.MaxProfileBytes, "profile_attempts": api.MaxProfileAttempts, "profile_status_seconds": api.ProfileStatusRetentionSeconds, "profile_step_name_bytes": api.MaxProfileStepNameBytes, "profile_failure_detail_bytes": api.MaxProfileFailureDetailBytes, "exec_output_bytes": api.MaxExecOutputBytes, "scrollback_lines": api.MaxTerminalScrollbackLines, "scrollback_bytes": api.MaxTerminalScrollbackBytes}}
+	b := api.Binding{Capabilities: capabilities, Limits: map[string]int{"message_bytes": wire.MaxMessage, "streams": wire.MaxPendingStreams - 1, "bulk": 4, "runtimes": sessionregistry.MaxLiveRuntimes, "uploads": 64, "dedup_entries": 256, "chunk_bytes": wire.ChunkSize, "profile_bytes": api.MaxProfileBytes, "profile_attempts": api.MaxProfileAttempts, "profile_status_seconds": api.ProfileStatusRetentionSeconds, "profile_step_name_bytes": api.MaxProfileStepNameBytes, "profile_failure_detail_bytes": api.MaxProfileFailureDetailBytes, "exec_output_bytes": api.MaxExecOutputBytes, "scrollback_lines": api.MaxTerminalScrollbackLines, "scrollback_bytes": api.MaxTerminalScrollbackBytes}}
 	b.Limits["submission_ordinary_keys"] = sessionregistry.DefaultMaxKeys
 	b.Limits["submission_control_keys_per_class"] = sessionregistry.DefaultMaxControls
 	b.Limits["submission_runtime_records"] = sessionregistry.MaxRuntimeRecords
 	b.Limits["submission_reads"] = cap(d.submissionReads)
+	for class, usage := range d.streams.Snapshot() {
+		b.Limits["streams_"+string(class)] = usage.Limit
+	}
 	b.Limits["acp_conversation_bytes"] = api.MaxACPConversationBytes
 	b.Capabilities = append(append([]string(nil), b.Capabilities...), "submission.acp")
 	b.Limits["acp_conversations_bytes"] = api.MaxACPConversationsBytes
@@ -85,18 +88,16 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	go input.Watch(ctx, func() { sess.Close() })
 	log.Printf("fabricd connected incarnation=%s generation=%d", d.inc, gen)
 	go func() { _ = renewInputLease(ctx, input, ctrl, accepted); sess.Close() }()
-	sem := make(chan struct{}, wire.MaxStreams)
 	for {
 		raw, err := sess.AcceptStream()
 		if err != nil {
 			return nil
 		}
-		select {
-		case sem <- struct{}{}:
+		if lease := d.streams.Acquire(wire.StreamOpening); lease != nil {
 			d.mu.Lock()
 			if d.ctx.Err() != nil {
 				d.mu.Unlock()
-				<-sem
+				lease.Release()
 				raw.Close()
 				continue
 			}
@@ -104,10 +105,10 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 			d.mu.Unlock()
 			go func() {
 				defer d.active.Done()
-				defer func() { <-sem }()
-				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen, input: input, epoch: accepted.RouteEpoch}, target, gen)
+				defer lease.Release()
+				d.handle(&executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d, generation: gen, input: input, epoch: accepted.RouteEpoch}, target, gen, lease)
 			}()
-		default:
+		} else {
 			raw.Close()
 		}
 	}

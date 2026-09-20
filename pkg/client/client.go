@@ -20,6 +20,7 @@ type Client struct {
 	s       *yamux.Session
 	control *wire.Stream
 	Binding api.Binding
+	streams *wire.StreamCapacity
 }
 
 // Connect performs the Dune client handshake on an established byte connection.
@@ -45,7 +46,7 @@ func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error)
 		s.Close()
 		return nil, e
 	}
-	c := &Client{s: s, control: ctrl}
+	c := &Client{s: s, control: ctrl, streams: wire.NewStreamCapacity(1)}
 	if e = wire.Decode(m, &c.Binding); e != nil {
 		s.Close()
 		return nil, e
@@ -63,9 +64,19 @@ type Stream struct {
 	once         sync.Once
 	terminal     bool
 	controlEpoch atomic.Uint64
+	lease        *wire.StreamLease
 }
 
-func (s *Stream) Close() error { s.once.Do(func() { s.cancel(); s.s.Close() }); return nil }
+func (s *Stream) Close() error {
+	s.once.Do(func() {
+		s.cancel()
+		s.s.Close()
+		if s.lease != nil {
+			s.lease.Release()
+		}
+	})
+	return nil
+}
 func (s *Stream) Send(m *pb.Message) error {
 	if e := s.s.Send(m); e != nil {
 		return &api.Error{Code: "RESULT_UNKNOWN", Detail: e.Error()}
@@ -114,18 +125,24 @@ func (c *Client) open(ctx context.Context, op, id string, payload any, r *api.Ru
 	if e := ctx.Err(); e != nil {
 		return nil, nil, e
 	}
-	raw, e := c.s.OpenStream()
-	if e != nil {
-		return nil, nil, e
-	}
-	st := &Stream{s: wire.Wrap(raw)}
-	st.cancel = context.AfterFunc(ctx, func() { st.s.Close() })
 	m := &pb.Message{Kind: "request", RequestId: id, Operation: op, Target: c.Binding.Target, Incarnation: c.Binding.Incarnation, ConnectionGeneration: c.Binding.Generation, RouteEpoch: c.Binding.RouteEpoch, Payload: api.Payload(payload)}
 	if r != nil {
 		m.RuntimeId = r.ID
 		m.RuntimeGeneration = r.Generation
 		m.RuntimeIncarnation = r.Incarnation
 	}
+	class := wire.RequestClass(m)
+	lease := c.streams.Acquire(class)
+	if lease == nil {
+		return nil, nil, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: fmt.Sprintf("SDK %s stream capacity exhausted before send", class)}
+	}
+	raw, e := c.s.OpenStream()
+	if e != nil {
+		lease.Release()
+		return nil, nil, e
+	}
+	st := &Stream{s: wire.Wrap(raw), lease: lease}
+	st.cancel = context.AfterFunc(ctx, func() { st.s.Close(); lease.Release() })
 	if e = st.Send(m); e != nil {
 		st.Close()
 		return nil, nil, e

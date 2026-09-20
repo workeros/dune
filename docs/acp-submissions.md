@@ -108,6 +108,46 @@ if err != nil || receipt.Stage != "stopped" {
 已完成控制证据达到硬上限后，限制新权限/新可取消工作；不回收证据来释放重复执行
 许可。状态和操作读取使用独立并发额度，不使用普通传输结果缓存。
 
+### 流并发与持久证据预算
+
+SDK、Gateway、fabricd 与独立宿主按解码后的实际操作隔离并发。控制 envelope 必须
+包含合法提交键、匹配的完整 Runtime 和实际控制动作；并发类别不授予业务权限。
+Gateway 仍执行正常鉴权，宿主仍检查当前权限／可取消目标。各层不借用其他类别的空槽。
+
+| 类别 | 单 SDK／Gateway 连接 | 每个 fabricd／独立宿主 | Gateway 全局 |
+| --- | --- | --- | --- |
+| 普通操作及订阅 `ordinary` | 64 | 64 | 512 |
+| 状态、模型、回执等短查询 `read` | 16 | 16 | 128 |
+| 操作长轮询 `wait` | 16 | 16 | 128 |
+| 权限回答 `permission` | 16 | 16 | 128 |
+| 取消 `cancel` | 16 | 16 | 128 |
+| 停止 `stop` | 16 | 16 | 128 |
+| 清理 `forget` | 16 | 16 | 128 |
+| 未分类首包 `opening` | Gateway 8；SDK 无入站首包 | 8 | 64 |
+
+这些默认值也是当前硬上限，尚不提供用户配置范围。fabricd 和宿主预算覆盖该进程的
+全部连接，旧连接排空期间仍计费。清理由 fabricd 的独立注册索引执行，宿主不接受
+forget。首包最多 4 MiB、读取期限 5 秒；Yamux 待接收 backlog 为 169（包含连接
+控制流），增加 backlog 不增加普通执行额度。未分类首包、网络和鉴权本身仍受有界
+限流；这里保证普通**已分类工作**占满后保留控制能力，不保证在无限连接或半包洪泛
+下每次请求都成功。首包槽不足时关闭对应流，不猜测业务接纳结果。
+
+`Binding.Limits` 公布 `streams_ordinary/read/wait/permission/cancel/stop/forget/opening`，
+`streams=168` 是含首包读取的总业务流预算；单独的连接控制流不计入该值。
+`machine.info.stream_capacity` 返回 fabricd 各类实际 `used/limit`；
+`Gateway.Status().StreamCapacity` 返回 Gateway 的全局用量，包含尚未退出的回调。
+并发拒绝使用 `RESOURCE_EXHAUSTED`，detail 指明层和类别；它不是持久 `not_accepted`。
+
+流并发不替代持久预算：每个安装的普通提交键最多 4096；permission 和 cancel
+分别最多 4096 个“未消费预留＋已消费证据”，已完成控制不另借一份额度；每个注册
+Runtime 各有一个 stop 和 forget 槽。安装最多 16 个活动 Runtime、256 个保留身份。
+这些是当前 fabricd 默认和硬上限，尚无对外配置。注册库内部测试／嵌入选项的键与
+控制上限范围为 1–65536，配置持久化后，各宿主必须使用相同值。
+普通操作结果为每 Runtime 64 条、每条最多 512 KiB／1024 条更新，完成后最多保留
+15 分钟；排队上限为 32。当前最小接纳证据不自动回收，容量不足限制新普通工作，
+已有键和控制预留保留。内部回执读取另限 8 并发、状态读取 16、模型分页读取 8，
+操作长轮询另限 16，不占用状态读取槽。
+
 托管 ACP 的网络入口统一为 `submission.acp`；不再接受无键 `acp.action` 请求。
 Gateway 将 envelope 内的实际 action 交给授权策略，策略仍分别检查
 new/load/list/prompt/permission/cancel，envelope 本身不授予宽泛操作权限。

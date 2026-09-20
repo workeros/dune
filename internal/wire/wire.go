@@ -37,7 +37,7 @@ func ValidID(id string) bool {
 
 func Config() *yamux.Config {
 	c := yamux.DefaultConfig()
-	c.AcceptBacklog = MaxStreams
+	c.AcceptBacklog = MaxPendingStreams
 	c.MaxStreamWindowSize = 256 * 1024
 	c.StreamOpenTimeout = 5 * time.Second
 	c.StreamCloseTimeout = 5 * time.Second
