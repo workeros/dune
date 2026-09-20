@@ -148,7 +148,7 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 				}
 			}
 			if entry == nil {
-				entry = &api.ACPEntry{Type: "tool", TurnID: turnID, ContextIncomplete: kind != "tool_call", Tool: &api.ACPTool{ID: id, Status: "unknown", Fields: map[string]json.RawMessage{}}}
+				entry = &api.ACPEntry{Type: "tool", TurnID: turnID, ContextIncomplete: kind != "tool_call" || turnID == "", Tool: &api.ACPTool{ID: id, Status: "unknown", Fields: map[string]json.RawMessage{}}}
 			}
 			for field, value := range update {
 				entry.Tool.Fields[field] = value
@@ -165,7 +165,7 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 				}
 			}
 			if kind == "tool_call" {
-				entry.ContextIncomplete = false
+				entry.ContextIncomplete = entry.TurnID == ""
 			}
 			m.put(*entry, key)
 		case "plan", "available_commands_update", "current_mode_update", "config_option_update", "usage_update":

@@ -1,7 +1,9 @@
 package tests
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,6 +106,11 @@ func TestACPConversationReadWithoutSubscription(t *testing.T) {
 	must(t, err)
 	if string(before) != string(after) {
 		t.Fatal("read issued an Agent control request")
+	}
+	canceled, cancelRead := context.WithCancel(h.ctx)
+	cancelRead()
+	if _, err := h.client.ReadACPConversation(canceled, runtime, api.ACPConversationRead{ConversationID: id}); !errors.Is(err, context.Canceled) {
+		t.Fatal("read cancellation was reported as an unknown write", err)
 	}
 	rpcsAfter, err := os.ReadFile(rpcLog)
 	must(t, err)

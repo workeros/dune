@@ -74,13 +74,13 @@ func rawMessageText(content json.RawMessage) string {
 
 func TestConversationToolPatchPreservesNullAndUnknownFields(t *testing.T) {
 	slot := conversationFixture(t)
-	conversationUpdate(t, slot, "", `{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"in_progress","title":"working"}`)
+	conversationUpdate(t, slot, "known-turn", `{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"in_progress","title":"working"}`)
 	partial := conversationPage(t, slot).Entries[0]
 	if !partial.ContextIncomplete {
 		t.Fatal("orphan tool lacks missing-context marker")
 	}
-	conversationUpdate(t, slot, "", `{"sessionUpdate":"tool_call","toolCallId":"tool-1","rawInput":{"query":"value"},"vendor":{"custom":1}}`)
-	conversationUpdate(t, slot, "", `{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","title":null,"rawOutput":[],"status":"completed"}`)
+	conversationUpdate(t, slot, "known-turn", `{"sessionUpdate":"tool_call","toolCallId":"tool-1","rawInput":{"query":"value"},"vendor":{"custom":1}}`)
+	conversationUpdate(t, slot, "known-turn", `{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","title":null,"rawOutput":[],"status":"completed"}`)
 	entry := conversationPage(t, slot).Entries[0]
 	if entry.ID != partial.ID || entry.Tool.Status != "completed" || entry.ContextIncomplete {
 		t.Fatalf("tool identity/state lost: %+v", entry)
@@ -143,6 +143,13 @@ func TestConversationOversizedTextKeepsBoundedUpdatingTail(t *testing.T) {
 	first := conversationPage(t, slot).Entries[0]
 	if !first.ContentOmitted || len(first.Message.Tail) == 0 || !strings.HasPrefix(rawMessageText(first.Message.Content[0]), "PREFIX") || !strings.HasSuffix(rawMessageText(first.Message.Tail[len(first.Message.Tail)-1]), "TAIL") {
 		t.Fatal("oversized text lost prefix, tail or omission")
+	}
+	for i := 0; i < 100; i++ {
+		update["content"] = api.Payload(map[string]string{"type": "text", "text": strings.Repeat("汉", 8192)})
+		slot.update(update, "")
+	}
+	if len(slot.model.entries) != 1 || len(slot.model.index) != 1 {
+		t.Fatal("continued oversized streaming accumulated entries or indexes")
 	}
 	update["content"] = api.Payload(map[string]string{"type": "text", "text": "-FINAL"})
 	slot.update(update, "")
@@ -264,5 +271,127 @@ func TestConversationRejectsInvalidCursorsAndArguments(t *testing.T) {
 		if _, err := slot.get(api.ACPConversationGet{ConversationID: slot.describe().ID, EntryIDs: []string{id}}); err == nil {
 			t.Fatalf("accepted invalid entry ID %s", id)
 		}
+	}
+}
+
+func TestConversationLateToolTerminalAndMissingTurn(t *testing.T) {
+	slot := conversationFixture(t)
+	slot.startTurn("one", "question")
+	conversationUpdate(t, slot, "turn-one", `{"sessionUpdate":"tool_call","toolCallId":"known","status":"in_progress","title":"work"}`)
+	tool := conversationPage(t, slot).Entries[2]
+	slot.finishTurn(api.AgentOperation{Ref: "one", State: "completed", StopReason: "end_turn"})
+	finished := conversationPage(t, slot).Entries[2]
+	if finished.Tool.Status != "unknown" || string(finished.Tool.Fields["status"]) != `"in_progress"` {
+		t.Fatal("turn completion fabricated a successful tool")
+	}
+	conversationUpdate(t, slot, "", `{"sessionUpdate":"tool_call_update","toolCallId":"known","status":"completed","rawOutput":"late result"}`)
+	late := conversationPage(t, slot).Entries[2]
+	if late.ID != tool.ID || late.Tool.Status != "completed" || late.TurnID != "turn-one" {
+		t.Fatal("late native update lost retained tool identity")
+	}
+	conversationUpdate(t, slot, "", `{"sessionUpdate":"tool_call","toolCallId":"without-turn"}`)
+	entries := conversationPage(t, slot).Entries
+	if !entries[len(entries)-1].ContextIncomplete {
+		t.Fatal("missing native turn was presented as complete context")
+	}
+	conversationUpdate(t, slot, "", `{"sessionUpdate":"tool_call_update","toolCallId":"known","status":null}`)
+	if conversationPage(t, slot).Entries[2].Tool.Status != "unknown" {
+		t.Fatal("explicit null did not clear native tool status")
+	}
+}
+
+func TestConversationOldSnapshotIsImmutableAcrossSwitch(t *testing.T) {
+	slot := conversationFixture(t)
+	conversationUpdate(t, slot, "", `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first generation"}}`)
+	page := conversationPage(t, slot)
+	get, err := slot.get(api.ACPConversationGet{ConversationID: page.Conversation.ID, EntryIDs: []string{page.Entries[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedPage, encodedGet := string(api.Payload(page)), string(api.Payload(get))
+	snapshotTaken := make(chan struct{})
+	switched := make(chan struct{})
+	go func() {
+		close(snapshotTaken)
+		slot.begin(api.ACPAction{Action: "load", SessionID: "session-test", Cwd: "/work"})
+		close(switched)
+	}()
+	<-snapshotTaken
+	<-switched
+	if string(api.Payload(page)) != encodedPage || string(api.Payload(get)) != encodedGet {
+		t.Fatal("in-flight snapshot adopted a newer generation")
+	}
+	if _, err := slot.read(api.ACPConversationRead{ConversationID: page.Conversation.ID}); err == nil {
+		t.Fatal("old target still accepted after switch")
+	}
+	if _, err := slot.get(api.ACPConversationGet{ConversationID: page.Conversation.ID, EntryIDs: []string{page.Entries[0].ID}}); err == nil {
+		t.Fatal("old get still accepted after switch")
+	}
+}
+
+func TestConversationDoesNotDeduplicateEchoOrRepeatedInput(t *testing.T) {
+	slot := conversationFixture(t)
+	for _, operation := range []string{"first", "second"} {
+		slot.startTurn(operation, "same text")
+		conversationUpdate(t, slot, conversationTurnID(operation), `{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"same text"}}`)
+		slot.finishTurn(api.AgentOperation{Ref: operation, State: "completed"})
+	}
+	page := conversationPage(t, slot)
+	var userMessages []api.ACPEntry
+	for _, entry := range page.Entries {
+		if entry.Message != nil && entry.Message.Role == "user" {
+			userMessages = append(userMessages, entry)
+		}
+	}
+	if len(userMessages) != 4 {
+		t.Fatalf("text equality deduplicated a distinct input or uncorrelated echo: %d", len(userMessages))
+	}
+	for _, entry := range userMessages {
+		if rawMessageText(entry.Message.Content[0]) != "same text" {
+			t.Fatal("distinct input was concatenated across source/turn boundary")
+		}
+	}
+	if userMessages[0].TurnID == userMessages[2].TurnID {
+		t.Fatal("repeated input lost its turn boundary")
+	}
+}
+
+func TestConversationReplayAndLiveProtocolSemanticsMatch(t *testing.T) {
+	// Identical fixed protocol facts go through the actual controller receive
+	// path, with no active prompt. Load must ingest them before its result.
+	facts := []string{
+		`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"}}`,
+		`{"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"text","text":"hel"}}`,
+		`{"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"text","text":"lo"}}`,
+		`{"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"resource_link","uri":"file:///work/result.txt","name":"result"}}`,
+		`{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read","status":"in_progress","rawInput":{"path":"result.txt"}}`,
+		`{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":null,"status":"completed","rawOutput":{"ok":true}}`,
+		`{"sessionUpdate":"vendor_event","value":{"meaning":"kept"}}`,
+	}
+	live, _ := queueFixture(t)
+	replay, requests := queueFixture(t)
+	load := submitAction(t, replay, api.ACPAction{Action: "load", SessionID: "session-a"})
+	rpc := takeRPC(t, requests)
+	for _, fact := range facts {
+		update := api.Payload(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "session-a", "update": json.RawMessage(fact)}})
+		live.receive(update)
+		replay.receive(update)
+	}
+	pending := conversationPage(t, replay.conversation)
+	if pending.Conversation.Phase != "loading" || pending.Conversation.OpenOutcome != "pending" || len(pending.Entries) != 4 {
+		t.Fatal("load replay was not readable before response")
+	}
+	replyRPC(replay, rpc, map[string]any{})
+	waitOperation(t, replay, load)
+	a, b := conversationPage(t, live.conversation), conversationPage(t, replay.conversation)
+	for i := range a.Entries {
+		a.Entries[i].Revision = 0
+		b.Entries[i].Revision = 0
+	}
+	if string(api.Payload(a.Entries)) != string(api.Payload(b.Entries)) {
+		t.Fatal("replay and live protocol merging diverged")
+	}
+	if rawMessageText(b.Entries[1].Message.Content[0]) != "hello" || len(b.Entries[1].Message.Content) != 2 || b.Entries[2].Tool.Status != "completed" || string(b.Entries[2].Tool.Fields["title"]) != "null" || !b.Entries[2].ContextIncomplete || b.Entries[3].Activity.UpdateType != "vendor_event" {
+		t.Fatal("fixed protocol facts were not preserved")
 	}
 }

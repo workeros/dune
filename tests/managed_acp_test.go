@@ -2,6 +2,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,9 +11,10 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/api"
 )
 
-func TestManagedACPHistoryReplayBackpressure(t *testing.T) {
+func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	h := start(t)
 	mock := filepath.Join(h.dir, "mock-acp")
 	output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
@@ -20,14 +22,14 @@ func TestManagedACPHistoryReplayBackpressure(t *testing.T) {
 		t.Fatalf("mock build: %s %v", output, err)
 	}
 	const updateCount = 160
-	largeValue := strings.Repeat("x", 64*1024)
+	largeValue := strings.Repeat("x", 80*1024)
 	history := make([]map[string]any, 0, updateCount)
 	for i := 0; i < updateCount; i++ {
 		value := largeValue
 		if i == 0 {
 			value = strings.Repeat("y", 900*1024)
 		}
-		history = append(history, map[string]any{"sessionUpdate": "available_commands_update", "availableCommands": []any{map[string]string{"name": "large", "description": value}}})
+		history = append(history, map[string]any{"sessionUpdate": "tool_call", "toolCallId": fmt.Sprintf("tool-%d", i), "title": fmt.Sprintf("tool title %d", i), "rawOutput": value})
 	}
 	b, err := json.Marshal(history)
 	must(t, err)
@@ -59,22 +61,25 @@ func TestManagedACPHistoryReplayBackpressure(t *testing.T) {
 	observer, err := h.client.Attach(h.ctx, rt, true)
 	must(t, err)
 	defer observer.Close()
-	var accepted json.RawMessage
-	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), map[string]any{"action": "load", "session_id": "mock-session"}, &accepted, &rt))
-
-	// Give the Agent time to emit more than both the old 16-message queue and
-	// the new byte budget before consuming the replay.
-	time.Sleep(100 * time.Millisecond)
-	seen := 0
-	for seen < updateCount {
-		m, err := observer.Recv()
-		if err != nil {
-			t.Fatalf("history replay stopped after %d/%d updates: %v", seen, updateCount, err)
-		}
-		if m.Kind == "acp_update" {
-			seen++
-		}
+	accepted, err := h.client.ACPSubmit(h.ctx, rt, api.ACPAction{Action: "load", SessionID: "mock-session"})
+	must(t, err)
+	completed, err := h.client.WaitAgentOperation(h.ctx, rt, api.AgentOperationWait{Ref: accepted.Ref, TimeoutMS: 30000})
+	must(t, err)
+	if completed.State != "completed" {
+		t.Fatal("slow diagnostics blocked native load", completed)
 	}
+	current, err := h.client.ACPState(h.ctx, rt)
+	must(t, err)
+	page, err := h.client.ReadACPConversation(h.ctx, rt, api.ACPConversationRead{ConversationID: current.Conversation.ID})
+	must(t, err)
+	if page.Conversation.HeadOrder != updateCount || !page.Conversation.PrefixEvicted || !page.Conversation.ContentOmitted || len(page.Entries) == 0 || len(api.Payload(page)) > api.MaxACPConversationResponseBytes {
+		t.Fatal("replay did not reach a bounded retained model", page.Conversation)
+	}
+	last := page.Entries[len(page.Entries)-1]
+	if last.Tool.ID != "tool-159" || string(last.Tool.Fields["title"]) != `"tool title 159"` {
+		t.Fatal("replay tail lost", last.Tool.ID)
+	}
+
 }
 
 func TestManagedACPOfflinePermissions(t *testing.T) {
@@ -90,10 +95,11 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	must(t, err)
 	stream.Close()
 	type state struct {
-		Ready       bool   `json:"ready"`
-		Busy        string `json:"busy"`
-		SessionID   string `json:"session_id"`
-		Permissions []struct {
+		Conversation *api.ACPConversation `json:"conversation"`
+		Ready        bool                 `json:"ready"`
+		Busy         string               `json:"busy"`
+		SessionID    string               `json:"session_id"`
+		Permissions  []struct {
 			ID string `json:"id"`
 		} `json:"permissions"`
 	}
@@ -120,13 +126,13 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	}
 	await(func(s state) bool { return s.Ready })
 	must(t, action(map[string]any{"action": "new"}))
-	await(func(s state) bool { return s.SessionID != "" && s.Busy == "" })
+	observed := await(func(s state) bool { return s.SessionID != "" && s.Busy == "" })
 	for _, a := range []string{"list", "load"} {
 		if err := action(map[string]any{"action": a, "session_id": "mock-session"}); err == nil || !strings.Contains(err.Error(), "UNSUPPORTED") {
 			t.Fatalf("unadvertised %s: %v", a, err)
 		}
 	}
-	must(t, action(map[string]any{"action": "prompt", "text": "offline permission"}))
+	must(t, action(map[string]any{"action": "prompt", "expected_conversation_id": observed.Conversation.ID, "text": "offline permission"}))
 	pending := await(func(s state) bool { return len(s.Permissions) == 1 })
 	var queued json.RawMessage
 	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), map[string]any{"action": "new"}, &queued, &rt))
@@ -148,8 +154,8 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	if err := action(permission); err == nil {
 		t.Fatal("permission answered twice")
 	}
-	await(func(s state) bool { return s.Busy == "" && len(s.Permissions) == 0 })
-	must(t, action(map[string]any{"action": "prompt", "text": "permission cancellation"}))
+	observed = await(func(s state) bool { return s.Busy == "" && len(s.Permissions) == 0 })
+	must(t, action(map[string]any{"action": "prompt", "expected_conversation_id": observed.Conversation.ID, "text": "permission cancellation"}))
 	stale := await(func(s state) bool { return len(s.Permissions) == 1 })
 	must(t, action(map[string]any{"action": "cancel"}))
 	await(func(s state) bool { return s.Busy == "" && len(s.Permissions) == 0 })

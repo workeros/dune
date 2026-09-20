@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -11,19 +12,19 @@ import (
 // ACPState discovers the current model without attaching or opening a session.
 func (c *Client) ACPState(ctx context.Context, runtime api.Runtime) (api.ACPState, error) {
 	var state api.ACPState
-	err := c.CallID(ctx, "acp.state", wire.ID(), struct{}{}, &state, &runtime)
+	err := c.callACPRead(ctx, "acp.state", struct{}{}, &state, runtime)
 	return state, err
 }
 
 func (c *Client) ReadACPConversation(ctx context.Context, runtime api.Runtime, request api.ACPConversationRead) (api.ACPConversationPage, error) {
 	var page api.ACPConversationPage
-	err := c.CallID(ctx, "acp.conversation.read", wire.ID(), request, &page, &runtime)
+	err := c.callACPRead(ctx, "acp.conversation.read", request, &page, runtime)
 	return page, err
 }
 
 func (c *Client) GetACPConversationEntries(ctx context.Context, runtime api.Runtime, request api.ACPConversationGet) (api.ACPConversationEntries, error) {
 	var entries api.ACPConversationEntries
-	err := c.CallID(ctx, "acp.conversation.get", wire.ID(), request, &entries, &runtime)
+	err := c.callACPRead(ctx, "acp.conversation.get", request, &entries, runtime)
 	return entries, err
 }
 
@@ -91,4 +92,18 @@ func (c *Client) SubscribeACPConversation(ctx context.Context, runtime api.Runti
 	}
 	stream, _, err := c.open(ctx, "runtime.attach", wire.ID(), api.Attach{Observe: true, Conversation: true}, &runtime)
 	return stream, err
+}
+
+// Read cancellation has no Agent side effect and is not an unknown write.
+func (c *Client) callACPRead(parent context.Context, operation string, request, response any, runtime api.Runtime) error {
+	if !slices.Contains(c.Binding.Capabilities, operation) {
+		return &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not advertise " + operation}
+	}
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	err := c.CallID(ctx, operation, wire.ID(), request, response, &runtime)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }

@@ -29,7 +29,7 @@ func TestACPCredentialEchoIsRedactedFromOperationAndError(t *testing.T) {
 	a.receive(api.Payload(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "error": map[string]any{"code": -32000, "message": "failed with " + secret, "data": map[string]string{"token": secret}}}))
 	completed := waitOperation(t, a, operation)
 	output := readOperation(t, a, operation)
-	for _, value := range []any{completed, output, a.snapshot()} {
+	for _, value := range []any{completed, output, a.snapshot(), conversationPage(t, a.conversation)} {
 		encoded := api.Payload(value)
 		if bytes.Contains(encoded, []byte(secret)) || !bytes.Contains(encoded, []byte("[redacted]")) {
 			t.Fatal("credential echo in public state or output")
