@@ -46,3 +46,25 @@ func TestStartRequiresCallerKeyAndPreservesLocalCancellation(t *testing.T) {
 		t.Fatal("Start generated a replacement ID", err)
 	}
 }
+
+func TestACPSubmitAndControlKeepCallerKeyWithoutAResponse(t *testing.T) {
+	key := api.SubmissionKey{SubmissionID: "saved-before-submit", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}}
+	client := &Client{Binding: api.Binding{Target: "machine", Capabilities: []string{"submission.acp"}}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	operation, err := client.ACPSubmit(ctx, key, api.ACPAction{Action: "prompt", Text: "not sent"})
+	var submissionError *api.SubmissionError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &submissionError) || submissionError.Key != key || operation.Submission == nil || operation.Submission.SubmissionKey != key || operation.Submission.Admission != api.SubmissionUnknown {
+		t.Fatal("lost original prompt identity or cancellation", operation, err)
+	}
+	receipt, err := client.ACPControl(ctx, key, api.ACPAction{Action: "cancel", OperationRef: "exact-prompt"})
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &submissionError) || submissionError.Key != key || receipt.SubmissionKey != key || receipt.Admission != api.SubmissionUnknown {
+		t.Fatal(receipt, err)
+	}
+	key.SubmissionID = ""
+	operation, err = client.ACPSubmit(t.Context(), key, api.ACPAction{Action: "new"})
+	var invalid *api.Error
+	if !errors.As(err, &invalid) || invalid.Code != "INVALID_ARGUMENT" || operation.Submission.SubmissionID != "" {
+		t.Fatal("missing ID was replaced", operation, err)
+	}
+}

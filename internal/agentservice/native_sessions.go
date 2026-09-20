@@ -35,12 +35,26 @@ func validateOpenSession(request agents.OpenSessionRequest) error {
 	return nil
 }
 
-func (s *Service) OpenSession(ctx context.Context, scope agents.Scope, request agents.OpenSessionRequest) (agents.Operation, error) {
-	if err := validateOpenSession(request); err != nil {
-		return agents.Operation{}, err
-	}
+func (s *Service) OpenSession(ctx context.Context, scope agents.Scope, request agents.OpenSessionRequest) (result agents.Operation, err error) {
+	key := api.SubmissionKey{SubmissionID: request.SubmissionID, Target: api.SubmissionTarget{OwnerID: scope.OwnerID}}
+	defer func() {
+		if result.Submission == nil {
+			result.Submission = &api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
+		}
+		if err != nil {
+			err = &api.SubmissionError{Key: key, Cause: err}
+		}
+	}()
 	ref, err := parseAgentRef(request.AgentRef)
 	if err != nil {
+		return result, err
+	}
+	key = submissionKeyFor(scope.OwnerID, ref.Target, request.SubmissionID)
+	if err := key.Validate(); err != nil {
+		return result, invalid(err.Error())
+	}
+
+	if err := validateOpenSession(request); err != nil {
 		return agents.Operation{}, err
 	}
 	if ref.Target.Runtime.Adapter != "acp" {
@@ -61,15 +75,15 @@ func (s *Service) OpenSession(ctx context.Context, scope agents.Scope, request a
 		return agents.Operation{}, err
 	}
 	action := api.ACPAction{Action: request.Action, SessionID: request.SessionID, Cwd: request.Cwd}
-	return submitACP(ctx, connection, ref.Target, runtime, action, request.WaitMS)
+	return submitACP(ctx, connection, ref.Target, runtime, key, action, request.WaitMS)
 }
 
-// Queue ownership and completion stay in fabricd. A failed optional wait still
+// Queue ownership and completion stay in the original session host. A failed optional wait still
 // returns the accepted reference, and a caller disconnect never resubmits it.
-func submitACP(ctx context.Context, connection *client.Client, target workbench.AgentTarget, runtime api.Runtime, action api.ACPAction, waitMS int) (agents.Operation, error) {
-	accepted, err := connection.ACPSubmit(ctx, runtime, action)
+func submitACP(ctx context.Context, connection *client.Client, target workbench.AgentTarget, runtime api.Runtime, key api.SubmissionKey, action api.ACPAction, waitMS int) (agents.Operation, error) {
+	accepted, err := connection.ACPSubmit(ctx, key, action)
 	if err != nil {
-		return agents.Operation{}, submissionError(err)
+		return describeOperation(target, accepted), submissionError(err)
 	}
 	result := describeOperation(target, accepted)
 	if waitMS > 0 && !accepted.Terminal() {
@@ -77,6 +91,7 @@ func submitACP(ctx context.Context, connection *client.Client, target workbench.
 		if err != nil {
 			return result, err
 		}
+		completed.Submission = accepted.Submission
 		result = describeOperation(target, completed)
 	}
 	return result, nil
@@ -91,7 +106,7 @@ func (s *Service) initializeACP(ctx context.Context, scope agents.Scope, connect
 		return result, err
 	}
 	target := targetFor(binding, runtime)
-	operation, err := submitACP(ctx, connection, target, runtime, api.ACPAction{Action: "new", Cwd: runtime.WorkingDirectory}, 30000)
+	operation, err := submitACP(ctx, connection, target, runtime, submissionKeyFor(scope.OwnerID, target, result.SubmissionID), api.ACPAction{Action: "new", Cwd: runtime.WorkingDirectory}, 30000)
 	if operation.Ref != "" {
 		result.Operation = &operation
 	}
@@ -140,4 +155,12 @@ func awaitACPReady(ctx context.Context, connection *client.Client, runtime api.R
 		case <-ticker.C:
 		}
 	}
+}
+
+func submissionKeyFor(owner string, target workbench.AgentTarget, id string) api.SubmissionKey {
+	return api.SubmissionKey{SubmissionID: id, Target: api.SubmissionTarget{
+		OwnerID: owner, RunnerID: target.Binding.RunnerID, FabricID: target.Binding.FabricID,
+		MachineID: target.Binding.MachineID, BindingRevision: target.Binding.Revision,
+		RuntimeID: target.Runtime.ID, RuntimeIncarnation: target.Runtime.Incarnation, RuntimeGeneration: target.Runtime.Generation,
+	}}
 }

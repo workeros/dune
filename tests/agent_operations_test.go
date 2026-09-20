@@ -117,7 +117,7 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 			t.Fatal("ACP initialization did not finish")
 		}
 	}
-	created, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "new"})
+	created, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{Action: "new"})
 	must(t, err)
 	created, err = h.client.WaitAgentOperation(h.ctx, runtime, api.AgentOperationWait{Ref: created.Ref, TimeoutMS: 3000})
 	must(t, err)
@@ -129,9 +129,9 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 	defer clientA.Close()
 	observed, err := h.client.ACPState(h.ctx, runtime)
 	must(t, err)
-	first, err := clientA.ACPSubmit(h.ctx, runtime, api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "permission first", SessionID: "mock-session"})
+	first, err := testACPSubmit(clientA, h.ctx, runtime, api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "permission first", SessionID: "mock-session"})
 	must(t, err)
-	second, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "second", SessionID: "mock-session"})
+	second, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "second", SessionID: "mock-session"})
 	must(t, err)
 	if second.State != "pending" {
 		t.Fatalf("second admission: %+v", second)

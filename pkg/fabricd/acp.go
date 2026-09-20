@@ -40,6 +40,8 @@ type acpController struct {
 	renewConnection func() error
 	mu              sync.Mutex
 	controlMu       sync.Mutex
+	reserveControl  func(string, string) error
+	releaseControl  func(string, string)
 	controlling     bool
 	r               *runtime
 	state           api.ACPState
@@ -159,7 +161,7 @@ func (a *acpController) closedWithExitLocked(code *int) {
 	a.conversation.exitedWithCode(code)
 	a.state.Ready = false
 	a.state.Busy = ""
-	a.permissions = map[string]acpPermission{}
+	a.clearPermissionsLocked()
 	if a.state.Error == "" {
 		a.state.Error = "ACP Agent exited"
 	}
@@ -211,7 +213,7 @@ func (a *acpController) receive(data []byte) {
 			a.settleOperationLocked(a.active, reply.Result, reply.Err)
 		}
 		if ch != nil && a.methods[id] != "session/list" {
-			a.permissions = map[string]acpPermission{}
+			a.clearPermissionsLocked()
 			a.publishLocked()
 		}
 		a.mu.Unlock()
@@ -252,6 +254,13 @@ func (a *acpController) receive(data []byte) {
 		}
 		if valid {
 			key := wire.ID()
+			if a.reserveControl != nil {
+				if err := a.reserveControl("permission", key); err != nil {
+					a.mu.Unlock()
+					_ = a.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32000, "message": "Dune permission response capacity unavailable"}})
+					return
+				}
+			}
 			a.permissions[key] = acpPermission{ACPPermission: api.ACPPermission{ID: key, Params: append(json.RawMessage(nil), m.Params...)}, rpcID: m.ID}
 			a.publishLocked()
 			a.mu.Unlock()
@@ -443,7 +452,16 @@ func (a *acpController) action(req api.ACPAction) (any, error) {
 	if req.Action == "permission" || req.Action == "cancel" {
 		a.controlMu.Lock()
 		defer a.controlMu.Unlock()
+		return a.control(req, nil)
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.enqueueLocked(req)
+}
+
+// control runs with controlMu held. Admission is committed under the state
+// lock after validating the effective target and before consuming it or writing.
+func (a *acpController) control(req api.ACPAction, admit func() error) (any, error) {
 	a.mu.Lock()
 	select {
 	case <-a.done:
@@ -473,6 +491,12 @@ func (a *acpController) action(req api.ACPAction) (any, error) {
 			a.mu.Unlock()
 			return nil, fmt.Errorf("invalid permission option")
 		}
+		if admit != nil {
+			if err := admit(); err != nil {
+				a.mu.Unlock()
+				return nil, err
+			}
+		}
 		delete(a.permissions, req.PermissionID)
 		a.controlling = true
 		a.publishLocked()
@@ -487,13 +511,19 @@ func (a *acpController) action(req api.ACPAction) (any, error) {
 		return map[string]bool{"accepted": true}, nil
 	}
 	if req.Action == "cancel" {
-		if a.state.Busy != "prompt" {
+		if a.state.Busy != "prompt" || (req.OperationRef != "" && (a.active == nil || a.active.ref != req.OperationRef)) {
 			a.mu.Unlock()
 			return nil, fmt.Errorf("no prompt to cancel")
 		}
+		if admit != nil {
+			if err := admit(); err != nil {
+				a.mu.Unlock()
+				return nil, err
+			}
+		}
 		id := a.state.SessionID
 		permissions := a.permissions
-		a.permissions = map[string]acpPermission{}
+		a.clearPermissionsLocked()
 		a.state.Busy = "cancelling"
 		a.controlling = true
 		a.publishLocked()
@@ -510,4 +540,13 @@ func (a *acpController) action(req api.ACPAction) (any, error) {
 	}
 	defer a.mu.Unlock()
 	return a.enqueueLocked(req)
+}
+
+func (a *acpController) clearPermissionsLocked() {
+	if a.releaseControl != nil {
+		for id := range a.permissions {
+			a.releaseControl("permission", id)
+		}
+	}
+	a.permissions = map[string]acpPermission{}
 }

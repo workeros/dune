@@ -117,7 +117,7 @@ func TestAgentMCPInjectionStartsSwitchesAndRejectsExitedCredentials(t *testing.T
 			if _, err := connection.ConfigureAgentMCP(t.Context(), *started.Runtime, api.AgentMCP{URL: f.app.agentMCPURL, Token: token}); errorCode(err) != "CONFLICT" {
 				t.Fatal("configured running credential could be replaced", err)
 			}
-			directoryAction(t, connection, *started.Runtime, api.ACPAction{Action: "load", SessionID: "another-native", Cwd: f.workspace})
+			directoryAction(t, connection, *started.Runtime, started.SubmissionKey, api.ACPAction{Action: "load", SessionID: "another-native", Cwd: f.workspace})
 			if readInjectedMCP(t, filename).token() != token {
 				t.Fatal("native switch rotated the process credential")
 			}

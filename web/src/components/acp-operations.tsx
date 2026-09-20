@@ -31,7 +31,11 @@ export function useACPOperations(prefix: string, enabled: boolean, onNativeChang
  const submit = async (action: "prompt" | "new" | "load", body: Record<string, unknown>) => {
   setError("");
   let operation: ACPOperation | undefined;
-  try { operation = parseOperation(await request<unknown>(`${prefix}/agents/${action === "prompt" ? "prompt" : "open-session"}`, { method: "POST", body: JSON.stringify(body) })); }
+  const submissionID = crypto.randomUUID();
+  const identified = { ...body, submission_id: submissionID };
+  try {
+   sessionStorage.setItem("dune.lastACPSubmission", JSON.stringify({ submission_id: submissionID, agent_ref: body.agent_ref, prefix }));
+   operation = parseOperation(await request<unknown>(`${prefix}/agents/${action === "prompt" ? "prompt" : "open-session"}`, { method: "POST", body: JSON.stringify(identified) })); }
   catch (cause) {
    if (cause instanceof APIError && cause.result) { try { operation = parseOperation(cause.result); } catch { /* No usable receipt. */ } }
    setError(`${errorText(cause)}；不会自动重发。${operation ? "已保留本次操作，可以继续查询。" : "请先检查当前会话。"}`);

@@ -26,6 +26,7 @@ type AgentScope struct {
 // AgentAction is intentionally narrower than fabricd's complete ACP action
 // set. Bot execution cannot approve permissions or cancel an unrelated turn.
 type AgentAction struct {
+	SubmissionID           string `json:"submission_id"`
 	ExpectedConversationID string `json:"expected_conversation_id,omitempty"`
 	Action                 string `json:"action"`
 	Text                   string `json:"text,omitempty"`
@@ -163,10 +164,13 @@ func (c *agentConnection) State(ctx context.Context, runtime api.Runtime) (Agent
 }
 
 func (c *agentConnection) Submit(ctx context.Context, runtime api.Runtime, action AgentAction) (api.AgentOperation, error) {
+	target := c.target
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	key := api.SubmissionKey{SubmissionID: action.SubmissionID, Target: target}
 	if action.Action != "new" && action.Action != "load" && action.Action != "prompt" {
-		return api.AgentOperation{}, errors.New("IM Agent action must be new, load or prompt")
+		return api.AgentOperation{Submission: &api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}}, &api.SubmissionError{Key: key, Cause: errors.New("IM Agent action must be new, load or prompt")}
 	}
-	return c.sdk.ACPSubmit(ctx, runtime, api.ACPAction{ExpectedConversationID: action.ExpectedConversationID, Action: action.Action, Text: action.Text, SessionID: action.SessionID, Cwd: action.Cwd})
+	return c.sdk.ACPSubmit(ctx, key, api.ACPAction{ExpectedConversationID: action.ExpectedConversationID, Action: action.Action, Text: action.Text, SessionID: action.SessionID, Cwd: action.Cwd})
 }
 
 func (c *agentConnection) WaitOperation(ctx context.Context, runtime api.Runtime, request api.AgentOperationWait) (api.AgentOperation, error) {

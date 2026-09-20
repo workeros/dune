@@ -74,7 +74,7 @@ for line in sys.stdin:
 	}
 	_, err = client.ReadACPConversation(ctx, runtime, api.ACPConversationRead{ConversationID: "nonexistent"})
 	assertCode(err, "CONVERSATION_UNAVAILABLE")
-	operation, err := client.ACPSubmit(ctx, runtime, api.ACPAction{Action: "new"})
+	operation, err := testACPSubmit(client, ctx, runtime, api.ACPAction{Action: "new"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,14 +84,14 @@ for line in sys.stdin:
 	}
 	id := operation.ConversationID
 	for _, expected := range []string{"", "old-generation"} {
-		_, err := client.ACPSubmit(ctx, runtime, api.ACPAction{Action: "prompt", Text: "not sent", ExpectedConversationID: expected})
+		_, err := testACPSubmit(client, ctx, runtime, api.ACPAction{Action: "prompt", Text: "not sent", ExpectedConversationID: expected})
 		code := "CONVERSATION_CHANGED"
 		if expected == "" {
 			code = "INVALID_ARGUMENT"
 		}
 		assertCode(err, code)
 	}
-	operation, err = client.ACPSubmit(ctx, runtime, api.ACPAction{Action: "prompt", Text: "retained input", ExpectedConversationID: id})
+	operation, err = testACPSubmit(client, ctx, runtime, api.ACPAction{Action: "prompt", Text: "retained input", ExpectedConversationID: id})
 	if err != nil {
 		t.Fatal(err)
 	}

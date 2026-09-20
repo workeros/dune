@@ -7,6 +7,7 @@ import (
 )
 
 type PromptRequest struct {
+	SubmissionID           string `json:"submission_id" jsonschema:"Caller-owned ID saved before first send; required for managed ACP."`
 	ExpectedConversationID string `json:"expected_conversation_id,omitempty" jsonschema:"Caller-observed conversation_id; required for managed ACP. Never refresh automatically on retry."`
 	AgentRef               string `json:"agent_ref"`
 	Text                   string `json:"text"`

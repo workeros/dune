@@ -71,3 +71,22 @@ receipt, err := connection.QuerySubmission(ctx, key)
 当前最小接纳证据不会按 TTL 删除。普通表满后拒绝新普通提交，已有键仍可查询；
 控制预留独立计费。实际运行期控制接入、原始 ACP 续接及完整验收进度见
 [实施记录](acp-session-lifecycle-implementation.md)。
+
+## 运行期提交与必要控制
+
+`Client.ACPSubmit(ctx, key, action)` 接纳 new/load/list/prompt，返回的
+`AgentOperation.Submission` 保存原键及回执；初始 `pending` 仅表示已经接纳，
+当前执行结果由 `WaitAgentOperation`/`ReadAgentOperation` 读取。
+`agents.PromptRequest`、`agents.OpenSessionRequest` 和 `host.AgentAction` 同样要求
+调用方预先持有 `submission_id`。Launcher 的初始 new 使用原 launch ID 加新 Runtime
+作用域，不生成无法预先查询的业务 ID。
+
+`Client.ACPControl(ctx, key, action)` 接纳 permission/cancel。permission 指定原
+`permission_id` 和有效 `option_id`；cancel 必须指定原 prompt 的 `operation_ref`。
+这些控制在发布权限或接纳 prompt 时已经预留容量，不占普通操作结果和普通键额度。
+无效目标不占用预留；已消费目标的精确重复返回原回执，不再次写入 Agent。
+`stage=written` 只确认管道写完；失败保留 accepted，并标记 `input_unrecoverable`。
+控制结果使用原键查询，不进入普通操作输出日志。
+
+已完成控制证据达到硬上限后，限制新权限/新可取消工作；不回收证据来释放重复执行
+许可。状态和操作读取使用独立并发额度，不使用普通传输结果缓存。

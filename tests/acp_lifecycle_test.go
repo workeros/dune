@@ -115,7 +115,23 @@ func TestManagedACPOriginalProcessAcrossConnectorRestart(t *testing.T) {
 	if len(state.Permissions) != 1 || state.Permissions[0].ID != permissionID || state.Conversation.ID != conversation || state.Conversation.Revision < before {
 		t.Fatal("restart reset permission or model identity", state)
 	}
-	must(t, h.client.CallID(h.ctx, "acp.action", "permission-control", api.ACPAction{Action: "permission", PermissionID: permissionID, OptionID: "allow"}, nil, &runtime))
+	key.SubmissionID = "permission-control"
+	answer := api.ACPAction{Action: "permission", PermissionID: permissionID, OptionID: "allow"}
+	control, err := h.client.ACPControl(h.ctx, key, answer)
+	must(t, err)
+	if control.Stage != "written" {
+		t.Fatal("permission write not recorded", control)
+	}
+	duplicate, err := h.client.ACPControl(h.ctx, key, answer)
+	must(t, err)
+	if duplicate.OperationRef != control.OperationRef {
+		t.Fatal("permission duplicate changed operation", duplicate)
+	}
+	observedControl, err := h.client.QuerySubmission(h.ctx, key)
+	must(t, err)
+	if observedControl.OperationRef != control.OperationRef || observedControl.Stage != "written" {
+		t.Fatal("permission result not queryable", observedControl)
+	}
 	wait(permissionTask)
 	page, err := h.client.ReadACPConversation(h.ctx, runtime, api.ACPConversationRead{ConversationID: conversation})
 	must(t, err)

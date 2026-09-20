@@ -370,3 +370,25 @@ func prepareFile(path string, create bool) error {
 	}
 	return nil
 }
+
+// Lookup checks a frozen request without claiming its key. Control admission
+// uses this before lifecycle validation so a consumed target can still return
+// its original receipt, while invalid new targets spend no reserved capacity.
+func (r *Registry) Lookup(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver string) (api.SubmissionReceipt, bool, error) {
+	result := api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
+	encoded, err := encodeKey(key)
+	if err != nil {
+		return result, false, err
+	}
+	record, err := readRecord(ctx, r.db, encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, false, nil
+	}
+	if err != nil {
+		return result, false, err
+	}
+	if record.digest != hex.EncodeToString(digest[:]) || record.receiver != receiver {
+		return result, true, conflict()
+	}
+	return record.receipt(key), true, nil
+}

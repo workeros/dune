@@ -74,11 +74,11 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	must(t, err)
 	normalStream.Close()
 	waitManagedACPReady(t, h, normal)
-	opened, err := h.client.ACPSubmit(h.ctx, normal, api.ACPAction{Action: "new"})
+	opened, err := testACPSubmit(h.client, h.ctx, normal, api.ACPAction{Action: "new"})
 	must(t, err)
 	opened, err = h.client.WaitAgentOperation(h.ctx, normal, api.AgentOperationWait{Ref: opened.Ref, TimeoutMS: 5000})
 	must(t, err)
-	accepted, err := h.client.ACPSubmit(h.ctx, rt, api.ACPAction{Action: "load", SessionID: "mock-session"})
+	accepted, err := testACPSubmit(h.client, h.ctx, rt, api.ACPAction{Action: "load", SessionID: "mock-session"})
 	must(t, err)
 	must(t, gate.(*net.TCPListener).SetDeadline(time.Now().Add(5*time.Second)))
 	paused, err := gate.Accept()
@@ -93,7 +93,7 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	if loading.Conversation == nil || loading.Conversation.Phase != "loading" {
 		t.Fatal("load barrier did not hold the native result")
 	}
-	prompt, err := h.client.ACPSubmit(h.ctx, normal, api.ACPAction{Action: "prompt", ExpectedConversationID: opened.ConversationID, Text: "unrelated progress during replay"})
+	prompt, err := testACPSubmit(h.client, h.ctx, normal, api.ACPAction{Action: "prompt", ExpectedConversationID: opened.ConversationID, Text: "unrelated progress during replay"})
 	must(t, err)
 	prompt, err = h.client.WaitAgentOperation(h.ctx, normal, api.AgentOperationWait{Ref: prompt.Ref, TimeoutMS: 5000})
 	must(t, err)

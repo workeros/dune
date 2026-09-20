@@ -135,7 +135,7 @@ func TestACPConversationGenerationBarriersThroughGateway(t *testing.T) {
 	must(t, err)
 	stream.Close()
 	waitManagedACPReady(t, h, runtime)
-	created, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "new"})
+	created, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{Action: "new"})
 	must(t, err)
 	wait := func(operation api.AgentOperation) api.AgentOperation {
 		t.Helper()
@@ -153,7 +153,7 @@ func TestACPConversationGenerationBarriersThroughGateway(t *testing.T) {
 	}
 	// An actual Agent permission request is the dispatch barrier. Its prompt RPC
 	// stays pending until the test explicitly answers through the control API.
-	active, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "prompt", ExpectedConversationID: id, Text: "permission barrier"})
+	active, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{Action: "prompt", ExpectedConversationID: id, Text: "permission barrier"})
 	must(t, err)
 	sub, err := h.client.SubscribeACPConversation(h.ctx, runtime)
 	must(t, err)
@@ -171,27 +171,27 @@ func TestACPConversationGenerationBarriersThroughGateway(t *testing.T) {
 			permission = state.Permissions[0].ID
 		}
 	}
-	load, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "load", SessionID: "mock-session", Cwd: h.dir})
+	load, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{Action: "load", SessionID: "mock-session", Cwd: h.dir})
 	must(t, err)
-	shared, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "load", SessionID: "mock-session", Cwd: h.dir})
+	shared, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{Action: "load", SessionID: "mock-session", Cwd: h.dir})
 	must(t, err)
 	if shared.Ref != load.Ref {
 		t.Fatal("equivalent queued loads did not share an operation")
 	}
-	queued, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "prompt", ExpectedConversationID: id, Text: "stale queued"})
+	queued, err := testACPSubmit(h.client, h.ctx, runtime, api.ACPAction{Action: "prompt", ExpectedConversationID: id, Text: "stale queued"})
 	must(t, err)
 	if queued.State != "pending" {
 		t.Fatal("dispatch barrier did not hold prompt")
 	}
 	admission := newConversationBarrier(t)
 	delayed := conversationRelay(t, h, func(m *pb.Message) {
-		if m.Operation == "acp.action" {
+		if m.Operation == "submission.acp" {
 			admission.hold(h.ctx)
 		}
 	}, nil)
 	delayedResult := make(chan error, 1)
 	go func() {
-		_, err := delayed.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "prompt", ExpectedConversationID: id, Text: "stale delayed"})
+		_, err := testACPSubmit(delayed, h.ctx, runtime, api.ACPAction{Action: "prompt", ExpectedConversationID: id, Text: "stale delayed"})
 		delayedResult <- err
 	}()
 	admission.wait(t)

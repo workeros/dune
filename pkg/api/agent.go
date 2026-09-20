@@ -6,6 +6,7 @@ import "encoding/json"
 // ExpectedConversationID; intermediaries must never fill or refresh it. Native
 // SessionID/Cwd are additional selectors. Admission and dispatch both validate.
 type ACPAction struct {
+	OperationRef           string `json:"operation_ref,omitempty"`
 	ExpectedConversationID string `json:"expected_conversation_id,omitempty"`
 	Action                 string `json:"action"`
 	Text                   string `json:"text,omitempty"`
@@ -32,12 +33,13 @@ type NativeSession struct {
 // AgentOperation identifies one accepted submission in the original fabricd
 // Runtime. A completed ACP RPC does not imply the user's task passed acceptance.
 type AgentOperation struct {
-	ConversationID string `json:"conversation_id,omitempty"`
-	Ref            string `json:"operation_ref"`
-	State          string `json:"state"`
-	StopReason     string `json:"stop_reason,omitempty"`
-	Error          string `json:"error,omitempty"`
-	ErrorCode      string `json:"error_code,omitempty"`
+	Submission     *SubmissionReceipt `json:"submission,omitempty"`
+	ConversationID string             `json:"conversation_id,omitempty"`
+	Ref            string             `json:"operation_ref"`
+	State          string             `json:"state"`
+	StopReason     string             `json:"stop_reason,omitempty"`
+	Error          string             `json:"error,omitempty"`
+	ErrorCode      string             `json:"error_code,omitempty"`
 	// NativeSession belongs to this operation's matching successful response,
 	// even when another caller has since changed the Runtime's session.
 	NativeSession *NativeSession `json:"native_session,omitempty"`

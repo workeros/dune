@@ -38,13 +38,17 @@ func (c *Client) ConfigureAgentMCP(ctx context.Context, runtime api.Runtime, con
 
 // ACPSubmit admits a new/load/list/prompt to the Runtime queue. Closing this
 // connection never cancels it. Unknown submissions must not be replayed.
-func (c *Client) ACPSubmit(ctx context.Context, runtime api.Runtime, action api.ACPAction) (api.AgentOperation, error) {
-	var operation api.AgentOperation
+func (c *Client) ACPSubmit(ctx context.Context, key api.SubmissionKey, action api.ACPAction) (api.AgentOperation, error) {
 	if action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" {
-		return operation, &api.Error{Code: "INVALID_ARGUMENT", Detail: "ACPSubmit requires new, load, list or prompt"}
+		return api.AgentOperation{Submission: &api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}}, &api.SubmissionError{Key: key, Cause: &api.Error{Code: "INVALID_ARGUMENT", Detail: "ACPSubmit requires new, load, list or prompt"}}
 	}
-	err := c.CallID(ctx, "acp.action", wire.ID(), action, &operation, &runtime)
-	return operation, err
+	receipt, err := c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(action)})
+	if err != nil {
+		return api.AgentOperation{Submission: &receipt}, err
+	}
+	// This is the initial admitted operation, not a claim that it is still
+	// pending when the caller receives it. Wait/read observes current execution.
+	return api.AgentOperation{Ref: receipt.OperationRef, State: "pending", Submission: &receipt}, nil
 }
 
 func (c *Client) WaitAgentOperation(ctx context.Context, runtime api.Runtime, request api.AgentOperationWait) (api.AgentOperation, error) {
@@ -106,4 +110,14 @@ func (c *Client) callACPRead(parent context.Context, operation string, request, 
 		return ctx.Err()
 	}
 	return err
+}
+
+// ACPControl admits an exact permission answer or prompt cancellation using the
+// target's reserved capacity. Stage "written" confirms pipe delivery only.
+// Its receipt is queried by key; it does not consume ordinary operation slots.
+func (c *Client) ACPControl(ctx context.Context, key api.SubmissionKey, action api.ACPAction) (api.SubmissionReceipt, error) {
+	if action.Action != "permission" && action.Action != "cancel" {
+		return api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, &api.SubmissionError{Key: key, Cause: &api.Error{Code: "INVALID_ARGUMENT", Detail: "ACPControl requires permission or cancel"}}
+	}
+	return c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(action)})
 }

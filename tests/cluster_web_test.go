@@ -237,8 +237,8 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	var target agents.LaunchResult
 	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{SubmissionID: wire.ID(), Custom: &agentProfile}, &target)
 	var first, second agents.Operation
-	request(sites[0], "POST", "api/v1/agents/prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "permission for cluster A"}, &first)
-	callMCP("agents_prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_SECOND_OPERATION"}, &second)
+	request(sites[0], "POST", "api/v1/agents/prompt", agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "permission for cluster A"}, &first)
+	callMCP("agents_prompt", agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_SECOND_OPERATION"}, &second)
 	if second.State != "pending" || first.Ref == second.Ref {
 		t.Fatal("cross-host submissions did not share one serial queue")
 	}
@@ -319,7 +319,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 		t.Fatal("missing initial conversation window", latest)
 	}
 	var appended agents.Operation
-	callMCP("agents_prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_CURSOR_APPEND"}, &appended)
+	callMCP("agents_prompt", agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_CURSOR_APPEND"}, &appended)
 	callMCP("agents_wait", agents.WaitRequest{OperationRef: appended.Ref, TimeoutMS: 5000}, &waited)
 	if waited.Operation == nil || waited.Operation.State != "completed" {
 		t.Fatal("cursor fixture append did not complete")

@@ -54,7 +54,7 @@ func TestRealACPConversationLoad(t *testing.T) {
 	}
 	submit := func(action api.ACPAction) api.AgentOperation {
 		t.Helper()
-		operation, err := h.client.ACPSubmit(h.ctx, runtime, action)
+		operation, err := testACPSubmit(h.client, h.ctx, runtime, action)
 		must(t, err)
 		for !operation.Terminal() {
 			operation, err = h.client.WaitAgentOperation(h.ctx, runtime, api.AgentOperationWait{Ref: operation.Ref, TimeoutMS: 30000})

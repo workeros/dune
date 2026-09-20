@@ -89,6 +89,8 @@ func runSessionHost(directory string) error {
 	}
 	r.acp = newACPController(r)
 	r.acp.requireMCP = boot.Profile.RequireAgentMCP
+	r.acp.reserveControl = func(kind, id string) error { return d.registry.ReserveControl(ctx, reg.Target, kind, id) }
+	r.acp.releaseControl = func(kind, id string) { _ = d.registry.ReleaseControl(ctx, reg.Target, kind, id) }
 	now := time.Now().UTC()
 	r.startedAt = &now
 	if boot.Profile.Start.TimeoutSeconds > 0 {

@@ -24,7 +24,7 @@ func TestAgentNativeSessionStartupIsImmediatelyUsable(t *testing.T) {
 	if err != nil || len(page.Items) != 1 {
 		t.Fatal(page, err)
 	}
-	op, err := f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: page.Items[0].Runtime.ConversationID, AgentRef: page.Items[0].Ref, Text: "first task", WaitMS: 3000})
+	op, err := f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: page.Items[0].Runtime.ConversationID, AgentRef: page.Items[0].Ref, Text: "first task", WaitMS: 3000})
 	if err != nil || op.State != "completed" {
 		t.Fatal("start still required manual new", op, err)
 	}
@@ -44,11 +44,11 @@ func TestAgentNativeSessionQueueRetainsOperationAndCapturesOnlyConfirmation(t *t
 	}
 	agent := page.Items[0]
 	messenger := f.app.AgentMessenger()
-	if _, err := messenger.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "first", WaitMS: 1}); err != nil {
+	if _, err := messenger.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "first", WaitMS: 1}); err != nil {
 		t.Fatal(err)
 	}
 	sessions := f.app.AgentNativeSessions()
-	load, err := sessions.OpenSession(t.Context(), f.agentScope(), agents.OpenSessionRequest{AgentRef: agent.Ref, Action: "load", SessionID: "saved-conversation", Cwd: "/native/work", WaitMS: 1})
+	load, err := sessions.OpenSession(t.Context(), f.agentScope(), agents.OpenSessionRequest{SubmissionID: wire.ID(), AgentRef: agent.Ref, Action: "load", SessionID: "saved-conversation", Cwd: "/native/work", WaitMS: 1})
 	if err != nil || load.State != "pending" || load.NativeSession != nil || !strings.HasPrefix(load.Ref, "operation_") {
 		t.Fatal("load failed to retain queued operation", load, err)
 	}
@@ -67,12 +67,12 @@ func TestAgentNativeSessionQueueRetainsOperationAndCapturesOnlyConfirmation(t *t
 	if err != nil || current.NativeSession.ID != "saved-conversation" || current.NativeSession.Cwd != "/native/work" {
 		t.Fatal("confirmed load lost native selection", err)
 	}
-	if _, err := sessions.OpenSession(t.Context(), f.agentScope(), agents.OpenSessionRequest{AgentRef: agent.Ref, Action: "new"}); errorCode(err) != "STALE_SESSION" {
+	if _, err := sessions.OpenSession(t.Context(), f.agentScope(), agents.OpenSessionRequest{SubmissionID: wire.ID(), AgentRef: agent.Ref, Action: "new"}); errorCode(err) != "STALE_SESSION" {
 		t.Fatal("stale native reference changed a different conversation", err)
 	}
 	wrong := f.agentScope()
 	wrong.OwnerID = "another-tenant"
-	if _, err := sessions.OpenSession(t.Context(), wrong, agents.OpenSessionRequest{AgentRef: agent.Ref, Action: "new"}); !errors.Is(err, metadata.ErrNotFound) {
+	if _, err := sessions.OpenSession(t.Context(), wrong, agents.OpenSessionRequest{SubmissionID: wire.ID(), AgentRef: agent.Ref, Action: "new"}); !errors.Is(err, metadata.ErrNotFound) {
 		t.Fatal("cross Tenant lifecycle request accepted", err)
 	}
 }

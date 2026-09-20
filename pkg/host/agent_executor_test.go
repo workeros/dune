@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/aiomni/dune/internal/wire"
 	"os"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
 	if _, err := connection.Start(context.Background(), "test-launch", api.Profile{Version: 1, Kind: "agent", Adapter: "pty"}); err == nil {
 		t.Fatal("non-managed ACP Agent started through IM executor")
 	}
-	if _, err := connection.Submit(context.Background(), api.Runtime{}, AgentAction{Action: "permission"}); err == nil {
+	if _, err := connection.Submit(context.Background(), api.Runtime{}, AgentAction{SubmissionID: wire.ID(), Action: "permission"}); err == nil {
 		t.Fatal("IM executor allowed a permission action")
 	}
 	if err := connection.Close(); err != nil {
@@ -173,7 +174,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 		}
 	}
 	waitState(runtime, func(state AgentState) bool { return state.Ready && state.Busy == "" })
-	if _, err := connection.Submit(ctx, runtime, AgentAction{Action: "new", Cwd: f.workspace}); err != nil {
+	if _, err := connection.Submit(ctx, runtime, AgentAction{SubmissionID: wire.ID(), Action: "new", Cwd: f.workspace}); err != nil {
 		t.Fatal(err)
 	}
 	observed := waitState(runtime, func(state AgentState) bool { return state.SessionID == "fake-acp-session" && state.Busy == "" })
@@ -182,7 +183,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer subscription.Close()
-	if _, err := connection.Submit(ctx, runtime, AgentAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "hello"}); err != nil {
+	if _, err := connection.Submit(ctx, runtime, AgentAction{SubmissionID: wire.ID(), ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	var answer, stopReason string
@@ -217,7 +218,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if !replacementState.CanLoad {
 		t.Fatal("fake ACP load capability was not published")
 	}
-	if _, err := connection.Submit(ctx, replacement, AgentAction{Action: "load", Cwd: f.workspace, SessionID: "fake-acp-session"}); err != nil {
+	if _, err := connection.Submit(ctx, replacement, AgentAction{SubmissionID: wire.ID(), Action: "load", Cwd: f.workspace, SessionID: "fake-acp-session"}); err != nil {
 		t.Fatal(err)
 	}
 	waitState(replacement, func(state AgentState) bool {

@@ -71,9 +71,11 @@ func startDirectoryACP(t *testing.T, f executorFixture, request agents.StartRequ
 	return result, connection
 }
 
-func directoryAction(t *testing.T, connection *client.Client, runtime api.Runtime, action api.ACPAction) {
+func directoryAction(t *testing.T, connection *client.Client, runtime api.Runtime, key api.SubmissionKey, action api.ACPAction) {
 	t.Helper()
-	op, err := connection.ACPSubmit(t.Context(), runtime, action)
+	key.SubmissionID = wire.ID()
+	key.Target.RuntimeID, key.Target.RuntimeIncarnation, key.Target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	op, err := connection.ACPSubmit(t.Context(), key, action)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +94,12 @@ func TestAgentDirectoryReadsCurrentNativeSessionsThroughGateway(t *testing.T) {
 		t.Fatal("initial discovery", page, err)
 	}
 	initial := page.Items[0]
-	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "new"})
+	directoryAction(t, connection, *launched.Runtime, launched.SubmissionKey, api.ACPAction{Action: "new"})
 	created, err := directory.Get(t.Context(), f.agentScope(), initial.Ref)
 	if err != nil || created.Runtime.NativeSession == nil || created.Runtime.NativeSession.ID != launched.Runtime.NativeSession.ID || created.Ref != initial.Ref {
 		t.Fatal("confirmed native session not captured", created, err)
 	}
-	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "load", SessionID: "other-native", Cwd: "/other-session"})
+	directoryAction(t, connection, *launched.Runtime, launched.SubmissionKey, api.ACPAction{Action: "load", SessionID: "other-native", Cwd: "/other-session"})
 	if _, err := directory.Get(t.Context(), f.agentScope(), created.Ref); err == nil {
 		t.Fatal("an old Agent reference followed a different native conversation")
 	} else {

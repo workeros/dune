@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/wire"
@@ -26,8 +27,8 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 		return
 	}
 	var action api.ACPAction
-	if request.Operation != "acp.action" || json.Unmarshal(request.Payload, &action) != nil || (action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt") {
-		s.Fail("UNSUPPORTED", errors.New("submission.acp requires a managed new, load, list or prompt"))
+	if request.Operation != "acp.action" || json.Unmarshal(request.Payload, &action) != nil || (action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" && action.Action != "permission" && action.Action != "cancel") {
+		s.Fail("UNSUPPORTED", errors.New("submission.acp requires a managed ACP action"))
 		return
 	}
 	runtime, err := d.lookup(message)
@@ -55,6 +56,9 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 }
 
 func (a *acpController) submit(ctx context.Context, registry *sessionregistry.Registry, key api.SubmissionKey, action api.ACPAction, receiver string) (api.SubmissionReceipt, error) {
+	if action.Action == "permission" || action.Action == "cancel" {
+		return a.submitControl(ctx, registry, key, action, receiver)
+	}
 	// Digest the interpreted business parameters, excluding transport identity.
 	digest := sessionregistry.Digest("acp.action", api.Payload(action))
 	claim, receipt, err := registry.ClaimKey(ctx, key, digest, receiver)
@@ -93,6 +97,79 @@ func (a *acpController) submit(ctx context.Context, registry *sessionregistry.Re
 		}
 	}
 	return receipt, err
+}
+
+// Controls consume only a reservation belonging to their effective target.
+// Duplicate lookup precedes lifecycle validation because that target may have
+// finished already. A new invalid answer must never consume another slot.
+func (a *acpController) submitControl(ctx context.Context, registry *sessionregistry.Registry, key api.SubmissionKey, action api.ACPAction, receiver string) (api.SubmissionReceipt, error) {
+	a.controlMu.Lock()
+	defer a.controlMu.Unlock()
+	digest := sessionregistry.Digest("acp.action", api.Payload(action))
+	receipt, found, err := registry.Lookup(ctx, key, digest, receiver)
+	if err != nil {
+		return receipt, err
+	}
+	if found {
+		return receipt, submissionDecisionError(receipt)
+	}
+	id := action.PermissionID
+	if action.Action == "cancel" {
+		id = action.OperationRef
+	}
+	if api.ValidateSubmissionID(id) != nil {
+		return receipt, &api.Error{Code: "INVALID_ARGUMENT", Detail: "control requires an exact permission_id or operation_ref"}
+	}
+	admitted := false
+	_, err = a.control(action, func() error {
+		claim, existing, claimErr := registry.ClaimControl(ctx, key, digest, receiver, action.Action, id)
+		receipt = existing
+		if claimErr != nil {
+			return claimErr
+		}
+		if !claim.Acquired() {
+			return &api.Error{Code: "RESULT_UNKNOWN", Detail: "control key was concurrently claimed; query its original receipt"}
+		}
+		receipt, claimErr = registry.Accept(ctx, claim, wire.ID())
+		admitted = claimErr == nil
+		return claimErr
+	})
+	if !admitted {
+		var failure *api.Error
+		if err != nil && !errors.As(err, &failure) {
+			err = &api.Error{Code: "INVALID_ARGUMENT", Detail: err.Error()}
+		}
+		return receipt, err
+	}
+	// The host finishes admitted writes even after the submitting stream closes.
+	// A pipe failure is not a rejection and never grants permission to replay.
+	stage, code := "written", ""
+	if err != nil {
+		stage, code = "input_unrecoverable", "RESULT_UNKNOWN"
+	}
+	progressCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	confirmed, progressErr := registry.Progress(progressCtx, key, receipt.OperationRef, stage, code, nil)
+	if progressErr == nil {
+		receipt = confirmed
+	}
+	if err != nil || progressErr != nil {
+		return receipt, &api.Error{Code: "RESULT_UNKNOWN", Detail: "control was admitted; its write completion could not be confirmed"}
+	}
+	return receipt, nil
+}
+
+func submissionDecisionError(receipt api.SubmissionReceipt) error {
+	switch receipt.Admission {
+	case api.SubmissionAccepted:
+		return nil
+	case api.SubmissionNotAccepted:
+		return &api.Error{Code: receipt.ErrorCode, Detail: "original submission was not accepted"}
+	case api.SubmissionExpired:
+		return &api.Error{Code: "SUBMISSION_EXPIRED", Detail: "original submission receipt expired; do not replay"}
+	default:
+		return &api.Error{Code: "RESULT_UNKNOWN", Detail: "original submission admission is not confirmed"}
+	}
 }
 
 func failSubmission(s *executionStream, receipt api.SubmissionReceipt, err error) {

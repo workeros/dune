@@ -34,6 +34,7 @@ type Engine struct {
 	cleaner           *process.Cleaner
 	registry          *sessionregistry.Registry
 	submissionReads   chan struct{}
+	stateReads        chan struct{}
 	starts            chan struct{}
 	mu                sync.Mutex
 	inc               string
@@ -63,6 +64,7 @@ func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
 	engine.submissionReads = make(chan struct{}, 8)
+	engine.stateReads = make(chan struct{}, 16)
 	go engine.conversations.run(ctx)
 	return engine
 }
@@ -162,35 +164,48 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		d.port(s, m)
 		return
 	}
-	// Reserve before admission. Pending and completed entries cannot execute twice.
-	hash := requestHash(m)
-	d.mu.Lock()
-	if c := d.cache[m.RequestId]; c != nil {
-		saved := c.result
-		d.mu.Unlock()
-		if c.hash != hash {
-			s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("request ID has different payload"))
+	retainResult := !sessionRead(m.Operation)
+	if !retainResult {
+		select {
+		case d.stateReads <- struct{}{}:
+			defer func() { <-d.stateReads }()
+		default:
+			s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("state read concurrency limit reached"))
 			return
 		}
-		if saved == nil {
-			s.Fail("RESULT_UNKNOWN", fmt.Errorf("request still running"))
-			return
-		}
-		_ = s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId})
-		_ = s.Send(saved)
-		return
-	}
-	if !d.cacheRoomLocked() {
-		d.mu.Unlock()
-		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("dedup capacity, retry with new request after 60 seconds"))
-		return
-	}
-	d.cache[m.RequestId] = &cached{hash: hash, at: time.Now()}
-	d.mu.Unlock()
-	if s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId}) != nil {
+	} else {
+		// Reserve before admission. Pending and completed entries cannot execute twice.
+		hash := requestHash(m)
 		d.mu.Lock()
-		delete(d.cache, m.RequestId)
+		if c := d.cache[m.RequestId]; c != nil {
+			saved := c.result
+			d.mu.Unlock()
+			if c.hash != hash {
+				s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("request ID has different payload"))
+				return
+			}
+			if saved == nil {
+				s.Fail("RESULT_UNKNOWN", fmt.Errorf("request still running"))
+				return
+			}
+			_ = s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId})
+			_ = s.Send(saved)
+			return
+		}
+		if !d.cacheRoomLocked() {
+			d.mu.Unlock()
+			s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("dedup capacity, retry with new request after 60 seconds"))
+			return
+		}
+		d.cache[m.RequestId] = &cached{hash: hash, at: time.Now()}
 		d.mu.Unlock()
+	}
+	if s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId}) != nil {
+		if retainResult {
+			d.mu.Lock()
+			delete(d.cache, m.RequestId)
+			d.mu.Unlock()
+		}
 		return
 	}
 	var result any
@@ -412,14 +427,16 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 			res.Code = ae.Code
 		}
 	}
-	d.mu.Lock()
-	if searchRequest || m.Operation == "agent.operation.read" || m.Operation == "runtime.scrollback" || m.Operation == "acp.conversation.read" || m.Operation == "acp.conversation.get" {
-		// Retain deduplication without duplicating up to 256 large read responses.
-		d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "read response is not retained; issue a new read"}
-	} else {
-		d.cache[m.RequestId].result = res
+	if retainResult {
+		d.mu.Lock()
+		if searchRequest || m.Operation == "agent.operation.read" || m.Operation == "runtime.scrollback" || m.Operation == "acp.conversation.read" || m.Operation == "acp.conversation.get" {
+			// Retain deduplication without duplicating up to 256 large read responses.
+			d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "read response is not retained; issue a new read"}
+		} else {
+			d.cache[m.RequestId].result = res
+		}
+		d.mu.Unlock()
 	}
-	d.mu.Unlock()
 	_ = s.Send(res)
 }
 
@@ -544,4 +561,15 @@ func (d *Engine) cacheRoomLocked() bool {
 	}
 	delete(d.cache, id)
 	return true
+}
+
+// Observations consume bounded concurrent readers, never submission evidence or
+// the ordinary transport cache. Repeating a read has no business side effect.
+func sessionRead(operation string) bool {
+	switch operation {
+	case "machine.info", "runtime.list", "runtime.get", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "runtime.capture", "runtime.scrollback", "profile.status":
+		return true
+	default:
+		return false
+	}
 }

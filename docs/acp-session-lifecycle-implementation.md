@@ -183,3 +183,37 @@ still outstanding. `make web-check web-build` passes with bundle-size warnings.
 Remaining integration work includes all Runtime actions/control reservations,
 independent cleanup recovery, raw ACP, full discovery/loss classification, pinned
 runtime dependencies, platform manager/upgrade acceptance and SandDance consumers.
+
+Slice 6 managed submission/control tracer bullet: ACPSubmit now takes the caller's
+complete key. Prompt/OpenSession, initial Launcher new, IM AgentAction, and Web
+ordinary submits supply caller-owned IDs; initial admission snapshots retain
+receipts across local errors and optional waits. IM derives IDs from its persisted
+session key/revision and action before sending. Web saves its latest submission
+ID and original agent_ref before sending; a complete recovery UI remains pending.
+
+Permissions reserve their response before publication; prompts reserve their
+exact cancel target before queue admission. Controls validate their live target
+before consuming a reservation, persist admission before stdin, and record written
+or input_unrecoverable independently of ordinary operation slots. Duplicate lookup
+precedes lifecycle validation, so completed targets still return the original
+receipt. Ended unused permissions/queued prompts release only unused reservations.
+State/model/operation reads bypass the ordinary transport cache and use bounded
+independent concurrency.
+
+`go test -race ./internal/sessionregistry ./pkg/fabricd ./pkg/client ./pkg/host
+./pkg/access -count=1 -timeout=180s` passes. Additional targeted race tests pass
+for cancelled SDK submits preserving identity, reads with a full pending transport
+cache, ended-control release, and ordinary evidence/operation exhaustion with
+40 invalid answers and 20 concurrent duplicate answers producing one permission
+response plus one independently reserved cancel. Completed controls cannot fund
+new controls by discarding their evidence.
+
+The real-process `TestManagedACPOriginalProcessAcrossConnectorRestart` now also
+uses ACPControl and QuerySubmission after connector restart, checking written
+permission evidence and duplicate identity. It passes along with submission,
+managed offline permissions, history replay and generation-barrier regressions.
+IM duneagent tests and Web typecheck/build pass (existing bundle-size warnings).
+The old direct acp.action network route is still awaiting removal together with
+Web controls/history migration; stop/forget admission, raw ACP, discovery/upgrade
+and complete L01–L55 acceptance remain outstanding. These are intermediate
+commits, not a completed lifecycle delivery.

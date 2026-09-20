@@ -94,8 +94,17 @@ func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func
 	if err != nil {
 		return status, err
 	}
+	if req.Action == "prompt" && a.reserveControl != nil {
+		if err := a.reserveControl("cancel", status.Ref); err != nil {
+			a.operations.set(status.Ref, "failed", "", "cancel reservation unavailable; request was not sent")
+			return api.AgentOperation{}, err
+		}
+	}
 	if admit != nil {
 		if err := admit(status); err != nil {
+			if req.Action == "prompt" && a.releaseControl != nil {
+				a.releaseControl("cancel", status.Ref)
+			}
 			// No RPC was dispatched. Retain this terminal fact in case a
 			// registry commit succeeded but its acknowledgement was lost.
 			a.operations.set(status.Ref, "failed", "", "submission admission was not confirmed; request was not sent")
@@ -132,11 +141,13 @@ func (a *acpController) startNextLocked() {
 				a.operations.records[operation.ref].status.ErrorCode = "CONVERSATION_CHANGED"
 				a.operations.mu.Unlock()
 				a.publishOperation(a.operations.set(operation.ref, "failed", "", err.Error()))
+				a.releaseCancelLocked(operation)
 				continue
 			}
 		}
 		if req.Action == "prompt" && (req.SessionID != a.state.SessionID || req.Cwd != a.state.Cwd) {
 			a.publishOperation(a.operations.set(operation.ref, "failed", "", "native ACP session changed before execution"))
+			a.releaseCancelLocked(operation)
 			continue
 		}
 		a.active = operation
@@ -263,9 +274,12 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 		a.conversation.finishTurn(status)
 	}
 	a.publishOperation(a.operations.set(operation.ref, state, reason, detail))
+	if a.releaseControl != nil && a.active != nil {
+		a.releaseControl("cancel", a.active.ref)
+	}
 	a.active = nil
 	a.state.Busy, a.state.OperationRef = "", ""
-	a.permissions = map[string]acpPermission{}
+	a.clearPermissionsLocked()
 	if state == "unknown" {
 		// An unconfirmed boundary cannot safely release the next queued prompt.
 		a.cancelPendingLocked("previous ACP outcome is unknown; request was not sent")
@@ -337,8 +351,15 @@ func (a *acpController) confirmSessionLocked() *api.NativeSession {
 func (a *acpController) cancelPendingLocked(detail string) {
 	for _, operation := range a.queue {
 		a.publishOperation(a.operations.set(operation.ref, "cancelled", "", detail))
+		a.releaseCancelLocked(operation)
 	}
 	a.queue, a.state.Pending = nil, 0
+}
+
+func (a *acpController) releaseCancelLocked(operation *acpQueuedAction) {
+	if a.releaseControl != nil && operation.request.Action == "prompt" {
+		a.releaseControl("cancel", operation.ref)
+	}
 }
 
 func (a *acpController) closeQueueLocked() {
@@ -349,6 +370,9 @@ func (a *acpController) closeQueueLocked() {
 			a.conversation.finishTurn(status)
 		}
 		a.publishOperation(status)
+		if a.releaseControl != nil && a.active != nil {
+			a.releaseControl("cancel", a.active.ref)
+		}
 		a.active = nil
 	}
 	a.cancelPendingLocked("Agent exited; queued request was not sent")

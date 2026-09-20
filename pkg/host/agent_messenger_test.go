@@ -25,18 +25,18 @@ func TestAgentMessengerUsesFabricdOperationsAcrossConnections(t *testing.T) {
 	f := openExecutorFixture(t)
 	gate := filepath.Join(f.workspace, "release-first")
 	launched, connection := directoryACPWithEnvironment(t, f, map[string]string{"DUNE_HOST_FAKE_ACP_GATE": gate})
-	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "new"})
+	directoryAction(t, connection, *launched.Runtime, launched.SubmissionKey, api.ACPAction{Action: "new"})
 	page, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
 	if err != nil || len(page.Items) != 1 {
 		t.Fatal("discovery", page, err)
 	}
 	agent := page.Items[0]
 	firstService, secondService := f.app.AgentMessenger(), f.app.AgentMessenger()
-	first, err := firstService.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "first", WaitMS: 1})
+	first, err := firstService.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "first", WaitMS: 1})
 	if err != nil || first.Terminal() || !strings.HasPrefix(first.Ref, "operation_") {
 		t.Fatal("first submission", first, err)
 	}
-	second, err := secondService.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "second"})
+	second, err := secondService.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "second"})
 	if err != nil || second.State != "pending" || second.Ref == first.Ref {
 		t.Fatal("second submission", second, err)
 	}
@@ -87,8 +87,8 @@ func TestAgentMessengerUsesFabricdOperationsAcrossConnections(t *testing.T) {
 	if err != nil || idle.Agent == nil || idle.Operation != nil || idle.TimedOut {
 		t.Fatal("activity mode", idle, err)
 	}
-	directoryAction(t, connection, *launched.Runtime, api.ACPAction{Action: "load", SessionID: "different", Cwd: f.workspace})
-	_, err = firstService.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "must not be redirected"})
+	directoryAction(t, connection, *launched.Runtime, launched.SubmissionKey, api.ACPAction{Action: "load", SessionID: "different", Cwd: f.workspace})
+	_, err = firstService.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "must not be redirected"})
 	var failure *api.Error
 	if !errors.As(err, &failure) || failure.Code != "STALE_SESSION" {
 		t.Fatal("old native reference was accepted", err)
@@ -104,7 +104,7 @@ func TestAgentMessengerUsesFabricdOperationsAcrossConnections(t *testing.T) {
 	if _, err := secondService.Wait(t.Context(), wrong, agents.WaitRequest{OperationRef: first.Ref}); !errors.Is(err, metadata.ErrNotFound) {
 		t.Fatal("cross-Tenant operation wait", err)
 	}
-	if _, err := secondService.Prompt(t.Context(), wrong, agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "cross tenant"}); !errors.Is(err, metadata.ErrNotFound) {
+	if _, err := secondService.Prompt(t.Context(), wrong, agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "cross tenant"}); !errors.Is(err, metadata.ErrNotFound) {
 		t.Fatal("cross-Tenant prompt", err)
 	}
 	if _, err := secondService.SendKeys(t.Context(), f.agentScope(), agents.KeysRequest{AgentRef: agent.Ref, Keys: []string{"Enter"}}); err == nil {
@@ -163,7 +163,7 @@ func TestAgentMessengerPTYDeliveryAndSnapshotRemainDistinct(t *testing.T) {
 			t.Fatal("PTY did not become ready", err)
 		}
 	}
-	op, err := messenger.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "delegated task", WaitMS: 3000})
+	op, err := messenger.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "delegated task", WaitMS: 3000})
 	if err != nil || op.State != "delivered" {
 		t.Fatal("PTY delivery", op, err)
 	}
@@ -205,12 +205,12 @@ func TestAgentMessengerPreservesObservedConversationAfterSameNativeReload(t *tes
 	if observed.Runtime.ConversationID == "" {
 		t.Fatal("discovery omitted prompt precondition")
 	}
-	directoryAction(t, connection, *started.Runtime, api.ACPAction{Action: "load", SessionID: observed.Runtime.NativeSession.ID, Cwd: observed.Runtime.NativeSession.Cwd})
-	_, err = f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{AgentRef: observed.Ref, ExpectedConversationID: observed.Runtime.ConversationID, Text: "must not be redirected"})
+	directoryAction(t, connection, *started.Runtime, started.SubmissionKey, api.ACPAction{Action: "load", SessionID: observed.Runtime.NativeSession.ID, Cwd: observed.Runtime.NativeSession.Cwd})
+	_, err = f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), AgentRef: observed.Ref, ExpectedConversationID: observed.Runtime.ConversationID, Text: "must not be redirected"})
 	if errorCode(err) != "CONVERSATION_CHANGED" {
 		t.Fatal("host refreshed the caller's precondition", err)
 	}
-	_, err = f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{AgentRef: observed.Ref, Text: "missing condition"})
+	_, err = f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{SubmissionID: wire.ID(), AgentRef: observed.Ref, Text: "missing condition"})
 	if errorCode(err) != "INVALID_ARGUMENT" {
 		t.Fatal("host accepted missing conversation ID", err)
 	}

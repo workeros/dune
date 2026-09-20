@@ -18,16 +18,32 @@ func validWait(timeout int) error {
 	return nil
 }
 
-func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents.PromptRequest) (agents.Operation, error) {
+func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents.PromptRequest) (result agents.Operation, err error) {
+	receipt := api.SubmissionReceipt{SubmissionKey: api.SubmissionKey{SubmissionID: request.SubmissionID, Target: api.SubmissionTarget{OwnerID: scope.OwnerID}}, Admission: api.SubmissionUnknown}
+	defer func() {
+		if result.Submission == nil {
+			result.Submission = &receipt
+		}
+		if err != nil {
+			err = &api.SubmissionError{Key: receipt.SubmissionKey, Cause: err}
+		}
+	}()
+	ref, err := parseAgentRef(request.AgentRef)
+	if err != nil {
+		return result, err
+	}
+	receipt.SubmissionKey = submissionKeyFor(scope.OwnerID, ref.Target, request.SubmissionID)
+	if ref.Target.Runtime.Adapter == "acp" {
+		if err := receipt.SubmissionKey.Validate(); err != nil {
+			return result, invalid(err.Error())
+		}
+	}
+
 	if err := validWait(request.WaitMS); err != nil {
 		return agents.Operation{}, err
 	}
 	if request.Text == "" || len(request.Text) > 64*1024 || !utf8.ValidString(request.Text) {
 		return agents.Operation{}, invalid("prompt requires 1..65536 UTF-8 bytes")
-	}
-	ref, err := parseAgentRef(request.AgentRef)
-	if err != nil {
-		return agents.Operation{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(request.WaitMS)*time.Millisecond+10*time.Second)
 	defer cancel()
@@ -52,7 +68,7 @@ func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents
 		if runtime.NativeSession == nil {
 			return agents.Operation{}, &api.Error{Code: "SESSION_REQUIRED", Detail: "create or load a native ACP session before prompting"}
 		}
-		accepted, err = connection.ACPSubmit(ctx, runtime, api.ACPAction{ExpectedConversationID: request.ExpectedConversationID, Action: "prompt", Text: request.Text, SessionID: runtime.NativeSession.ID, Cwd: runtime.NativeSession.Cwd})
+		accepted, err = connection.ACPSubmit(ctx, receipt.SubmissionKey, api.ACPAction{ExpectedConversationID: request.ExpectedConversationID, Action: "prompt", Text: request.Text, SessionID: runtime.NativeSession.ID, Cwd: runtime.NativeSession.Cwd})
 	} else {
 		agent := ""
 		if runtime.Activity != nil {
@@ -61,10 +77,13 @@ func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents
 		nativeID, nativeCwd := nativePTYTarget(runtime)
 		accepted, err = connection.PTYPrompt(ctx, runtime, api.PTYPrompt{Text: request.Text, Agent: agent, SessionID: nativeID, Cwd: nativeCwd})
 	}
+	if accepted.Submission != nil {
+		receipt = *accepted.Submission
+	}
 	if err != nil {
 		return agents.Operation{}, submissionError(err)
 	}
-	result := describeOperation(ref.Target, accepted)
+	result = describeOperation(ref.Target, accepted)
 	if request.WaitMS > 0 && !accepted.Terminal() {
 		completed, waitErr := connection.WaitAgentOperation(ctx, runtime, api.AgentOperationWait{Ref: accepted.Ref, TimeoutMS: request.WaitMS})
 		if waitErr != nil {
@@ -121,7 +140,7 @@ func submissionError(err error) error {
 	if errors.As(err, &failure) && failure.Code != "STREAM_INTERRUPTED" {
 		return err
 	}
-	return &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent submission result is unknown; the request was not replayed"}
+	return errors.Join(&api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent submission result is unknown; the request was not replayed"}, err)
 }
 
 func (s *Service) Wait(ctx context.Context, scope agents.Scope, request agents.WaitRequest) (agents.WaitResult, error) {

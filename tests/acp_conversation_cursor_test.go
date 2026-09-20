@@ -31,7 +31,7 @@ func TestACPConversationIndependentCursorsAcrossConnections(t *testing.T) {
 	waitManagedACPReady(t, h, runtime)
 	submit := func(action api.ACPAction) api.AgentOperation {
 		t.Helper()
-		operation, err := h.client.ACPSubmit(h.ctx, runtime, action)
+		operation, err := testACPSubmit(h.client, h.ctx, runtime, action)
 		must(t, err)
 		result, err := h.client.WaitAgentOperation(h.ctx, runtime, api.AgentOperationWait{Ref: operation.Ref, TimeoutMS: 3000})
 		must(t, err)
