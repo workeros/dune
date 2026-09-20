@@ -38,9 +38,10 @@ default to 50 and cap at 200; explicit zero is invalid. At most eight conversati
 read/get responses are in flight per engine. Capacity eviction removes a
 contiguous insertion-order prefix and does not depend on readership.
 
-The implementation is being delivered in vertical slices. Full acceptance
-and resource measurements are the remaining delivery work; this document is not a completion
-report for the full conversation requirements.
+Implementation, resource measurements and A01–A39 evidence are recorded in
+[the acceptance report](acp-conversation-acceptance.md). Final acceptance still
+requires a configured load-capable real Agent; local subprocess and browser
+fixtures do not replace that validation.
 
 Validation of the initial slice:
 
@@ -64,8 +65,8 @@ also hard maxima), advertised in Runner binding limits.
 
 `machine.info.acp_conversations` reports model/entry/encoded-byte counts,
 evictions, omitted updates, read bytes/time and in-flight loads. Encoded-byte
-accounting is not a claim about RSS; allocation and resource measurements are
-part of the remaining acceptance work.
+accounting is not a claim about RSS; the acceptance report gives measured
+encoded bytes, heap, RSS, allocation churn and read costs.
 
 Model/paging/capacity regression: `go test -race ./pkg/fabricd -run '^TestConversation'`.
 
@@ -130,3 +131,39 @@ does not claim to have synchronized unrequested older pages. Its cache is bounde
 to 4 MiB / 1,000 entries, separate from the server budget. Explicit native history
 loading remains a control action. ACP Stream opens a separate diagnostic stream
 only while visible; raw chunks never append to the model-based chat view.
+
+SDK state/read/get calls respect caller cancellation with a maximum ten-second
+read deadline. They check advertised capabilities and return `UNSUPPORTED` when
+absent. Concurrent read/get admission can return `RESOURCE_EXHAUSTED`; canceling
+a read or operation wait never cancels an Agent task. Ordinary subscriptions
+have caller-controlled lifetime. Notifications have no artificial batching delay:
+the store wakes its publisher on commit and coalesces unsent intervals while
+publisher/subscriber work is pending. Scheduling/network delay is not a fixed
+100 ms delivery guarantee.
+
+A standalone read-only example uses only public Dune packages:
+
+```sh
+go run ./samples/acp-conversation -gateway "$DUNE_GATEWAY" -target "$DUNE_TARGET" -runtime runtime.json -limit 20
+```
+
+Provide the existing authorized token through `DUNE_TOKEN`. `runtime.json` is the
+full exact Runtime obtained from discovery. For a private TLS certificate, pass
+`-ca /absolute/path/to/ca.pem`. Use `-cursor <next_cursor>` for an earlier page;
+use `-conversation <observed_id> -entries e-1,e-2` to refresh entries. ID refresh
+never silently adopts a new generation. The sample never opens or loads a native
+session and never downloads referenced content.
+
+For subscription composition, wait for `SubscribeACPConversation` to return,
+then call state/read. Keep the subscription receiving while requests are in
+flight. In the same conversation, compare individual entry revisions; the page's
+overall revision only updates its model description and retention boundary.
+Maintain pending invalidations for loaded entries absent from that page. On a
+gap or `invalidates_all`, refresh the ranges/IDs your application retained. On a
+new target or conversation, invalidate old request contexts before accepting
+new responses. A delayed c1 response must never select c1 after c2 was selected.
+
+The current implementation retains in-memory content only while fabricd and its
+Runtime remain available. Agent exit keeps the model readable; explicit stop or
+forget removes it. The later session-host/reconnection proposal changes this
+lifetime boundary and is a separate implementation.
