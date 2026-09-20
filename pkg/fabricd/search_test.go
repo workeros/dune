@@ -140,14 +140,21 @@ func TestSearchUTF8AndBudgets(t *testing.T) {
 	searchWrite(t, root, "invalid.txt", "needle\n"+strings.Repeat("x", 100000)+"\xff")
 	searchWrite(t, root, "long.txt", "needle"+strings.Repeat("x", maxSearchRecord))
 	searchWrite(t, root, "huge.txt", strings.Repeat("x", maxSearchFileBytes+1))
-	result, err = engine.search(context.Background(), root, api.SearchOptions{Mode: "content", Query: "needle"})
-	if err != nil || result.Complete || !hasSearchIssue(result, "content_encoding") || !hasSearchIssue(result, "file_size_limit") || !hasSearchIssue(result, "line_size_limit") {
-		t.Fatalf("partial: %+v %v", result, err)
-	}
-	for _, item := range result.Matches {
-		if filepath.Base(item.Path) != "unicode.txt" {
-			t.Fatalf("unverified result: %+v", item)
-		}
+	// An oversized JSON record stops the bounded ripgrep reader. Verify each
+	// failure independently: traversal may encounter long.txt before invalid.txt,
+	// so one partial response cannot promise diagnostics for both files.
+	for _, item := range []struct{ file, issue string }{{"invalid.txt", "content_encoding"}, {"long.txt", "line_size_limit"}, {"huge.txt", "file_size_limit"}} {
+		t.Run(item.issue, func(t *testing.T) {
+			result, err := engine.search(context.Background(), root, api.SearchOptions{Mode: "content", Query: "needle", Include: []string{"unicode.txt", item.file}})
+			if err != nil || result.Complete || !hasSearchIssue(result, item.issue) {
+				t.Fatalf("partial: %+v %v", result, err)
+			}
+			for _, match := range result.Matches {
+				if filepath.Base(match.Path) != "unicode.txt" {
+					t.Fatalf("unverified result: %+v", match)
+				}
+			}
+		})
 	}
 	result, err = engine.search(context.Background(), root, api.SearchOptions{Mode: "path", Query: "huge"})
 	if err != nil || !result.Complete || len(result.Matches) != 1 {
