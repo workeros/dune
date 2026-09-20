@@ -87,7 +87,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	defer server.Close()
 	client := connectMCP(t, server.URL+"/api/v1/agent-mcp", token)
 	tools, err := client.ListTools(t.Context(), nil)
-	if err != nil || len(tools.Tools) != 11 {
+	if err != nil || len(tools.Tools) != 12 {
 		t.Fatal("tool catalog", tools, err)
 	}
 	for _, tool := range tools.Tools {
@@ -122,6 +122,10 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	launched := callMCP[agents.LaunchResult](t, client, "agents_start", map[string]any{"submission_id": "mcp-launch", "binding": f.binding, "profile": map[string]any{"id": first.Items[0].ID, "revision": first.Items[0].Revision}, "working_directory": f.workspace})
 	if launched.Runtime == nil || launched.AgentRef == "" || launched.Operation == nil || launched.Operation.State != "completed" {
 		t.Fatal("MCP start did not prepare a native session", launched)
+	}
+	receipt := callMCP[api.SubmissionReceipt](t, client, "agents_launch_submission", agents.LaunchQuery{SubmissionID: "mcp-launch", Binding: f.binding})
+	if receipt.SubmissionKey != launched.SubmissionKey || receipt.Admission != api.SubmissionAccepted || receipt.Runtime == nil || receipt.Runtime.ID != launched.Runtime.ID {
+		t.Fatal("MCP launch query lost original identity", receipt)
 	}
 	prompt := callMCP[agents.Operation](t, client, "agents_prompt", agents.PromptRequest{SubmissionID: wire.ID(), ExpectedConversationID: launched.Runtime.ConversationID, AgentRef: launched.AgentRef, Text: "delegated task"})
 	waited := callMCP[agents.WaitResult](t, client, "agents_wait", agents.WaitRequest{OperationRef: prompt.Ref, TimeoutMS: 3000})

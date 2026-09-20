@@ -1020,3 +1020,30 @@ previously validated expensive L53/L54 fixtures). The added gap checks pass with
 race separately. All three installer regressions pass in 36.7 seconds, including
 different build stamps, in-flight work, rollback and PTY deadlines. Affected vet
 and whitespace checks pass. No external/native service-manager acceptance ran.
+
+## Slice 25 — original launch queries and Web recovery
+
+Launcher.QueryLaunch, authenticated personal/Tenant HTTP launch-submission and
+the read-only agents_launch_submission MCP tool query a launch without needing
+an Agent reference from its lost response. They preserve caller ID and exact
+binding, authorize the current reader, reject changed bindings/owners, and never
+resolve Profile/environment or execute setup, MCP configuration or session open.
+Host shutdown errors now also preserve Start's original key.
+
+Web saves up to 64 launch identities before the first POST in account-scoped
+sessionStorage. Failed/full/corrupt storage prevents sending, unknown records are
+not evicted, and receipts must match the saved owner, binding and launch scope.
+Refresh exposes independent read-only queries. A confirmed started Runtime can
+be opened manually on its original current binding. Removal deletes only the
+local lookup record; another login cannot see it. Storage excludes request bodies
+and returned private data. Worktree/setup stages are checkpoints with unconfirmed
+results, not a claim that their process remains running.
+
+Host/HTTP/MCP focused race regressions pass (host 35.7 seconds), proving an empty
+read remains unknown, later explicit launch executes setup and Agent once, repeated
+queries leave counts unchanged, and trusted owner/binding checks precede reads.
+All 14 Web unit cases and six launch browser cases pass, including two completely
+lost responses, refresh, independent exact-key queries, manual reopen, removal,
+storage failure, changed binding and another login. Wide/narrow screenshots were
+visually checked. TypeScript, production build, affected Go vet and diff checks
+pass; Rspack retains its bundle-size warnings. No external acceptance ran.

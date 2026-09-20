@@ -190,3 +190,54 @@ func TestAgentLauncherKeepsPreparedWorktreeOnStartFailure(t *testing.T) {
 		t.Fatal("prepared worktree lost", err)
 	}
 }
+
+func TestAgentLaunchQueryNeedsOnlyOriginalKeyWithoutRepeatingSetup(t *testing.T) {
+	f := openExecutorFixture(t)
+	query := agents.LaunchQuery{SubmissionID: "saved-before-first-send", Binding: f.binding}
+	key := api.SubmissionKey{SubmissionID: query.SubmissionID, Target: api.SubmissionTarget{OwnerID: f.owner, RunnerID: f.binding.RunnerID, FabricID: f.binding.FabricID, MachineID: f.binding.MachineID, BindingRevision: f.binding.Revision}}
+	assertReceipt := func(want api.SubmissionAdmission) api.SubmissionReceipt {
+		t.Helper()
+		receipt, err := f.app.AgentLauncher().QueryLaunch(t.Context(), f.agentScope(), query)
+		if err != nil || receipt.SubmissionKey != key || receipt.Admission != want {
+			t.Fatal("original launch query", receipt, err)
+		}
+		return receipt
+	}
+	assertReceipt(api.SubmissionUnknown)
+	profile := launchShell(f.workspace, "printf agent >> launches")
+	profile.Setup.Steps = []api.Command{{Run: "printf setup >> setup-count", Shell: "/bin/sh"}}
+	started, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: query.SubmissionID, Binding: f.binding, Custom: &profile})
+	if err != nil || started.Runtime == nil {
+		t.Fatal(started, err)
+	}
+	// Queries must not resolve profiles or environment again.
+	f.app.agentEnvironment = func(context.Context, agents.Scope, runner.Binding, map[string]string) (map[string]string, error) {
+		t.Fatal("read-only query resolved launch environment")
+		return nil, nil
+	}
+	for range 3 {
+		receipt := assertReceipt(api.SubmissionAccepted)
+		if receipt.Stage != "started" || receipt.Runtime == nil || receipt.Runtime.ID != started.Runtime.ID {
+			t.Fatal("query lost original Runtime", receipt)
+		}
+	}
+	waitLaunchFile(t, filepath.Join(f.workspace, "launches"), "agent")
+	waitLaunchFile(t, filepath.Join(f.workspace, "setup-count"), "setup")
+	for _, test := range []struct {
+		name  string
+		scope agents.Scope
+		query agents.LaunchQuery
+		want  error
+	}{
+		{"wrong owner", agents.Scope{Principal: f.principal, OwnerID: "foreign"}, query, metadata.ErrNotFound},
+		{"changed binding", f.agentScope(), agents.LaunchQuery{SubmissionID: query.SubmissionID, Binding: runner.Binding{RunnerID: f.binding.RunnerID, FabricID: f.binding.FabricID, MachineID: f.binding.MachineID, Revision: f.binding.Revision + 1}}, runner.ErrBindingChanged},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			receipt, err := f.app.AgentLauncher().QueryLaunch(t.Context(), test.scope, test.query)
+			var failure *api.SubmissionError
+			if !errors.Is(err, test.want) || !errors.As(err, &failure) || failure.Key != receipt.SubmissionKey || receipt.SubmissionID != query.SubmissionID || receipt.Target.OwnerID != test.scope.OwnerID || receipt.Target.BindingRevision != test.query.Binding.Revision || receipt.Admission != api.SubmissionUnknown {
+				t.Fatal("rejected query lost original key", receipt, err)
+			}
+		})
+	}
+}

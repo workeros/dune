@@ -2,7 +2,7 @@ import type { State } from "../src/components/acp-state";
 import type { Page } from "@playwright/test";
 import type { AgentRuntime, ProfileRecord, Runner } from "../src/lib/api";
 import { targetFor, type Project, type SavedView } from "../src/workbench/model";
-import type { LaunchRequest, LaunchResult } from "../src/workbench/launch";
+import type { LaunchReceipt, LaunchRequest, LaunchResult } from "../src/workbench/launch";
 
 export function workbenchACPState(id: string): State {
  return { ready: true, revision: 1, busy: "", session_id: "native", cwd: "/workspace", can_list: false, can_load: true, permissions: [], conversation: {
@@ -20,7 +20,8 @@ export function workbenchState() {
     inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
     connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>,
     runtimeIssues: [] as { runner_id: string; code: string; runtime: AgentRuntime }[],
-    profiles: [] as ProfileRecord[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "mcp",
+    profiles: [] as ProfileRecord[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "mcp" | "lost",
+    launchReceipts: {} as Record<string, LaunchReceipt>, launchQueries: [] as any[], accountID: "owner",
   };
 }
 export type WorkbenchState = ReturnType<typeof workbenchState>;
@@ -48,7 +49,13 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     const body = method === "GET" || method === "DELETE" ? {} : request.postDataJSON();
     const reply = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
     if (path.endsWith("/bootstrap")) return reply({ login_methods: [{ kind: "password", url: "/api/v1/auth/login" }], attached: true, managed: false, tenant_scoped: false, local_registration: true });
-    if (path.endsWith("/me")) return reply({ id: "owner", email: "owner@test.dev" });
+    if (path.endsWith("/me")) return reply({ id: state.accountID, email: `${state.accountID}@test.dev` });
+    if (path === "/api/v1/agents/launch-submission") {
+      state.launchQueries.push(body);
+      const binding = state.runners.find((runner) => runner.id === body.binding.runner_id)?.binding;
+      if (JSON.stringify(binding) !== JSON.stringify(body.binding)) return reply({ code: "BINDING_CHANGED", error: "original binding unavailable" }, 409);
+      return reply(state.launchReceipts[body.submission_id] ?? { submission_id: body.submission_id, target: { owner_id: state.accountID, runner_id: body.binding.runner_id, fabric_id: body.binding.fabric_id, machine_id: body.binding.machine_id, binding_revision: body.binding.revision }, admission: "unknown" });
+    }
     if (path === "/api/v1/runners") return reply({ items: state.runners });
     if (path === "/api/v1/profiles") return reply({ items: state.profiles });
     if (path === "/api/v1/agents") {
@@ -85,8 +92,11 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
         state.starts++; state.launchRequests.push(body);
         const profile = body.custom ?? state.profiles.find((item) => item.id === body.profile?.id)?.profile;
         const runtime: AgentRuntime = { id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
-        const result: LaunchResult = { worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
+        const result: LaunchResult = { submission_id: body.submission_id, target: { owner_id: state.accountID, runner_id: runner[1], machine_id: url.searchParams.get("machine_id")!, fabric_id: url.searchParams.get("fabric_id")!, binding_revision: Number(url.searchParams.get("revision")) }, worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
         if (state.launchFailure !== "start") { result.runtime = runtime; state.runtimes[runner[1]].push(runtime); }
+        result.submission = { ...result, admission: "accepted", stage: state.launchFailure === "start" ? "failed" : "started" };
+        state.launchReceipts[body.submission_id] = result.submission;
+        if (state.launchFailure === "lost") return route.abort("connectionreset");
         if (state.launchFailure) return reply({ code: state.launchFailure === "start" ? "START_FAILED" : "MCP_CONFIGURATION_FAILED", error: "startup confirmation failed", result }, 503);
         return reply(result, 201);
       }

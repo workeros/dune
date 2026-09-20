@@ -56,6 +56,19 @@ receipt, err := connection.QuerySubmission(ctx, key)
 查询使用当前认证和原完整键，不要求活动 Runtime 存在。它不创建任务、不消耗提交
 额度，也不产生拒绝墓碑或恢复执行副作用。
 
+尚未取得 `agent_ref` 的应用调用方使用
+`App.AgentLauncher().QueryLaunch(ctx, scope, agents.LaunchQuery{SubmissionID: id, Binding: binding})`。
+HTTP 为 `POST /api/v1/agents/launch-submission`（企业入口沿用其 Tenant 前缀），
+MCP 为只读工具 `agents_launch_submission`。两者只接收原 ID 和 binding，Owner
+来自当前认证。绑定变化时拒绝查询，不重定向到替代机器；查询不解析 Profile、运行
+setup、配置 MCP 或补做初始 new。
+
+Web 在第一次 POST 前按账号保存最多 64 条启动标识到 `sessionStorage`，刷新后逐项
+查询。存储损坏、写入失败或已满时阻止发送，不淘汰未知记录。只保存查询选择器、
+时间和接纳阶段，不存启动正文或环境。查询确认原 `accepted/started` 后可手动打开
+同一绑定的原 Runtime；打开不会重新执行初始 new。移除本地记录不会停止 Runtime。
+记录仅在当前浏览器标签页保留，不承诺关闭标签页或清除站点数据后的恢复。
+
 | admission | 含义 |
 | --- | --- |
 | `unknown` | 尚无足够接纳证据；无记录也可能是原请求尚未到达 |

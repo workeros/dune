@@ -21,6 +21,10 @@ func (f launchFunc) Start(ctx context.Context, scope agents.Scope, request agent
 	return f(ctx, scope, request)
 }
 
+func (f launchFunc) QueryLaunch(context.Context, agents.Scope, agents.LaunchQuery) (api.SubmissionReceipt, error) {
+	return api.SubmissionReceipt{}, &api.Error{Code: "UNSUPPORTED"}
+}
+
 type directoryFixture struct {
 	list func(agents.Scope, runner.Query) (agents.DirectoryPage, error)
 	get  func(agents.Scope, string) (agents.Agent, error)
@@ -131,5 +135,48 @@ func TestRemovedRecoveryRoutesDoNotStartAgents(t *testing.T) {
 		if out.Code != http.StatusNotFound {
 			t.Fatalf("removed route %s returned %d", route.path, out.Code)
 		}
+	}
+}
+
+type launchQueryFunc func(context.Context, agents.Scope, agents.LaunchQuery) (api.SubmissionReceipt, error)
+
+func (f launchQueryFunc) Start(context.Context, agents.Scope, agents.StartRequest) (agents.LaunchResult, error) {
+	panic("launch query must not start an Agent")
+}
+func (f launchQueryFunc) QueryLaunch(ctx context.Context, scope agents.Scope, query agents.LaunchQuery) (api.SubmissionReceipt, error) {
+	return f(ctx, scope, query)
+}
+
+func TestLaunchQueryHTTPPinsOwnerAndOriginalBinding(t *testing.T) {
+	for _, tenant := range []bool{false, true} {
+		t.Run(map[bool]string{false: "personal", true: "tenant"}[tenant], func(t *testing.T) {
+			f := newWorkbenchFixture(t, tenant)
+			query := agents.LaunchQuery{SubmissionID: "caller-saved", Binding: runner.Binding{RunnerID: "original", FabricID: "fabric", MachineID: "machine", Revision: 7}}
+			calls := 0
+			f.server.options.AgentLauncher = launchQueryFunc(func(_ context.Context, scope agents.Scope, got agents.LaunchQuery) (api.SubmissionReceipt, error) {
+				calls++
+				if scope.OwnerID != f.owner || scope.Principal.ID != f.users[0].ID || got != query {
+					t.Fatal("query changed original identity", scope, got)
+				}
+				key := api.SubmissionKey{SubmissionID: got.SubmissionID, Target: api.SubmissionTarget{OwnerID: scope.OwnerID, RunnerID: got.Binding.RunnerID, FabricID: got.Binding.FabricID, MachineID: got.Binding.MachineID, BindingRevision: got.Binding.Revision}}
+				return api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, nil
+			})
+			out := f.request(t, "POST", "/agents/launch-submission", 0, query)
+			var receipt api.SubmissionReceipt
+			if out.Code != http.StatusOK || json.Unmarshal(out.Body.Bytes(), &receipt) != nil || receipt.SubmissionID != query.SubmissionID || receipt.Admission != api.SubmissionUnknown || receipt.Target.OwnerID != f.owner || calls != 1 {
+				t.Fatal("launch query response", out.Code, out.Body.String(), calls)
+			}
+			if out := f.request(t, "POST", "/agents/launch-submission", -1, query); out.Code != http.StatusUnauthorized || calls != 1 {
+				t.Fatal("anonymous query reached service", out.Code, calls)
+			}
+			if tenant {
+				if out := f.request(t, "POST", "/agents/launch-submission", 2, query); out.Code != http.StatusForbidden || calls != 1 {
+					t.Fatal("cross-Tenant query reached service", out.Code, calls)
+				}
+			}
+			if out := f.request(t, "POST", "/agents/launch-submission", 0, map[string]any{"submission_id": query.SubmissionID, "binding": query.Binding, "owner_id": "foreign"}); out.Code != http.StatusBadRequest || calls != 1 {
+				t.Fatal("body overrode trusted owner", out.Code, calls)
+			}
+		})
 	}
 }

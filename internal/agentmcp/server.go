@@ -114,6 +114,9 @@ func registerTools(server *mcp.Server, options Options) {
 	addTool(server, "agents_start", "Start an assistant on an existing ready Runner using a fixed Profile revision or project default. Omit worktree to use the current directory. Preserve partial results on error; never replay an unknown start. ACP returns its initial new operation until ready.", false, func(ctx context.Context, scope agents.Scope, input startInput) (any, error) {
 		return options.Launcher.Start(ctx, scope, agents.StartRequest{SubmissionID: input.SubmissionID, Binding: input.Binding, Profile: input.Profile, Project: input.Project, DirectoryID: input.DirectoryID, WorkingDirectory: input.WorkingDirectory, Worktree: input.Worktree})
 	})
+	addTool(server, "agents_launch_submission", "Read admission of the original launch using its caller-saved submission_id and exact Runner binding. Never starts setup, creates an Agent, opens a session or configures MCP. Unknown remains unknown; do not replay it.", true, func(ctx context.Context, scope agents.Scope, input agents.LaunchQuery) (any, error) {
+		return options.Launcher.QueryLaunch(ctx, scope, input)
+	})
 	addTool(server, "agents_prompt", "Send text to an exact Agent. Managed ACP requires expected_conversation_id observed from runtime.conversation_id; preserve it across retries. ACP returns operation_ref; pending has no output yet. PTY delivered only confirms input, not task completion. Optional wait_ms (0..30000) waits only this submission. Never replay an unknown result.", false, func(ctx context.Context, scope agents.Scope, input agents.PromptRequest) (any, error) {
 		return options.Messenger.Prompt(ctx, scope, input)
 	})

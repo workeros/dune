@@ -5,6 +5,7 @@ import (
 
 	"github.com/aiomni/dune/internal/agentservice"
 	"github.com/aiomni/dune/pkg/agents"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -18,10 +19,21 @@ type agentLauncher struct{ app *App }
 func (l *agentLauncher) Start(ctx context.Context, scope agents.Scope, request agents.StartRequest) (agents.LaunchResult, error) {
 	ctx, finish, err := l.app.adminContext(ctx)
 	if err != nil {
-		return agents.LaunchResult{}, err
+		key := api.SubmissionKey{SubmissionID: request.SubmissionID, Target: api.SubmissionTarget{OwnerID: scope.OwnerID, RunnerID: request.Binding.RunnerID, FabricID: request.Binding.FabricID, MachineID: request.Binding.MachineID, BindingRevision: request.Binding.Revision}}
+		return agents.LaunchResult{SubmissionKey: key}, &api.SubmissionError{Key: key, Cause: err}
 	}
 	defer finish()
 	return l.app.agentService().Start(ctx, scope, request)
+}
+
+func (l *agentLauncher) QueryLaunch(ctx context.Context, scope agents.Scope, request agents.LaunchQuery) (api.SubmissionReceipt, error) {
+	ctx, finish, err := l.app.adminContext(ctx)
+	if err != nil {
+		key := api.SubmissionKey{SubmissionID: request.SubmissionID, Target: api.SubmissionTarget{OwnerID: scope.OwnerID, RunnerID: request.Binding.RunnerID, FabricID: request.Binding.FabricID, MachineID: request.Binding.MachineID, BindingRevision: request.Binding.Revision}}
+		return api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, &api.SubmissionError{Key: key, Cause: err}
+	}
+	defer finish()
+	return l.app.agentService().QueryLaunch(ctx, scope, request)
 }
 
 func (a *App) agentService() *agentservice.Service {

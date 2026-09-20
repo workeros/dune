@@ -5,8 +5,11 @@ import { APIError, bindingKey, call, errorText, post, runnerPath, type AgentRunt
 import { DirectoryPicker } from "./directory-picker";
 import type { Project } from "./model";
 import type { LaunchRequest, LaunchResult } from "./launch";
+import { matchesLaunch, readLaunches, recordLaunchReceipt, saveLaunch, type LaunchScope } from "./launch-records";
+import { LaunchRecovery } from "./launch-recovery";
 
-export function StartAgent({ runners, selected, onSelect, profiles, project, onStarted, onManageProfiles }: {
+export function StartAgent({ scope, runners, selected, onSelect, profiles, project, onStarted, onManageProfiles }: {
+  scope: LaunchScope;
   runners: Runner[]; selected?: Runner; onSelect: (runner: Runner) => void; profiles: ProfileRecord[]; project?: Project;
   onStarted: (runner: Runner, runtime: AgentRuntime) => void; onManageProfiles: () => void;
 }) {
@@ -48,6 +51,10 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
     const submissionID = crypto.randomUUID();
     setBusy(true); setError("");
     const accept = (result: LaunchResult | undefined) => {
+      if (!result) return;
+      const saved = readLaunches(scope).find((item) => item.submission_id === submissionID);
+      if (!saved || !matchesLaunch(scope, saved, result)) throw new Error("启动响应与原提交身份不一致，请查询原提交。");
+      if (result.submission) recordLaunchReceipt(scope, submissionID, result.submission);
       if (result?.worktree) { setCwd(result.worktree.path); setDirectoryID(""); setLocation("current"); }
       if (result?.runtime) onStarted(runner, result.runtime);
     };
@@ -65,13 +72,14 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
         if (!selection) throw new Error("请选择 Agent 配置。");
         body.profile = selection;
       }
-      // Save identity before the first send so refresh cannot erase an unknown launch.
-      sessionStorage.setItem("dune.lastLaunch", JSON.stringify({ submission_id: submissionID, binding: runner.binding }));
+      saveLaunch(scope, runner.binding, submissionID);
       accept(await post<LaunchResult>(runnerPath(runner.binding, "sessions"), body));
     } catch (cause) {
       const partial = cause instanceof APIError ? cause.result as LaunchResult | undefined : undefined;
-      accept(partial);
-      setError(`${partial?.worktree ? `已创建 worktree：${partial.worktree.path}。` : ""}${partial?.runtime ? "Agent 已启动，请继续使用已打开的会话。" : ""}${errorText(cause)} 提交标识：${submissionID}`);
+      try {
+        accept(partial);
+        setError(`${partial?.worktree ? `已创建 worktree：${partial.worktree.path}。` : ""}${partial?.runtime ? "Agent 已启动，请继续使用已打开的会话。" : ""}${errorText(cause)} 提交标识：${submissionID}`);
+      } catch (invalid) { setError(`${errorText(invalid)} 提交标识：${submissionID}`); }
     } finally { setBusy(false); }
   };
   const locationReady = location === "current" || !!worktreePath && !!branch;
@@ -88,6 +96,7 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
     {selected?.binding && current?.binding && bindingKey(selected.binding) !== bindingKey(current.binding) && <p className="error-box" role="alert">启动环境的绑定已变化。<Button size="sm" variant="outline" onClick={() => onSelect(current)}>选择当前环境</Button></p>}
     {!directoryMatches && <p className="error-box" role="alert">所选项目目录的环境绑定不可用，请重新选择项目目录或编辑项目。</p>}
     {error && <p className="error-box" role="alert">{error}</p>}
+    <LaunchRecovery scope={scope} runners={runners} onOpen={onStarted} />
     {runner?.binding && <DirectoryPicker binding={runner.binding} path={cwd || "/"} open={browsing} onOpenChange={setBrowsing} onSelect={(path) => { setCwd(path); setDirectoryID(""); }} />}
   </div>;
 }

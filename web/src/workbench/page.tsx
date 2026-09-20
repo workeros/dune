@@ -17,8 +17,8 @@ import "./workbench.css";
 const ACPPane = lazy(() => import("../components/acp").then((module) => ({ default: module.ACPPane })));
 const TerminalPane = lazy(() => import("../components/terminal").then((module) => ({ default: module.TerminalPane })));
 
-export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onSelectRunner, profileVersion, onManageProfiles }: {
-  runners: Runner[]; runnersLoading: boolean; selectedRunner?: Runner; onSelectRunner: (runner: Runner) => void; profileVersion: number; onManageProfiles: () => void;
+export function ParallelWorkbench({ accountID, runners, runnersLoading, selectedRunner, onSelectRunner, profileVersion, onManageProfiles }: {
+  accountID: string; runners: Runner[]; runnersLoading: boolean; selectedRunner?: Runner; onSelectRunner: (runner: Runner) => void; profileVersion: number; onManageProfiles: () => void;
 }) {
   const prefix = "/api/v1", saved = useView(prefix), directory = useAgents(runners), projects = useProjects(prefix);
   const [projectID, setProjectID] = useState(""), [editing, setEditing] = useState<Project | "new">(), [profiles, setProfiles] = useState<ProfileRecord[]>([]);
@@ -76,7 +76,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     {saved.error && <div className="error-box mx-3" role="alert">{saved.error}<Button variant="outline" size="sm" onClick={() => void saved.reload()}>加载已保存布局</Button></div>}
     {(error || projects.error) && <p className="error-box mx-3" role="alert">{error || projects.error}</p>}
     <ACPSubmissionRecovery prefix={prefix} />
-    <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime) => { const agent = directory.add(runner, runtime); if (agent) open(agent); }} />
+    <StartAgent scope={{ accountID, prefix }} runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime) => { const agent = directory.add(runner, runtime); if (agent) open(agent); }} />
     <div className="parallel-body"><aside className="agent-navigation">
       <div className="nav-heading"><h2>项目</h2><Button size="sm" variant="ghost" onClick={() => setEditing("new")}>新建项目</Button></div>
       <nav aria-label="项目列表"><button className={!projectID ? "selected" : ""} onClick={() => setProjectID("")}>全部项目</button>{projects.projects.map((item) => <div className="project-nav-row" key={item.id}><button className={projectID === item.id ? "selected" : ""} title={item.name} onClick={() => setProjectID(item.id)}>{item.name}</button><Button size="sm" variant="ghost" aria-label={`编辑项目 ${item.name}`} onClick={() => setEditing(item)}>编辑</Button></div>)}</nav>

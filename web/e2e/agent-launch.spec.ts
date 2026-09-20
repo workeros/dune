@@ -61,3 +61,68 @@ test("attaches a confirmed Runtime after MCP configuration failure without start
   await expect(page.getByRole("alert").filter({ hasText: "Agent 已启动" })).toBeVisible();
   expect(state.starts).toBe(1);
 });
+
+test("two lost launch responses survive refresh and query their original keys without replay", async ({ page }, testInfo) => {
+  const state = workbenchState(); state.launchFailure = "lost";
+  await mockWorkbench(page, state); await page.goto("/");
+  for (let count = 1; count <= 2; count++) {
+    await page.getByRole("button", { name: "普通终端", exact: true }).click();
+    await expect.poll(() => state.starts).toBe(count);
+    await expect(page.getByRole("button", { name: "普通终端", exact: true })).toBeEnabled();
+  }
+  const ids = state.launchRequests.map((request) => request.submission_id);
+  expect(new Set(ids).size).toBe(2);
+  await page.reload();
+  const recovery = page.getByLabel("启动恢复记录");
+  await recovery.locator("summary").click();
+  await expect(recovery.getByText("接纳未确认", { exact: true })).toHaveCount(2);
+  await expect(page.locator(".agent-pane")).toHaveCount(0);
+  for (const id of ids) {
+    const row = recovery.locator("div.border-b").filter({ has: page.locator(`code[title="${id}"]`) });
+    await row.getByRole("button", { name: "查询原启动" }).click();
+    await expect(row.getByText("会话已启动", { exact: true })).toBeVisible();
+  }
+  expect(state.launchQueries).toEqual(ids.map((submission_id) => ({ submission_id, binding: state.runners[0].binding })));
+  expect(state.starts).toBe(2);
+  await expect(page.locator(".agent-pane")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("launch-recovery-wide.png") });
+  await page.setViewportSize({ width: 600, height: 1000 });
+  await page.screenshot({ path: testInfo.outputPath("launch-recovery-narrow.png") });
+  await recovery.getByRole("button", { name: "打开原会话" }).first().click();
+  await expect(page.locator(".agent-pane")).toHaveCount(1);
+  expect(state.starts).toBe(2);
+  await recovery.getByRole("button", { name: "移除本地记录" }).first().click();
+  await expect(recovery.getByRole("button", { name: "查询原启动" })).toHaveCount(1);
+  expect(state.runtimes.one.filter((runtime) => runtime.id.startsWith("new-"))).toHaveLength(2);
+});
+
+test("storage failure blocks launch before any request", async ({ page }) => {
+  const state = workbenchState();
+  await mockWorkbench(page, state); await page.goto("/");
+  await page.evaluate(() => { Storage.prototype.setItem = () => { throw new Error("storage unavailable"); }; });
+  await page.getByRole("button", { name: "普通终端", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "storage unavailable" })).toBeVisible();
+  expect(state.starts).toBe(0);
+});
+
+test("changed bindings and another login cannot recover into a replacement target", async ({ page }) => {
+  const state = workbenchState(); state.launchFailure = "lost";
+  await mockWorkbench(page, state); await page.goto("/");
+  await page.getByRole("button", { name: "普通终端", exact: true }).click();
+  await expect.poll(() => state.starts).toBe(1);
+  await expect(page.getByRole("button", { name: "普通终端", exact: true })).toBeEnabled();
+  const original = { ...state.runners[0].binding! };
+  state.runners[0].binding!.revision++;
+  await page.reload();
+  const recovery = page.getByLabel("启动恢复记录");
+  await recovery.locator("summary").click();
+  await recovery.getByRole("button", { name: "查询原启动" }).click();
+  await expect(recovery.getByRole("alert")).toContainText("环境绑定已变化");
+  expect(state.launchQueries[0].binding).toEqual(original);
+  await expect(recovery.getByRole("button", { name: "打开原会话" })).toHaveCount(0);
+  state.accountID = "another";
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "并行工作台" })).toBeVisible();
+  await expect(page.getByLabel("启动恢复记录")).toHaveCount(0);
+  expect(state.starts).toBe(1);
+});

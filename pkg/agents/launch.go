@@ -54,6 +54,14 @@ type LaunchResult struct {
 
 type Launcher interface {
 	Start(context.Context, Scope, StartRequest) (LaunchResult, error)
+	QueryLaunch(context.Context, Scope, LaunchQuery) (api.SubmissionReceipt, error)
+}
+
+// LaunchQuery needs only the caller-saved identity. It never resolves another
+// Profile revision, starts setup, configures MCP or opens an ACP session.
+type LaunchQuery struct {
+	SubmissionID string         `json:"submission_id"`
+	Binding      runner.Binding `json:"binding"`
 }
 
 // EnvironmentResolver applies the host's existing Environment Profile defaults

@@ -79,3 +79,20 @@ func (s *Server) openAgentSession(w http.ResponseWriter, r *http.Request) {
 	result, err := s.options.AgentNativeSessions.OpenSession(r.Context(), agents.Scope{Principal: user, OwnerID: owner}, request)
 	writeAgentResult(w, result, err)
 }
+
+func (s *Server) queryAgentLaunch(w http.ResponseWriter, r *http.Request) {
+	user, owner, ok := s.workbenchOwner(w, r, "workspace.read")
+	if !ok {
+		return
+	}
+	var request agents.LaunchQuery
+	if !readJSON(w, r, &request) {
+		return
+	}
+	if s.options.AgentLauncher == nil {
+		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "Agent launcher is not configured")
+		return
+	}
+	result, err := s.options.AgentLauncher.QueryLaunch(r.Context(), agents.Scope{Principal: user, OwnerID: owner}, request)
+	writeAgentResult(w, result, err)
+}
