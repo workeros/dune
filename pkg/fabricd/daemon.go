@@ -121,6 +121,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		return
 	}
 	switch m.Operation {
+	case "submission.acp":
+		d.submitACP(s, m, target)
+		return
 	case "submission.get":
 		d.querySubmission(s, m, target)
 		return

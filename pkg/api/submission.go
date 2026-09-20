@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode"
@@ -92,6 +93,15 @@ type SubmissionReceipt struct {
 	Runtime      *Runtime            `json:"runtime,omitempty"`
 	Stage        string              `json:"stage,omitempty"`
 	ErrorCode    string              `json:"error_code,omitempty"`
+}
+
+// SubmissionRequest carries one frozen business request. Operation selects the
+// existing business vocabulary; the submission envelope never grants authority
+// to an operation that the current authenticated caller could not perform.
+type SubmissionRequest struct {
+	SubmissionKey
+	Operation string          `json:"operation"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 // SubmissionError retains the query key even for local cancellation or an EOF

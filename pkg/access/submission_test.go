@@ -7,6 +7,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
 func TestSubmissionQueriesAuthorizeExactScopeWithoutActiveRuntime(t *testing.T) {
@@ -52,5 +53,25 @@ func TestSubmissionQueriesAuthorizeExactScopeWithoutActiveRuntime(t *testing.T) 
 	revoked.Store(true)
 	if _, err := client.QuerySubmission(ctx, key); err == nil {
 		t.Fatal("revoked connection read submission evidence")
+	}
+}
+
+func TestSubmissionEnvelopeDescribesActualBusinessAction(t *testing.T) {
+	scope := testScope()
+	key := api.SubmissionKey{SubmissionID: "caller-id", Target: api.SubmissionTarget{
+		OwnerID: scope.OwnerID, RunnerID: scope.Binding.RunnerID, FabricID: scope.Binding.FabricID,
+		MachineID: scope.Binding.MachineID, BindingRevision: scope.Binding.Revision,
+		RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1,
+	}}
+	request := api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(api.ACPAction{Action: "load", Cwd: "/allowed"})}
+	message := &pb.Message{Kind: "request", RequestId: "transport", Operation: "submission.acp", Target: key.Target.MachineID, RuntimeId: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1, Payload: api.Payload(request)}
+	description, err := Describe(scope, message)
+	if err != nil || description.Operation != "acp.action" || description.Suboperation != "load" || description.Resource.Directory != "/allowed" {
+		t.Fatal("envelope hid business policy inputs", description, err)
+	}
+	request.Target.OwnerID = "forged-owner"
+	message.Payload = api.Payload(request)
+	if _, err := Describe(scope, message); err == nil {
+		t.Fatal("submission key escaped owner scope")
 	}
 }

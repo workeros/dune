@@ -76,3 +76,22 @@ engine state lock pass. `go vet ./pkg/api ./internal/sessionregistry ./pkg/clien
 ./pkg/access ./pkg/fabricd` passes.
 The full `go test -race ./pkg/client ./pkg/access ./pkg/fabricd -count=1
 -timeout=180s` also passes (including existing authorization, ACP and PTY tests).
+
+Slice 2 write path: `Client.Submit` carries a caller-owned Runtime key through
+Gateway authorization to the existing ACP queue. The queue persists admission
+before dispatch, including two keys sharing an in-flight load operation. Exact
+duplicates return the original operation, changed requests conflict, and durable
+validation rejection returns `not_accepted` with its original structured code.
+SDK errors retain the original key and any validated admission receipt.
+
+`go test -race ./pkg/api ./pkg/client ./pkg/fabricd ./pkg/access -count=1
+-timeout=180s` passes. `go test ./tests -run
+'^Test(ManagedSubmissionAdmissionThroughGateway|SubmissionQueryAcrossFabricdRestart)$'
+-count=1 -timeout=100s -v` passes. The mock RPC log contains exactly one new and
+one prompt after duplicate and rejected submissions. Unit coverage verifies
+shared loads and that failed admission persistence dispatches no Agent RPC.
+
+The feature branch still has the old consumer entry points pending migration;
+this is an intermediate slice, not a compatibility commitment. Agent lifetime
+is still owned by fabricd at this point. Protected controls, launch admission,
+independent host ownership, and L01–L55 process acceptance remain outstanding.

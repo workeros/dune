@@ -28,13 +28,20 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	decode := func(out any) error { return json.Unmarshal(m.Payload, out) }
 	var err error
 	switch m.Operation {
+	case "submission.acp":
+		var submission api.SubmissionRequest
+		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || submission.Operation != "acp.action" || !matchesSubmissionScope(scope, submission.Target, m) {
+			return r, ErrDenied
+		}
+		// Authorize the actual business action, never a broad envelope grant.
+		inner := &pb.Message{Kind: m.Kind, RequestId: m.RequestId, Operation: submission.Operation, Target: m.Target, RuntimeId: m.RuntimeId, RuntimeIncarnation: m.RuntimeIncarnation, RuntimeGeneration: m.RuntimeGeneration, Payload: submission.Payload}
+		return Describe(scope, inner)
 	case "submission.get":
 		var key api.SubmissionKey
 		if err = decode(&key); err != nil || key.Validate() != nil {
 			return r, ErrDenied
 		}
-		target := key.Target
-		if target.OwnerID != scope.OwnerID || target.RunnerID != scope.Binding.RunnerID || target.FabricID != scope.Binding.FabricID || target.MachineID != scope.Binding.MachineID || target.BindingRevision != scope.Binding.Revision || target.RuntimeID != m.RuntimeId || target.RuntimeIncarnation != m.RuntimeIncarnation || target.RuntimeGeneration != m.RuntimeGeneration {
+		if !matchesSubmissionScope(scope, key.Target, m) {
 			return r, ErrDenied
 		}
 	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
@@ -184,6 +191,10 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		}
 	}
 	return r, nil
+}
+
+func matchesSubmissionScope(scope Scope, target api.SubmissionTarget, m *pb.Message) bool {
+	return target.OwnerID == scope.OwnerID && target.RunnerID == scope.Binding.RunnerID && target.FabricID == scope.Binding.FabricID && target.MachineID == scope.Binding.MachineID && target.BindingRevision == scope.Binding.Revision && target.RuntimeID == m.RuntimeId && target.RuntimeIncarnation == m.RuntimeIncarnation && target.RuntimeGeneration == m.RuntimeGeneration
 }
 
 func continuation(base Request, runtime RuntimeIdentity, m *pb.Message) (Request, error) {

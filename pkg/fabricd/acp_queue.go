@@ -26,6 +26,13 @@ type acpQueuedAction struct {
 // Called with the controller lock: validation, admission and order are shared
 // by every Web, IM and MCP caller, regardless of the host Pod they reached.
 func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, error) {
+	return a.enqueueWithAdmissionLocked(req, nil)
+}
+
+// admit runs under the same lock as validation and queue publication, before
+// an accepted action can be dispatched to Agent stdin. The persistent receipt
+// must point to the actual shared operation, including an in-flight load merge.
+func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func(api.AgentOperation) error) (api.AgentOperation, error) {
 	if !a.state.Ready {
 		return api.AgentOperation{}, fmt.Errorf("ACP is not ready")
 	}
@@ -73,6 +80,11 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 		a.operations.mu.Lock()
 		status := a.operations.records[previous.ref].status
 		a.operations.mu.Unlock()
+		if admit != nil {
+			if err := admit(status); err != nil {
+				return api.AgentOperation{}, err
+			}
+		}
 		return status, nil
 	}
 	if len(a.queue) >= maxACPPending {
@@ -81,6 +93,14 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 	status, err := a.operations.create()
 	if err != nil {
 		return status, err
+	}
+	if admit != nil {
+		if err := admit(status); err != nil {
+			// No RPC was dispatched. Retain this terminal fact in case a
+			// registry commit succeeded but its acknowledgement was lost.
+			a.operations.set(status.Ref, "failed", "", "submission admission was not confirmed; request was not sent")
+			return api.AgentOperation{}, err
+		}
 	}
 	a.queue = append(a.queue, &acpQueuedAction{request: req, ref: status.Ref})
 	if a.active == nil && !a.controlling {
