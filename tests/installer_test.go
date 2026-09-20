@@ -109,6 +109,9 @@ func (m *installManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if runtime.GOOS == "darwin" {
 			var data []byte
 			data, err = os.ReadFile(filepath.Join(m.home, "Library/LaunchAgents/com.dune."+m.name+".plist"))
+			if err == nil && (bytes.Count(data, []byte(`<string>/dev/null</string>`)) != 2 || !bytes.Contains(data, []byte(`<string>--service-log-dir</string>`))) {
+				m.t.Error("service lacks bounded diagnostics or retains an unbounded output file")
+			}
 			var plist struct {
 				Arguments []string `xml:"dict>array>string"`
 				Values    []string `xml:"dict>dict>string"`
@@ -123,6 +126,9 @@ func (m *installManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			var data []byte
 			data, err = os.ReadFile(filepath.Join(m.home, ".config/systemd/user", m.name+".service"))
+			if err == nil && (!bytes.Contains(data, []byte("StandardOutput=null\nStandardError=null")) || !bytes.Contains(data, []byte("--service-log-dir"))) {
+				m.t.Error("service lacks bounded diagnostics or retains unbounded output")
+			}
 			for _, line := range strings.Split(string(data), "\n") {
 				if strings.HasPrefix(line, "ExecStart=") {
 					for _, quoted := range regexp.MustCompile(`"(?:[^"\\]|\\.)*"|[^\s"]+`).FindAllString(strings.TrimPrefix(line, "ExecStart="), -1) {
@@ -395,12 +401,17 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 		if version == "fixture-new" {
 			stamp(version)
 		} else {
-			must(t, os.WriteFile(filepath.Join(f.source, "dune"), oldProgram, 0700))
+			// Publish another executable inode, as a downloaded release would.
+			// Overwriting a previously executed Mach-O inode can invalidate macOS
+			// cached code-signing pages and kill the rollback CLI before it runs.
+			rollback := filepath.Join(f.source, "rollback-program")
+			must(t, os.WriteFile(rollback, oldProgram, 0700))
+			must(t, os.Rename(rollback, filepath.Join(f.source, "dune")))
 		}
 		client.Close()
 		output, err := f.command("upgrade").CombinedOutput()
 		if err != nil {
-			t.Fatal(string(output), err)
+			t.Fatal(version, string(output), err)
 		}
 		<-f.manager.starts
 		client = f.dial()

@@ -24,6 +24,20 @@ func privateLog(t *testing.T) (*Log, string) {
 	return l, filepath.Join(dir, "events.jsonl")
 }
 
+func TestLifecycleLogRejectsConcurrentWriters(t *testing.T) {
+	l, path := privateLog(t)
+	if second, err := Open(filepath.Dir(path), filepath.Base(path)); err == nil {
+		second.Close()
+		t.Fatal("two writers could exceed the shared log bound")
+	}
+	l.Close()
+	second, err := Open(filepath.Dir(path), filepath.Base(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.Close()
+}
+
 func TestLifecycleLogBoundsDiskQueueAndRejectsBodies(t *testing.T) {
 	l, path := privateLog(t)
 	for i := range 1500 {

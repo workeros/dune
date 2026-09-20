@@ -1086,3 +1086,24 @@ explicit persisted Owner checks, duneagent/feishu race suites passed again
 test loses the startup response, repeatedly reads the original receipt without
 new/setup calls, then rejects a changed binding. Host and IM vet/diff checks
 pass. This does not claim IM service restarts or real platform delivery acceptance.
+
+## Slice 28 — bounded installed-service startup diagnostics
+
+Generated launchd/systemd services now use a separately created private service
+diagnostic directory, recording invocation and normal exit/failure in a 64 KiB
+JSONL window before configuration is loaded. Their stdout/stderr go to the null
+device, so repeated configuration failures cannot grow an unbounded flat file.
+Foreground errors remain available for diagnosis; raw service panic/error bodies
+are not retained. Lifecycle files reject concurrent writers with a nonblocking
+file lock, preserving their hard bound even during overlapping invocations.
+
+The first installer regression correctly rejected using the possibly nonprivate
+configuration parent directly. The implementation now creates/checks a distinct
+0700 directory before service stop, without weakening privacy checks. A subsequent
+rollback fixture hit macOS executable-page invalidation when rewriting a used
+Mach-O inode; it now publishes the original bytes through an atomic rename,
+matching normal release publication. No product compatibility workaround was
+added. The corrected mixed-build switch/rollback case passes in 17.3 seconds;
+the other two installer cases passed in the preceding 33.8-second run. Startup
+tests drive 600 failures through the CLI and verify bounded, body-free diagnostics;
+concurrent-writer and lifecycle race tests pass. Full regression follows.

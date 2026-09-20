@@ -71,6 +71,10 @@ func Open(directory, name string) (*Log, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lifecycle log already has a writer: %w", err)
+	}
 	info, err := f.Stat()
 	if err == nil {
 		owner, ok := info.Sys().(*syscall.Stat_t)

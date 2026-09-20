@@ -44,3 +44,19 @@ token, prompt, tool-body or raw-permission field. Gap logging records a boundary
 observation; the latest output/model state supplies current retained positions.
 Version and diagnostic reads perform no Agent control RPC and cannot adopt or
 clean up an unregistered artifact.
+
+Installed services additionally use `<config_directory>/<service_name>-diagnostics/service-events.jsonl`
+in a separately created 0700 directory, with the same 64 KiB bound, private-file checks, single-writer lock and reset
+markers. It records `service_starting` before reading configuration and
+`service_exit` with `FAILED` or `STOPPED` on a normal error/return. Repeated startup
+failure cannot grow a flat log indefinitely. A SIGKILL or panic may leave only
+the start record; absence of an exit event is not an exit-status claim.
+
+Generated launchd/systemd definitions route stdout/stderr to the null device;
+continuous connection/host diagnostics use the bounded lifecycle files. Raw
+startup error strings and panic dumps are not retained by the installed service.
+Use service-manager status for the process exit status. For a startup problem,
+after confirming the connector is stopped, foreground `dune --config FILE fabricd`
+prints the full error to the invoking terminal. Logs redirected by an operator
+or external service-manager implementation have that operator's retention policy.
+No existing operator log files are automatically deleted or adopted.

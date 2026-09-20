@@ -15,6 +15,7 @@ import (
 	"github.com/aiomni/dune/internal/daemon"
 	internalgateway "github.com/aiomni/dune/internal/gateway"
 	"github.com/aiomni/dune/internal/install"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/fabricd"
@@ -31,15 +32,34 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (runErr error) {
 	flags := flag.NewFlagSet("dune", flag.ContinueOnError)
 	configPath := flags.String("config", config.DefaultPath(), "machine or Web listener configuration")
+	serviceLogDir := flags.String("service-log-dir", "", "private bounded service diagnostics directory (fabricd only)")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return err
 	}
 	args := flags.Args()
 	if len(args) == 0 {
 		return fmt.Errorf("a Web or connector command is required; use dune help")
+	}
+	if *serviceLogDir != "" {
+		if args[0] != "fabricd" {
+			return fmt.Errorf("service diagnostics apply only to fabricd")
+		}
+		log, err := lifecycle.Open(*serviceLogDir, "service-events.jsonl")
+		if err != nil {
+			return err
+		}
+		log.Record(lifecycle.Entry{Kind: "service_starting"})
+		defer func() {
+			code := "STOPPED"
+			if runErr != nil {
+				code = "FAILED"
+			}
+			log.Record(lifecycle.Entry{Kind: "service_exit", Code: code})
+			log.Close()
+		}()
 	}
 	if args[0] == "version" {
 		return runVersion(*configPath, args[1:])

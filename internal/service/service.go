@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/aiomni/dune/internal/launchgate"
 )
 
 func Run(ctx context.Context, action, config, name, readyFile, readyNonce string) error {
@@ -24,6 +26,15 @@ func Run(ctx context.Context, action, config, name, readyFile, readyNonce string
 	path, err := filepath.Abs(config)
 	if err != nil {
 		return err
+	}
+	logDir := filepath.Join(filepath.Dir(path), name+"-diagnostics")
+	if action == "install" && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
+		if err := os.Mkdir(logDir, 0700); err != nil && !os.IsExist(err) {
+			return err
+		}
+		if err := launchgate.CheckDirectory(logDir); err != nil {
+			return err
+		}
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -59,7 +70,7 @@ func Run(ctx context.Context, action, config, name, readyFile, readyNonce string
 					return err
 				}
 			}
-			body := "[Unit]\nDescription=Dune development machine connector\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart=" + quote(exe) + " --config " + quote(path) + " fabricd" + extra + "\nEnvironment=" + quote("PATH="+os.Getenv("PATH")) + "\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n"
+			body := "[Unit]\nDescription=Dune development machine connector\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart=" + quote(exe) + " --service-log-dir " + quote(logDir) + " --config " + quote(path) + " fabricd" + extra + "\nEnvironment=" + quote("PATH="+os.Getenv("PATH")) + "\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=15\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=default.target\n"
 			if err = os.WriteFile(filepath.Join(dir, unit), []byte(body), 0600); err != nil {
 				return err
 			}
@@ -84,7 +95,7 @@ func Run(ctx context.Context, action, config, name, readyFile, readyNonce string
 				return err
 			}
 			esc := func(s string) string { var b strings.Builder; _ = xml.EscapeText(&b, []byte(s)); return b.String() }
-			log := filepath.Join(filepath.Dir(path), name+".log")
+			log := os.DevNull
 			extra := ""
 			if readyFile != "" {
 				extra = `<string>--ready-file</string><string>` + esc(readyFile) + `</string><string>--ready-nonce</string><string>` + esc(readyNonce) + `</string>`
@@ -93,7 +104,7 @@ func Run(ctx context.Context, action, config, name, readyFile, readyNonce string
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			body := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + esc(label) + `</string><key>ProgramArguments</key><array><string>` + esc(exe) + `</string><string>--config</string><string>` + esc(path) + `</string><string>fabricd</string>` + extra + `</array><key>EnvironmentVariables</key><dict><key>PATH</key><string>` + esc(os.Getenv("PATH")) + `</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>AbandonProcessGroup</key><true/><key>StandardOutPath</key><string>` + esc(log) + `</string><key>StandardErrorPath</key><string>` + esc(log) + `</string></dict></plist>`
+			body := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + esc(label) + `</string><key>ProgramArguments</key><array><string>` + esc(exe) + `</string><string>--service-log-dir</string><string>` + esc(logDir) + `</string><string>--config</string><string>` + esc(path) + `</string><string>fabricd</string>` + extra + `</array><key>EnvironmentVariables</key><dict><key>PATH</key><string>` + esc(os.Getenv("PATH")) + `</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>AbandonProcessGroup</key><true/><key>StandardOutPath</key><string>` + esc(log) + `</string><key>StandardErrorPath</key><string>` + esc(log) + `</string></dict></plist>`
 			if err = os.WriteFile(plist, []byte(body), 0600); err != nil {
 				return err
 			}
