@@ -197,6 +197,10 @@ func (a *acpController) receive(data []byte) {
 			return
 		}
 		a.mu.Lock()
+		if a.reconnecting {
+			a.mu.Unlock()
+			return
+		}
 		ch := a.pending[id]
 		reply := acpReply{Result: m.Result}
 		if m.Error != nil {
@@ -230,6 +234,12 @@ func (a *acpController) receive(data []byte) {
 			} `json:"options"`
 		}
 		a.mu.Lock()
+		// Admission at the reader can precede an explicit open. Recheck under
+		// the state lock so an in-flight old permission cannot enter that model.
+		if a.reconnecting {
+			a.mu.Unlock()
+			return
+		}
 		permissionBytes := len(m.Params)
 		for _, p := range a.permissions {
 			permissionBytes += len(p.Params)

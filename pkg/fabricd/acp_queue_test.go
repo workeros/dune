@@ -485,3 +485,38 @@ func TestACPRejectsCallbacksFromOldConnectionWithSameNativeID(t *testing.T) {
 		t.Fatal("fresh replay was not retained")
 	}
 }
+
+func TestACPInFlightCallbacksCannotCrossLoadBoundary(t *testing.T) {
+	for _, kind := range []string{"permission", "response"} {
+		t.Run(kind, func(t *testing.T) {
+			a, _ := queueFixture(t)
+			a.mu.Lock()
+			a.conversation.begin(api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/tmp"})
+			a.reconnecting = true
+			a.state.Busy = "load"
+			reply := make(chan acpReply, 1)
+			a.pending["old-prompt"], a.methods["old-prompt"] = reply, "session/prompt"
+			a.mu.Unlock()
+			before := a.snapshot()
+			// receive runs after the connection check in acceptACPLineFrom. An
+			// action can begin a new model while that admitted line is parsed.
+			// inputMu prevents a fresh connection from starting until it returns.
+			message := map[string]any{"jsonrpc": "2.0", "id": "old-permission", "method": "session/request_permission", "params": map[string]any{
+				"sessionId": "session-a", "options": []map[string]string{{"optionId": "allow", "kind": "allow_once", "name": "Allow"}},
+			}}
+			if kind == "response" {
+				message = map[string]any{"jsonrpc": "2.0", "id": "old-prompt", "result": map[string]string{"stopReason": "end_turn"}}
+			}
+			a.receive(api.Payload(message))
+			after := a.snapshot()
+			if len(after.Permissions) != 0 || after.Revision != before.Revision || after.Conversation.Revision != before.Conversation.Revision {
+				t.Fatalf("in-flight old callback changed new state: before=%+v after=%+v", before, after)
+			}
+			select {
+			case <-reply:
+				t.Fatal("draining connection delivered a reply after the open boundary")
+			default:
+			}
+		})
+	}
+}

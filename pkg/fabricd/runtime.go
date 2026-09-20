@@ -413,8 +413,8 @@ func (r *runtime) acceptACPLineFrom(b []byte, connection *process.Process) bool 
 		}
 	}
 	if e := validateRPC(b); e != nil {
-		r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: e.Error()})
-		r.stop()
+		// The conversation may have changed while the line was validated.
+		r.failACPReadFrom(connection, e)
 		return false
 	}
 	if r.acp != nil {

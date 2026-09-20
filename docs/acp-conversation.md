@@ -100,6 +100,9 @@ controller; old connection callbacks cannot update the new model. Oversized
 output and read errors also check connection ownership under the controller
 lock before changing completeness, publishing a notice or stopping the Runtime.
 This includes the interval where a new model is visible while old output drains.
+Permission requests and RPC replies already admitted by the input reader recheck
+that boundary under the state lock after parsing. Malformed lines recheck it
+before stopping the Runtime as well.
 The Agent must support native load across processes. A failure to establish the
 new connection fails the open without replaying a prompt. Normal read/state/
 subscribe operations never use this path. The configured Runtime timeout is
