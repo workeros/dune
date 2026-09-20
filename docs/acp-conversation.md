@@ -38,8 +38,8 @@ default to 50 and cap at 200; explicit zero is invalid. At most eight conversati
 read/get responses are in flight per engine. Capacity eviction removes a
 contiguous insertion-order prefix and does not depend on readership.
 
-The implementation is being delivered in vertical slices. Consumer model
-migration and full acceptance are subsequent slices; this document is not a completion
+The implementation is being delivered in vertical slices. Full acceptance
+and resource measurements are the remaining delivery work; this document is not a completion
 report for the full conversation requirements.
 
 Validation of the initial slice:
@@ -116,3 +116,17 @@ pending interval. Slow raw diagnostics close with `SLOW_CONSUMER`; even load
 replay never waits for a subscriber. Model changes caused by global eviction
 also notify the affected Runtime. A latest-page read only satisfies IDs present
 in that response; it cannot clear updates to previously loaded older entries.
+
+Dune Web now renders retained model entries. It reads a recent page after an
+ordinary model subscription, fetches earlier pages on demand, and refreshes
+changed entries by ID. Each entry is merged by its own decimal-string revision;
+older pages can add unseen entries, but cannot overwrite newer values or revive
+entries below the known eviction boundary. Responses from an obsolete request
+generation cannot select an older conversation. A recent-page response never
+clears a pending update to an older loaded tool.
+
+On reconnect the Web view intentionally starts from a fresh recent window. It
+does not claim to have synchronized unrequested older pages. Its cache is bounded
+to 4 MiB / 1,000 entries, separate from the server budget. Explicit native history
+loading remains a control action. ACP Stream opens a separate diagnostic stream
+only while visible; raw chunks never append to the model-based chat view.

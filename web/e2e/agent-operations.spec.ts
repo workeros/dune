@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { mockWorkbench, workbenchState } from "./workbench-fixture";
+import { mockWorkbench, workbenchState, workbenchACPState } from "./workbench-fixture";
 
 test("busy ACP queues a task and reads only that operation across idle and output gaps", async ({ page }, testInfo) => {
  const state = workbenchState(); await mockWorkbench(page, state);
  let send: (value: unknown) => void = () => undefined;
- const acp = { ready: true, revision: 1, busy: "prompt", pending: 0, session_id: "native", cwd: "/workspace", can_load: true, can_list: false, permissions: [] };
+ const acp = { ...workbenchACPState("one-acp"), ready: true, revision: 1, busy: "prompt", pending: 0, session_id: "native", cwd: "/workspace", can_load: true, can_list: false, permissions: [] };
+ state.acpStates["one-acp"] = acp;
  await page.routeWebSocket(/one-acp\/events/, (socket) => { send = (value) => socket.send(JSON.stringify(value)); send({ type: "acp_state", payload: acp }); });
  const submissions: any[] = [], reads: any[] = [], waits: any[] = [];
  let operationState = "pending", expired = false;
@@ -25,7 +26,7 @@ test("busy ACP queues a task and reads only that operation across idle and outpu
  await page.getByLabel("发送给 Agent 的任务").fill("任务 B");
  await page.getByRole("button", { name: "加入队列", exact: true }).click();
  await expect(page.getByLabel("任务 1", { exact: true })).toContainText("排队中");
- expect(submissions).toEqual([{ agent_ref: "ref-one-acp", text: "任务 B", wait_ms: 0 }]);
+ expect(submissions).toEqual([{ agent_ref: "ref-one-acp", text: "任务 B", expected_conversation_id: "conversation-one-acp", wait_ms: 0 }]);
  acp.busy = ""; acp.revision++; send({ type: "acp_state", payload: acp });
  await expect.poll(() => waits.length).toBeGreaterThan(0);
  await expect(page.getByLabel("任务 1", { exact: true })).toContainText("排队中");
@@ -71,6 +72,6 @@ test("ACP native actions use shared references and unknown prompt receipts are r
  await expect(page.getByLabel("任务 3", { exact: true })).toContainText("结果未知");
  await expect(page.getByText(/已保留本次操作，可以继续查询/)).toBeVisible();
  await page.waitForTimeout(1200);
- expect(calls.map((call) => call.body)).toEqual([{ agent_ref: "ref-one-acp", action: "new", wait_ms: 0 }, { agent_ref: "ref-one-acp", action: "load", session_id: "saved-native", wait_ms: 0 }, { agent_ref: "ref-one-acp", text: "do once", wait_ms: 0 }]);
+ expect(calls.map((call) => call.body)).toEqual([{ agent_ref: "ref-one-acp", action: "new", wait_ms: 0 }, { agent_ref: "ref-one-acp", action: "load", session_id: "saved-native", wait_ms: 0 }, { agent_ref: "ref-one-acp", text: "do once", expected_conversation_id: "conversation-one-acp", wait_ms: 0 }]);
  expect(state.calls.filter((call) => call.operation === "acp.action")).toHaveLength(0);
 });

@@ -1,14 +1,22 @@
+import type { State } from "../src/components/acp-state";
 import type { Page } from "@playwright/test";
 import type { AgentRuntime, ProfileRecord, Runner } from "../src/lib/api";
 import { targetFor, type Project, type SavedView } from "../src/workbench/model";
 import type { LaunchRequest, LaunchResult } from "../src/workbench/launch";
+
+export function workbenchACPState(id: string): State {
+ return { ready: true, revision: 1, busy: "", session_id: "native", cwd: "/workspace", can_list: false, can_load: true, permissions: [], conversation: {
+  conversation_id: `conversation-${id}`, revision: "1", phase: "ready", origin: "new", open_outcome: "succeeded", open_error: null,
+  head_order: "0", retained_from_order: "1", retained_entry_count: 0, prefix_evicted: false, content_omitted: false, context_incomplete: false, native_history_coverage: "not_applicable",
+ } };
+}
 
 export function workbenchState() {
   const runners: Runner[] = ["one", "two"].map((id) => ({ id, name: `Runner ${id}`, online: true, kind: "attached", binding: { runner_id: id, machine_id: `machine-${id}`, fabric_id: "attached", revision: 1 } }));
   const runtimes: Record<string, AgentRuntime[]> = Object.fromEntries(runners.map((runner, index) => [runner.id, (["pty", "acp"] as const).map((adapter) => ({ id: `${runner.id}-${adapter}`, incarnation: `boot-${runner.id}`, generation: 1, adapter, state: "running", title: `${index ? "B" : "A"}-${adapter.toUpperCase()}`, working_directory: `/repo-${index ? "b" : "a"}`, activity: { state: "idle", source: adapter, epoch: "events", sequence: 2 } }))]));
   const projects: Project[] = runners.map((runner, index) => ({ id: `project-${index}`, revision: 1, name: `Project ${index ? "B" : "A"}`, directories: [{ id: `directory-${index}`, binding: runner.binding!, path: `/repo-${index ? "b" : "a"}` }] }));
   return {
-    runners, runtimes, projects, view: { id: "main", revision: 0, root: null } as SavedView,
+    runners, runtimes, projects, acpStates: Object.fromEntries(Object.values(runtimes).flat().filter((runtime) => runtime.adapter === "acp").map((runtime) => [runtime.id, workbenchACPState(runtime.id)])), view: { id: "main", revision: 0, root: null } as SavedView,
     inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
     connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>,
     profiles: [] as ProfileRecord[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "mcp",
@@ -20,7 +28,7 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
   await page.routeWebSocket(/\/api\/v1\/ws\/runners\//, (socket) => {
     const path = new URL(socket.url()).pathname;
     state.connections.push(path);
-    if (path.includes("-acp/")) socket.send(JSON.stringify({ type: "acp_state", payload: { ready: true, revision: 1, busy: "", session_id: "native", cwd: "/workspace", can_list: false, can_load: true, permissions: [] } }));
+    if (path.includes("-acp/")) socket.send(JSON.stringify({ type: "acp_state", payload: state.acpStates[path.split("/").at(-2)!] ?? workbenchACPState(path.split("/").at(-2)!) }));
     else socket.send(JSON.stringify({ type: "data", data: `ready ${path}\r\n` }));
     socket.onMessage((message) => state.inputs.push({ path, message: JSON.parse(message.toString()) }));
   });
@@ -76,6 +84,9 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
       if (body.operation === "git") return reply({ stdout: `diff from ${runner[1]} ${body.payload.directory}`, stderr: "", exit_code: 0, truncated: false });
       if (body.operation === "files") return reply({ items: [{ name: "README.md", is_dir: false }] });
       if (body.operation === "runtime.stop") { state.runtimes[runner[1]] = state.runtimes[runner[1]].filter((runtime) => runtime.id !== body.runtime.id); return reply({}); }
+      if (body.operation === "acp.state") return reply(state.acpStates[body.runtime.id] ?? workbenchACPState(body.runtime.id));
+      if (body.operation === "acp.conversation.read") return reply({ conversation: (state.acpStates[body.runtime.id] ?? workbenchACPState(body.runtime.id)).conversation, entries: [], through_order: "0", has_more: false, range_evicted: false });
+      if (body.operation === "acp.conversation.get") return reply({ conversation: (state.acpStates[body.runtime.id] ?? workbenchACPState(body.runtime.id)).conversation, entries: [], missing: [], unprocessed_entry_ids: [] });
       if (body.operation === "acp.action") return reply({ accepted: true });
       return reply({});
     }
