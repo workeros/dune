@@ -375,7 +375,7 @@ func TestInstallerReceiptGatesCleanupAndPTYTimeoutSurvivesUpgrade(t *testing.T) 
 	if capture.HistoryLines < 40 || !strings.Contains(capture.Content, "UPGRADE_HISTORY_79") {
 		t.Fatal("upgrade or timeout destroyed history", capture)
 	}
-	must(t, client.CallID(f.ctx, "runtime.forget", wire.ID(), struct{}{}, nil, &rt))
+	must(t, testForgetRuntime(client, f.ctx, rt))
 }
 
 func TestInstallerRejectsWrongReceiptAndPreservesOldPrograms(t *testing.T) {

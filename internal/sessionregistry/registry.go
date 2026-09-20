@@ -135,7 +135,7 @@ func (r *Registry) initialize(ctx context.Context) error {
 			group_generation INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'active',
 			runtime BLOB NOT NULL, registration BLOB NOT NULL, resources BLOB NOT NULL);
 		CREATE TABLE IF NOT EXISTS cleanup_jobs (
-			key TEXT PRIMARY KEY REFERENCES submission_keys(key), host BLOB NOT NULL,
+			key TEXT PRIMARY KEY REFERENCES submission_keys(key), host BLOB NOT NULL, local BLOB NOT NULL,
 			confirmed INTEGER NOT NULL DEFAULT 0, executor_term INTEGER NOT NULL DEFAULT 0)`)
 	if err != nil {
 		return err

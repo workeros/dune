@@ -40,13 +40,21 @@ func installationID(stateDir string) string {
 }
 
 func sessionSocket(reg sessionRegistration) (string, error) {
+	path, err := sessionSocketPath(reg)
+	if err != nil {
+		return "", err
+	}
+	if err := tmux.PrivateDir(filepath.Dir(path)); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func sessionSocketPath(reg sessionRegistration) (string, error) {
 	if reg.Target.Validate() != nil || reg.Target.RuntimeID != reg.Runtime.ID || reg.Target.RuntimeIncarnation != reg.Runtime.Incarnation || reg.Target.RuntimeGeneration != reg.Runtime.Generation || reg.Target.MachineID != reg.Machine || !wire.ValidID(reg.Instance) || !wire.ValidID(reg.Runtime.ID) || !wire.ValidID(reg.Runtime.Incarnation) || reg.Runtime.Generation != 1 || reg.Version != sessionProtocol || len(reg.Installation) != 64 || reg.Machine == "" {
 		return "", fmt.Errorf("invalid ACP host registration")
 	}
 	root := filepath.Join("/tmp", fmt.Sprintf("dune-acp-%d", os.Getuid()))
-	if err := tmux.PrivateDir(root); err != nil {
-		return "", err
-	}
 	key := installationID(reg.Installation + "/" + reg.Instance)
 	return filepath.Join(root, key[:32]), nil
 }

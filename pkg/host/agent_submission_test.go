@@ -78,4 +78,14 @@ func TestAgentSubmissionLookupUsesOriginalKeyAcrossNativeSessionChange(t *testin
 	if err != nil || observed.OperationRef != stopped.OperationRef || observed.Stage != "stopped" {
 		t.Fatal("original stop could not be queried", observed, err)
 	}
+	forget := agents.SubmissionRequest{SubmissionID: "saved-forget", AgentRef: launched.AgentRef, ACPAction: api.ACPAction{Action: "forget"}}
+	cleaned, err := service.Submit(t.Context(), f.agentScope(), forget)
+	if err != nil || cleaned.Stage != "completed" {
+		t.Fatal("original-reference cleanup failed", cleaned, err)
+	}
+	observed, err = service.QuerySubmission(t.Context(), f.agentScope(), agents.SubmissionQuery{SubmissionID: forget.SubmissionID, AgentRef: forget.AgentRef})
+	if err != nil || observed.Stage != "completed" || observed.OperationRef != cleaned.OperationRef {
+		t.Fatal("cleanup lost its original public query", observed, err)
+	}
+
 }

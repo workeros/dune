@@ -205,6 +205,9 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, options CreateOpti
 		if err := PrivateDir(r.nativeDir()); err != nil {
 			return nil, err
 		}
+		if err := r.markCleanupDirectory(r.nativeDir()); err != nil {
+			return nil, err
+		}
 		var err error
 		argv, env, err = agentintegration.Launch(r.nativeDir(), agentintegration.Binding{RuntimeID: meta.ID, Incarnation: meta.Incarnation, Agent: options.NativeAgent}, argv, env, options.RequireMCP)
 		if err != nil {
@@ -218,6 +221,9 @@ func (s *Server) Create(meta api.Runtime, argv, env []string, options CreateOpti
 			if r.native {
 				_ = os.RemoveAll(r.nativeDir())
 			}
+			return nil, err
+		}
+		if err := r.markCleanupDirectory(r.timeoutDir()); err != nil {
 			return nil, err
 		}
 		var err error

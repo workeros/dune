@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
-import { bindingKey, call, errorText, listAll, request, type ProfileRecord, type Runner } from "../lib/api";
+import { bindingKey, errorText, listAll, request, type ProfileRecord, type Runner } from "../lib/api";
 import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
 import { useView } from "./use-view";
 import { useAgents } from "./use-agents";
@@ -41,11 +41,10 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     if (!stopping) return;
     setStopBusy(true); setError("");
     try {
-      if (stopping.runtime.state === "running") {
-        const submissionID = saveACPSubmission(prefix, stopping.target.binding, stopping.runtime, stopping.ref ?? "", "stop");
-        const receipt = await request(`${prefix}/agents/submit`, { method: "POST", body: JSON.stringify({ submission_id: submissionID, agent_ref: stopping.ref, action: "stop" }) });
-        recordACPReceipt(submissionID, receipt);
-      } else { await call(stopping.target.binding, "runtime.forget", {}, stopping.runtime); }
+      const action = stopping.runtime.state === "running" ? "stop" : "forget";
+      const submissionID = saveACPSubmission(prefix, stopping.target.binding, stopping.runtime, stopping.ref ?? "", action);
+      const receipt = await request(`${prefix}/agents/submit`, { method: "POST", body: JSON.stringify({ submission_id: submissionID, agent_ref: stopping.ref, action }) });
+      recordACPReceipt(submissionID, receipt);
       setStopping(undefined); await directory.refresh();
     }
     catch (cause) { setError(errorText(cause)); } finally { setStopBusy(false); }
@@ -67,7 +66,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
       <button className="pane-title" onClick={() => focus(leaf.id)} title={`${projectName} · ${runner?.name ?? leaf.pane.target.binding.runner_id}`}><strong>{agent?.runtime.title ?? leaf.pane.target.runtime.adapter.toUpperCase()}</strong><small>{projectName} · {runner?.name ?? "原环境"}</small></button>
       <span className="pane-status">{agent ? activityLabel(agent.runtime) : "待核验"} · {leaf.pane.target.runtime.adapter.toUpperCase()}</span>
       <Button size="sm" variant="ghost" aria-label={`固定审阅 ${agent?.runtime.title ?? leaf.id}`} onClick={() => { saved.change((old) => ({ ...old, review_pane: old.review_pane === leaf.id ? undefined : leaf.id })); setReview((old) => old || "git"); }}>{saved.view.review_pane === leaf.id ? "取消固定" : "固定审阅"}</Button>
-      {available && <Button size="sm" variant="ghost" aria-label={`${agent.runtime.state === "running" ? "停止" : "删除"} ${agent.runtime.title ?? leaf.id}`} onClick={() => setStopping(agent)}>{agent.runtime.state === "running" ? "停止" : "删除"}</Button>}
+      {bindingValid && runner.online && agent && ["running", "exited", "lost"].includes(agent.runtime.state) && <Button size="sm" variant="ghost" aria-label={`${agent.runtime.state === "running" ? "停止" : "删除"} ${agent.runtime.title ?? leaf.id}`} onClick={() => setStopping(agent)}>{agent.runtime.state === "running" ? "停止" : "删除"}</Button>}
       <Button size="sm" variant="ghost" aria-label={`移出 ${agent?.runtime.title ?? leaf.id}`} title="移出视图，Agent 继续运行" onClick={() => saved.change((old) => removePane(old, leaf.id))}>移出</Button>
     </header><div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane key={targetKey(agent.target)} binding={leaf.pane.target.binding} runtime={agent.runtime} agentRef={agent.ref} prefix={prefix} onNativeChange={directory.refresh} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
   };
@@ -93,6 +92,6 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     {review && <aside className="workbench-review" aria-label="文件与 Git 审阅"><header><strong>{saved.view.review_pane ? "已固定审阅" : "跟随焦点"}</strong><span>{reviewAgent?.runner.name ?? "选择一个会话"}</span><Button size="sm" variant="ghost" onClick={() => { saved.change((old) => ({ ...old, review_pane: undefined })); }}>跟随焦点</Button></header>{reviewAgent?.runtime.working_directory && reviewLeaf ? <div className="review-content" key={`${targetKey(reviewLeaf.pane.target)}:${reviewAgent.runtime.working_directory}:${review}`}>{review === "git" ? <Diff binding={reviewLeaf.pane.target.binding} cwd={reviewAgent.runtime.working_directory} /> : <Files binding={reviewLeaf.pane.target.binding} cwd={reviewAgent.runtime.working_directory} />}</div> : <p className="muted p-4">会话可访问时，显示它所在目录的内容。</p>}</aside>}
     </div>
     {editing && <ProjectEditor prefix={prefix} project={editing === "new" ? undefined : editing} runners={runners} profiles={profiles} onClose={() => setEditing(undefined)} onSaved={async (project) => { await projects.refresh(); setProjectID(project?.id ?? ""); }} />}
-    <Dialog open={!!stopping} onOpenChange={(open) => { if (!open && !stopBusy) setStopping(undefined); }}><DialogContent><DialogTitle>{stopping?.runtime.state === "running" ? "停止" : "删除"} {stopping?.runtime.title || "会话"}？</DialogTitle><DialogDescription className="muted my-4">{stopping?.runtime.adapter === "pty" ? "终端会话和保留的终端历史会被清除，开发机文件会保留。" : stopping?.runtime.state === "running" ? "Agent 进程会结束，开发机文件会保留。" : "退出的会话记录会被删除，开发机文件会保留。"}</DialogDescription><Button variant="destructive" disabled={stopBusy} onClick={() => void stop()}>{stopBusy ? "提交中…" : stopping?.runtime.state === "running" ? "确认停止" : "确认删除"}</Button></DialogContent></Dialog>
+    <Dialog open={!!stopping} onOpenChange={(open) => { if (!open && !stopBusy) setStopping(undefined); }}><DialogContent><DialogTitle>{stopping?.runtime.state === "running" ? "停止" : "删除"} {stopping?.runtime.title || "会话"}？</DialogTitle><DialogDescription className="muted my-4">{stopping?.runtime.adapter === "pty" ? "终端会话和保留的终端历史会被清除，开发机文件会保留。" : stopping?.runtime.state === "running" ? "Agent 进程会结束，开发机文件会保留。" : "会话缓存和连接记录会被清理，项目文件及 Agent 原生历史会保留。"}</DialogDescription><Button variant="destructive" disabled={stopBusy} onClick={() => void stop()}>{stopBusy ? "提交中…" : stopping?.runtime.state === "running" ? "确认停止" : "确认删除"}</Button></DialogContent></Dialog>
   </div>;
 }

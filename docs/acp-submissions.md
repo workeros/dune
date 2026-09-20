@@ -118,8 +118,8 @@ HTTP 提供 `POST /agents/submit`（`agents.SubmissionRequest`）和
 `agent_ref + submission_id` 定位完整键。原生会话已变更或 Runtime 不在活动目录时，
 查询仍按原 Runtime 键进行；不会先读取当前原生会话来替换目标。通用 submit 直接
 传递显式 ACP 参数，prompt 的 `expected_conversation_id` 和控制目标仍由宿主验证。
-`action: "stop"` 通过同一 HTTP/MCP 入口停止所选 Runtime（包括 PTY），不带其他
-ACP 参数，也不依赖当前原生会话仍与 agent_ref 一致。`host.AgentConnection.Stop`
+`action: "stop"` 和 `action: "forget"` 通过同一 HTTP/MCP 入口控制原 Runtime（包括 PTY），
+不带其他 ACP 参数，也不依赖当前原生会话仍与 agent_ref 一致。`host.AgentConnection.Stop`
 同样要求调用方提供 submission_id，并提供按原 Runtime 查询回执的方法。
 返回 receipt 中的 `operation_ref` 是原 Runtime 的 SDK 操作选择器；普通
 Prompt/OpenSession 便利接口返回的 operation 引用另外封装了跨 host 路由目标。
@@ -131,14 +131,37 @@ Web 的 Runtime 面板在“提交记录”中保留刷新后的查询入口。�
 达到上限时要求显式移除不再需要的本地记录；不会自动丢弃未知提交来腾空间。
 “查询原提交”只读接纳证据及原操作状态，不重发操作；“移除本地记录”不停止 Agent。
 工作台的“全部提交记录”在 Runtime 已不在目录或面板关闭后仍保留查询入口。
-forget 的执行接入与崩溃恢复仍在后续实现切片中；此处的本地额度不代表清理已交付。
+已丢失会话仍可显式清理；清理记录在活动 Runtime 消失后保留，显示已确认步骤及未完成状态。
 
-清理回执 schema 已增加 `cleanup.confirmed` 和 `cleanup.remaining`，步骤依次为
-`host`、`ipc`、`runtime_directory`。独立索引只在收到当前执行器的步骤确认后推进，
-全部步骤确认才将 `stage` 标为 `completed` 并释放该 Runtime 的活动配额；原提交键、
-固定资源计划、完成回执和身份封闭记录继续保留。步骤出错保留 `accepted/cleaning`
-和有界错误码，不把目录缺项或读回回执解释为清理已完成。该 schema 和索引事务已
-实现；网络 forget、实际步骤执行与恢复调度尚未接入，不能据此认定 L51/L52 已通过。
+## 显式清理与恢复
+
+```go
+// forgetKey 在首次发送前保存，包含原 Runtime 的完整身份。
+receipt, err := connection.Forget(ctx, forgetKey)
+if err != nil || receipt.Stage != "completed" {
+    // 保留原键，只读 QuerySubmission；accepted 只表示原清理已接纳。
+}
+```
+
+网络 `runtime.forget` 必须携带 `SubmissionRequest{SubmissionKey: key,
+Operation: "runtime.forget"}`，不再接受无标识请求。独立索引先检查同作用域的键占用，
+再在与进程注册共用的事务边界内核实已退出或宿主及进程组已确认丢失、保存固定资源
+计划并封闭 Runtime。IPC 超时不能授权清理。原宿主已丢失时无需 stop、原宿主 ACK
+或替代进程。生命周期核实失败但未保存拒绝决定时，回执仍是 `unknown`。
+
+`cleanup.confirmed` 和 `cleanup.remaining` 保存可信步骤。常驻 ACP 的步骤为
+`host`、`ipc`、`runtime_directory`；PTY 为 `terminal`、`runtime_directories`。
+退役 tmux 实例时核对原身份；目录与 socket 先移入不覆盖现有资源的专属隔离位置，
+再通过固定目录句柄核对原 inode／实例标记并清理。路径复用、权限错误或无法确认
+删除时保留 `accepted/cleaning` 及有界错误码，不猜测完成。项目文件和 Agent 原生
+历史不属于清理计划。PTY stop 已删除的活动条目可由其独立 stopped 回执核实后清理
+身份预留；自然退出的 PTY 则清理终端历史及 Dune 生成的辅助缓存。
+
+全部步骤持久确认后才标记 `completed`，释放 Runtime 活动配额；原键、资源计划、
+完成回执与身份墓碑继续有界保留。fabricd 启动及每 30 秒的恢复调度只续办原已接纳
+计划，单次执行使用 20 秒期限，未确认步骤等待后续调度。旧执行器的实际动作退出
+前不会释放安装锁；步骤登记另有执行器代次隔离。查询和重复提交都不启动调度，
+也不会重放其他任务。适用平台及全部 L01–L55 验收范围见实施记录。
 
 ## 宿主丢失的证据
 

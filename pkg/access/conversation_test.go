@@ -164,7 +164,7 @@ for line in sys.stdin:
 	assertCode(checks["acp.conversation.get"](runtime), "UNSUPPORTED")
 	assertCode(checks["runtime.attach"](runtime), "UNSUPPORTED")
 	client.Binding = binding
-	if err := client.CallID(ctx, "runtime.forget", wire.ID(), struct{}{}, nil, &runtime); err != nil {
+	if err := testForgetRuntime(client, ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
 	for _, read := range checks {

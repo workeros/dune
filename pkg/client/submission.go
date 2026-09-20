@@ -33,7 +33,7 @@ func (c *Client) Submit(parent context.Context, request api.SubmissionRequest) (
 	switch request.Operation {
 	case "acp.action":
 		operation = "submission.acp"
-	case "runtime.stop":
+	case "runtime.stop", "runtime.forget":
 		operation = request.Operation
 	}
 	if operation == "" || key.Target.RuntimeID == "" || !slices.Contains(c.Binding.Capabilities, operation) {

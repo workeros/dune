@@ -68,7 +68,9 @@ func runSessionHost(directory string) error {
 		return err
 	}
 	defer listener.Close()
-	defer os.Remove(socket)
+	// Retirement owns this pathname through its recorded inode. A late host
+	// destructor must not unlink a resource that has since reused the path.
+	listener.(*net.UnixListener).SetUnlinkOnClose(false)
 	if err := os.Chmod(socket, 0600); err != nil {
 		return err
 	}

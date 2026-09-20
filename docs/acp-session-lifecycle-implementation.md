@@ -418,3 +418,80 @@ error rather than being reported as resource absence. It passes with race enable
 Runtime launch now exclusively creates its directory and cannot overwrite an
 existing instance marker/bootstrap; the connector-survival process test passes
 again after that change.
+
+
+Slice 13 public forget and recoverable physical cleanup: Client.Forget and the
+identified runtime.forget route now reach independent admission directly. The
+unidentified route and direct RemoveAll cleanup were removed. HTTP/MCP action
+forget uses the original Agent selector without requiring its current native
+session or an active Runtime entry. The Web saves the exact forget identity before
+sending, permits cleanup of a confirmed lost Runtime, and preserves step/error
+observations across reload and Runtime removal.
+
+The executor retires the exact tmux instance, confirms original host/group absence,
+then cleans the recorded socket and Runtime directory. Filesystem cleanup uses a
+non-overwriting rename into a fixed quarantine, revalidates inode/instance evidence,
+and operates through pinned directory handles. It does not follow project symlinks.
+A host destructor no longer unlinks its old socket pathname. Interrupted emptying
+resumes with the original instance marker; a crash after marker removal can only
+remove the empty, matching quarantine. Resource identity changes retain accepted
+with an unconfirmed step and do not authorize deletion of the replacement.
+
+PTY uses the same key/receipt/seal namespace and reserved cleanup slot, with a
+fixed ended-Runtime plan for its terminal and Dune-generated timeout/native-helper
+caches. A durable stopped receipt permits cleanup after explicit PTY stop has
+already removed the active entry and caches. The existing timeout/history and
+installer-upgrade PTY test passes with the new caller-key contract. This preserves
+PTY behavior; it does not establish raw ACP host continuity.
+
+Startup recovery and a bounded 30-second scheduler resume only previously admitted
+plans. Duplicate submissions and all reads do not schedule cleanup. A per-key
+execution map prevents parallel execution within a connector; active work retains
+fabricd.lock through shutdown, with durable executor terms fencing late checkpoints.
+The scheduler and actions drain before the installation lock can pass to another
+connector. Individual execution attempts have a 20-second deadline, and unfinished
+steps retain honest error/stage evidence for later recovery.
+
+New real-process tests run through Gateway and SDK against isolated test fabricd,
+host and guardian processes. TestForgetResumesOnlyOriginalCleanupAfterProcessCrashes
+SIGKILLs fabricd at six barriers: after acceptance, host retirement, IPC quarantine,
+Runtime contents deletion, marker deletion, and physical directory removal before
+its final checkpoint. Each replacement executor pauses before resumption while
+three public queries return the unchanged original receipt. Releasing it completes
+only the original plan; duplicate forget returns that receipt and project/native
+history remains intact. A late host business request after acceptance is sealed.
+TestForgetConfirmedLostHostNeedsNoStopOrReplacement uses a real mock ACP Agent:
+an original accepted host key conflicts with forget both before and after host
+SIGKILL; a new legal key cleans up without stop or a replacement host, and the
+original operation's admission is unchanged. Both tests pass with race enabled.
+
+Filesystem tests cover all quarantine/marker interruption boundaries, original
+and quarantine path reuse, and external project symlinks. The engine-fencing test
+suspends a real directory cleanup, requests Close, verifies a competing Open cannot
+acquire the installation lock, then drains the old action and verifies the new
+engine resumes the original plan. These pass with race enabled. Public host tests
+also query completed cleanup after the original native session has changed.
+
+Validation: affected sessionregistry/tmux/fabricd/access/client/host race suites
+pass; targeted crash/loss and shutdown-lock tests pass after the final changes.
+The existing connector-survival, host-loss, lost-stop-response and explicit
+new/load generation-barrier process regressions pass together. Fifteen Chromium
+workbench/agent-operation cases pass, including lost forget response, Runtime
+removal, reload and original progress lookup without another send or Agent start;
+the resulting screenshot was inspected. Web typecheck/build passes with the
+existing bundle-size warnings. The main-module compile-only test sweep passes;
+this is not a full main-module regression run.
+
+These are local managed-ACP cleanup observations for L27/L51/L52/L55, not the full
+L01–L55/platform acceptance audit. Protected IPC/connector stream scheduling and
+all saturation dimensions in L53/L54 remain to be implemented and tested. Raw ACP
+independent hosting/input integrity, full discovery issue reporting, retention,
+pinned dependencies, upgrade/rollback preflight, remaining public-consumer recovery,
+SandDance integration, four-platform runtime/service-manager tests and real Agent
+evidence also remain. No business Runner or external Agent service was used.
+
+Final checks for this slice: internal agentservice/agentmcp tests, Web unit tests
+and affected-package vet pass. Dune builds for Linux/macOS amd64/arm64 using the
+new platform-specific non-replacing rename operations; these are compile checks,
+not Linux or service-manager runtime acceptance. The real-Agent/PostgreSQL/native
+Agent acceptance environment switches remain unset.

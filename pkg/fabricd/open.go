@@ -27,6 +27,12 @@ import (
 // and provide tmux beside its executable, on PATH, or through DUNE_TMUX.
 // Close releases the lock without destroying tmux sessions.
 func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
+	return openWithCleanupBarrier(ctx, stateDir, nil)
+}
+
+// The private barrier permits process acceptance tests to suspend cleanup at
+// exact durable/physical boundaries without introducing a production RPC hook.
+func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(api.SubmissionKey, string) error) (_ *Engine, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -41,6 +47,7 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 		return nil, err
 	}
 	d := newEngine(ctx)
+	d.cleanupBarrier = barrier
 	defer func() {
 		if err != nil {
 			d.Close()
@@ -94,6 +101,11 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 	}
 	go d.watchTmux()
 	go d.expire(d.ctx)
+	if err := d.recoverCleanups(); err != nil {
+		return nil, err
+	}
+	d.active.Add(1)
+	go d.runCleanupRecovery()
 	return d, nil
 }
 

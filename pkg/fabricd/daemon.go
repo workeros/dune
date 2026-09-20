@@ -58,6 +58,8 @@ type Engine struct {
 	closeOnce         sync.Once
 	active            sync.WaitGroup
 	lock              *os.File
+	cleanups          map[api.SubmissionKey]*cleanupExecution
+	cleanupBarrier    func(api.SubmissionKey, string) error
 }
 
 func newEngine(parent context.Context) *Engine {
@@ -65,6 +67,7 @@ func newEngine(parent context.Context) *Engine {
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
 	engine.submissionReads = make(chan struct{}, 8)
 	engine.stateReads = make(chan struct{}, 16)
+	engine.cleanups = make(map[api.SubmissionKey]*cleanupExecution)
 	go engine.conversations.run(ctx)
 	return engine
 }
@@ -143,6 +146,9 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	}
 	var e error
 	switch m.Operation {
+	case "runtime.forget":
+		d.submitForget(s, m, target)
+		return
 	case "runtime.stop":
 		d.submitStop(s, m, target)
 		return
@@ -329,12 +335,6 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		home, err := os.UserHomeDir()
 		e = err
 		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics()}
-	case "runtime.forget":
-		var r *runtime
-		r, e = d.lookup(m)
-		if e == nil {
-			e = d.forgetRuntime(r)
-		}
 	case "runtime.get":
 		var r *runtime
 		r, e = d.lookup(m)

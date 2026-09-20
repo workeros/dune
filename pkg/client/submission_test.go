@@ -86,3 +86,21 @@ func TestStopRequiresCallerKeyAndKeepsItAfterLocalCancellation(t *testing.T) {
 		t.Fatal("stop supplied an implicit ID", receipt, err)
 	}
 }
+
+func TestForgetRequiresCallerKeyAndKeepsItAfterLocalCancellation(t *testing.T) {
+	key := api.SubmissionKey{SubmissionID: "saved-forget", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}}
+	client := &Client{Binding: api.Binding{Target: "machine", Capabilities: []string{"runtime.forget"}}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	receipt, err := client.Forget(ctx, key)
+	var local *api.SubmissionError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &local) || local.Key != key || receipt.SubmissionKey != key || receipt.Admission != api.SubmissionUnknown {
+		t.Fatal("stop lost caller identity or fabricated acceptance", receipt, err)
+	}
+	key.SubmissionID = ""
+	receipt, err = client.Forget(t.Context(), key)
+	var invalid *api.Error
+	if !errors.As(err, &invalid) || invalid.Code != "INVALID_ARGUMENT" || receipt.SubmissionID != "" {
+		t.Fatal("stop supplied an implicit ID", receipt, err)
+	}
+}

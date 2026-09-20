@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
@@ -33,5 +34,15 @@ func testStopRuntime(connection *client.Client, ctx context.Context, runtime api
 	target := api.SubmissionTarget{OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: connection.Binding.Target, BindingRevision: 1}
 	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
 	_, err := connection.Stop(ctx, api.SubmissionKey{SubmissionID: "test-stop", Target: target})
+	return err
+}
+
+func testForgetRuntime(connection *client.Client, ctx context.Context, runtime api.Runtime) error {
+	target := api.SubmissionTarget{OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: connection.Binding.Target, BindingRevision: 1}
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	receipt, err := connection.Forget(ctx, api.SubmissionKey{SubmissionID: "test-forget", Target: target})
+	if err == nil && receipt.Stage != "completed" {
+		return fmt.Errorf("cleanup remains %s: %s", receipt.Stage, receipt.ErrorCode)
+	}
 	return err
 }

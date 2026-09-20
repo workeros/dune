@@ -2,7 +2,7 @@ package agents
 
 import "github.com/aiomni/dune/pkg/api"
 
-// SubmissionRequest sends an explicitly identified ACP action or Runtime stop. Save
+// SubmissionRequest sends an explicitly identified ACP action, stop or forget. Save
 // both selectors before sending. The action is frozen; querying never repeats it.
 type SubmissionRequest struct {
 	SubmissionID string `json:"submission_id"`

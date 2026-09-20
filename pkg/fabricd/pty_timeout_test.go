@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
@@ -134,7 +133,7 @@ func TestPTYTimeoutWhileFabricdClosedRetainsHistoryAndReason(t *testing.T) {
 	if got.StartedAt == nil || got.DeadlineAt == nil || !got.StartedAt.Equal(*r.StartedAt) || !got.DeadlineAt.Equal(*r.DeadlineAt) {
 		t.Fatal("restart changed the original deadline", r, got)
 	}
-	if err := current.CallID(ctx, "runtime.forget", wire.ID(), struct{}{}, nil, &r); err != nil {
+	if err := testForgetRuntime(current, ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Capture(); err == nil {
@@ -172,6 +171,9 @@ func TestPTYExplicitStopDestroysHistoryAndTimeoutRecord(t *testing.T) {
 		t.Fatal("stop retained native sessions", sessions, err)
 	}
 	assertNoTimeoutRecords(t, dir)
+	if err := testForgetRuntime(c, ctx, r); err != nil {
+		t.Fatal("stopped PTY lost its independent cleanup reservation", err)
+	}
 }
 
 func TestPTYWithoutTimeoutRunsWithoutHelper(t *testing.T) {

@@ -249,45 +249,6 @@ func (d *Engine) stop(r *runtime) error {
 	return nil
 }
 
-// forgetRuntime performs cleanup after the caller's admission boundary. It
-// requires confirmed exit; a failed IPC probe never authorizes deletion.
-func (d *Engine) forgetRuntime(r *runtime) error {
-	if r.host != nil {
-		state := r.info()
-		if state.Availability != "" || state.State != "exited" {
-			return &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "cleanup requires confirmed Agent exit"}
-		}
-		if err := d.acpTmux.DestroyHost(r.id, r.host.registration.Instance); err != nil {
-			return err
-		}
-		r.host.close()
-		if err := os.RemoveAll(r.host.directory); err != nil {
-			return err
-		}
-	} else {
-		r.mu.Lock()
-		if r.exit == nil {
-			r.mu.Unlock()
-			return fmt.Errorf("stop the runtime before deleting retained history")
-		}
-		if r.tmux != nil {
-			if err := r.tmux.Destroy(); err != nil {
-				r.mu.Unlock()
-				return err
-			}
-		}
-		r.mu.Unlock()
-		r.closePTYInput()
-		if r.acp != nil {
-			r.acp.conversation.remove()
-		}
-	}
-	d.mu.Lock()
-	delete(d.runtimes, r.id)
-	d.mu.Unlock()
-	return nil
-}
-
 func (r *runtime) finish(code int) {
 	r.mu.Lock()
 	if r.exit != nil {

@@ -7,8 +7,9 @@ const changed = "dune-submissions-changed";
 const controlActions = new Set(["permission", "cancel", "stop", "forget"]);
 const actions: Record<string, string> = { new: "新建对话", load: "加载对话", list: "查询 Agent 历史", prompt: "任务", permission: "权限回答", cancel: "取消任务", stop: "停止", forget: "清理" };
 type Admission = "unknown" | "accepted" | "not_accepted" | "expired";
-type Receipt = { submission_id: string; admission: Admission; operation_ref?: string; stage?: string; error_code?: string; target: { runner_id: string; fabric_id: string; machine_id: string; binding_revision: number; runtime_id: string; runtime_incarnation: string; runtime_generation: number } };
-type Saved = { submission_id: string; agent_ref: string; prefix: string; binding: Binding; runtime: Runtime; action: string; created_at: string; admission?: Admission; stage?: string; operation_ref?: string; outcome?: string };
+type Cleanup = { confirmed: string[]; remaining: string[] };
+type Receipt = { cleanup?: Cleanup; submission_id: string; admission: Admission; operation_ref?: string; stage?: string; error_code?: string; target: { runner_id: string; fabric_id: string; machine_id: string; binding_revision: number; runtime_id: string; runtime_incarnation: string; runtime_generation: number } };
+type Saved = { submission_id: string; agent_ref: string; prefix: string; binding: Binding; runtime: Runtime; action: string; created_at: string; admission?: Admission; stage?: string; operation_ref?: string; outcome?: string; error_code?: string; cleanup?: Cleanup };
 
 function readSaved(): Saved[] {
  const raw = sessionStorage.getItem(storageKey);
@@ -47,7 +48,7 @@ function matchesReceipt(saved: Saved, receipt: Receipt) {
 export function recordACPReceipt(id: string, value: unknown) {
  const items = readSaved(), saved = items.find((item) => item.submission_id === id), receipt = value as Receipt;
  if (!saved || !matchesReceipt(saved, receipt) || receipt.admission === "accepted" && !receipt.operation_ref) throw new Error("提交回执与发送前保存的身份不一致，请查询原提交。");
- writeSaved(items.map((item) => item === saved ? { ...item, admission: receipt.admission, operation_ref: receipt.operation_ref, stage: receipt.stage } : item));
+ writeSaved(items.map((item) => item === saved ? { ...item, admission: receipt.admission, operation_ref: receipt.operation_ref, stage: receipt.stage, error_code: receipt.error_code, cleanup: receipt.cleanup } : item));
 }
 
 const admissionLabels: Record<Admission, string> = { unknown: "接纳未确认", accepted: "已接纳", not_accepted: "未接纳", expired: "回执已过期" };
@@ -91,7 +92,8 @@ export function ACPSubmissionRecovery({ prefix, binding, runtime }: { prefix: st
   {error && <p role="alert" className="error-box">{error}</p>}
   <div className="max-h-48 overflow-auto">{items.map((item) => <div className="flex flex-wrap items-center gap-2 border-b py-2" key={item.submission_id}>
    <strong>{actions[item.action]}</strong>{!runtimeIdentity && <span>{item.binding.runner_id} · {item.runtime.id.slice(0, 12)}</span>}<time>{new Date(item.created_at).toLocaleTimeString()}</time>
-   <span role="status">{item.outcome ? outcomeLabels[item.outcome] : item.stage && stageLabels[item.stage] || admissionLabels[item.admission ?? "unknown"]}</span>
+   <span role="status">{item.outcome ? outcomeLabels[item.outcome] : item.stage === "cleaning" && item.error_code ? "清理尚未完成" : item.stage && stageLabels[item.stage] || admissionLabels[item.admission ?? "unknown"]}</span>
+   {item.cleanup && <span>已确认 {item.cleanup.confirmed.length}/{item.cleanup.confirmed.length + item.cleanup.remaining.length} 个清理步骤</span>}
    <Button size="sm" variant="ghost" disabled={!!reading} onClick={() => void query(item)}>{reading === item.submission_id ? "查询中…" : "查询原提交"}</Button>
    <Button size="sm" variant="ghost" disabled={!!reading} onClick={() => remove(item.submission_id)}>移除本地记录</Button>
   </div>)}</div>

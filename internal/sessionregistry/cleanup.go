@@ -47,10 +47,30 @@ func (r CleanupResources) Validate(target api.SubmissionTarget, instance string)
 	return nil
 }
 
-var cleanupSteps = [...]string{"host", "ipc", "runtime_directory"}
+var cleanupSteps = []string{"host", "ipc", "runtime_directory"}
+var localCleanupSteps = []string{"terminal", "runtime_directories"}
 
-func cleanupProgress(confirmed int) api.CleanupProgress {
-	return api.CleanupProgress{Confirmed: append([]string{}, cleanupSteps[:confirmed]...), Remaining: append([]string{}, cleanupSteps[confirmed:]...)}
+// LocalCleanup freezes the ended connector-owned Runtime (PTY or raw ACP).
+// Managed hosts always use their independently registered HostRecord instead.
+type LocalCleanup struct {
+	Runtime     api.Runtime    `json:"runtime"`
+	Directories []FileIdentity `json:"directories"`
+}
+
+func (p LocalCleanup) validate(target api.SubmissionTarget) error {
+	if !matchingRuntime(target, p.Runtime) || api.ValidateSubmissionID(p.Runtime.Incarnation) != nil || p.Runtime.State != "exited" || (p.Runtime.Adapter != "pty" && p.Runtime.Adapter != "acp") || len(p.Directories) > 2 {
+		return fmt.Errorf("cleanup requires a bounded ended original Runtime")
+	}
+	for _, directory := range p.Directories {
+		if !filepath.IsAbs(directory.Path) || filepath.Clean(directory.Path) != directory.Path || directory.Path == "/" || len(directory.Path) > 4096 || directory.Inode == 0 {
+			return fmt.Errorf("invalid local cleanup resource")
+		}
+	}
+	return nil
+}
+
+func cleanupProgress(steps []string, confirmed int) api.CleanupProgress {
+	return api.CleanupProgress{Confirmed: append([]string{}, steps[:confirmed]...), Remaining: append([]string{}, steps[confirmed:]...)}
 }
 
 // AcceptForget binds the original Runtime key, consumes only its reserved
@@ -60,6 +80,57 @@ func cleanupProgress(confirmed int) api.CleanupProgress {
 // as RecordGroup, preventing a replacement process from crossing that proof.
 // Duplicate lookup precedes verification, even after resources are removed.
 func (r *Registry) AcceptForget(ctx context.Context, key api.SubmissionKey, ref string, verify func(HostRecord) error) (bool, api.SubmissionReceipt, error) {
+	if verify == nil {
+		return false, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, fmt.Errorf("cleanup verifier required")
+	}
+	return r.acceptForget(ctx, key, ref, func(tx *sql.Tx) (CleanupJob, error) {
+		host, err := scanHost(tx.QueryRowContext(ctx, `SELECT `+hostColumns+` FROM session_hosts h WHERE h.target=?`, encodeTarget(key.Target)))
+		if err == nil {
+			err = verify(host)
+		}
+		return CleanupJob{Host: host}, err
+	})
+}
+
+// AcceptLocalForget shares the exact same key, reservation, seal and checkpoint
+// transaction as managed cleanup. Its verifier only observes an ended Runtime.
+func (r *Registry) AcceptLocalForget(ctx context.Context, key api.SubmissionKey, ref string, verify func() (LocalCleanup, error)) (bool, api.SubmissionReceipt, error) {
+	if verify == nil {
+		return false, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, fmt.Errorf("cleanup verifier required")
+	}
+	return r.acceptForget(ctx, key, ref, func(tx *sql.Tx) (CleanupJob, error) {
+		var hosts int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_hosts WHERE target=?`, encodeTarget(key.Target)).Scan(&hosts); err != nil {
+			return CleanupJob{}, err
+		}
+		if hosts != 0 {
+			return CleanupJob{}, conflict()
+		}
+		// Explicit PTY stop already removes its active entry and generated
+		// caches. Its durable stopped receipt is still authoritative evidence
+		// for releasing that original Runtime's retained reservation.
+		var stopped []byte
+		stopErr := tx.QueryRowContext(ctx, `SELECT k.runtime FROM control_reservations c JOIN submission_keys k ON k.key=c.consumed_key WHERE c.target=? AND c.kind='stop' AND k.state='accepted' AND k.stage='stopped'`, encodeTarget(key.Target)).Scan(&stopped)
+		if stopErr == nil {
+			var runtime api.Runtime
+			if json.Unmarshal(stopped, &runtime) != nil {
+				return CleanupJob{}, fmt.Errorf("invalid retained stop Runtime")
+			}
+			local := LocalCleanup{Runtime: runtime, Directories: []FileIdentity{}}
+			return CleanupJob{Local: &local}, local.validate(key.Target)
+		}
+		if !errors.Is(stopErr, sql.ErrNoRows) {
+			return CleanupJob{}, stopErr
+		}
+		local, err := verify()
+		if err == nil {
+			err = local.validate(key.Target)
+		}
+		return CleanupJob{Local: &local}, err
+	})
+}
+
+func (r *Registry) acceptForget(ctx context.Context, key api.SubmissionKey, ref string, verify func(*sql.Tx) (CleanupJob, error)) (bool, api.SubmissionReceipt, error) {
 	result := api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
 	encoded, err := encodeKey(key)
 	if err != nil || key.Target.RuntimeID == "" || api.ValidateSubmissionID(ref) != nil || verify == nil {
@@ -84,13 +155,9 @@ func (r *Registry) AcceptForget(ctx context.Context, key api.SubmissionKey, ref 
 	if err := checkRuntimeOpen(ctx, tx, key.Target); err != nil {
 		return false, result, err
 	}
-	host, err := scanHost(tx.QueryRowContext(ctx, `SELECT `+hostColumns+` FROM session_hosts h WHERE h.target=?`, encodeTarget(key.Target)))
+	plan, err := verify(tx)
 	if err != nil {
-		return false, result, err
-	}
-	if err := verify(host); err != nil {
-		// No irreversible rejection was saved. A delayed original request may
-		// still arrive, so the public admission remains unknown.
+		// Unpersisted refusal is unknown, since the original may arrive later.
 		return false, result, err
 	}
 	resource, _ := controlResource(key.Target, ControlForget, "")
@@ -98,11 +165,11 @@ func (r *Registry) AcceptForget(ctx context.Context, key api.SubmissionKey, ref 
 	if err := tx.QueryRowContext(ctx, `SELECT consumed_key FROM control_reservations WHERE resource=?`, resource).Scan(&consumed); err != nil || consumed != "" {
 		return false, result, &api.Error{Code: "CONTROL_UNAVAILABLE", Detail: "cleanup reservation is absent or already consumed"}
 	}
-	progress := cleanupProgress(0)
+	progress := cleanupProgress(plan.Steps(), 0)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO submission_keys(key,digest,receiver,token,state,control_resource,operation_ref,stage,cleanup) VALUES(?,?,?,?,'accepted',?,?,'cleaning',?)`, encoded, hex.EncodeToString(digest[:]), ForgetReceiver, wire.ID(), resource, ref, api.Payload(progress)); err != nil {
 		return false, result, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO cleanup_jobs(key,host) VALUES(?,?)`, encoded, api.Payload(host)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO cleanup_jobs(key,host,local) VALUES(?,?,?)`, encoded, api.Payload(plan.Host), api.Payload(plan.Local)); err != nil {
 		return false, result, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE control_reservations SET consumed_key=? WHERE resource=?`, encoded, resource); err != nil {
@@ -124,29 +191,44 @@ func (r *Registry) AcceptForget(ctx context.Context, key api.SubmissionKey, ref 
 type CleanupJob struct {
 	Key       api.SubmissionKey
 	Host      HostRecord
+	Local     *LocalCleanup
 	Reference string
 	Confirmed int
 	Term      uint64
 }
 
+func (j CleanupJob) Steps() []string {
+	if j.Local != nil {
+		return append([]string{}, localCleanupSteps...)
+	}
+	return append([]string{}, cleanupSteps...)
+}
+
 func scanCleanup(row interface{ Scan(...any) error }) (CleanupJob, error) {
 	var job CleanupJob
-	var key, host []byte
-	if err := row.Scan(&key, &host, &job.Reference, &job.Confirmed, &job.Term); err != nil {
+	var key, host, local []byte
+	if err := row.Scan(&key, &host, &local, &job.Reference, &job.Confirmed, &job.Term); err != nil {
 		return job, err
 	}
-	if json.Unmarshal(key, &job.Key) != nil || json.Unmarshal(host, &job.Host) != nil || job.Key.Validate() != nil || job.Host.Target != job.Key.Target || job.Host.Resources.Validate(job.Key.Target, job.Host.Instance) != nil || api.ValidateSubmissionID(job.Reference) != nil || job.Confirmed < 0 || job.Confirmed > len(cleanupSteps) {
+	if json.Unmarshal(key, &job.Key) != nil || json.Unmarshal(host, &job.Host) != nil || json.Unmarshal(local, &job.Local) != nil || job.Key.Validate() != nil || api.ValidateSubmissionID(job.Reference) != nil || job.Confirmed < 0 || job.Confirmed > len(job.Steps()) {
 		return job, fmt.Errorf("invalid persisted cleanup plan")
+	}
+	if job.Local != nil {
+		if err := job.Local.validate(job.Key.Target); err != nil {
+			return job, err
+		}
+	} else if job.Host.Target != job.Key.Target || job.Host.Resources.Validate(job.Key.Target, job.Host.Instance) != nil {
+		return job, fmt.Errorf("invalid persisted host cleanup plan")
 	}
 	return job, nil
 }
 
-const cleanupColumns = `j.key,j.host,k.operation_ref,j.confirmed,j.executor_term`
+const cleanupColumns = `j.key,j.host,j.local,k.operation_ref,j.confirmed,j.executor_term`
 
 // PendingCleanups is observational. Only the recovery scheduler may hand these
 // original plans to an executor; submission queries never call that scheduler.
 func (r *Registry) PendingCleanups(ctx context.Context) ([]CleanupJob, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+cleanupColumns+` FROM cleanup_jobs j JOIN submission_keys k ON k.key=j.key WHERE j.confirmed<? ORDER BY j.key LIMIT ?`, len(cleanupSteps), MaxRuntimeRecords)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+cleanupColumns+` FROM cleanup_jobs j JOIN submission_keys k ON k.key=j.key WHERE k.stage='cleaning' ORDER BY j.key LIMIT ?`, MaxRuntimeRecords)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +258,7 @@ func (r *Registry) BindCleanup(ctx context.Context, key api.SubmissionKey, ref s
 	if err != nil {
 		return job, err
 	}
-	if job.Term > term || job.Reference != ref || job.Confirmed == len(cleanupSteps) {
+	if job.Term > term || job.Reference != ref || job.Confirmed == len(job.Steps()) {
 		return CleanupJob{}, conflict()
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE cleanup_jobs SET executor_term=? WHERE key=?`, term, encoded); err != nil {
@@ -195,7 +277,7 @@ func (r *Registry) BindCleanup(ctx context.Context, key api.SubmissionKey, ref s
 func (r *Registry) CheckpointCleanup(ctx context.Context, job CleanupJob, step, code string) (api.SubmissionReceipt, error) {
 	result := api.SubmissionReceipt{SubmissionKey: job.Key, Admission: api.SubmissionUnknown}
 	encoded, err := encodeKey(job.Key)
-	if err != nil || job.Term == 0 || job.Confirmed < 0 || job.Confirmed >= len(cleanupSteps) || cleanupSteps[job.Confirmed] != step || (code != "" && api.ValidateSubmissionID(code) != nil) {
+	if err != nil || job.Term == 0 || job.Confirmed < 0 || job.Confirmed >= len(job.Steps()) || job.Steps()[job.Confirmed] != step || (code != "" && api.ValidateSubmissionID(code) != nil) {
 		return result, fmt.Errorf("original cleanup step and bounded result required")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -214,9 +296,9 @@ func (r *Registry) CheckpointCleanup(ctx context.Context, job CleanupJob, step, 
 	if code == "" {
 		confirmed++
 	}
-	progress := cleanupProgress(confirmed)
+	progress := cleanupProgress(stored.Steps(), confirmed)
 	stage := "cleaning"
-	if confirmed == len(cleanupSteps) {
+	if confirmed == len(stored.Steps()) {
 		stage = "completed"
 		if _, err := tx.ExecContext(ctx, `UPDATE runtime_reservations SET live=0 WHERE target=? AND sealed=1`, encodeTarget(job.Key.Target)); err != nil {
 			return result, err

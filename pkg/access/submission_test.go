@@ -112,3 +112,19 @@ func TestStopRequiresOriginalIdentifiedRuntimeScope(t *testing.T) {
 		t.Fatal("stop crossed original Runtime identity", err)
 	}
 }
+
+func TestForgetRequiresOriginalIdentifiedRuntimeScope(t *testing.T) {
+	message := &pb.Message{Kind: "request", Target: "machine", RequestId: "transport-id", Operation: "runtime.forget", Payload: api.Payload(struct{}{})}
+	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+		t.Fatal("unidentified stop was authorized", err)
+	}
+	message = testACPEnvelope(message)
+	message.Operation = "runtime.forget"
+	if description, err := Describe(testScope(), message); err != nil || description.Operation != "runtime.forget" {
+		t.Fatal("identified stop lost its authorization vocabulary", description, err)
+	}
+	message.RuntimeIncarnation = "replacement-host"
+	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+		t.Fatal("stop crossed original Runtime identity", err)
+	}
+}

@@ -287,6 +287,12 @@ func (c *Client) Stop(ctx context.Context, key api.SubmissionKey) (api.Submissio
 	return c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "runtime.stop"})
 }
 
+// Forget submits one original cleanup intent. accepted/cleaning is not success;
+// query the same key until the independently retained receipt says completed.
+func (c *Client) Forget(ctx context.Context, key api.SubmissionKey) (api.SubmissionReceipt, error) {
+	return c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "runtime.forget"})
+}
+
 // Attach always permits PTY output viewing. With observe=false it also acquires
 // input if available; otherwise use Stream.Control("take") to explicitly take
 // over. Observe-only streams can never acquire input. ACP semantics are separate.
