@@ -6,9 +6,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type message struct {
@@ -96,8 +98,25 @@ func main() {
 			cwd, _ := os.Getwd()
 			reply(m.ID, map[string]any{"sessions": []any{map[string]string{"sessionId": "mock-session", "cwd": cwd, "title": "Mock native history (no model)"}}})
 		case "session/load":
-			for _, u := range history {
+			for i, u := range history {
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "mock-session", "update": u}})
+				if address := os.Getenv("DUNE_MOCK_LOAD_GATE"); address != "" && i == len(history)/2 {
+					gate, err := net.DialTimeout("tcp", address, 5*time.Second)
+					if err != nil {
+						panic(err)
+					}
+					_ = gate.SetDeadline(time.Now().Add(30 * time.Second))
+					_, err = gate.Write([]byte{1})
+					if err != nil {
+						panic(err)
+					}
+					var release [1]byte
+					_, err = gate.Read(release[:])
+					_ = gate.Close()
+					if err != nil {
+						panic(err)
+					}
+				}
 			}
 			reply(m.ID, map[string]any{})
 		case "session/prompt":

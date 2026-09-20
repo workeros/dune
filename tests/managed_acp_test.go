@@ -3,6 +3,8 @@ package tests
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +39,10 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 
 	p := profile(h.dir, "acp", mock)
 	p.ManagedACP = true
-	p.Env = map[string]string{"DUNE_MOCK_HISTORY": "1"}
+	gate, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	defer gate.Close()
+	p.Env = map[string]string{"DUNE_MOCK_HISTORY": "1", "DUNE_MOCK_LOAD_GATE": gate.Addr().String()}
 	rt, initial, err := h.client.Start(h.ctx, p)
 	must(t, err)
 	initial.Close()
@@ -61,7 +66,46 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	observer, err := h.client.Attach(h.ctx, rt, true)
 	must(t, err)
 	defer observer.Close()
+	// A second actual Agent remains usable while the first replays a large
+	// history to a non-consuming diagnostic observer.
+	normalProfile := profile(t.TempDir(), "acp", mock)
+	normalProfile.ManagedACP = true
+	normal, normalStream, err := h.client.Start(h.ctx, normalProfile)
+	must(t, err)
+	normalStream.Close()
+	waitManagedACPReady(t, h, normal)
+	opened, err := h.client.ACPSubmit(h.ctx, normal, api.ACPAction{Action: "new"})
+	must(t, err)
+	opened, err = h.client.WaitAgentOperation(h.ctx, normal, api.AgentOperationWait{Ref: opened.Ref, TimeoutMS: 5000})
+	must(t, err)
 	accepted, err := h.client.ACPSubmit(h.ctx, rt, api.ACPAction{Action: "load", SessionID: "mock-session"})
+	must(t, err)
+	must(t, gate.(*net.TCPListener).SetDeadline(time.Now().Add(5*time.Second)))
+	paused, err := gate.Accept()
+	must(t, err)
+	defer paused.Close()
+	must(t, paused.SetDeadline(time.Now().Add(10*time.Second)))
+	var ready [1]byte
+	_, err = io.ReadFull(paused, ready[:])
+	must(t, err)
+	loading, err := h.client.ACPState(h.ctx, rt)
+	must(t, err)
+	if loading.Conversation == nil || loading.Conversation.Phase != "loading" {
+		t.Fatal("load barrier did not hold the native result")
+	}
+	prompt, err := h.client.ACPSubmit(h.ctx, normal, api.ACPAction{Action: "prompt", ExpectedConversationID: opened.ConversationID, Text: "unrelated progress during replay"})
+	must(t, err)
+	prompt, err = h.client.WaitAgentOperation(h.ctx, normal, api.AgentOperationWait{Ref: prompt.Ref, TimeoutMS: 5000})
+	must(t, err)
+	if prompt.State != "completed" {
+		t.Fatal("replay starved another Runtime", prompt)
+	}
+	other, err := h.client.ReadACPConversation(h.ctx, normal, api.ACPConversationRead{ConversationID: opened.ConversationID})
+	must(t, err)
+	if !strings.Contains(string(api.Payload(other.Entries)), "unrelated progress during replay") {
+		t.Fatal("concurrent normal conversation lost content")
+	}
+	_, err = paused.Write([]byte{1})
 	must(t, err)
 	completed, err := h.client.WaitAgentOperation(h.ctx, rt, api.AgentOperationWait{Ref: accepted.Ref, TimeoutMS: 30000})
 	must(t, err)
