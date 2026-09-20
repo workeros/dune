@@ -21,17 +21,26 @@ import (
 	"modernc.org/sqlite"
 )
 
-const DefaultMaxKeys = 4096
+const (
+	DefaultMaxKeys     = 4096
+	DefaultMaxControls = 4096
+	MaxLiveRuntimes    = 16
+	MaxRuntimeRecords  = 256
+)
 
 type Options struct {
 	// MaxKeys bounds persistent evidence, including rejected and unfinished
 	// claims. Evidence is never evicted to make room for another execution.
 	MaxKeys int
+	// MaxControls independently bounds each cancel/permission reservation class,
+	// including completed evidence. Runtime stop/forget each have their own slot.
+	MaxControls int
 }
 
 type Registry struct {
-	db      *sql.DB
-	maxKeys int
+	db          *sql.DB
+	maxKeys     int
+	maxControls int
 }
 
 // Claim is an exclusive, private permission to resolve one key's admission.
@@ -61,6 +70,12 @@ func Open(ctx context.Context, directory string, options Options) (*Registry, er
 	if options.MaxKeys == 0 {
 		options.MaxKeys = DefaultMaxKeys
 	}
+	if options.MaxControls == 0 {
+		options.MaxControls = DefaultMaxControls
+	}
+	if options.MaxControls < 1 || options.MaxControls > 65536 {
+		return nil, fmt.Errorf("registry control capacity must be 1..65536 per class")
+	}
 	if options.MaxKeys < 1 || options.MaxKeys > 65536 {
 		return nil, fmt.Errorf("registry max keys must be 1..65536")
 	}
@@ -81,12 +96,13 @@ func Open(ctx context.Context, directory string, options Options) (*Registry, er
 	query.Set("_txlock", "immediate")
 	query.Add("_pragma", "busy_timeout(5000)")
 	query.Add("_pragma", "synchronous(FULL)")
+	query.Add("_pragma", "foreign_keys(ON)")
 	dsn.RawQuery = query.Encode()
 	connector, err := sqlite.NewConnector(dsn.String())
 	if err != nil {
 		return nil, err
 	}
-	r := &Registry{db: sql.OpenDB(connector), maxKeys: options.MaxKeys}
+	r := &Registry{db: sql.OpenDB(connector), maxKeys: options.MaxKeys, maxControls: options.MaxControls}
 	r.db.SetMaxOpenConns(1)
 	if err := r.initialize(ctx); err != nil {
 		r.Close()
@@ -102,22 +118,28 @@ func (r *Registry) initialize(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS registry_settings (
-		id INTEGER PRIMARY KEY CHECK (id = 1), max_keys INTEGER NOT NULL);
+		id INTEGER PRIMARY KEY CHECK (id = 1), max_keys INTEGER NOT NULL, max_controls INTEGER NOT NULL);
 		CREATE TABLE IF NOT EXISTS submission_keys (
 		key TEXT PRIMARY KEY, digest TEXT NOT NULL, receiver TEXT NOT NULL,
 		token TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('claimed','accepted','not_accepted')),
-		operation_ref TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '')`)
+		operation_ref TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
+		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB);
+		CREATE TABLE IF NOT EXISTS runtime_reservations (
+			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0);
+		CREATE TABLE IF NOT EXISTS control_reservations (
+			resource TEXT PRIMARY KEY, target TEXT NOT NULL, kind TEXT NOT NULL,
+			consumed_key TEXT NOT NULL DEFAULT '', FOREIGN KEY(target) REFERENCES runtime_reservations(target))`)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO registry_settings(id,max_keys) VALUES(1,?) ON CONFLICT(id) DO NOTHING`, r.maxKeys); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO registry_settings(id,max_keys,max_controls) VALUES(1,?,?) ON CONFLICT(id) DO NOTHING`, r.maxKeys, r.maxControls); err != nil {
 		return err
 	}
-	var configured int
-	if err = tx.QueryRowContext(ctx, `SELECT max_keys FROM registry_settings WHERE id=1`).Scan(&configured); err != nil {
+	var configured, controls int
+	if err = tx.QueryRowContext(ctx, `SELECT max_keys,max_controls FROM registry_settings WHERE id=1`).Scan(&configured, &controls); err != nil {
 		return err
 	}
-	if configured != r.maxKeys {
+	if configured != r.maxKeys || controls != r.maxControls {
 		return fmt.Errorf("registry capacity differs from its persisted configuration")
 	}
 	return tx.Commit()
@@ -129,6 +151,10 @@ func (r *Registry) Close() error { return r.db.Close() }
 // session host instance or the independent registry, not a network connection.
 // Acquired is false for every existing record; callers must not execute again.
 func (r *Registry) ClaimKey(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver string) (Claim, api.SubmissionReceipt, error) {
+	return r.claimKey(ctx, key, digest, receiver, "")
+}
+
+func (r *Registry) claimKey(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver, controlResource string) (Claim, api.SubmissionReceipt, error) {
 	result := api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
 	encoded, err := encodeKey(key)
 	if err != nil {
@@ -144,7 +170,7 @@ func (r *Registry) ClaimKey(ctx context.Context, key api.SubmissionKey, digest [
 	defer tx.Rollback()
 	stored, err := readRecord(ctx, tx, encoded)
 	if err == nil {
-		if stored.digest != hex.EncodeToString(digest[:]) || stored.receiver != receiver {
+		if stored.digest != hex.EncodeToString(digest[:]) || stored.receiver != receiver || stored.controlResource != controlResource {
 			return Claim{}, result, conflict()
 		}
 		return Claim{}, stored.receipt(key), nil
@@ -152,15 +178,28 @@ func (r *Registry) ClaimKey(ctx context.Context, key api.SubmissionKey, digest [
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Claim{}, result, err
 	}
-	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM submission_keys`).Scan(&count); err != nil {
+	if err := checkRuntimeOpen(ctx, tx, key.Target); err != nil {
 		return Claim{}, result, err
 	}
-	if count >= r.maxKeys {
-		return Claim{}, result, &api.Error{Code: "SUBMISSION_CAPACITY_EXHAUSTED", Detail: "persistent submission evidence capacity reached"}
+	if controlResource == "" {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM submission_keys WHERE control_resource=''`).Scan(&count); err != nil {
+			return Claim{}, result, err
+		}
+		if count >= r.maxKeys {
+			return Claim{}, result, &api.Error{Code: "SUBMISSION_CAPACITY_EXHAUSTED", Detail: "ordinary persistent submission evidence capacity reached"}
+		}
+	} else {
+		var target, consumed string
+		if err := tx.QueryRowContext(ctx, `SELECT target,consumed_key FROM control_reservations WHERE resource=?`, controlResource).Scan(&target, &consumed); err != nil || target != encodeTarget(key.Target) || consumed != "" {
+			return Claim{}, result, &api.Error{Code: "CONTROL_UNAVAILABLE", Detail: "control reservation is absent or already consumed"}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE control_reservations SET consumed_key=? WHERE resource=?`, encoded, controlResource); err != nil {
+			return Claim{}, result, err
+		}
 	}
 	claim := Claim{key: key, token: wire.ID()}
-	_, err = tx.ExecContext(ctx, `INSERT INTO submission_keys(key,digest,receiver,token,state) VALUES(?,?,?,?,'claimed')`, encoded, hex.EncodeToString(digest[:]), receiver, claim.token)
+	_, err = tx.ExecContext(ctx, `INSERT INTO submission_keys(key,digest,receiver,token,state,control_resource) VALUES(?,?,?,?,'claimed',?)`, encoded, hex.EncodeToString(digest[:]), receiver, claim.token, controlResource)
 	if err != nil {
 		return Claim{}, result, err
 	}
@@ -231,6 +270,11 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 		}
 		return record.receipt(claim.key), nil
 	}
+	if state == "accepted" {
+		if err := checkRuntimeOpen(ctx, tx, claim.key.Target); err != nil {
+			return result, err
+		}
+	}
 	_, err = tx.ExecContext(ctx, `UPDATE submission_keys SET state=?,operation_ref=?,error_code=? WHERE key=?`, state, operationRef, code, encoded)
 	if err != nil {
 		return result, err
@@ -242,7 +286,8 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 }
 
 type record struct {
-	digest, receiver, token, state, operationRef, errorCode string
+	digest, receiver, token, state, operationRef, errorCode, stage, controlResource string
+	runtime                                                                         []byte
 }
 
 func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
@@ -250,7 +295,11 @@ func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
 	if r.state == "claimed" {
 		admission = api.SubmissionUnknown
 	}
-	return api.SubmissionReceipt{SubmissionKey: key, Admission: admission, OperationRef: r.operationRef, ErrorCode: r.errorCode}
+	receipt := api.SubmissionReceipt{SubmissionKey: key, Admission: admission, OperationRef: r.operationRef, ErrorCode: r.errorCode, Stage: r.stage}
+	if len(r.runtime) != 0 {
+		_ = json.Unmarshal(r.runtime, &receipt.Runtime)
+	}
+	return receipt
 }
 
 type queryRow interface {
@@ -259,8 +308,8 @@ type queryRow interface {
 
 func readRecord(ctx context.Context, db queryRow, key string) (record, error) {
 	var result record
-	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code FROM submission_keys WHERE key=?`, key).Scan(
-		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode)
+	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime FROM submission_keys WHERE key=?`, key).Scan(
+		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime)
 	return result, err
 }
 

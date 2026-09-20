@@ -128,3 +128,26 @@ existing forget execution is only routed cleanup at this slice), shared machine
 quotas, protected control evidence, complete discovery diagnostics, fixed binary
 dependencies, service-manager/platform tests and public consumer contract migration.
 No full L01–L55 completion claim is made by this process tracer bullet.
+
+Slice 4 admission-resource foundation: the independent registry now separates
+ordinary keys from permission/cancel reservations and per-Runtime stop/forget
+slots. Defaults are 4,096 ordinary keys and 4,096 retained reservations per
+permission/cancel class (configuration range 1..65,536). Stop and forget are
+reserved separately when creating a Runtime resource record. The resource
+ledger limits live ACP hosts to 16 (16 × 8 MiB = 128 MiB model/stream budget)
+and retains at most 256 Runtime identity records. These are target resource
+limits; the next slice wires every launch/control to this ledger.
+
+Launch admission can atomically reserve its Runtime identity and controls before
+side effects. Forget admission atomically seals that Runtime and records cleaning;
+late unaccepted claims cannot commit across the seal. Confirmed completion
+releases its live-host slot while retaining the original key and identity closure.
+Progress and Runtime association survive registry reopen; reading never advances
+cleanup. Completed control evidence is not freed to admit another control key.
+
+`go test -race ./internal/sessionregistry -count=1 -timeout=90s` passes. New tests
+exhaust ordinary and per-control limits, preserve protected controls and reads,
+reject 100 invalid control targets without consuming valid reservations, preserve
+cross-operation key conflicts, and reopen cleanup evidence before completion.
+Public control/launch dispatch is not yet migrated, so this is evidence for the
+registry contract, not a passed L51–L55 network/process acceptance claim.
