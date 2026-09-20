@@ -1,12 +1,16 @@
 import { test, expect } from "@playwright/test";
 import { mockWorkbench, workbenchState, workbenchACPState } from "./workbench-fixture";
 
+function operationReceipt(submissionID: string, ref: string) {
+ return { submission_id: submissionID, admission: "accepted", operation_ref: ref, target: { owner_id: "owner", runner_id: "one", fabric_id: "attached", machine_id: "machine-one", binding_revision: 1, runtime_id: "one-acp", runtime_incarnation: "boot-one", runtime_generation: 1 } };
+}
+
 test("stop keeps its original receipt query after the Runtime disappears and the page reloads", async ({ page }, testInfo) => {
  const state = workbenchState(); await mockWorkbench(page, state);
  let submitted: any, saved: any, sends = 0;
  await page.route("**/api/v1/agents/submit", async (route) => {
   sends++; submitted = route.request().postDataJSON();
-  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
+  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem('dune.acpSubmissions:"owner"') ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
   expect(saved).toMatchObject({ action: "stop", agent_ref: "ref-one-acp", runtime: { id: "one-acp", incarnation: "boot-one", generation: 1 } });
   expect(submitted).toEqual({ submission_id: saved.submission_id, agent_ref: saved.agent_ref, action: "stop" });
   state.runtimes.one = state.runtimes.one.filter((runtime) => runtime.id !== "one-acp");
@@ -14,7 +18,7 @@ test("stop keeps its original receipt query after the Runtime disappears and the
  });
  await page.route("**/api/v1/agents/submission", async (route) => {
   expect(route.request().postDataJSON()).toEqual({ submission_id: submitted.submission_id, agent_ref: submitted.agent_ref });
-  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: "accepted", operation_ref: "original-stop", stage: "stopped", target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: "accepted", operation_ref: "original-stop", stage: "stopped", target: { owner_id: "owner", ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
  });
  await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
  await page.getByRole("button", { name: "停止 A-ACP", exact: true }).click();
@@ -37,7 +41,7 @@ test("forget saves the lost Runtime before sending and keeps cleanup progress af
  let submitted: any, saved: any, sends = 0, completed = false;
  await page.route("**/api/v1/agents/submit", async (route) => {
   sends++; submitted = route.request().postDataJSON();
-  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
+  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem('dune.acpSubmissions:"owner"') ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
   expect(saved).toMatchObject({ action: "forget", agent_ref: "ref-one-acp", runtime: { id: "one-acp", incarnation: "boot-one", generation: 1 } });
   expect(submitted).toEqual({ submission_id: saved.submission_id, agent_ref: saved.agent_ref, action: "forget" });
   state.runtimes.one = state.runtimes.one.filter((runtime) => runtime.id !== "one-acp");
@@ -45,7 +49,7 @@ test("forget saves the lost Runtime before sending and keeps cleanup progress af
  });
  await page.route("**/api/v1/agents/submission", async (route) => {
   expect(route.request().postDataJSON()).toEqual({ submission_id: submitted.submission_id, agent_ref: submitted.agent_ref });
-  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: "accepted", operation_ref: "original-cleanup", stage: completed ? "completed" : "cleaning", error_code: completed ? "" : "CLEANUP_UNCONFIRMED", cleanup: { confirmed: completed ? ["host", "ipc", "runtime_directory"] : ["host"], remaining: completed ? [] : ["ipc", "runtime_directory"] }, target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: "accepted", operation_ref: "original-cleanup", stage: completed ? "completed" : "cleaning", error_code: completed ? "" : "CLEANUP_UNCONFIRMED", cleanup: { confirmed: completed ? ["host", "ipc", "runtime_directory"] : ["host"], remaining: completed ? [] : ["ipc", "runtime_directory"] }, target: { owner_id: "owner", ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
  });
  await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
  await page.getByRole("button", { name: "删除 A-ACP", exact: true }).click();
@@ -76,7 +80,7 @@ test("busy ACP queues a task and reads only that operation across idle and outpu
  await page.route("**/api/v1/agents/*", async (route) => {
   const path = new URL(route.request().url()).pathname, body = route.request().postDataJSON();
   const reply = (value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
-  if (path.endsWith("/prompt")) { submissions.push(body); return reply(operation()); }
+  if (path.endsWith("/prompt")) { submissions.push(body); return reply({ ...operation(), submission: operationReceipt(body.submission_id, "operation-b") }); }
   if (path.endsWith("/wait")) { waits.push(body); return reply({ operation: operation() }); }
   if (path.endsWith("/read")) {
    reads.push(body);
@@ -121,7 +125,8 @@ test("ACP native actions use shared references and unknown prompt receipts are r
   const path = new URL(route.request().url()).pathname, body = route.request().postDataJSON();
   calls.push({ path, body });
   const native = path.endsWith("/open-session");
-  const operation = { operation_ref: native ? `operation-${calls.length}` : "operation-unknown", state: native ? "completed" : "unknown" };
+  const ref = native ? `operation-${calls.length}` : "operation-unknown";
+  const operation = { operation_ref: ref, state: native ? "completed" : "unknown", submission: operationReceipt(body.submission_id, ref) };
   await route.fulfill({ status: native ? 200 : 503, contentType: "application/json", body: JSON.stringify(native ? operation : { code: "RESULT_UNKNOWN", error: "任务回执未知", result: operation }) });
  });
  await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
@@ -145,9 +150,9 @@ test("ACP controls save caller identity before sending and select the exact prom
  const calls: any[] = [];
  await page.route("**/api/v1/agents/submit", async (route) => {
   const body = route.request().postDataJSON(); calls.push(body);
-  const saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), body.submission_id);
+  const saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem('dune.acpSubmissions:"owner"') ?? "[]").find((item: any) => item.submission_id === id), body.submission_id);
   expect(saved).toMatchObject({ submission_id: body.submission_id, agent_ref: body.agent_ref, prefix: "/api/v1" });
-  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: body.submission_id, admission: "accepted", stage: "written", operation_ref: "control", target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: body.submission_id, admission: "accepted", stage: "written", operation_ref: "control", target: { owner_id: "owner", ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
  });
  await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
  await page.getByRole("button", { name: "允许一次", exact: true }).click();
@@ -166,7 +171,7 @@ test("lost first response survives refresh and queries the original key without 
  const task = "sensitive prompt never persisted";
  await page.route("**/api/v1/agents/prompt", async (route) => {
   sends++; submitted = route.request().postDataJSON();
-  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
+  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem('dune.acpSubmissions:"owner"') ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
   expect(saved).toBeTruthy();
   expect(JSON.stringify(saved)).not.toContain(task);
   await route.abort("failed");
@@ -174,7 +179,7 @@ test("lost first response survives refresh and queries the original key without 
  await page.route("**/api/v1/agents/submission", async (route) => {
   queries++;
   expect(route.request().postDataJSON()).toEqual({ submission_id: submitted.submission_id, agent_ref: submitted.agent_ref });
-  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: queries === 1 ? "unknown" : "accepted", operation_ref: queries === 1 ? undefined : "original-sdk-operation", target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: queries === 1 ? "unknown" : "accepted", operation_ref: queries === 1 ? undefined : "original-sdk-operation", target: { owner_id: "owner", ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
  });
  await page.route(/\/runners\/[^/]+\/call\?/, async (route) => {
   const body = route.request().postDataJSON();
@@ -198,4 +203,28 @@ test("lost first response survives refresh and queries the original key without 
  await expect(records.getByRole("status")).toHaveText("操作已完成");
  expect(sends).toBe(1); expect(queries).toBe(2);
  await page.screenshot({ path: testInfo.outputPath("submission-recovery.png"), fullPage: true });
+ state.accountID = "another";
+ await page.reload();
+ await expect(page.getByRole("heading", { name: "并行工作台" })).toBeVisible();
+ await expect(page.getByLabel("历史提交查询", { exact: true })).toHaveCount(0);
+ await expect(page.getByLabel("提交恢复记录", { exact: true })).toHaveCount(0);
+ expect(sends).toBe(1); expect(queries).toBe(2);
+});
+
+test("an operation with a mismatched receipt is not followed or replayed", async ({ page }) => {
+ const state = workbenchState(); await mockWorkbench(page, state);
+ let sends = 0, waits = 0;
+ await page.route("**/api/v1/agents/prompt", async (route) => {
+  sends++;
+  const body = route.request().postDataJSON();
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ operation_ref: "unrelated-operation", state: "running", submission: operationReceipt(body.submission_id, "original-operation") }) });
+ });
+ await page.route("**/api/v1/agents/wait", async (route) => { waits++; await route.abort(); });
+ await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+ await page.getByLabel("发送给 Agent 的任务").fill("do once");
+ await page.getByRole("button", { name: "发送", exact: true }).click();
+ await expect(page.getByRole("alert").filter({ hasText: "操作引用与原提交回执不一致" })).toBeVisible();
+ await expect(page.getByLabel("任务 1", { exact: true })).toHaveCount(0);
+ await expect(page.getByLabel("发送给 Agent 的任务")).toHaveValue("do once");
+ expect(sends).toBe(1); expect(waits).toBe(0);
 });

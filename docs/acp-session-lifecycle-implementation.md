@@ -1047,3 +1047,19 @@ lost responses, refresh, independent exact-key queries, manual reopen, removal,
 storage failure, changed binding and another login. Wide/narrow screenshots were
 visually checked. TypeScript, production build, affected Go vet and diff checks
 pass; Rspack retains its bundle-size warnings. No external acceptance ran.
+
+## Slice 26 — Web Runtime receipt ownership
+
+Existing ACP operation/control recovery now namespaces its bounded local records
+by authenticated account, and validates receipt owner as well as the original
+Runtime and binding. Successful and partial-error operation responses must carry
+a matching accepted receipt with the same operation_ref before Web follows that
+operation or clears its input. A mismatched response retains the caller's key
+for an explicit read, without polling an unrelated operation or replaying work.
+
+Thirteen launch/operation browser regressions pass (10.6 seconds), including
+account changes after a lost prompt response and an unrelated operation reference.
+Existing stop/forget recovery after Runtime removal, permissions, exact cancel,
+queue/output gaps and partial-error operation reads remain covered. TypeScript,
+14 unit tests, production build and whitespace checks pass. No native or external
+environment was used.

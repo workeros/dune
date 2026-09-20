@@ -42,9 +42,9 @@ export function ParallelWorkbench({ accountID, runners, runnersLoading, selected
     setStopBusy(true); setError("");
     try {
       const action = stopping.runtime.state === "running" ? "stop" : "forget";
-      const submissionID = saveACPSubmission(prefix, stopping.target.binding, stopping.runtime, stopping.ref ?? "", action);
+      const submissionID = saveACPSubmission(accountID, prefix, stopping.target.binding, stopping.runtime, stopping.ref ?? "", action);
       const receipt = await request(`${prefix}/agents/submit`, { method: "POST", body: JSON.stringify({ submission_id: submissionID, agent_ref: stopping.ref, action }) });
-      recordACPReceipt(submissionID, receipt);
+      recordACPReceipt(accountID, submissionID, receipt);
       setStopping(undefined); await directory.refresh();
     }
     catch (cause) { setError(errorText(cause)); } finally { setStopBusy(false); }
@@ -68,14 +68,14 @@ export function ParallelWorkbench({ accountID, runners, runnersLoading, selected
       <Button size="sm" variant="ghost" aria-label={`固定审阅 ${agent?.runtime.title ?? leaf.id}`} onClick={() => { saved.change((old) => ({ ...old, review_pane: old.review_pane === leaf.id ? undefined : leaf.id })); setReview((old) => old || "git"); }}>{saved.view.review_pane === leaf.id ? "取消固定" : "固定审阅"}</Button>
       {bindingValid && runner.online && agent && ["running", "exited", "lost"].includes(agent.runtime.state) && <Button size="sm" variant="ghost" aria-label={`${agent.runtime.state === "running" ? "停止" : "删除"} ${agent.runtime.title ?? leaf.id}`} onClick={() => setStopping(agent)}>{agent.runtime.state === "running" ? "停止" : "删除"}</Button>}
       <Button size="sm" variant="ghost" aria-label={`移出 ${agent?.runtime.title ?? leaf.id}`} title="移出视图，Agent 继续运行" onClick={() => saved.change((old) => removePane(old, leaf.id))}>移出</Button>
-    </header><div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane key={targetKey(agent.target)} binding={leaf.pane.target.binding} runtime={agent.runtime} agentRef={agent.ref} prefix={prefix} onNativeChange={directory.refresh} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
+    </header><div className="pane-body"><Suspense fallback={<p className="muted p-4" role="status">正在打开会话…</p>}>{available ? agent.runtime.adapter === "pty" ? <TerminalPane binding={leaf.pane.target.binding} runtime={agent.runtime} focused={saved.view.focus_pane === leaf.id} /> : <ACPPane accountID={accountID} key={targetKey(agent.target)} binding={leaf.pane.target.binding} runtime={agent.runtime} agentRef={agent.ref} prefix={prefix} onNativeChange={directory.refresh} /> : <div className="pane-unavailable" role="status">{unavailable}</div>}</Suspense></div></div>;
   };
   const visibleAgents = directory.agents.filter((agent) => !projectID || projectFor(agent, projects.projects)?.project.id === projectID);
   return <div className="parallel-workbench">
     <header className="parallel-header"><div><h1>并行工作台</h1><p className="muted" role="status">{saved.error ? "布局未保存" : !saved.loaded ? "读取个人布局…" : saved.saving ? "保存布局中…" : "布局已保存"}</p></div><div className="flex flex-wrap gap-2"><label className="split-choice">新会话打开方向<select value={direction} onChange={(event) => setDirection(event.target.value as Split["direction"])}><option value="horizontal">左右分屏</option><option value="vertical">上下分屏</option></select></label><Button size="sm" variant={review === "files" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "files" ? "" : "files")}>文件</Button><Button size="sm" variant={review === "git" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "git" ? "" : "git")}>Git diff</Button></div></header>
     {saved.error && <div className="error-box mx-3" role="alert">{saved.error}<Button variant="outline" size="sm" onClick={() => void saved.reload()}>加载已保存布局</Button></div>}
     {(error || projects.error) && <p className="error-box mx-3" role="alert">{error || projects.error}</p>}
-    <ACPSubmissionRecovery prefix={prefix} />
+    <ACPSubmissionRecovery accountID={accountID} prefix={prefix} />
     <StartAgent scope={{ accountID, prefix }} runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime) => { const agent = directory.add(runner, runtime); if (agent) open(agent); }} />
     <div className="parallel-body"><aside className="agent-navigation">
       <div className="nav-heading"><h2>项目</h2><Button size="sm" variant="ghost" onClick={() => setEditing("new")}>新建项目</Button></div>

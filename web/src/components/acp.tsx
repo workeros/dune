@@ -62,7 +62,7 @@ function ACPStream({ entries }: { entries: StreamEntry[] }) {
  })}</div></aside>;
 }
 
-export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: { binding: Binding; runtime: Runtime; agentRef?: string; prefix: string; onNativeChange: () => void }) {
+export function ACPPane({ accountID, binding, runtime, agentRef, prefix, onNativeChange }: { accountID: string; binding: Binding; runtime: Runtime; agentRef?: string; prefix: string; onNativeChange: () => void }) {
  const [text, setText] = useState(""), [error, setError] = useState(""), [sending, setSending] = useState(false), [sessionID, setSessionID] = useState("");
  const [diagnostics, dispatch] = useReducer(conversationReducer, initialConversation);
  const { streamEntries, streamOpen } = diagnostics;
@@ -70,7 +70,7 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
  const { state, connected, ended } = model;
  const entries = useMemo(() => orderedEntries(model.cache), [model.cache.entries]);
  const scroll = useRef<HTMLDivElement>(null), followTail = useRef(true);
- const requests = useACPOperations(prefix, binding, runtime, true, onNativeChange);
+ const requests = useACPOperations(accountID, prefix, binding, runtime, true, onNativeChange);
  // Raw ACP diagnostics are opt-in and never append to the model conversation.
  useEffect(() => {
   if (!streamOpen || ended) return;
@@ -103,9 +103,9 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
     if (accepted && action === "prompt") setText((current) => current === extra.text ? "" : current);
    } else {
     if (!agentRef) throw new Error("正在同步会话引用，请稍后提交。");
-    const submissionID = saveACPSubmission(prefix, binding, runtime, agentRef, action);
+    const submissionID = saveACPSubmission(accountID, prefix, binding, runtime, agentRef, action);
     const receipt = await request(`${prefix}/agents/submit`, { method: "POST", body: JSON.stringify({ submission_id: submissionID, agent_ref: agentRef, action, ...extra }) });
-    recordACPReceipt(submissionID, receipt);
+    recordACPReceipt(accountID, submissionID, receipt);
    }
   }
   catch (e) { setError(errorText(e)); } finally { setSending(false); }
@@ -147,7 +147,7 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
    {streamOpen && <ACPStream entries={streamEntries} />}
   </div>
   {!ended && !!state?.permissions.length && <div className="max-h-80 overflow-auto border-t bg-[#f6e5aa] p-4">{state.permissions.map((permission) => <section className="mb-3" key={permission.id}><h3 className="mb-2 text-sm font-bold">等待授权 · {permission.params.toolCall?.title || "Agent 工具请求"}</h3><pre aria-label="授权请求详情" className="mb-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-foreground/15 bg-card p-3 text-xs">{JSON.stringify(permission.params.toolCall, null, 2)}</pre><div className="flex flex-wrap gap-2">{permission.params.options.map((option) => <Button key={option.optionId} size="sm" variant="outline" disabled={disabled} onClick={() => void act("permission", { permission_id: permission.id, option_id: option.optionId })}>{option.name}</Button>)}</div></section>)}</div>}
-  <ACPSubmissionRecovery prefix={prefix} binding={binding} runtime={runtime} />
+  <ACPSubmissionRecovery accountID={accountID} prefix={prefix} binding={binding} runtime={runtime} />
   <ACPOperations prefix={prefix} enabled={true} requests={requests} renderUpdates={(updates) => <Conversation entries={updates.reduce<typeof initialConversation>((model, update) => conversationReducer(model, isRecord(update) ? { type: "update", update: update as Update } : { type: "notice", value: "无法解析的操作输出" }), initialConversation).entries} />} />
   <form className="flex gap-2 border-t border-foreground/20 p-3" onSubmit={(event) => { event.preventDefault(); void act("prompt", { text, expected_conversation_id: state?.conversation?.conversation_id ?? "" }); }}><Textarea aria-label="发送给 Agent 的任务" placeholder="描述编码任务…" value={text} onChange={(event) => setText(event.target.value)} maxLength={65536} className="min-h-16 flex-1" /><Button type="submit" disabled={disabled || !agentRef || (busy && state?.busy !== "prompt") || !state?.session_id || !state?.conversation?.conversation_id || !text.trim()}>{busy ? "加入队列" : "发送"}</Button></form>
  </div>;

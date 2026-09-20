@@ -22,7 +22,7 @@ const queryError = (cause: unknown) => cause instanceof APIError && ["OPERATION_
  ? "本次操作引用已失效，无法查询。不能据此判断任务没有执行。"
  : `${errorText(cause)}；查询未完成，可以重新查询。`;
 
-export function useACPOperations(prefix: string, binding: Binding, runtime: Runtime, enabled: boolean, onNativeChange: () => void) {
+export function useACPOperations(accountID: string, prefix: string, binding: Binding, runtime: Runtime, enabled: boolean, onNativeChange: () => void) {
  const [items, setItems] = useState<Submission[]>([]), [error, setError] = useState("");
  const sequence = useRef(0), nativeChanged = useRef(onNativeChange); nativeChanged.current = onNativeChange;
  const merge = (operation: ACPOperation) => {
@@ -33,16 +33,21 @@ export function useACPOperations(prefix: string, binding: Binding, runtime: Runt
   setError("");
   let operation: ACPOperation | undefined;
   let submissionID: string | undefined;
+  const accepted = (value: unknown) => {
+   if (!submissionID) throw new Error("缺少原提交标识。");
+   const parsed = parseOperation(value);
+   const receipt = recordACPReceipt(accountID, submissionID, (value as { submission?: unknown }).submission);
+   if (receipt.admission !== "accepted" || receipt.operation_ref !== parsed.operation_ref) throw new Error("操作引用与原提交回执不一致，请查询原提交。");
+   return parsed;
+  };
   try {
-   submissionID = saveACPSubmission(prefix, binding, runtime, String(body.agent_ref ?? ""), action);
+   submissionID = saveACPSubmission(accountID, prefix, binding, runtime, String(body.agent_ref ?? ""), action);
    const identified = { ...body, submission_id: submissionID };
    const response = await request<unknown>(`${prefix}/agents/${action === "prompt" ? "prompt" : "open-session"}`, { method: "POST", body: JSON.stringify(identified) });
-   operation = parseOperation(response);
-   const receipt = (response as { submission?: unknown }).submission;
-   if (receipt) recordACPReceipt(submissionID, receipt);
+   operation = accepted(response);
   }
   catch (cause) {
-   if (cause instanceof APIError && cause.result) { try { operation = parseOperation(cause.result); } catch { /* No usable receipt. */ } }
+   if (cause instanceof APIError && cause.result) { try { operation = accepted(cause.result); } catch { /* Keep the saved key; an unverified operation must not be followed. */ } }
    setError(`${errorText(cause)}；不会自动重发。${operation ? "已保留本次操作，可以继续查询。" : submissionID ? "已保存提交标识，可在提交记录中查询。" : "请求尚未发送。"}`);
   }
   if (!operation) return false;
