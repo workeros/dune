@@ -30,7 +30,17 @@ issue does not disable an otherwise-ready Runner or hide its healthy siblings.
 The Web workbench keeps missing cached targets marked unavailable, reconnects
 only after observing them again, and deduplicates by their complete target.
 
-Current discovery reads the durable host registration index at connector startup.
-Late registration after that scan and classification of orphan filesystem/tmux
-artifacts require the subsequent rescan slice; the current implementation is not
-the full lifecycle requirement's delivery claim.
+Discovery reads the durable index at startup and rescans at most once per second
+on list reads, unknown exact-target reads and bounded startup recovery. The scan
+has a one-second context deadline and coalesces concurrent readers. An admitted
+ACP launch without a registered host reports `HOST_REGISTRATION_PENDING` with its
+original Runtime; a confirmed failed launch reports `LAUNCH_FAILED`. No scan
+restarts setup or launches a missing host. A repaired registration can reconnect
+its original instance. `REGISTRY_UNAVAILABLE` preserves previously known targets
+and prevents absence from being treated as a stale Runtime.
+
+Launches retain their own connection until initial publication. Discovery cannot
+replace that connection or another known host identity. Cleanup completion and
+scan publication are serialized, so a scan started before forget cannot reinsert
+the retired Runtime. Classification of orphan filesystem/tmux artifacts remains
+in the next slice; this is not the full lifecycle requirement's delivery claim.

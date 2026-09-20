@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestPendingHostDiscoveryRetainsOriginalLaunchBeforeRegistration(t *testing.T) {
+	dir := privateDirectory(t)
+	r := openRegistry(t, dir, 4)
+	key := testKey()
+	key.Target.RuntimeID, key.Target.RuntimeIncarnation, key.Target.RuntimeGeneration = "", "", 0
+	claim, _, err := r.ClaimKey(t.Context(), key, Digest("profile.start", nil), "registry:launch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := api.Runtime{ID: "late-runtime", Incarnation: "original", Generation: 1, Adapter: "acp", State: "starting"}
+	if _, err := r.AcceptLaunch(t.Context(), claim, "launch-ref", runtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r = openRegistry(t, dir, 4)
+	page, err := r.Hosts(t.Context())
+	if err != nil || len(page.Hosts) != 0 || len(page.Issues) != 1 || page.Issues[0].Runtime == nil || page.Issues[0].Runtime.ID != runtime.ID || page.Issues[0].Code != "HOST_REGISTRATION_PENDING" {
+		t.Fatal(page, err)
+	}
+	key.Target.RuntimeID, key.Target.RuntimeIncarnation, key.Target.RuntimeGeneration = runtime.ID, runtime.Incarnation, 1
+	host := HostRecord{Target: key.Target, Instance: "original-host", BootID: "boot", PID: 1234, Runtime: runtime, Registration: []byte(`{}`), Resources: testResources(key.Target, "original-host")}
+	if err := r.RegisterHost(t.Context(), host); err != nil {
+		t.Fatal(err)
+	}
+	page, err = r.Hosts(t.Context())
+	if err != nil || len(page.Hosts) != 1 || len(page.Issues) != 0 {
+		t.Fatal("registration did not replace pending evidence", page, err)
+	}
+}
+
 func TestHostDiscoveryPreservesHealthyRowsBesideCorruption(t *testing.T) {
 	r := openRegistry(t, privateDirectory(t), 4)
 	for i := range 3 {

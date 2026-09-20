@@ -2,7 +2,6 @@ package fabricd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -322,39 +321,4 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-}
-
-func (d *Engine) discoverSessions() error {
-	root := filepath.Join(d.stateDir, "acp", "runtimes")
-	if err := tmux.PrivateDir(root); err != nil {
-		return err
-	}
-	hosts, err := d.registry.Hosts(d.ctx)
-	if err != nil {
-		return err
-	}
-	d.discoveryIssues = append(d.discoveryIssues, hosts.Issues...)
-	for _, host := range hosts.Hosts {
-		var reg sessionRegistration
-		if json.Unmarshal(host.Registration, &reg) != nil || reg.Installation != installationID(d.stateDir) || reg.Target != host.Target || reg.Instance != host.Instance {
-			runtime := host.Runtime
-			runtime.Availability = "unavailable"
-			d.discoveryIssues = append(d.discoveryIssues, api.RuntimeDiscoveryIssue{Runtime: &runtime, Code: "REGISTRATION_INVALID"})
-			continue
-		}
-		if _, err := sessionSocket(reg); err != nil {
-			code := "REGISTRATION_INVALID"
-			if reg.Version != sessionProtocol {
-				code = "SESSION_PROTOCOL_UNSUPPORTED"
-			}
-			runtime := host.Runtime
-			runtime.Availability = "unavailable"
-			d.discoveryIssues = append(d.discoveryIssues, api.RuntimeDiscoveryIssue{Runtime: &runtime, Code: code})
-			continue
-		}
-		reg.Runtime = host.Runtime
-		directory := filepath.Join(root, reg.Runtime.ID)
-		d.runtimes[reg.Runtime.ID] = &runtime{id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", host: &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc, registry: d.registry}}
-	}
-	return nil
 }

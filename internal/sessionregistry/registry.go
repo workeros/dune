@@ -125,7 +125,8 @@ func (r *Registry) initialize(ctx context.Context) error {
 		operation_ref TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
 		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB, worktree BLOB, cleanup BLOB, raw_input BLOB);
 		CREATE TABLE IF NOT EXISTS runtime_reservations (
-			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0);
+			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0,
+			launch_key TEXT REFERENCES submission_keys(key));
 		CREATE TABLE IF NOT EXISTS control_reservations (
 			resource TEXT PRIMARY KEY, target TEXT NOT NULL, kind TEXT NOT NULL,
 			consumed_key TEXT NOT NULL DEFAULT '', FOREIGN KEY(target) REFERENCES runtime_reservations(target));

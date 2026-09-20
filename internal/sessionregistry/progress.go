@@ -35,6 +35,13 @@ func (r *Registry) AcceptLaunch(ctx context.Context, claim Claim, operationRef s
 	if err := reserveRuntime(ctx, tx, target); err != nil {
 		return result, err
 	}
+	linked, err := tx.ExecContext(ctx, `UPDATE runtime_reservations SET launch_key=? WHERE target=? AND launch_key IS NULL`, encoded, encodeTarget(target))
+	if err != nil {
+		return result, err
+	}
+	if count, err := linked.RowsAffected(); err != nil || count != 1 {
+		return result, conflict()
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE submission_keys SET state='accepted',operation_ref=?,stage='accepted',runtime=? WHERE key=?`, operationRef, api.Payload(runtime), encoded); err != nil {
 		return result, err
 	}

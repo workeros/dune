@@ -46,6 +46,10 @@ func TestDiscoveryRecoversEightHostsBesideUnresponsiveEndpointAndCorruptRegistra
 	if err != nil {
 		t.Fatal(err)
 	}
+	corrupted, err := registry.Host(h.ctx, cleanupTestKey(runtimes[9], "read").Target)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.kill()
 	var registration sessionRegistration
 	if err := json.Unmarshal(slow.Registration, &registration); err != nil {
@@ -139,6 +143,22 @@ func TestDiscoveryRecoversEightHostsBesideUnresponsiveEndpointAndCorruptRegistra
 	state, err := h.client.ACPState(h.ctx, runtimes[8])
 	if err != nil || !state.Ready {
 		t.Fatal("same endpoint did not recover", state, err)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(h.state, "registry", "registry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`UPDATE session_hosts SET registration=? WHERE instance=?`, []byte(corrupted.Registration), corrupted.Instance)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitTimeoutTest(t, func() bool {
+		page, err := h.client.List(h.ctx)
+		return err == nil && page.Complete && len(page.Items) == 10
+	})
+	if state, err := h.client.ACPState(h.ctx, runtimes[9]); err != nil || !state.Ready {
+		t.Fatal("repaired original registration was not rediscovered", state, err)
 	}
 	for i, work := range workspaces {
 		body, err := os.ReadFile(filepath.Join(work, "process.log"))

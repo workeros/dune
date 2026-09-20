@@ -13,6 +13,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if code, handled := registrationHostTestHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	if code, handled := rawHostTestHelper(os.Args[1:]); handled {
 		os.Exit(code)
 	}

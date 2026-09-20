@@ -569,12 +569,26 @@ func validateRPC(b []byte) error {
 }
 func (d *Engine) lookup(m *pb.Message) (*runtime, error) {
 	d.mu.Lock()
+	missing := d.runtimes[m.RuntimeId] == nil
+	d.mu.Unlock()
+	if missing {
+		d.refreshSessionRegistrations(d.ctx)
+	}
+	d.mu.Lock()
 	defer d.mu.Unlock()
 	r := d.runtimes[m.RuntimeId]
 	if r == nil {
+		if incarnation := d.launching[m.RuntimeId]; incarnation != "" && incarnation == m.RuntimeIncarnation && m.RuntimeGeneration == 1 {
+			return nil, &api.Error{Code: "HOST_REGISTRATION_PENDING", Detail: "original Runtime launch has not confirmed its host"}
+		}
 		for _, issue := range d.discoveryIssues {
 			if known := issue.Runtime; known != nil && known.ID == m.RuntimeId && known.Incarnation == m.RuntimeIncarnation && known.Generation == m.RuntimeGeneration {
 				return nil, &api.Error{Code: issue.Code, Detail: "original Runtime registration could not be verified"}
+			}
+		}
+		for _, issue := range d.discoveryIssues {
+			if issue.Runtime == nil && issue.Code == "REGISTRY_UNAVAILABLE" {
+				return nil, &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "original Runtime registration cannot currently be checked"}
 			}
 		}
 	}
@@ -584,6 +598,7 @@ func (d *Engine) lookup(m *pb.Message) (*runtime, error) {
 	return r, nil
 }
 func (d *Engine) list(ctx context.Context) api.RuntimeList {
+	d.refreshSessionRegistrations(ctx)
 	d.mu.Lock()
 	runtimes := make([]*runtime, 0, len(d.runtimes))
 	for _, r := range d.runtimes {

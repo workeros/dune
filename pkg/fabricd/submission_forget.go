@@ -244,12 +244,14 @@ func (d *Engine) executeCleanup(ctx context.Context, job sessionregistry.Cleanup
 			return
 		}
 	}
+	d.discoveryScanMu.Lock()
 	d.mu.Lock()
 	r := d.runtimes[job.Key.Target.RuntimeID]
 	if r != nil && r.inc == job.Key.Target.RuntimeIncarnation {
 		delete(d.runtimes, r.id)
 	}
 	d.mu.Unlock()
+	d.discoveryScanMu.Unlock()
 	if r != nil && r.inc == job.Key.Target.RuntimeIncarnation {
 		if r.host != nil {
 			r.host.close()

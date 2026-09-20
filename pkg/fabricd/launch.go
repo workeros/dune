@@ -75,6 +75,10 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 		failSubmission(s, receipt, err)
 		return
 	}
+	d.mu.Lock()
+	d.launching[r.id] = r.inc
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); delete(d.launching, r.id); d.mu.Unlock() }()
 	progress := func(stage, code string, runtime *api.Runtime) error {
 		observed, err := d.registry.Progress(d.ctx, key, receipt.OperationRef, stage, code, runtime)
 		if err == nil {

@@ -777,3 +777,41 @@ This slice does not yet rescan late registrations or classify orphan artifacts.
 Those remain in scope, together with dependency pinning/upgrade preflight,
 platform service isolation, remaining consumer recovery/SandDance integration,
 real-Agent/platform evidence and the full L01–L55 audit. The goal remains active.
+
+## Slice 19 — late registration and read-only rescan
+
+Runtime reservations now link to the original launch key in the same admission
+transaction. A single registry snapshot includes registered hosts and original
+ACP launches that have not registered a host. The latter remain discoverable as
+HOST_REGISTRATION_PENDING with the exact Runtime, or LAUNCH_FAILED after an
+explicit recorded launch failure. No control or setup replay is inferred from
+missing registration. The private schema changes directly for this unreleased
+prototype; no compatibility adapter or migration shim is introduced.
+
+List and missing exact-target reads rescan at most once per second, under a
+one-second context deadline and a single scan lock. A registry read failure keeps
+the preceding targets and reports REGISTRY_UNAVAILABLE. The bounded startup
+recovery loop also watches pending original registration. In-progress launches
+retain their own IPC connection; rescanning cannot substitute a second connector
+or replace an already-known host instance. Cleanup's final map removal shares
+the publication lock, preventing a pre-cleanup snapshot from resurrecting it.
+
+TestLateOriginalHostRegistrationRecoversWithoutAnotherLaunch pauses the real
+host before registration using a test-only executable barrier, kills fabricd,
+and starts its replacement. Public launch query, list and exact Get preserve the
+original accepted key/Runtime and pending state. Releasing the original host makes
+it callable after 1.0004 seconds; the Agent log has one process and one initialize.
+After stop and forget, three subsequent scans do not reinsert the target.
+Registry coverage checks the pending-to-registered transition across reopen.
+The eight-host failure-isolation process test additionally repairs the original
+damaged registration and verifies all ten original hosts are visible and callable
+without replacing the connector again.
+
+The registry and fabricd race suites pass (101 seconds for fabricd, excluding
+the already-proven expensive L53/L54 saturation fixtures). Targeted cleanup
+crash/recovery, concurrent discovery and original-host recovery pass separately.
+Affected vet, Web typecheck and whitespace checks pass. This slice changes Web
+issue text only; the preceding 13 browser tests establish the interaction behavior.
+
+Artifact classification, dependency pinning and upgrade/rollback preflight,
+platform/consumer acceptance and the final L01–L55 audit remain in scope.

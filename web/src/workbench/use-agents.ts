@@ -10,7 +10,7 @@ type DirectoryPage = {
   issues: { runner_id: string; code: string; runtime?: AgentRuntime }[]; next_cursor?: string; complete: boolean;
 };
 type Discovery = { agents: Agent[]; errors: Record<string, string>; checked: Set<string> };
-const issueText = (code: string) => ({ OFFLINE: "开发环境暂时离线", ACCESS_DENIED: "会话访问已失效", BINDING_CHANGED: "开发环境绑定已变化", UNSUPPORTED: "开发环境暂不支持会话发现", REGISTRATION_INVALID: "部分会话的注册信息无法核实", SESSION_UNAVAILABLE: "部分会话暂不可连接", SESSION_PROTOCOL_UNSUPPORTED: "部分会话需要支持其协议的连接服务" } as Record<string, string>)[code] ?? "暂时无法读取 Agent 列表";
+const issueText = (code: string) => ({ OFFLINE: "开发环境暂时离线", ACCESS_DENIED: "会话访问已失效", BINDING_CHANGED: "开发环境绑定已变化", UNSUPPORTED: "开发环境暂不支持会话发现", REGISTRATION_INVALID: "部分会话的注册信息无法核实", SESSION_UNAVAILABLE: "部分会话暂不可连接", SESSION_PROTOCOL_UNSUPPORTED: "部分会话需要支持其协议的连接服务", HOST_REGISTRATION_PENDING: "原会话正在完成宿主注册", REGISTRY_UNAVAILABLE: "暂时无法读取会话注册索引", LAUNCH_FAILED: "部分会话的启动已失败，可查询原提交" } as Record<string, string>)[code] ?? "暂时无法读取 Agent 列表";
 
 export function useAgents(runners: Runner[], prefix = "/api/v1") {
   const [discovery, setDiscovery] = useState<Discovery>({ agents: [], errors: {}, checked: new Set() });

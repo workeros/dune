@@ -37,6 +37,9 @@ type Engine struct {
 	stateReads        chan struct{}
 	discoveryReads    chan struct{}
 	discoveryIssues   []api.RuntimeDiscoveryIssue
+	discoveryScanMu   sync.Mutex
+	discoveryNextScan time.Time
+	launching         map[string]string
 	operationWaits    chan struct{}
 	streams           *wire.StreamCapacity
 	starts            chan struct{}
@@ -72,6 +75,7 @@ func newEngine(parent context.Context) *Engine {
 	engine.submissionReads = make(chan struct{}, 8)
 	engine.stateReads = make(chan struct{}, 16)
 	engine.discoveryReads = make(chan struct{}, 8)
+	engine.launching = make(map[string]string)
 	engine.operationWaits = make(chan struct{}, 16)
 	engine.streams = wire.NewStreamCapacity(1)
 	engine.cleanups = make(map[api.SubmissionKey]*cleanupExecution)

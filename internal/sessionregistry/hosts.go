@@ -106,10 +106,12 @@ func (r *Registry) RecordHostRuntime(ctx context.Context, target api.SubmissionT
 
 const hostColumns = `h.target,h.instance,h.boot_id,h.pid,h.group_id,h.group_generation,h.phase,h.runtime,h.registration,h.resources`
 
-func scanHost(row interface{ Scan(...any) error }) (HostRecord, error) {
+func scanHost(row interface{ Scan(...any) error }, extra ...any) (HostRecord, error) {
 	var host HostRecord
-	var target, runtime, resources []byte
-	err := row.Scan(&target, &host.Instance, &host.BootID, &host.PID, &host.GroupID, &host.GroupGeneration, &host.Phase, &runtime, &host.Registration, &resources)
+	var target, runtime, registration, resources []byte
+	columns := []any{&target, &host.Instance, &host.BootID, &host.PID, &host.GroupID, &host.GroupGeneration, &host.Phase, &runtime, &registration, &resources}
+	err := row.Scan(append(columns, extra...)...)
+	host.Registration = registration
 	if err != nil {
 		return host, err
 	}
@@ -135,13 +137,39 @@ type HostDiscovery struct {
 
 func (r *Registry) Hosts(ctx context.Context) (HostDiscovery, error) {
 	discovery := HostDiscovery{Hosts: []HostRecord{}, Issues: []api.RuntimeDiscoveryIssue{}}
-	rows, err := r.db.QueryContext(ctx, `SELECT `+hostColumns+` FROM session_hosts h JOIN runtime_reservations r ON r.target=h.target WHERE r.live=1 ORDER BY h.target LIMIT ?`, MaxRuntimeRecords)
+	// One snapshot includes reservations whose original host has not registered
+	// yet. The launch link is fixed with admission, before starting any process.
+	rows, err := r.db.QueryContext(ctx, `SELECT r.target,COALESCE(h.instance,''),COALESCE(h.boot_id,''),COALESCE(h.pid,0),
+		COALESCE(h.group_id,0),COALESCE(h.group_generation,0),COALESCE(h.phase,''),h.runtime,h.registration,h.resources,
+		k.runtime,COALESCE(k.stage,'')
+		FROM runtime_reservations r LEFT JOIN session_hosts h ON r.target=h.target
+		LEFT JOIN submission_keys k ON k.key=r.launch_key WHERE r.live=1 ORDER BY r.target LIMIT ?`, MaxRuntimeRecords)
 	if err != nil {
 		return discovery, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		host, err := scanHost(rows)
+		var launchRuntime []byte
+		var stage string
+		host, err := scanHost(rows, &launchRuntime, &stage)
+		if host.Instance == "" && len(launchRuntime) != 0 {
+			var pending api.Runtime
+			if json.Unmarshal(launchRuntime, &pending) == nil && matchingRuntime(host.Target, pending) {
+				if pending.Adapter == "acp" {
+					pending.Availability = "unavailable"
+					code := "HOST_REGISTRATION_PENDING"
+					if stage == "failed" {
+						code = "LAUNCH_FAILED"
+					}
+					discovery.Issues = append(discovery.Issues, api.RuntimeDiscoveryIssue{Runtime: &pending, Code: code})
+				}
+				continue
+			}
+		}
+		if host.Instance == "" && len(launchRuntime) == 0 && host.Target.Validate() == nil {
+			// Direct internal reservations do not claim that an Agent was launched.
+			continue
+		}
 		if err != nil {
 			issue := api.RuntimeDiscoveryIssue{Code: "REGISTRATION_INVALID"}
 			if host.Target.Validate() == nil && host.Target.RuntimeID != "" {
