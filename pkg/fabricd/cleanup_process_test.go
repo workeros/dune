@@ -74,6 +74,7 @@ type cleanupProcessHarness struct {
 	events   *bufio.Reader
 	log      *os.File
 	lifetime time.Duration
+	program  string
 }
 
 func newCleanupProcessHarness(t *testing.T) *cleanupProcessHarness {
@@ -123,7 +124,11 @@ func (h *cleanupProcessHarness) start(point string) {
 		h.t.Fatal(err)
 	}
 	defer daemon.Close()
-	h.cmd = exec.Command(os.Args[0], "-test.run=^TestCleanupProcessHelper$", "-test.timeout="+(h.lifetime+10*time.Second).String())
+	program := h.program
+	if program == "" {
+		program = os.Args[0]
+	}
+	h.cmd = exec.Command(program, "-test.run=^TestCleanupProcessHelper$", "-test.timeout="+(h.lifetime+10*time.Second).String())
 	h.cmd.Env = append(os.Environ(), "DUNE_CLEANUP_TEST_CONTROL="+control.Addr().String(), "DUNE_CLEANUP_TEST_DAEMON="+daemon.Addr().String(), "DUNE_CLEANUP_TEST_STATE="+h.state, "DUNE_CLEANUP_TEST_POINT="+point)
 	h.cmd.Stdout, h.cmd.Stderr = h.log, h.log
 	if err := h.cmd.Start(); err != nil {

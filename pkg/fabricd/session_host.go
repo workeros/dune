@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
@@ -36,7 +37,7 @@ type sessionControl struct {
 }
 
 func sameSession(a, b sessionRegistration) bool {
-	return a.Target == b.Target && a.Version == b.Version && a.Installation == b.Installation && a.Machine == b.Machine && a.Instance == b.Instance && a.Runtime.ID == b.Runtime.ID && a.Runtime.Incarnation == b.Runtime.Incarnation && a.Runtime.Generation == b.Runtime.Generation
+	return a.Target == b.Target && a.Version == b.Version && a.Installation == b.Installation && a.Machine == b.Machine && a.Instance == b.Instance && a.Program == b.Program && a.Runtime.ID == b.Runtime.ID && a.Runtime.Incarnation == b.Runtime.Incarnation && a.Runtime.Generation == b.Runtime.Generation
 }
 
 // runSessionHost is the only owner of the existing Runtime/controller. Its
@@ -58,6 +59,14 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 		return err
 	}
 	reg := boot.Registration
+	program := filepath.Join(directory, "program")
+	executable, err := os.Executable()
+	if err != nil || executable != program {
+		return fmt.Errorf("ACP host must execute its retained program")
+	}
+	if err := retainedprogram.Verify(program, reg.Program); err != nil {
+		return err
+	}
 	if filepath.Base(directory) != reg.Runtime.ID || reg.Installation != installationID(boot.StateDir) || boot.Profile.Adapter != "acp" {
 		return fmt.Errorf("ACP bootstrap identity does not match its installation")
 	}
@@ -88,6 +97,8 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 		return err
 	}
 	r := &runtime{target: reg.Target, id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+	hostStarted := time.Now().UTC()
+	r.hostInfo = &api.ACPHostInfo{Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted}
 	bootID, err := process.BootID()
 	if err != nil {
 		return err
@@ -104,6 +115,9 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	argv, _ := boot.Profile.Start.Args()
 	var processGeneration uint64
 	r.acpStart = func() (*process.Process, error) {
+		if err := retainedprogram.Verify(program, reg.Program); err != nil {
+			return nil, err
+		}
 		return process.StartRegistered(argv, r.cwd, boot.Environment, func(group int) error {
 			generation, err := d.registry.RecordGroup(ctx, reg.Target, reg.Instance, processGeneration, group)
 			if err == nil {
@@ -240,7 +254,24 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 		}
 		old := control.current
 		control.term, control.connector, control.current = hello.Term, hello.Connector, sess
+		r.mu.Lock()
+		if r.hostInfo != nil {
+			now := time.Now().UTC()
+			r.hostInfo.Connected, r.hostInfo.ConnectorTerm, r.hostInfo.LastAttachedAt = true, hello.Term, &now
+		}
+		r.mu.Unlock()
 		control.mu.Unlock()
+		defer func() {
+			control.mu.Lock()
+			defer control.mu.Unlock()
+			if control.current == sess {
+				r.mu.Lock()
+				if r.hostInfo != nil {
+					r.hostInfo.Connected = false
+				}
+				r.mu.Unlock()
+			}
+		}()
 		if old != nil {
 			old.Close()
 		}

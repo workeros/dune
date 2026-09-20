@@ -852,3 +852,45 @@ Affected vet and whitespace checks pass. No Web behavior or actual platform
 service-manager test changed in this slice. The full goal remains active:
 dependency/version pinning, upgrade/rollback preflight, platform evidence,
 remaining public consumer/SandDance recovery and the full L01–L55 audit remain.
+
+## Slice 21 — retained host program and actual host diagnostics
+
+An ACP launch now copies the current Dune executable to its private Runtime
+directory before starting tmux. The independent inode has exclusive publication,
+private mode, synced file/directory, a SHA-256 identity and a 256 MiB hard size
+limit. Sixteen reserved Runtime slots cap these retained copies at 4 GiB per
+installation. The host executes the retained path and verifies it before its
+first Agent and every explicit replacement. Guardian and MCP stdio configuration
+already use the host's os.Executable, so they resolve this same retained copy.
+Forget removes it only through the original directory's accepted cleanup plan.
+
+The immutable program identity participates in the host handshake. Runtime
+diagnostics now distinguish planned IPC version from actual host instance/program
+digest/size, host and Agent PIDs, guardian group, original host start time, current
+connection, latest control term and attach time. A stale detach cannot overwrite
+a newer connection; probes do not take control or alter attach facts. Agent PIDs
+remain diagnostic and never become signal/admission authority.
+
+TestOriginalHostRetainsProgramAcrossReleaseDeletionAndExplicitOpen starts a real
+connector from an isolated release copy, opens a managed session, kills fabricd
+and removes that entire source release. The replacement connector reaches the
+same host/Agent/group and program digest with a newer control term. Only a second
+explicit new replaces the Agent; the original host starts its guardian from the
+retained 36537362-byte program. Agent logs prove exactly two initialize/new calls,
+one for each explicit open, and forget removes the retained file. This proves
+program retention across source deletion, not cross-version installer acceptance.
+Unit tests also overwrite the original inode before deleting it and execute the
+unchanged retained script; oversized/symlink destinations and tampered copies are
+rejected without replacing another file.
+
+The retainedprogram/process/registry/fabricd/host race suites pass (122.5 seconds
+for fabricd), excluding previously validated expensive L53/L54 fixtures. The
+16-Runtime machine-capacity scenario was rerun with retained copies and passes
+in 15.7 seconds at unchanged limits, preserving permission/cancel/stop/forget
+after connector SIGKILL. The host suite includes actual stdio MCP bridge startup.
+The added program-identity handshake rejection also passes; affected vet and
+whitespace checks pass. No Web source changed.
+
+Upgrade/rollback preflight, actual connector/tmux version diagnostics, platform
+service-manager evidence, remaining consumer/SandDance recovery and the final
+L01–L55 audit still remain. No real-Agent claim is made by the mock process test.

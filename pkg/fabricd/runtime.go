@@ -65,6 +65,7 @@ type runtime struct {
 	acp                    *acpController
 	raw                    *rawACP
 	host                   *sessionProxy
+	hostInfo               *api.ACPHostInfo
 	target                 api.SubmissionTarget
 	activity               api.AgentActivity
 	nativeSession          *api.NativeSession
@@ -129,6 +130,13 @@ func (r *runtime) info() api.Runtime {
 		activity.State = "unknown"
 	}
 	info := api.Runtime{ConversationID: conversationID, ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
+	if r.hostInfo != nil {
+		host := *r.hostInfo
+		if r.p != nil && r.p.Cmd != nil && r.p.Cmd.Process != nil {
+			host.AgentPID, host.GroupID = r.p.PID, r.p.Cmd.Process.Pid
+		}
+		info.ACPHost = &host
+	}
 	if r.acp != nil || r.raw != nil {
 		info.PersistentACP = true
 		info.ACPMode = "managed"

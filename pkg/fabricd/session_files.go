@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -19,12 +20,13 @@ const sessionProtocol = 1
 // Registration is discovery evidence, never execution authority. A matching
 // live IPC handshake is required before the connector calls this Runtime.
 type sessionRegistration struct {
-	Target       api.SubmissionTarget `json:"target"`
-	Version      int                  `json:"version"`
-	Installation string               `json:"installation"`
-	Machine      string               `json:"machine"`
-	Instance     string               `json:"instance"`
-	Runtime      api.Runtime          `json:"runtime"`
+	Target       api.SubmissionTarget     `json:"target"`
+	Version      int                      `json:"version"`
+	Installation string                   `json:"installation"`
+	Machine      string                   `json:"machine"`
+	Instance     string                   `json:"instance"`
+	Runtime      api.Runtime              `json:"runtime"`
+	Program      retainedprogram.Identity `json:"program"`
 }
 
 type sessionBootstrap struct {
@@ -51,7 +53,7 @@ func sessionSocket(reg sessionRegistration) (string, error) {
 }
 
 func sessionSocketPath(reg sessionRegistration) (string, error) {
-	if reg.Target.Validate() != nil || reg.Target.RuntimeID != reg.Runtime.ID || reg.Target.RuntimeIncarnation != reg.Runtime.Incarnation || reg.Target.RuntimeGeneration != reg.Runtime.Generation || reg.Target.MachineID != reg.Machine || !wire.ValidID(reg.Instance) || !wire.ValidID(reg.Runtime.ID) || !wire.ValidID(reg.Runtime.Incarnation) || reg.Runtime.Generation != 1 || reg.Version != sessionProtocol || len(reg.Installation) != 64 || reg.Machine == "" {
+	if reg.Program.Validate() != nil || reg.Target.Validate() != nil || reg.Target.RuntimeID != reg.Runtime.ID || reg.Target.RuntimeIncarnation != reg.Runtime.Incarnation || reg.Target.RuntimeGeneration != reg.Runtime.Generation || reg.Target.MachineID != reg.Machine || !wire.ValidID(reg.Instance) || !wire.ValidID(reg.Runtime.ID) || !wire.ValidID(reg.Runtime.Incarnation) || reg.Runtime.Generation != 1 || reg.Version != sessionProtocol || len(reg.Installation) != 64 || reg.Machine == "" {
 		return "", fmt.Errorf("invalid ACP host registration")
 	}
 	root := filepath.Join("/tmp", fmt.Sprintf("dune-acp-%d", os.Getuid()))

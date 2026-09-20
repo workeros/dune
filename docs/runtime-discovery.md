@@ -69,3 +69,21 @@ No scan deletes, renames, adopts or starts an artifact. Explicit forget uses onl
 the independent original cleanup plan; its known quarantine is excluded while
 retirement is in progress. Sockets in the shared per-user IPC directory without
 an association to this installation are not assigned or removed by guesswork.
+
+ACP Runtime descriptions include `acp_host`: the planned IPC protocol before
+registration, then the original host instance, retained program SHA-256/size,
+host/Agent/guardian-group PIDs, host start time, current connector availability,
+control term and most recent attach time. PIDs are diagnostic observations only.
+A read-only probe does not change attach facts; a stale connector's detach cannot
+overwrite its successor. Unavailable responses retain last-confirmed facts and
+must not be read as a fresh process check.
+
+Each ACP Runtime owns a private `program` copy outside releases. Host startup and
+every explicit Agent replacement verify its SHA-256, size and private file
+properties. The host runs that copy, so its guardian and MCP stdio bridge also
+resolve the retained executable. Copying uses a distinct inode, exclusive
+creation and file/directory synchronization; release overwrite or deletion
+cannot change it. One program is limited to 256 MiB; the existing 16-Runtime
+reservation bounds retained program data at 4 GiB per installation. Explicit
+forget removes the original copy after stopping its owner. Upgrade protocol
+preflight and release/service-manager acceptance remain separate work.

@@ -51,6 +51,12 @@ func TestSessionHostControlFencesOlderConnectorsAndProbesAreReadOnly(t *testing.
 	if response.Kind != "host.ready" {
 		t.Fatal(response)
 	}
+	wrongProgram := reg
+	wrongProgram.Program.SHA256 = "different-program"
+	_, response = connect(sessionHello{Registration: wrongProgram, Probe: true})
+	if response.Kind != "error" || response.Code != "HOST_IDENTITY_MISMATCH" {
+		t.Fatal("program identity mismatch accepted", response)
+	}
 	_, response = connect(sessionHello{Registration: reg, Probe: true})
 	control.mu.RLock()
 	unchanged := control.term == 1 && control.connector == firstHello.Connector

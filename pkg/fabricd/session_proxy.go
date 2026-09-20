@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
@@ -288,16 +289,17 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 	if p.ManagedACP {
 		description.ACPMode = "managed"
 	}
-	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: description}
+	executable := filepath.Join(directory, "program")
+	program, err := retainedprogram.Current(executable)
+	if err != nil {
+		return err
+	}
+	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: description, Program: program}
 	if err := savePrivateFile(filepath.Join(directory, "instance.json"), reg.Instance); err != nil {
 		return err
 	}
 	boot := sessionBootstrap{Launch: launch, Registration: reg, StateDir: d.stateDir, Profile: p, Environment: environment(p.Env)}
 	if err := savePrivateFile(filepath.Join(directory, "bootstrap.json"), boot); err != nil {
-		return err
-	}
-	executable, err := os.Executable()
-	if err != nil {
 		return err
 	}
 	if err := d.acpTmux.CreateHost(r.id, reg.Instance, executable, directory); err != nil {

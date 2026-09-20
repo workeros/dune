@@ -3,6 +3,7 @@ package fabricd
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -78,11 +79,13 @@ func (d *Engine) sessionArtifactIssues(ctx context.Context, discovery sessionreg
 			add(&observed, "INSTANCE_MARKER_INVALID", "")
 		}
 		var disk sessionRegistration
+		var registered sessionRegistration
+		_ = json.Unmarshal(host.Registration, &registered) // verifyHostResources already validated it.
 		err = privateRootFile(root, "registration.json", 64*1024, &disk)
 		diskSocket, identityErr := sessionSocketPath(disk)
 		if os.IsNotExist(err) {
 			add(&observed, "REGISTRATION_FILE_MISSING", "")
-		} else if err != nil || identityErr != nil || diskSocket != host.Resources.Socket.Path || disk.Instance != host.Instance || disk.Target != host.Target || disk.Installation != installationID(d.stateDir) {
+		} else if err != nil || identityErr != nil || diskSocket != host.Resources.Socket.Path || disk.Instance != host.Instance || disk.Target != host.Target || disk.Installation != installationID(d.stateDir) || disk.Program != registered.Program {
 			add(&observed, "REGISTRATION_FILE_INVALID", "")
 		}
 		directory, err := root.Open(".")

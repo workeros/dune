@@ -220,6 +220,7 @@ type Runtime struct {
 	LastConfirmedAt  *time.Time     `json:"last_confirmed_at,omitempty"`
 	PersistentACP    bool           `json:"persistent_acp,omitempty"`
 	ACPMode          string         `json:"acp_mode,omitempty"` // managed or raw
+	ACPHost          *ACPHostInfo   `json:"acp_host,omitempty"`
 	ConversationID   string         `json:"conversation_id,omitempty"`
 	ProjectID        string         `json:"project_id,omitempty"`
 	DirectoryID      string         `json:"directory_id,omitempty"`

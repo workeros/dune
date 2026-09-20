@@ -89,7 +89,7 @@ func (d *Engine) scanSessionRegistrations(ctx context.Context) error {
 		if existing := d.runtimes[reg.Runtime.ID]; existing != nil {
 			// A repaired record can reveal an original host; it cannot replace an
 			// already-known identity or steal an in-progress launch's connection.
-			if existing.inc != reg.Runtime.Incarnation || existing.host == nil || existing.host.registration.Instance != reg.Instance || existing.host.registration.Target != reg.Target {
+			if existing.inc != reg.Runtime.Incarnation || existing.host == nil || existing.host.registration.Instance != reg.Instance || existing.host.registration.Target != reg.Target || existing.host.registration.Program != reg.Program || existing.host.registration.Version != reg.Version {
 				issues = append(issues, api.RuntimeDiscoveryIssue{Runtime: &reg.Runtime, Code: "REGISTRATION_CONFLICT"})
 			}
 			continue

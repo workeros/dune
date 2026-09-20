@@ -62,6 +62,9 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 	}
 	argv, _ := p.Start.Args()
 	r := &runtime{id: wire.ID(), inc: wire.ID(), adapter: p.Adapter, title: filepath.Base(argv[0]), cwd: p.WorkingDirectory, projectID: p.ProjectID, directoryID: p.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+	if p.Adapter == "acp" {
+		r.hostInfo = &api.ACPHostInfo{Protocol: sessionProtocol}
+	}
 	reserved := r.info()
 	reserved.State = "starting"
 	receipt, err = d.registry.AcceptLaunch(d.ctx, claim, wire.ID(), reserved)

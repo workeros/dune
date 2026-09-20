@@ -55,6 +55,7 @@ type Status struct {
 	Error       string `json:"error,omitempty"`
 }
 type Process struct {
+	PID    int // Agent PID for diagnostics; control remains on the guardian pipe.
 	Cmd    *exec.Cmd
 	Input  io.WriteCloser
 	Output io.ReadCloser
@@ -168,6 +169,7 @@ func StartRegistered(argv []string, cwd string, env []string, register func(int)
 	}
 	_ = sr.SetReadDeadline(time.Time{})
 	_ = lw.SetWriteDeadline(time.Time{})
+	p.PID = st.PID
 	go func() {
 		var end Status
 		if dec.Decode(&end) == nil && end.Exit != nil {
