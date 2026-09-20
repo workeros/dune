@@ -346,7 +346,15 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	case "machine.info":
 		home, err := os.UserHomeDir()
 		e = err
-		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics(), StreamCapacity: d.streams.Snapshot()}
+		info := api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics(), StreamCapacity: d.streams.Snapshot()}
+		if e == nil && d.registry != nil {
+			var capacity api.SubmissionCapacity
+			capacity, e = d.registry.Capacity(s.ctx)
+			if e == nil {
+				info.SubmissionCapacity = &capacity
+			}
+		}
+		result = info
 	case "runtime.get":
 		var r *runtime
 		r, e = d.lookup(m)

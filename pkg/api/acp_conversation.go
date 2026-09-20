@@ -20,22 +20,23 @@ const (
 // ACPState describes the live controller. Conversation describes retained data,
 // independently of whether the Agent can still accept an operation.
 type ACPState struct {
-	OperationRef string           `json:"operation_ref,omitempty"`
-	Pending      int              `json:"pending"`
-	Revision     uint64           `json:"revision"`
-	Ready        bool             `json:"ready"`
-	Busy         string           `json:"busy"`
-	SessionID    string           `json:"session_id"`
-	Cwd          string           `json:"cwd"`
-	CanList      bool             `json:"can_list"`
-	CanLoad      bool             `json:"can_load"`
-	MCPTransport string           `json:"mcp_transport,omitempty"`
-	Agent        json.RawMessage  `json:"agent,omitempty"`
-	Permissions  []ACPPermission  `json:"permissions"`
-	List         json.RawMessage  `json:"list,omitempty"`
-	Error        string           `json:"error,omitempty"`
-	StopReason   string           `json:"stop_reason,omitempty"`
-	Conversation *ACPConversation `json:"conversation"`
+	OperationRef string            `json:"operation_ref,omitempty"`
+	Pending      int               `json:"pending"`
+	Revision     uint64            `json:"revision"`
+	Ready        bool              `json:"ready"`
+	Busy         string            `json:"busy"`
+	SessionID    string            `json:"session_id"`
+	Cwd          string            `json:"cwd"`
+	CanList      bool              `json:"can_list"`
+	CanLoad      bool              `json:"can_load"`
+	MCPTransport string            `json:"mcp_transport,omitempty"`
+	Agent        json.RawMessage   `json:"agent,omitempty"`
+	Permissions  []ACPPermission   `json:"permissions"`
+	List         json.RawMessage   `json:"list,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	StopReason   string            `json:"stop_reason,omitempty"`
+	Conversation *ACPConversation  `json:"conversation"`
+	Resources    *ACPResourceUsage `json:"resources,omitempty"`
 }
 
 type ACPPermission struct {

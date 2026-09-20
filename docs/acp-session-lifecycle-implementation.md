@@ -558,3 +558,70 @@ and explicit conversation-generation-barrier process tests pass together via
 `go test -race ./tests` with those four test names selected. No Web files changed;
 browser tests were not rerun. External Agent/PostgreSQL/native-Agent environment
 switches remain unset; these results use isolated local mock Agents only.
+
+## Slice 15 — independent ordinary-capacity evidence and diagnostics
+
+machine.info now reports a single read-only registry snapshot of ordinary keys,
+Runtime/identity reservations, and each control class's reserved/claimed/accepted/
+rejected/completed evidence. Completed controls remain included in their occupied
+class budget. acp.state reports the original host's queue, permission and operation
+result usage, output bytes/update counts and original completion/expiry times.
+Diagnostics cannot allocate submission records or turn an unavailable registry
+into an empty-capacity report.
+
+Operation results now keep their existing 64-record, 512 KiB/1024-update and
+15-minute bounds while refusing new ordinary work when all unexpired slots are
+occupied. The previous eager eviction of completed records under pressure did
+not meet L53's explicit refusal at result saturation. Pending/running results
+still have no completion TTL; connector restart does not change host timestamps.
+This change applies to managed ACP; PTY delivery receipts retain their existing
+oldest-completed pressure eviction, with a separate regression test.
+Queue and result exhaustion return SUBMISSION_CAPACITY_EXHAUSTED with the affected
+category. Durable rejection is saved before exposing not_accepted when space for
+the original key was obtained; a full key ledger still cannot manufacture it.
+
+TestEachOrdinaryCapacityPreservesOriginalControlsAcrossConnectorCrash exercises
+four separate local process scenarios with unchanged production defaults:
+
+- 32 pending prompts while result slots and ordinary keys remain available;
+- 64 results (62 completed, two active/queued), with only one queued prompt;
+- 4096 ordinary keys, including 4091 historical rejections prepared through the
+  real registry ClaimKey/Reject API, with just three operation records;
+- 16 actual registered hosts while ordinary key and operation budgets remain free.
+
+Each scenario retains an active permission and a queued cancellable prompt,
+SIGKILLs fabricd, reconnects to the original host, and compares the original
+resource snapshot and completion clock. Repeated public queries do not change
+durable counts. New ordinary work is refused in the corresponding dimension;
+effective permission/cancel/stop and an already-ended Runtime's forget complete.
+Agent process/RPC/history logs verify original identity, actual control delivery,
+and absence of the refused prompt. Before/after class usage and hard limits are
+included in test output. All four scenarios passed with race enabled, including
+the default 4096-key scenario; historical evidence is a fixture, not a claim of
+4091 historical Agent executions.
+
+Registry unit coverage verifies consistent independent counts after reopening
+and proves observations add no evidence. Operation tests verify a full result
+table preserves its earliest unexpired output, allows new work only after an
+actual completion TTL expires, and retains unfinished work. These pass with race.
+
+L54 still needs a separate process test for completed permission/cancel evidence
+at its budget, competing/expired submissions and another effective target's
+reservation. This slice also does not complete raw ACP hosting/input, discovery,
+dependency pinning/upgrades, remaining consumer recovery, SandDance integration,
+full L01–L55 audit, platform service isolation or real-Agent acceptance.
+
+Validation for slice 15: sessionregistry/client/access/host race suites and
+affected-package vet pass. The initial full fabricd race run found an existing
+search assertion that required all independent file errors even after a bounded
+oversized-record abort. Commit cbe3e19 splits those cases; the test passes ten
+race repetitions and the full fabricd race rerun passes. Targeted result-capacity
+and PTY-policy regressions pass after explicitly retaining PTY's existing eviction
+policy. Managed queue/history/offline-permission/generation-barrier/original-host
+process regressions pass together. Agentservice, agentmcp and webapp also compile;
+this compile-only check is not their full test suite. No real-Agent or external
+service acceptance is claimed.
+
+After the final policy split, the real-tmux
+TestPTYOperationsShareBrowserInputAndExpireOnFabricdRestart process regression
+also passes with race enabled.

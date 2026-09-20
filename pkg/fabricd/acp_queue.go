@@ -88,7 +88,7 @@ func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func
 		return status, nil
 	}
 	if len(a.queue) >= maxACPPending {
-		return api.AgentOperation{}, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "ACP pending queue is full"}
+		return api.AgentOperation{}, &api.Error{Code: "SUBMISSION_CAPACITY_EXHAUSTED", Detail: "ordinary ACP pending queue capacity reached"}
 	}
 	status, err := a.operations.create()
 	if err != nil {

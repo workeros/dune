@@ -185,7 +185,7 @@ func TestACPQueueCloseAndBoundedAdmission(t *testing.T) {
 	}
 	_, err := a.action(api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "overflow"})
 	var failure *api.Error
-	if !errors.As(err, &failure) || failure.Code != "RESOURCE_EXHAUSTED" {
+	if !errors.As(err, &failure) || failure.Code != "SUBMISSION_CAPACITY_EXHAUSTED" {
 		t.Fatalf("queue limit: %v", err)
 	}
 	a.closed()

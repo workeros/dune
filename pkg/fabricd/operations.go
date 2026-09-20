@@ -33,13 +33,16 @@ type operationRecord struct {
 type operationLog struct {
 	mu      sync.Mutex
 	records map[string]*operationRecord
+	// PTY delivery receipts keep their existing pressure eviction policy;
+	// managed ACP reserves unexpired task results until their completion TTL.
+	evictCompletedOnCapacity bool
 }
 
 func (r *runtime) operationLog() *operationLog {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.operations == nil {
-		r.operations = &operationLog{records: map[string]*operationRecord{}}
+		r.operations = &operationLog{records: map[string]*operationRecord{}, evictCompletedOnCapacity: r.adapter == "pty"}
 	}
 	return r.operations
 }
@@ -57,20 +60,50 @@ func (l *operationLog) create() (api.AgentOperation, error) {
 	defer l.mu.Unlock()
 	l.expireLocked(time.Now())
 	if len(l.records) >= maxRuntimeOperations {
-		var oldest string
-		for ref, record := range l.records {
-			if !record.finished.IsZero() && (oldest == "" || record.finished.Before(l.records[oldest].finished)) {
-				oldest = ref
+		if l.evictCompletedOnCapacity {
+			var oldest string
+			for ref, record := range l.records {
+				if !record.finished.IsZero() && (oldest == "" || record.finished.Before(l.records[oldest].finished)) {
+					oldest = ref
+				}
 			}
+			if oldest == "" {
+				return api.AgentOperation{}, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "Runtime operation capacity reached"}
+			}
+			delete(l.records, oldest)
+		} else {
+			return api.AgentOperation{}, &api.Error{Code: "SUBMISSION_CAPACITY_EXHAUSTED", Detail: "ordinary operation results capacity reached; unexpired results remain retained"}
 		}
-		if oldest == "" {
-			return api.AgentOperation{}, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "Runtime operation capacity reached"}
-		}
-		delete(l.records, oldest)
 	}
 	status := api.AgentOperation{Ref: wire.ID(), State: "pending"}
 	l.records[status.Ref] = &operationRecord{status: status, done: make(chan struct{})}
 	return status, nil
+}
+
+func (l *operationLog) usage() api.ACPOperationUsage {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.expireLocked(time.Now())
+	out := api.ACPOperationUsage{
+		Records: api.CapacityUsage{Used: len(l.records), Limit: maxRuntimeOperations},
+		Bytes:   api.CapacityUsage{Limit: maxRuntimeOperations * maxOperationBytes},
+		Updates: api.CapacityUsage{Limit: maxRuntimeOperations * maxOperationUpdates},
+	}
+	for _, record := range l.records {
+		out.Bytes.Used += record.bytes
+		out.Updates.Used += len(record.output)
+		if record.finished.IsZero() {
+			out.Unfinished++
+		} else {
+			out.Completed++
+			if out.OldestCompletion == nil || record.finished.Before(*out.OldestCompletion) {
+				completed := record.finished
+				expiry := completed.Add(operationRetention)
+				out.OldestCompletion, out.NextExpiry = &completed, &expiry
+			}
+		}
+	}
+	return out
 }
 
 func (l *operationLog) set(ref, state, reason, detail string) api.AgentOperation {

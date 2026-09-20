@@ -74,6 +74,7 @@ func newACPController(r *runtime) *acpController {
 }
 func (a *acpController) snapshotLocked() api.ACPState {
 	s := a.state
+	s.Resources = &api.ACPResourceUsage{Queue: api.CapacityUsage{Used: len(a.queue), Limit: maxACPPending}, Permissions: api.CapacityUsage{Used: len(a.permissions), Limit: 16}, Operations: a.operations.usage()}
 	s.Conversation = a.conversation.describe()
 	s.Permissions = make([]api.ACPPermission, 0, len(a.permissions))
 	for _, p := range a.permissions {

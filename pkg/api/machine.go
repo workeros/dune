@@ -3,12 +3,13 @@ package api
 // MachineInfo describes the execution user of the current concrete Runner.
 // UserID and Home locate native Agent storage; they do not grant access.
 type MachineInfo struct {
-	Home             string                   `json:"home"`
-	UserID           string                   `json:"user_id"`
-	OS               string                   `json:"os"`
-	Arch             string                   `json:"arch"`
-	ACPConversations *ACPConversationUsage    `json:"acp_conversations,omitempty"`
-	StreamCapacity   map[string]CapacityUsage `json:"stream_capacity,omitempty"`
+	Home               string                   `json:"home"`
+	UserID             string                   `json:"user_id"`
+	OS                 string                   `json:"os"`
+	Arch               string                   `json:"arch"`
+	ACPConversations   *ACPConversationUsage    `json:"acp_conversations,omitempty"`
+	StreamCapacity     map[string]CapacityUsage `json:"stream_capacity,omitempty"`
+	SubmissionCapacity *SubmissionCapacity      `json:"submission_capacity,omitempty"`
 }
 
 // CapacityUsage reports a bounded resource's currently occupied units and hard
