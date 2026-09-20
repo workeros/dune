@@ -113,7 +113,7 @@ func (f gatewayScopeFixture) ResolveAgentProfile(context.Context, channel.Conver
 }
 
 func (f gatewayScopeFixture) ResolveAgentScope(_ context.Context, conversation channel.ConversationSession) (host.AgentScope, error) {
-	if conversation.Key.TenantID != "tenant-a" || conversation.Target.RunnerID != f.scope.RunnerID {
+	if conversation.Key.TenantID != "tenant-a" || conversation.Target.RunnerID != f.scope.Binding.RunnerID {
 		return host.AgentScope{}, fmt.Errorf("unexpected test conversation scope")
 	}
 	return f.scope, nil
@@ -142,8 +142,8 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 	}
 	t.Cleanup(func() { _ = app.Close() })
 	mux.Handle("/", app)
-	scope := host.AgentScope{Principal: identity.User{ID: "im-test-owner"}, OwnerID: "im-test-owner", RunnerID: "im-test-runner"}
-	enrollment, err := manager.access.IssueEnrollment(ctx, scope.Principal, scope.OwnerID, runner.Runner{ID: scope.RunnerID, Name: "IM test", Kind: "managed"}, "im-test-fabric")
+	scope := host.AgentScope{Principal: identity.User{ID: "im-test-owner"}, OwnerID: "im-test-owner", Binding: runner.Binding{RunnerID: "im-test-runner"}}
+	enrollment, err := manager.access.IssueEnrollment(ctx, scope.Principal, scope.OwnerID, runner.Runner{ID: scope.Binding.RunnerID, Name: "IM test", Kind: "managed"}, "im-test-fabric")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,11 +189,12 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 		}
 	})
 	for {
-		state, err := manager.access.State(ctx, scope.OwnerID, scope.RunnerID)
+		state, err := manager.access.State(ctx, scope.OwnerID, scope.Binding.RunnerID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if state.Online {
+			scope.Binding = *state.Runner.Binding
 			break
 		}
 		select {
@@ -203,7 +204,7 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 		}
 	}
 	backend := duneagent.Backend{Executor: app.AgentExecutor(), Scopes: gatewayScopeFixture{scope: scope}, Profiles: gatewayScopeFixture{profile: profile}}
-	return backend, channel.AgentTarget{RunnerID: scope.RunnerID, ProfileID: "im-test-agent", ProfileRevision: 1, WorkingDirectory: t.TempDir()}
+	return backend, channel.AgentTarget{OwnerID: scope.OwnerID, RunnerID: scope.Binding.RunnerID, FabricID: scope.Binding.FabricID, MachineID: scope.Binding.MachineID, RunnerBindingRevision: scope.Binding.Revision, ProfileID: "im-test-agent", ProfileRevision: 1, WorkingDirectory: t.TempDir()}
 }
 
 func TestDuneGatewaySessionIsolationAttachAndExplicitNew(t *testing.T) {

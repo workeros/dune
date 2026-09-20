@@ -84,8 +84,18 @@ worker；不要为同一队列建立只认识部分 Binding 的多个 Service。
 Runner 不保存 AgentConfig。绑定与已有会话固定修订；Profile 更新不会隐式改变已接受目标。
 
 `ScopeResolver.ResolveAgentScope` 根据会话的 Tenant 和目标快照核验 Runner 授权，返回 Dune Owner、
-同一 Runner 和受信任 actor；IM Tenant 与 Dune Owner 可以使用不同 ID 空间。
+完整 `host.AgentScope.Binding` 和受信任 actor；IM Tenant 与 Dune Owner 可以使用不同 ID 空间。
 消息发送者不能决定 actor、Runner 或工作目录。Dune host 还会校验实际 Runner 归属和操作权限。
+持久化 `AgentTarget` 必须包含 `owner_id`、`runner_id`、`fabric_id`、`machine_id` 和
+正整数 `runner_binding_revision`。Backend 比较 resolver 与原目标，host 再比较当前
+Runner binding；任何变化都拒绝，不把旧会话或查询转移到替代机器。
+
+首次调用 `Backend.Start` 前，`duneagent.LaunchSubmissionID(session)` 可由原持久
+会话快照算出启动 ID，原目标已经包含完整查询作用域。发生未知启动时，可调用
+`Backend.QueryLaunch(ctx, originalSession, savedID)`；它不重新解析 Profile、启动
+Agent、补做 new 或解除 IM 队列的 unknown 隔离。若尚未保存新 Runtime，失败后的
+原会话修订仍可重建这个 ID；不要使用后来变更的修订推算旧 ID。查询 `started` 仅确认
+Runtime 启动，不能据此认定初始 native new 或原 IM 任务已成功。
 
 ## 机器人配置
 
@@ -102,7 +112,7 @@ Runner 不保存 AgentConfig。绑定与已有会话固定修订；Profile 更�
 ```
 
 上述 JSON 放入 `BotBinding.Config`，`ConfigVersion=1`；`Provider="feishu"`。
-另设 `TenantID`、`CredentialRef`、`Enabled` 和 `Target`：Runner ID、宿主空间中的 ACP
+另设 `TenantID`、`CredentialRef`、`Enabled` 和 `Target`：Dune Owner、完整 Runner binding、宿主空间中的 ACP
 Profile ID、正整数 Profile revision、绝对工作目录。凭据 JSON 包含 `app_secret`、`encrypt_key`、`verification_token`，
 通过 resolver 提供，不存入展示用 Config。
 

@@ -16,11 +16,12 @@ import (
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/profiles"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
 	f := openExecutorFixture(t)
-	scope := AgentScope{Principal: f.principal, OwnerID: f.owner, RunnerID: f.binding.RunnerID}
+	scope := AgentScope{Principal: f.principal, OwnerID: f.owner, Binding: f.binding}
 	connection, err := f.app.AgentExecutor().Open(context.Background(), scope)
 	if err != nil {
 		t.Fatal(err)
@@ -38,13 +39,19 @@ func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
 	if _, err := f.app.AgentExecutor().Open(context.Background(), scope); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("unauthorized principal opened Agent connection: %v", err)
 	}
-	scope = AgentScope{Principal: f.principal, OwnerID: "another-owner", RunnerID: f.binding.RunnerID}
+	scope = AgentScope{Principal: f.principal, OwnerID: "another-owner", Binding: f.binding}
 	if _, err := f.app.AgentExecutor().Open(context.Background(), scope); !errors.Is(err, authorization.ErrNotFound) {
 		t.Fatalf("wrong Tenant opened Agent connection: %v", err)
 	}
-	scope = AgentScope{Principal: f.principal, OwnerID: f.owner, RunnerID: "another-runner"}
+	scope = AgentScope{Principal: f.principal, OwnerID: f.owner, Binding: f.binding}
+	scope.Binding.RunnerID = "another-runner"
 	if _, err := f.app.AgentExecutor().Open(context.Background(), scope); !errors.Is(err, authorization.ErrNotFound) {
 		t.Fatalf("unknown Runner opened Agent connection: %v", err)
+	}
+	scope.Binding = f.binding
+	scope.Binding.Revision++
+	if _, err := f.app.AgentExecutor().Open(t.Context(), scope); !errors.Is(err, runner.ErrBindingChanged) {
+		t.Fatal("replacement binding accepted", err)
 	}
 }
 
@@ -134,7 +141,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	f := openExecutorFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	connection, err := f.app.AgentExecutor().Open(ctx, AgentScope{Principal: f.principal, OwnerID: f.owner, RunnerID: f.binding.RunnerID})
+	connection, err := f.app.AgentExecutor().Open(ctx, AgentScope{Principal: f.principal, OwnerID: f.owner, Binding: f.binding})
 	if err != nil {
 		t.Fatal(err)
 	}

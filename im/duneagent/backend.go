@@ -14,12 +14,13 @@ import (
 	"github.com/aiomni/dune/im/channel"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 type ScopeResolver interface {
 	// ResolveAgentScope authorizes the persisted IM Binding target and maps
 	// its TenantID to Dune's OwnerID and trusted actor. IM senders must never
-	// supply this scope. The returned RunnerID must match the target.
+	// supply this scope. The returned binding must exactly match the saved target.
 	ResolveAgentScope(context.Context, channel.ConversationSession) (host.AgentScope, error)
 }
 
@@ -43,7 +44,9 @@ func (b Backend) open(ctx context.Context, session channel.ConversationSession) 
 	if err != nil {
 		return nil, err
 	}
-	if scope.OwnerID == "" || scope.RunnerID != session.Target.RunnerID {
+	target := session.Target
+	expected := runner.Binding{RunnerID: target.RunnerID, FabricID: target.FabricID, MachineID: target.MachineID, Revision: target.RunnerBindingRevision}
+	if target.OwnerID == "" || scope.OwnerID != target.OwnerID || expected.FabricID == "" || expected.MachineID == "" || expected.Revision < 1 || scope.Binding != expected {
 		return nil, errors.New("Dune IM Agent scope lacks an owner or does not match the conversation Runner")
 	}
 	return b.Executor.Open(ctx, scope)
@@ -61,7 +64,14 @@ func (b Backend) Capabilities(ctx context.Context, session channel.ConversationS
 	return channel.AgentCapabilities{Adapter: "acp", AssistantDeltas: true, ReliableFinal: true}, nil
 }
 
-func (b Backend) Start(ctx context.Context, session channel.ConversationSession) (channel.AgentSession, error) {
+func (b Backend) Start(ctx context.Context, session channel.ConversationSession) (out channel.AgentSession, err error) {
+	key := launchKey(session, LaunchSubmissionID(session))
+	defer func() {
+		var submissionError *api.SubmissionError
+		if err != nil && !errors.As(err, &submissionError) {
+			err = &api.SubmissionError{Key: key, Cause: err}
+		}
+	}()
 	connection, err := b.open(ctx, session)
 	if err != nil {
 		return channel.AgentSession{}, err
@@ -111,7 +121,7 @@ func (b Backend) startRuntime(ctx context.Context, connection host.AgentConnecti
 	}
 	// This stable caller-owned ID is determined before the launch is sent and
 	// remains reproducible if the initial response is lost.
-	submissionID := sessionSubmissionID(session, "launch")
+	submissionID := LaunchSubmissionID(session)
 	runtime, err := connection.Start(ctx, submissionID, profile)
 	if err != nil {
 		return api.Runtime{}, fmt.Errorf("start Dune ACP Runtime (outcome may be unknown): %w", err)
@@ -291,4 +301,32 @@ func awaitOperation(ctx context.Context, connection host.AgentConnection, runtim
 func sessionSubmissionID(session channel.ConversationSession, action string) string {
 	digest := sha256.Sum256(append(api.Payload(session.Key), []byte(fmt.Sprint("/", action, "/", session.Revision))...))
 	return fmt.Sprintf("%s-%x", action, digest)
+}
+
+// LaunchSubmissionID is reproducible from the durable session snapshot used by
+// Start. Save it before Start; later session revisions describe different turns.
+func LaunchSubmissionID(session channel.ConversationSession) string {
+	return sessionSubmissionID(session, "launch")
+}
+
+func launchKey(session channel.ConversationSession, id string) api.SubmissionKey {
+	target := session.Target
+	return api.SubmissionKey{SubmissionID: id, Target: api.SubmissionTarget{OwnerID: target.OwnerID, RunnerID: target.RunnerID, FabricID: target.FabricID, MachineID: target.MachineID, BindingRevision: target.RunnerBindingRevision}}
+}
+
+// QueryLaunch observes the caller's saved launch ID on the session's original
+// binding. It does not resolve a Profile, open a native session, resume the IM
+// processor or send a reply. Unknown turns remain fenced for explicit handling.
+func (b Backend) QueryLaunch(ctx context.Context, session channel.ConversationSession, submissionID string) (api.SubmissionReceipt, error) {
+	key := launchKey(session, submissionID)
+	unknown := api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
+	if err := key.Validate(); err != nil {
+		return unknown, &api.SubmissionError{Key: key, Cause: err}
+	}
+	connection, err := b.open(ctx, session)
+	if err != nil {
+		return unknown, &api.SubmissionError{Key: key, Cause: err}
+	}
+	defer connection.Close()
+	return connection.QuerySubmission(ctx, api.Runtime{}, submissionID)
 }

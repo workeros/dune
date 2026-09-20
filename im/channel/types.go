@@ -22,10 +22,14 @@ type BotBinding struct {
 }
 
 type AgentTarget struct {
-	RunnerID         string `json:"runner_id"`
-	ProfileID        string `json:"profile_id"`
-	ProfileRevision  int64  `json:"profile_revision"`
-	WorkingDirectory string `json:"working_directory"`
+	OwnerID               string `json:"owner_id"`
+	RunnerID              string `json:"runner_id"`
+	FabricID              string `json:"fabric_id"`
+	MachineID             string `json:"machine_id"`
+	RunnerBindingRevision int64  `json:"runner_binding_revision"`
+	ProfileID             string `json:"profile_id"`
+	ProfileRevision       int64  `json:"profile_revision"`
+	WorkingDirectory      string `json:"working_directory"`
 }
 
 // InboundMessage is a verified, normalized event. Provider-specific fields in

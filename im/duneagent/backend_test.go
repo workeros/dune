@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/im/channel"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/runner"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
@@ -36,23 +37,26 @@ func (f fakeExecutor) Open(context.Context, host.AgentScope) (host.AgentConnecti
 }
 
 type fakeConnection struct {
-	runtime      api.Runtime
-	state        host.AgentState
-	outputs      []api.AgentOperationOutput
-	readStarted  chan struct{}
-	readReturned chan struct{}
-	profile      api.Profile
-	actions      []host.AgentAction
-	getErr       error
-	starts       int
-	stopErr      error
-	stops        int
+	runtime       api.Runtime
+	state         host.AgentState
+	outputs       []api.AgentOperationOutput
+	readStarted   chan struct{}
+	readReturned  chan struct{}
+	profile       api.Profile
+	actions       []host.AgentAction
+	getErr        error
+	starts        int
+	startErr      error
+	launchQueries []string
+	launchReceipt api.SubmissionReceipt
+	stopErr       error
+	stops         int
 }
 
 func (f *fakeConnection) Start(_ context.Context, submissionID string, profile api.Profile) (api.Runtime, error) {
 	f.profile = profile
 	f.starts++
-	return f.runtime, nil
+	return f.runtime, f.startErr
 }
 func (f *fakeConnection) Get(context.Context, api.Runtime) (api.Runtime, error) {
 	if f.getErr != nil {
@@ -102,6 +106,10 @@ func (f *fakeConnection) Stop(_ context.Context, runtime api.Runtime, id string)
 	return receipt, f.stopErr
 }
 func (f *fakeConnection) QuerySubmission(_ context.Context, runtime api.Runtime, id string) (api.SubmissionReceipt, error) {
+	if runtime.ID == "" {
+		f.launchQueries = append(f.launchQueries, id)
+		return f.launchReceipt, nil
+	}
 	stage := "stopping"
 	if f.runtime.State == "exited" {
 		stage = "stopped"
@@ -118,10 +126,10 @@ func testBackend() (Backend, channel.ConversationSession, *fakeConnection) {
 		runtime: api.Runtime{ID: "runtime-a", Incarnation: "inc-a", Generation: 2, Adapter: "acp", State: "running"},
 		state:   host.AgentState{Ready: true, Revision: 3, Conversation: &api.ACPConversation{ID: "conversation-a"}},
 	}
-	conversation := channel.ConversationSession{Key: channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a"}, Target: channel.AgentTarget{RunnerID: "runner-a", ProfileID: "agent-a", ProfileRevision: 1, WorkingDirectory: "/tmp/im-test"}}
+	conversation := channel.ConversationSession{Key: channel.SessionKey{TenantID: "tenant-a", BindingID: "bot-a"}, Target: channel.AgentTarget{OwnerID: "dune-owner-a", RunnerID: "runner-a", FabricID: "fabric-a", MachineID: "machine-a", RunnerBindingRevision: 1, ProfileID: "agent-a", ProfileRevision: 1, WorkingDirectory: "/tmp/im-test"}}
 	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: "/tmp", Start: api.Command{Argv: []string{"/bin/echo", "--acp"}}, Env: map[string]string{"TEAM": "infra"}}
 	profile.Setup.Steps = []api.Command{{Argv: []string{"prepare-agent"}}}
-	backend := Backend{Executor: fakeExecutor{connection: connection}, Scopes: fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", RunnerID: "runner-a"}}, Profiles: fakeProfiles{profile: profile}}
+	backend := Backend{Executor: fakeExecutor{connection: connection}, Scopes: fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", Binding: runner.Binding{RunnerID: "runner-a", FabricID: "fabric-a", MachineID: "machine-a", Revision: 1}}}, Profiles: fakeProfiles{profile: profile}}
 	return backend, conversation, connection
 }
 
@@ -147,13 +155,40 @@ func TestStartCreatesManagedACPRuntimeAndSession(t *testing.T) {
 
 func TestBackendRejectsMissingOwnerOrWrongRunnerScope(t *testing.T) {
 	backend, conversation, _ := testBackend()
-	backend.Scopes = fakeScopes{scope: host.AgentScope{RunnerID: "runner-a"}}
+	backend.Scopes = fakeScopes{scope: host.AgentScope{Binding: runner.Binding{RunnerID: "runner-a"}}}
 	if _, err := backend.Capabilities(context.Background(), conversation); err == nil {
 		t.Fatal("Agent scope without a Dune Owner accepted")
 	}
-	backend.Scopes = fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", RunnerID: "other-runner"}}
+	backend.Scopes = fakeScopes{scope: host.AgentScope{OwnerID: "dune-owner-a", Binding: runner.Binding{RunnerID: "other-runner"}}}
 	if _, err := backend.Start(context.Background(), conversation); err == nil {
 		t.Fatal("different Runner Agent scope accepted")
+	}
+}
+
+func TestUnknownLaunchOnlyQueriesOriginalBindingAndNeverOpensSession(t *testing.T) {
+	backend, conversation, connection := testBackend()
+	id := LaunchSubmissionID(conversation)
+	connection.startErr = io.EOF
+	if _, err := backend.Start(t.Context(), conversation); err == nil {
+		t.Fatal("lost launch response reported success")
+	}
+	key := api.SubmissionKey{SubmissionID: id, Target: api.SubmissionTarget{OwnerID: "dune-owner-a", RunnerID: conversation.Target.RunnerID, FabricID: conversation.Target.FabricID, MachineID: conversation.Target.MachineID, BindingRevision: conversation.Target.RunnerBindingRevision}}
+	connection.launchReceipt = api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionAccepted, Runtime: &connection.runtime, Stage: "started"}
+	backend.Profiles = nil // The read must not reconstruct launch configuration.
+	for range 2 {
+		receipt, err := backend.QueryLaunch(t.Context(), conversation, id)
+		if err != nil || receipt.SubmissionKey != key || receipt.Admission != api.SubmissionAccepted || receipt.Runtime.ID != connection.runtime.ID {
+			t.Fatal("original launch read", receipt, err)
+		}
+	}
+	if connection.starts != 1 || len(connection.actions) != 0 || !reflect.DeepEqual(connection.launchQueries, []string{id, id}) {
+		t.Fatal("query repeated startup or new", connection.starts, connection.actions, connection.launchQueries)
+	}
+	scope := backend.Scopes.(fakeScopes)
+	scope.scope.Binding.Revision++
+	backend.Scopes = scope
+	if _, err := backend.QueryLaunch(t.Context(), conversation, id); err == nil || len(connection.launchQueries) != 2 {
+		t.Fatal("query followed replacement binding", err)
 	}
 }
 

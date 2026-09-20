@@ -11,16 +11,17 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/identity"
+	"github.com/aiomni/dune/pkg/runner"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
 // AgentScope is supplied by trusted host code, not by an IM sender. Principal
-// is the authorized embedding-host actor for this Owner. The Runner's current
-// binding is resolved inside Dune and checked again by BackgroundRunner.
+// is the authorized embedding-host actor for this Owner. The caller persists
+// the exact binding before sending; Dune rejects any replacement binding.
 type AgentScope struct {
 	Principal identity.User
 	OwnerID   string
-	RunnerID  string
+	Binding   runner.Binding
 }
 
 // AgentAction is intentionally narrower than fabricd's complete ACP action
@@ -80,11 +81,11 @@ func (e *agentExecutor) Open(ctx context.Context, scope AgentScope) (AgentConnec
 	if err != nil {
 		return nil, err
 	}
-	if scope.OwnerID == "" || scope.RunnerID == "" {
+	if scope.OwnerID == "" || scope.Binding.RunnerID == "" || scope.Binding.FabricID == "" || scope.Binding.MachineID == "" || scope.Binding.Revision < 1 {
 		finish()
-		return nil, errors.New("IM Agent scope requires Tenant and Runner IDs")
+		return nil, errors.New("IM Agent scope requires an Owner and exact Runner binding")
 	}
-	resource, err := e.app.store.RunnerResource(ctx, scope.RunnerID)
+	resource, err := e.app.store.RunnerResource(ctx, scope.Binding.RunnerID)
 	if err != nil {
 		finish()
 		return nil, err
@@ -92,6 +93,10 @@ func (e *agentExecutor) Open(ctx context.Context, scope AgentScope) (AgentConnec
 	if resource.OwnerID != scope.OwnerID || resource.Runner.Binding == nil {
 		finish()
 		return nil, authorization.ErrNotFound
+	}
+	if *resource.Runner.Binding != scope.Binding {
+		finish()
+		return nil, runner.ErrBindingChanged
 	}
 	sdk, closeClient, err := (&runnerExecutor{app: e.app}).connect(ctx, scope.Principal, scope.OwnerID, *resource.Runner.Binding, "submission.acp")
 	if err != nil {

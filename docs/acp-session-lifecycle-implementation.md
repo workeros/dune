@@ -1063,3 +1063,26 @@ Existing stop/forget recovery after Runtime removal, permissions, exact cancel,
 queue/output gaps and partial-error operation reads remain covered. TypeScript,
 14 unit tests, production build and whitespace checks pass. No native or external
 environment was used.
+
+## Slice 27 — fixed IM launch and query targets
+
+The persisted IM AgentTarget now includes Dune Owner and all four Runner binding
+selectors. ScopeResolver must return that exact binding, and AgentExecutor checks
+it against the current authorized Runner before dialing. An old session cannot
+open, read, stop or launch against a replacement machine. This is a prototype
+contract change; embedding applications must populate the new fields.
+
+LaunchSubmissionID exposes the original durable session-revision-derived ID
+before Start. Backend.QueryLaunch uses that saved ID and target without Profile
+resolution, session/new, queue recovery or IM reply delivery. Non-submission
+startup errors now wrap the full original launch key. Accepted/started does not
+confirm the initial native open or the IM task; unknown processor turns remain
+fenced. No automatic recovery/replay was added.
+
+Host executor race tests pass (6.0 seconds), including replacement-binding
+rejection. Full IM race regression passed (feishu 26.8 seconds); after adding
+explicit persisted Owner checks, duneagent/feishu race suites passed again
+(26.4 seconds), including the actual local Gateway/ACP fixture. The new fault
+test loses the startup response, repeatedly reads the original receipt without
+new/setup calls, then rejects a changed binding. Host and IM vet/diff checks
+pass. This does not claim IM service restarts or real platform delivery acceptance.
