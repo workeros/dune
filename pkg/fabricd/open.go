@@ -106,6 +106,8 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 	}
 	d.active.Add(1)
 	go d.runCleanupRecovery()
+	d.active.Add(1)
+	go d.restoreSessionConnections()
 	return d, nil
 }
 

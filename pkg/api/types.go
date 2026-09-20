@@ -217,6 +217,7 @@ type Runtime struct {
 	// Unavailable preserves the last confirmed lifecycle fact.
 	// Lost requires independent proof that the original host/group no longer exist.
 	Availability     string         `json:"availability,omitempty"`
+	LastConfirmedAt  *time.Time     `json:"last_confirmed_at,omitempty"`
 	PersistentACP    bool           `json:"persistent_acp,omitempty"`
 	ACPMode          string         `json:"acp_mode,omitempty"` // managed or raw
 	ConversationID   string         `json:"conversation_id,omitempty"`

@@ -1,9 +1,35 @@
 package sessionregistry
 
 import (
+	"fmt"
 	"github.com/aiomni/dune/pkg/api"
 	"testing"
 )
+
+func TestHostDiscoveryPreservesHealthyRowsBesideCorruption(t *testing.T) {
+	r := openRegistry(t, privateDirectory(t), 4)
+	for i := range 3 {
+		key := testKey()
+		key.Target.RuntimeID = fmt.Sprint("runtime-", i)
+		if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
+			t.Fatal(err)
+		}
+		instance := fmt.Sprint("host-", i)
+		host := HostRecord{Target: key.Target, Instance: instance, BootID: "boot", PID: 1234, Runtime: api.Runtime{ID: key.Target.RuntimeID, Incarnation: key.Target.RuntimeIncarnation, Generation: 1, State: "running"}, Registration: []byte(`{}`), Resources: testResources(key.Target, instance)}
+		if err := r.RegisterHost(t.Context(), host); err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			if _, err := r.db.Exec(`UPDATE session_hosts SET runtime=? WHERE target=?`, []byte("damaged-private-content"), encodeTarget(key.Target)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	page, err := r.Hosts(t.Context())
+	if err != nil || len(page.Hosts) != 2 || len(page.Issues) != 1 || page.Issues[0].Code != "REGISTRATION_INVALID" || page.Issues[0].Runtime == nil || page.Issues[0].Runtime.ID != "runtime-1" {
+		t.Fatal(page, err)
+	}
+}
 
 func TestHostEvidenceSurvivesReopenAndCannotReplaceIdentity(t *testing.T) {
 	dir := privateDirectory(t)
@@ -41,7 +67,7 @@ func TestHostEvidenceSurvivesReopenAndCannotReplaceIdentity(t *testing.T) {
 		t.Fatal(stored, err)
 	}
 	hosts, err := r.Hosts(t.Context())
-	if err != nil || len(hosts) != 1 || hosts[0].Target != key.Target {
+	if err != nil || len(hosts.Hosts) != 1 || len(hosts.Issues) != 0 || hosts.Hosts[0].Target != key.Target {
 		t.Fatal(hosts, err)
 	}
 	key.SubmissionID = "forget"

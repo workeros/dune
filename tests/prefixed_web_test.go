@@ -444,9 +444,9 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 			}
 		}
 		do("POST", "api/v1/auth/login", map[string]string{"email": email, "password": "prefix-test-password"}, nil)
-		var remaining []api.Runtime
+		var remaining api.RuntimeList
 		do("POST", executionRoute("call"), map[string]any{"operation": "runtime.list", "payload": struct{}{}}, &remaining)
-		if len(remaining) != 1 || remaining[0].ID != runtime.ID || remaining[0].Incarnation != runtime.Incarnation || remaining[0].Generation != runtime.Generation || remaining[0].State != "running" {
+		if len(remaining.Items) != 1 || remaining.Items[0].ID != runtime.ID || remaining.Items[0].Incarnation != runtime.Incarnation || remaining.Items[0].Generation != runtime.Generation || remaining.Items[0].State != "running" {
 			t.Fatal("principal suspension changed the running PTY")
 		}
 		connection.Close()

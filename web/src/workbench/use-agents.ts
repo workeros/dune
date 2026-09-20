@@ -2,15 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { APIError, bindingKey, errorText, request, type AgentRuntime, type Runner } from "../lib/api";
 const isAccessError = (error: unknown) => error instanceof APIError && [401, 403].includes(error.status);
 
-import { targetFor, type Agent, type AgentTarget } from "./model";
+import { targetFor, targetKey, type Agent, type AgentTarget } from "./model";
 
 type DirectoryPage = {
   items: { agent_ref: string; target: AgentTarget; runtime: AgentRuntime }[];
   runners: { runner: Pick<Runner, "id" | "binding">; online: boolean; ready: boolean }[];
-  issues: { runner_id: string; code: string }[]; next_cursor?: string;
+  issues: { runner_id: string; code: string; runtime?: AgentRuntime }[]; next_cursor?: string; complete: boolean;
 };
 type Discovery = { agents: Agent[]; errors: Record<string, string>; checked: Set<string> };
-const issueText = (code: string) => ({ OFFLINE: "开发环境暂时离线", ACCESS_DENIED: "会话访问已失效", BINDING_CHANGED: "开发环境绑定已变化", UNSUPPORTED: "开发环境暂不支持会话发现" } as Record<string, string>)[code] ?? "暂时无法读取 Agent 列表";
+const issueText = (code: string) => ({ OFFLINE: "开发环境暂时离线", ACCESS_DENIED: "会话访问已失效", BINDING_CHANGED: "开发环境绑定已变化", UNSUPPORTED: "开发环境暂不支持会话发现", REGISTRATION_INVALID: "部分会话的注册信息无法核实", SESSION_UNAVAILABLE: "部分会话暂不可连接", SESSION_PROTOCOL_UNSUPPORTED: "部分会话需要支持其协议的连接服务" } as Record<string, string>)[code] ?? "暂时无法读取 Agent 列表";
 
 export function useAgents(runners: Runner[], prefix = "/api/v1") {
   const [discovery, setDiscovery] = useState<Discovery>({ agents: [], errors: {}, checked: new Set() });
@@ -33,7 +33,8 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
           if (!runner?.binding) continue;
           const key = bindingKey(runner.binding), issue = issues.get(runner.id);
           if (issue) { errors[key] = issueText(issue); if (issue === "ACCESS_DENIED") denied.add(key); }
-          else if (availability.online) checked.add(key);
+          else if (availability.online && (page.complete || page.issues.length > 0)) checked.add(key);
+          else if (availability.online) errors[key] = "会话发现尚未完成";
           else errors[key] = issueText("OFFLINE");
         }
         for (const item of page.items) {
@@ -53,11 +54,12 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
         if (isAccessError(cause)) denied.add(key);
       }
     }
+    const observed = new Set(agents.map((agent) => targetKey(agent.target)));
     if (generation === epoch.current) setDiscovery((old) => ({
       agents: [...agents.filter((agent) => !denied.has(bindingKey(agent.target.binding))), ...old.agents.filter((agent) => {
         const key = bindingKey(agent.target.binding);
-        return errors[key] && !checked.has(key) && !denied.has(key);
-      })], errors, checked,
+        return errors[key] && !checked.has(key) && !denied.has(key) && !observed.has(targetKey(agent.target));
+      }).map((agent) => ({ ...agent, runtime: { ...agent.runtime, availability: "unavailable" as const } }))], errors, checked,
     }));
   }, [prefix]);
   useEffect(() => {

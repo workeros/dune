@@ -155,7 +155,7 @@ func TestRunnerExecutorPreparesThroughGatewayWithoutBrowserSession(t *testing.T)
 	}
 	runtimes, err := sdk.List(context.Background())
 	closeClient()
-	if err != nil || len(runtimes) != 0 {
+	if err != nil || len(runtimes.Items) != 0 {
 		t.Fatal("environment preparation created an Agent Runtime", runtimes, err)
 	}
 }

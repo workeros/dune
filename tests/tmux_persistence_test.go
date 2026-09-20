@@ -162,7 +162,7 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 			gen = client.Binding.Generation
 			list, err := client.List(ctx)
 			must(t, err)
-			if len(list) != 1 || list[0].ID != rt.ID || list[0].Incarnation != rt.Incarnation || list[0].State != "running" {
+			if len(list.Items) != 1 || list.Items[0].ID != rt.ID || list.Items[0].Incarnation != rt.Incarnation || list.Items[0].State != "running" {
 				t.Fatalf("lost original runtime: %+v", list)
 			}
 			var screen api.TerminalSnapshot

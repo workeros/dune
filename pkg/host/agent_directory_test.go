@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/runner"
+	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
+	"github.com/hashicorp/yamux"
 )
 
 func directoryACP(t *testing.T, f executorFixture) (agents.LaunchResult, *client.Client) {
@@ -163,7 +166,7 @@ func TestAgentDirectoryKeepsHealthyRunnersWhenAnotherRunnerIsOffline(t *testing.
 		t.Fatal("first directory page", page, err)
 	}
 	last, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{Limit: 1, Cursor: page.NextCursor})
-	if err != nil || len(last.Items) != 0 || len(last.Runners) != 1 || last.Runners[0].Online || last.Runners[0].Ready {
+	if err != nil || last.Complete || len(last.Items) != 0 || len(last.Runners) != 1 || last.Runners[0].Online || last.Runners[0].Ready {
 		t.Fatal("offline directory page", last, err)
 	}
 	service := f.app.agentService()
@@ -178,8 +181,64 @@ func TestAgentDirectoryKeepsHealthyRunnersWhenAnotherRunnerIsOffline(t *testing.
 		return dial(ctx, scope, binding, operation)
 	}
 	partial, err := service.List(t.Context(), f.agentScope(), runner.Query{})
-	if err != nil || len(partial.Items) != 1 || len(partial.Issues) != 1 || partial.Issues[0].RunnerID != logical.ID || partial.Issues[0].Code != "OFFLINE" || partial.Runners[1].Ready {
+	if err != nil || partial.Complete || len(partial.Items) != 1 || len(partial.Issues) != 1 || partial.Issues[0].RunnerID != logical.ID || partial.Issues[0].Code != "OFFLINE" || partial.Runners[1].Ready {
 		t.Fatal("one offline route hid the healthy Runner", partial, err)
+	}
+}
+
+func TestAgentDirectoryPreservesPartialRuntimeDiscoveryFromOneRunner(t *testing.T) {
+	f := openExecutorFixture(t)
+	healthy := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, Adapter: "acp", State: "running"}
+	broken := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, Adapter: "acp", Availability: "unavailable"}
+	service := f.app.agentService()
+	service.Dial = func(ctx context.Context, _ agents.Scope, binding runner.Binding, operation string) (*client.Client, func(), error) {
+		if binding != f.binding || operation != "runtime.list" {
+			t.Error("discovery changed target or performed a control", binding, operation)
+		}
+		local, remote := net.Pipe()
+		server, err := yamux.Server(remote, wire.Config())
+		if err != nil {
+			return nil, nil, err
+		}
+		go func() {
+			control, err := server.AcceptStream()
+			if err != nil {
+				return
+			}
+			if _, err = wire.Read(control); err != nil {
+				return
+			}
+			if err = wire.Write(control, &pb.Message{Kind: "welcome", Payload: api.Payload(api.Binding{Target: binding.MachineID, Incarnation: "fixture", Generation: 1, Capabilities: []string{"runtime.list"}})}); err != nil {
+				return
+			}
+			stream, err := server.AcceptStream()
+			if err != nil {
+				return
+			}
+			defer stream.Close()
+			request, err := wire.Read(stream)
+			if err != nil {
+				return
+			}
+			if request.Operation != "runtime.list" {
+				t.Error("unexpected RPC", request.Operation)
+				return
+			}
+			if err := wire.Write(stream, &pb.Message{Kind: "accepted"}); err != nil {
+				return
+			}
+			_ = wire.Write(stream, &pb.Message{Kind: "result", Payload: api.Payload(api.RuntimeList{Items: []api.Runtime{healthy}, Complete: false, Issues: []api.RuntimeDiscoveryIssue{{Runtime: &broken, Code: "REGISTRATION_INVALID"}}})})
+		}()
+		connection, err := client.Connect(ctx, local, binding.MachineID)
+		if err != nil {
+			server.Close()
+			return nil, nil, err
+		}
+		return connection, func() { connection.Close(); server.Close() }, nil
+	}
+	page, err := service.List(t.Context(), f.agentScope(), runner.Query{})
+	if err != nil || page.Complete || len(page.Items) != 1 || page.Items[0].Runtime.ID != healthy.ID || len(page.Runners) != 1 || !page.Runners[0].Ready || len(page.Issues) != 1 || page.Issues[0].Runtime == nil || page.Issues[0].Runtime.ID != broken.ID || page.Issues[0].Code != "REGISTRATION_INVALID" {
+		t.Fatal("partial discovery hid healthy sibling or lost original issue", page, err)
 	}
 }
 

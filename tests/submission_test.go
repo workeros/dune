@@ -137,7 +137,7 @@ func TestSubmissionQueryAcrossFabricdRestart(t *testing.T) {
 	}
 	runtimes, err := h.client.List(h.ctx)
 	must(t, err)
-	if len(runtimes) != 0 {
+	if len(runtimes.Items) != 0 {
 		t.Fatal("receipt lookup created a replacement Runtime", runtimes)
 	}
 }

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,14 +27,18 @@ import (
 // sessionProxy owns only an IPC connection and last observed description. It
 // must never construct a controller, run initialize or restart an Agent.
 type sessionProxy struct {
-	mu           sync.Mutex
-	registration sessionRegistration
-	directory    string
-	term         uint64
-	connector    string
-	connection   *yamux.Session
-	control      *wire.Stream
-	registry     *sessionregistry.Registry
+	mu            sync.Mutex
+	registration  sessionRegistration
+	directory     string
+	term          uint64
+	connector     string
+	connection    *yamux.Session
+	control       *wire.Stream
+	registry      *sessionregistry.Registry
+	observeMu     sync.Mutex
+	observation   atomic.Pointer[api.Runtime]
+	nextProbe     time.Time
+	probeFailures int
 }
 
 func (p *sessionProxy) close() {
@@ -136,15 +142,47 @@ func (p *sessionProxy) request(operation string, payload any) *pb.Message {
 }
 
 func (p *sessionProxy) information() api.Runtime {
+	return p.informationContext(context.Background())
+}
+
+func (p *sessionProxy) informationContext(parent context.Context) api.Runtime {
+	// Coalesce concurrent probes before entering the connection mutex. Repeated
+	// reads of one bad endpoint cannot occupy every discovery worker in sequence.
+	if !p.observeMu.TryLock() {
+		if cached := p.observation.Load(); cached != nil {
+			result := *cached
+			result.Availability = "unavailable"
+			return result
+		}
+		p.mu.Lock()
+		result := p.registration.Runtime
+		p.mu.Unlock()
+		result.Availability = "unavailable"
+		return result
+	}
+	defer p.observeMu.Unlock()
+	if time.Now().Before(p.nextProbe) {
+		if cached := p.observation.Load(); cached != nil {
+			return *cached
+		}
+	}
 	p.mu.Lock()
 	request := p.request("runtime.get", struct{}{})
 	last := p.registration.Runtime
 	p.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if cached := p.observation.Load(); cached != nil {
+		last.LastConfirmedAt = cached.LastConfirmedAt
+	}
+	initial := last
+	initial.Availability = "unavailable"
+	p.observation.Store(&initial)
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	stream, err := p.open(ctx, request)
 	if err == nil {
 		defer stream.Close()
+		stop := context.AfterFunc(ctx, func() { stream.Close() })
+		defer stop()
 		_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))
 		var m *pb.Message
 		m, err = stream.Recv()
@@ -154,9 +192,13 @@ func (p *sessionProxy) information() api.Runtime {
 		if err == nil && m.Kind == "result" {
 			var current api.Runtime
 			if wire.Decode(m, &current) == nil && current.ID == last.ID && current.Incarnation == last.Incarnation && current.Generation == last.Generation {
+				now := time.Now().UTC()
+				current.LastConfirmedAt = &now
 				p.mu.Lock()
 				p.registration.Runtime = current
 				p.mu.Unlock()
+				p.observation.Store(&current)
+				p.nextProbe, p.probeFailures = time.Time{}, 0
 				return current
 			}
 		}
@@ -166,6 +208,10 @@ func (p *sessionProxy) information() api.Runtime {
 	if p.lossProven() {
 		last.State, last.Availability, last.StopReason, last.ExitCode = "lost", "lost", "host_lost", nil
 	}
+	p.probeFailures++
+	delay := 250 * time.Millisecond * time.Duration(1<<min(p.probeFailures-1, 5))
+	p.nextProbe = time.Now().Add(delay + time.Duration(rand.Int64N(int64(delay/2))))
+	p.observation.Store(&last)
 	return last
 }
 
@@ -287,13 +333,24 @@ func (d *Engine) discoverSessions() error {
 	if err != nil {
 		return err
 	}
-	for _, host := range hosts {
+	d.discoveryIssues = append(d.discoveryIssues, hosts.Issues...)
+	for _, host := range hosts.Hosts {
 		var reg sessionRegistration
 		if json.Unmarshal(host.Registration, &reg) != nil || reg.Installation != installationID(d.stateDir) || reg.Target != host.Target || reg.Instance != host.Instance {
-			return fmt.Errorf("registered ACP host identity could not be verified")
+			runtime := host.Runtime
+			runtime.Availability = "unavailable"
+			d.discoveryIssues = append(d.discoveryIssues, api.RuntimeDiscoveryIssue{Runtime: &runtime, Code: "REGISTRATION_INVALID"})
+			continue
 		}
 		if _, err := sessionSocket(reg); err != nil {
-			return err
+			code := "REGISTRATION_INVALID"
+			if reg.Version != sessionProtocol {
+				code = "SESSION_PROTOCOL_UNSUPPORTED"
+			}
+			runtime := host.Runtime
+			runtime.Availability = "unavailable"
+			d.discoveryIssues = append(d.discoveryIssues, api.RuntimeDiscoveryIssue{Runtime: &runtime, Code: code})
+			continue
 		}
 		reg.Runtime = host.Runtime
 		directory := filepath.Join(root, reg.Runtime.ID)

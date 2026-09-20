@@ -571,19 +571,63 @@ func (d *Engine) lookup(m *pb.Message) (*runtime, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r := d.runtimes[m.RuntimeId]
+	if r == nil {
+		for _, issue := range d.discoveryIssues {
+			if known := issue.Runtime; known != nil && known.ID == m.RuntimeId && known.Incarnation == m.RuntimeIncarnation && known.Generation == m.RuntimeGeneration {
+				return nil, &api.Error{Code: issue.Code, Detail: "original Runtime registration could not be verified"}
+			}
+		}
+	}
 	if r == nil || m.RuntimeGeneration != 1 || m.RuntimeIncarnation != r.inc {
 		return nil, &api.Error{Code: "STALE_RUNTIME", Detail: "Runtime handle invalid"}
 	}
 	return r, nil
 }
-func (d *Engine) list() []api.Runtime {
+func (d *Engine) list(ctx context.Context) api.RuntimeList {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	out := []api.Runtime{}
+	runtimes := make([]*runtime, 0, len(d.runtimes))
 	for _, r := range d.runtimes {
-		out = append(out, r.info())
+		runtimes = append(runtimes, r)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	out := api.RuntimeList{Items: make([]api.Runtime, len(runtimes)), Issues: append([]api.RuntimeDiscoveryIssue{}, d.discoveryIssues...), Complete: true}
+	d.mu.Unlock()
+	// Never hold the Engine lock over IPC. One bad endpoint cannot block exact
+	// lookup/stop of another Runtime, and concurrent lists share this hard bound.
+	jobs := make(chan int, len(runtimes))
+	for i := range runtimes {
+		jobs <- i
+	}
+	close(jobs)
+	var group sync.WaitGroup
+	for range min(8, len(runtimes)) {
+		group.Go(func() {
+			for i := range jobs {
+				r := runtimes[i]
+				if r.host == nil {
+					out.Items[i] = r.info()
+					continue
+				}
+				select {
+				case d.discoveryReads <- struct{}{}:
+					out.Items[i] = r.host.informationContext(ctx)
+					<-d.discoveryReads
+				case <-ctx.Done():
+					r.host.mu.Lock()
+					out.Items[i] = r.host.registration.Runtime
+					r.host.mu.Unlock()
+					out.Items[i].Availability = "unavailable"
+				}
+			}
+		})
+	}
+	group.Wait()
+	for _, runtime := range out.Items {
+		if runtime.Availability == "unavailable" {
+			out.Issues = append(out.Issues, api.RuntimeDiscoveryIssue{Runtime: &runtime, Code: "SESSION_UNAVAILABLE"})
+		}
+	}
+	out.Complete = len(out.Issues) == 0 && ctx.Err() == nil
+	sort.Slice(out.Items, func(i, j int) bool { return out.Items[i].ID < out.Items[j].ID })
 	return out
 }
 func environment(extra map[string]string) []string {

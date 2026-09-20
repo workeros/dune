@@ -19,6 +19,7 @@ export function workbenchState() {
     runners, runtimes, projects, acpStates: Object.fromEntries(Object.values(runtimes).flat().filter((runtime) => runtime.adapter === "acp").map((runtime) => [runtime.id, workbenchACPState(runtime.id)])), view: { id: "main", revision: 0, root: null } as SavedView,
     inputs: [] as { path: string; message: any }[], calls: [] as { runner: string; operation: string; payload: any }[],
     connections: [] as string[], viewWrites: [] as SavedView[], conflict: false, starts: 0, discoveryError: false, directoryRequests: [] as string[], directoryPageSize: 32, discoveryIssues: {} as Record<string, string>,
+    runtimeIssues: [] as { runner_id: string; code: string; runtime: AgentRuntime }[],
     profiles: [] as ProfileRecord[], launchRequests: [] as LaunchRequest[], launchFailure: "" as "" | "start" | "mcp",
   };
 }
@@ -53,12 +54,13 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     if (path === "/api/v1/agents") {
       state.directoryRequests.push(url.searchParams.get("cursor") ?? "");
       const start = Number(url.searchParams.get("cursor") ?? 0), end = start + state.directoryPageSize;
-      const runners = state.runners.slice(start, end), issues = runners.flatMap((runner) => state.discoveryError || state.discoveryIssues[runner.id] ? [{ runner_id: runner.id, code: state.discoveryIssues[runner.id] ?? "RUNNER_UNAVAILABLE" }] : []);
-      const items = runners.flatMap((runner) => !runner.binding || !runner.online || issues.some((issue) => issue.runner_id === runner.id) ? [] : (state.runtimes[runner.id] ?? []).map((runtime) => {
+      const runners = state.runners.slice(start, end), runnerIssues = runners.flatMap((runner) => state.discoveryError || state.discoveryIssues[runner.id] ? [{ runner_id: runner.id, code: state.discoveryIssues[runner.id] ?? "RUNNER_UNAVAILABLE" }] : []);
+      const issues = [...runnerIssues, ...state.runtimeIssues.filter((issue) => runners.some((runner) => runner.id === issue.runner_id))];
+      const items = runners.flatMap((runner) => !runner.binding || !runner.online || runnerIssues.some((issue) => issue.runner_id === runner.id) ? [] : (state.runtimes[runner.id] ?? []).map((runtime) => {
         const target = targetFor(runner.binding!, runtime);
         return { agent_ref: `ref-${runtime.id}`, target, runtime };
       }));
-      return reply({ items, runners: runners.map((runner) => ({ runner, online: runner.online, ready: runner.online })), issues, next_cursor: end < state.runners.length ? String(end) : undefined });
+      return reply({ items, runners: runners.map((runner) => ({ runner, online: runner.online, ready: runner.online })), issues, complete: !issues.length && runners.every((runner) => runner.online), next_cursor: end < state.runners.length ? String(end) : undefined });
     }
     if (path === "/api/v1/projects") {
       if (method === "GET") return reply({ items: state.projects });
@@ -89,7 +91,7 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
         return reply(result, 201);
       }
       state.calls.push({ runner: runner[1], operation: body.operation, payload: body.payload });
-      if (body.operation === "runtime.list") return state.discoveryError ? reply({ error: "discovery temporarily unavailable" }, 503) : reply(state.runtimes[runner[1]] ?? []);
+      if (body.operation === "runtime.list") return state.discoveryError ? reply({ error: "discovery temporarily unavailable" }, 503) : reply({ items: state.runtimes[runner[1]] ?? [], issues: [], complete: true });
       if (body.operation === "machine.info") return reply({ home: "/workspace" });
       if (body.operation === "git") return reply({ stdout: `diff from ${runner[1]} ${body.payload.directory}`, stderr: "", exit_code: 0, truncated: false });
       if (body.operation === "files") return reply({ items: [{ name: "README.md", is_dir: false }] });

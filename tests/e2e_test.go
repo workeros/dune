@@ -219,7 +219,7 @@ func TestExecProfilePTY(t *testing.T) {
 	receive(t, s, "exit", "")
 	list, e := h.client.List(h.ctx)
 	must(t, e)
-	if len(list) != 0 {
+	if len(list.Items) != 0 {
 		t.Fatal(list)
 	}
 	p.Setup.Steps = []api.Command{{Argv: []string{"/bin/sh", "-c", "exit 2"}}, {Argv: []string{"touch", "never"}}}
@@ -483,7 +483,7 @@ func TestRestart(t *testing.T) {
 	}
 	list, e := h.client.List(h.ctx)
 	must(t, e)
-	if len(list) != 1 || list[0].ID != rt.ID {
+	if len(list.Items) != 1 || list.Items[0].ID != rt.ID {
 		t.Fatal("tmux runtime lost", list)
 	}
 	b, e := os.ReadFile(pidfile)

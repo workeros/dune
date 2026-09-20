@@ -35,6 +35,8 @@ type Engine struct {
 	registry          *sessionregistry.Registry
 	submissionReads   chan struct{}
 	stateReads        chan struct{}
+	discoveryReads    chan struct{}
+	discoveryIssues   []api.RuntimeDiscoveryIssue
 	operationWaits    chan struct{}
 	streams           *wire.StreamCapacity
 	starts            chan struct{}
@@ -69,6 +71,7 @@ func newEngine(parent context.Context) *Engine {
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
 	engine.submissionReads = make(chan struct{}, 8)
 	engine.stateReads = make(chan struct{}, 16)
+	engine.discoveryReads = make(chan struct{}, 8)
 	engine.operationWaits = make(chan struct{}, 16)
 	engine.streams = wire.NewStreamCapacity(1)
 	engine.cleanups = make(map[api.SubmissionKey]*cleanupExecution)
@@ -352,7 +355,7 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 			}
 		}
 	case "runtime.list":
-		result = d.list()
+		result = d.list(s.ctx)
 	case "profile.status":
 		var request api.ProfileStatusRequest
 		e = wire.Decode(m, &request)

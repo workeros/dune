@@ -729,3 +729,51 @@ pinned runtime dependencies and upgrade/rollback preflight, platform service
 isolation and release evidence, remaining public consumer recovery/SandDance
 integration, and the final requirement-by-requirement L01–L55 audit. Local raw
 tests do not substitute for those deliverables or real-Agent acceptance.
+
+## Slice 18 — partial discovery and bounded host restoration
+
+The public runtime.list/SDK response is now a RuntimeList containing items,
+complete and local issues. AgentDirectory preserves those facts across Runner
+pagination, keeping healthy siblings and the Runner's readiness. Invalid durable
+rows/registration bodies and unsupported protocols no longer abort every ACP
+host's startup discovery. Exact references to a rejected registration report its
+issue instead of claiming the Runtime ended. Successful list probes carry
+last_confirmed_at; a timeout preserves last-known business state and explicitly
+marks availability unavailable.
+
+Lists copy the runtime map under the Engine lock and perform IPC after releasing
+it. All list readers share eight probe slots; per-host probes coalesce and failed
+reads back off from 250 ms to 8 s plus up to 50% jitter. Each probe has a two-second
+deadline and startup restoration has a 30-second window. No recovery probe sends
+an Agent control RPC.
+
+TestDiscoveryRecoversEightHostsBesideUnresponsiveEndpointAndCorruptRegistration
+starts ten actual independent hosts and mock Agents, kills fabricd, temporarily
+replaces one socket with an endpoint that accepts without answering, and corrupts
+a different registration. The final race run confirms eight original healthy
+hosts callable in 87.8 ms after restart, with both failures isolated. The bad
+probe closes on its deadline; restoring the original socket resumes the same
+host. All ten Agent logs retain one PID and one initialize, without session RPCs.
+An earlier SIGSTOP fixture was ineffective because its foreground child resumed;
+it is not counted as timeout evidence.
+
+A separate concurrent-list test exercises nine unresponsive IPC peers, verifies
+the shared eight-probe maximum, timely exact lookups and read-only backoff.
+Registry tests retain healthy rows beside corruption. The public AgentDirectory
+contract test checks one Runner's healthy item and exact local issue through the
+SDK protocol. Web browser coverage checks missing cached targets, healthy panes,
+three partial refreshes without duplication and reconnection to the original
+target with no new launch. The three affected browser suites pass all 13 tests.
+
+The fabricd race suite passes in 86 seconds, excluding the two expensive L53/L54
+saturation fixtures already validated independently. Registry/client/agentservice/
+host race suites pass, with the new partial-directory case rerun after fixing its
+protocol fixture's missing transport admission frame. Affected vet, Web
+typecheck/unit tests/production build and diff checks pass; the build retains its
+asset-size warnings. The independent IM module compiles (no IM test execution in
+this slice). No real Agent or service-manager/platform test was run.
+
+This slice does not yet rescan late registrations or classify orphan artifacts.
+Those remain in scope, together with dependency pinning/upgrade preflight,
+platform service isolation, remaining consumer recovery/SandDance integration,
+real-Agent/platform evidence and the full L01–L55 audit. The goal remains active.

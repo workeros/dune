@@ -18,7 +18,7 @@ import (
 func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Query) (agents.DirectoryPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	page := agents.DirectoryPage{Items: []agents.Agent{}, Runners: []agents.RunnerAvailability{}, Issues: []agents.DiscoveryIssue{}}
+	page := agents.DirectoryPage{Items: []agents.Agent{}, Runners: []agents.RunnerAvailability{}, Issues: []agents.DiscoveryIssue{}, Complete: true}
 	discovered, err := s.Access.DiscoverTenant(ctx, scope.Principal, scope.OwnerID, query)
 	if err != nil {
 		return page, err
@@ -44,6 +44,8 @@ func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Que
 		availability agents.RunnerAvailability
 		items        []agents.Agent
 		issue        string
+		issues       []api.RuntimeDiscoveryIssue
+		complete     bool
 	}
 	results := make([]result, len(discovered.Items))
 	jobs := make(chan int, len(discovered.Items))
@@ -57,6 +59,7 @@ func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Que
 			for i := range jobs {
 				resource := discovered.Items[i]
 				status := agents.RunnerAvailability{Runner: resource.Runner}
+				results[i].complete = false
 				if resource.Runner.Binding != nil {
 					status.Online = online[resource.Runner.Binding.MachineID]
 				}
@@ -64,9 +67,10 @@ func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Que
 					_, readyErr := s.Access.Check(ctx, scope.Principal, resource, "profile.start", resource.Runner.Kind)
 					status.Ready = readyErr == nil
 					callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-					items, err := s.runnerAgents(callCtx, scope, resource)
+					items, discovery, err := s.runnerAgents(callCtx, scope, resource)
 					cancel()
 					results[i].items = items
+					results[i].issues, results[i].complete = discovery.Issues, discovery.Complete
 					if err != nil {
 						results[i].issue = discoveryError(err)
 						status.Ready = false
@@ -80,6 +84,10 @@ func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Que
 	for _, result := range results {
 		page.Runners = append(page.Runners, result.availability)
 		page.Items = append(page.Items, result.items...)
+		page.Complete = page.Complete && result.complete
+		for _, issue := range result.issues {
+			page.Issues = append(page.Issues, agents.DiscoveryIssue{RunnerID: result.availability.Runner.ID, Runtime: issue.Runtime, Code: issue.Code})
+		}
 		if result.issue != "" {
 			page.Issues = append(page.Issues, agents.DiscoveryIssue{RunnerID: result.availability.Runner.ID, Code: result.issue})
 		}
@@ -87,21 +95,21 @@ func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Que
 	return page, nil
 }
 
-func (s *Service) runnerAgents(ctx context.Context, scope agents.Scope, resource authorization.Resource) ([]agents.Agent, error) {
+func (s *Service) runnerAgents(ctx context.Context, scope agents.Scope, resource authorization.Resource) ([]agents.Agent, api.RuntimeList, error) {
 	connection, closeConnection, err := s.Dial(ctx, scope, *resource.Runner.Binding, "runtime.list")
 	if err != nil {
-		return nil, err
+		return nil, api.RuntimeList{}, err
 	}
 	defer closeConnection()
 	runtimes, err := connection.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, runtimes, err
 	}
-	items := make([]agents.Agent, 0, len(runtimes))
-	for _, runtime := range runtimes {
+	items := make([]agents.Agent, 0, len(runtimes.Items))
+	for _, runtime := range runtimes.Items {
 		items = append(items, describe(resource.Runner, runtime))
 	}
-	return items, nil
+	return items, runtimes, nil
 }
 
 func (s *Service) Get(ctx context.Context, scope agents.Scope, value string) (agents.Agent, error) {

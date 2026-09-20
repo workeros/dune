@@ -99,7 +99,7 @@ func TestHostLossUsesIndependentEvidenceAndDoesNotReplay(t *testing.T) {
 	}
 	listed, err := h.client.List(h.ctx)
 	must(t, err)
-	if len(listed) != 1 || listed[0].ID != runtime.ID || listed[0].State != "running" || listed[0].Availability != "unavailable" {
+	if len(listed.Items) != 1 || listed.Items[0].ID != runtime.ID || listed.Items[0].State != "running" || listed.Items[0].Availability != "unavailable" {
 		t.Fatal("IPC timeout was treated as process loss", listed)
 	}
 	must(t, syscall.Kill(record.PID, syscall.SIGKILL))
@@ -130,7 +130,7 @@ func TestHostLossUsesIndependentEvidenceAndDoesNotReplay(t *testing.T) {
 	h.reconnect()
 	listed, err = h.client.List(h.ctx)
 	must(t, err)
-	if len(listed) != 1 || listed[0].ID != runtime.ID || listed[0].Incarnation != runtime.Incarnation || listed[0].State != "lost" || listed[0].Availability != "lost" || listed[0].ExitCode != nil {
+	if len(listed.Items) != 1 || listed.Items[0].ID != runtime.ID || listed.Items[0].Incarnation != runtime.Incarnation || listed.Items[0].State != "lost" || listed.Items[0].Availability != "lost" || listed.Items[0].ExitCode != nil {
 		t.Fatal("lost original identity vanished or acquired a fabricated exit", listed)
 	}
 	receipt, err := h.client.QuerySubmission(h.ctx, key)

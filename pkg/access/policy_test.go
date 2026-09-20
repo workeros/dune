@@ -175,7 +175,7 @@ func TestEnvironmentProfilePreparation(t *testing.T) {
 		}
 	}
 	runtimes, err := c.List(ctx)
-	if err != nil || len(runtimes) != 0 {
+	if err != nil || len(runtimes.Items) != 0 {
 		t.Fatal("environment Profile created a Runtime", runtimes, err)
 	}
 	request := <-seen
@@ -342,7 +342,7 @@ func TestAgentProfileSetupFailureIncludesDiagnostics(t *testing.T) {
 		t.Fatalf("Agent setup diagnostics incomplete: %+v", progress)
 	}
 	runtimes, err := c.List(ctx)
-	if err != nil || len(runtimes) != 0 {
+	if err != nil || len(runtimes.Items) != 0 {
 		t.Fatal("failed Agent setup created a Runtime", runtimes, err)
 	}
 }

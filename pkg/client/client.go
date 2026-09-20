@@ -286,8 +286,8 @@ func (c *Client) ProfileStatus(ctx context.Context, executionID string) (api.Pro
 	return out, err
 }
 
-func (c *Client) List(ctx context.Context) ([]api.Runtime, error) {
-	var r []api.Runtime
+func (c *Client) List(ctx context.Context) (api.RuntimeList, error) {
+	var r api.RuntimeList
 	e := c.Call(ctx, "runtime.list", struct{}{}, &r)
 	return r, e
 }

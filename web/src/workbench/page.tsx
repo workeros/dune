@@ -54,7 +54,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     const bindingValid = runner && bindingKey(runner.binding) === bindingKey(leaf.pane.target.binding);
     const projectName = projects.projects.find((item) => item.id === leaf.pane.project_id)?.name ?? "未归类";
     const key = bindingKey(leaf.pane.target.binding), discoveryError = directory.errors[key];
-    const available = bindingValid && runner.online && agent && agent.runtime.state !== "lost" && agent.runtime.availability !== "lost";
+    const available = bindingValid && runner.online && agent && agent.runtime.state !== "lost" && agent.runtime.availability !== "lost" && agent.runtime.availability !== "unavailable";
     let unavailable = "正在核验会话…";
     if (!runnersLoading && !runner) unavailable = "原开发环境暂不可访问";
     else if (runner && !bindingValid) unavailable = "原环境绑定已失效，请从列表选择当前会话。";

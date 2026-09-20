@@ -130,18 +130,20 @@ test("a delayed save cannot overwrite changes made during the request", async ({
   expect(state.viewWrites.map((view) => view.revision)).toEqual([0, 1]);
 });
 
-test("summary refresh errors retain open sessions and their connections", async ({ page }) => {
+test("summary refresh errors retain panes and recover the original targets", async ({ page }) => {
   const state = workbenchState(); await mockWorkbench(page, state); await page.goto("/");
   await page.getByRole("button", { name: "打开 A-PTY · Runner one", exact: true }).click();
   await expect.poll(() => state.connections.length).toBe(1);
   state.discoveryError = true;
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.getByText("Runner one：暂时无法读取 Agent 列表", { exact: true })).toBeVisible();
-  await expect(page.locator(".xterm-helper-textarea")).toHaveCount(1);
+  await expect(page.locator(".xterm-helper-textarea")).toHaveCount(0);
   state.discoveryError = false;
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.getByText("Runner one：暂时无法读取 Agent 列表", { exact: true })).toHaveCount(0);
-  expect(state.connections).toHaveLength(1);
+  await expect.poll(() => state.connections.length).toBe(2);
+  expect(state.connections[1]).toBe(state.connections[0]);
+  expect(state.starts).toBe(0);
 });
 
 test("four panes remain readable with long labels, and a saved view without focus works on mobile", async ({ page }, testInfo) => {

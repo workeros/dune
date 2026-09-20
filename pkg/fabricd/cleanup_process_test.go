@@ -274,7 +274,7 @@ func TestForgetResumesOnlyOriginalCleanupAfterProcessCrashes(t *testing.T) {
 				t.Fatal("duplicate cleanup changed original receipt", duplicate, err)
 			}
 			listed, err := h.client.List(h.ctx)
-			if err != nil || len(listed) != 0 {
+			if err != nil || len(listed.Items) != 0 {
 				t.Fatal("completed Runtime still discovered", listed, err)
 			}
 			data, err := os.ReadFile(projectFile)

@@ -128,19 +128,29 @@ func (r *Registry) Host(ctx context.Context, target api.SubmissionTarget) (HostR
 
 // Hosts is read-only and bounded by the reserved Runtime identity pool. It can
 // rediscover a lost host even when its Runtime directory is absent or damaged.
-func (r *Registry) Hosts(ctx context.Context) ([]HostRecord, error) {
+type HostDiscovery struct {
+	Hosts  []HostRecord
+	Issues []api.RuntimeDiscoveryIssue
+}
+
+func (r *Registry) Hosts(ctx context.Context) (HostDiscovery, error) {
+	discovery := HostDiscovery{Hosts: []HostRecord{}, Issues: []api.RuntimeDiscoveryIssue{}}
 	rows, err := r.db.QueryContext(ctx, `SELECT `+hostColumns+` FROM session_hosts h JOIN runtime_reservations r ON r.target=h.target WHERE r.live=1 ORDER BY h.target LIMIT ?`, MaxRuntimeRecords)
 	if err != nil {
-		return nil, err
+		return discovery, err
 	}
 	defer rows.Close()
-	hosts := []HostRecord{}
 	for rows.Next() {
 		host, err := scanHost(rows)
 		if err != nil {
-			return nil, err
+			issue := api.RuntimeDiscoveryIssue{Code: "REGISTRATION_INVALID"}
+			if host.Target.Validate() == nil && host.Target.RuntimeID != "" {
+				issue.Runtime = &api.Runtime{ID: host.Target.RuntimeID, Incarnation: host.Target.RuntimeIncarnation, Generation: host.Target.RuntimeGeneration, Adapter: "acp", Availability: "unavailable"}
+			}
+			discovery.Issues = append(discovery.Issues, issue)
+			continue
 		}
-		hosts = append(hosts, host)
+		discovery.Hosts = append(discovery.Hosts, host)
 	}
-	return hosts, rows.Err()
+	return discovery, rows.Err()
 }

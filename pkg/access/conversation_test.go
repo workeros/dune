@@ -171,7 +171,7 @@ for line in sys.stdin:
 		assertCode(read(runtime), "STALE_RUNTIME")
 	}
 	list, err := client.List(ctx)
-	if err != nil || len(list) != 0 {
+	if err != nil || len(list.Items) != 0 {
 		t.Fatal("forgotten Runtime remained discoverable", list, err)
 	}
 	raw, stream, err := testStartProfile(client, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"/bin/cat"}}})

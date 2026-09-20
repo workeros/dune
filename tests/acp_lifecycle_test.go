@@ -89,7 +89,7 @@ func TestManagedACPOriginalProcessAcrossConnectorRestart(t *testing.T) {
 	wait(queued)
 	listed, err := h.client.List(h.ctx)
 	must(t, err)
-	if len(listed) != 1 || listed[0].ID != runtime.ID || listed[0].Incarnation != runtime.Incarnation || listed[0].Generation != runtime.Generation || listed[0].Availability != "" {
+	if len(listed.Items) != 1 || listed.Items[0].ID != runtime.ID || listed.Items[0].Incarnation != runtime.Incarnation || listed.Items[0].Generation != runtime.Generation || listed.Items[0].Availability != "" {
 		t.Fatal("connector did not rediscover the original Runtime", listed)
 	}
 	permissionTask := submit("permission-before-term", api.ACPAction{Action: "prompt", Text: "permission task", ExpectedConversationID: conversation})

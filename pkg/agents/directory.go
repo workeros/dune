@@ -24,8 +24,9 @@ type RunnerAvailability struct {
 }
 
 type DiscoveryIssue struct {
-	RunnerID string `json:"runner_id"`
-	Code     string `json:"code"`
+	RunnerID string       `json:"runner_id"`
+	Code     string       `json:"code"`
+	Runtime  *api.Runtime `json:"runtime,omitempty"`
 }
 
 // Pagination advances across Runners. An unavailable Runner is reported rather
@@ -35,6 +36,7 @@ type DirectoryPage struct {
 	Runners    []RunnerAvailability `json:"runners"`
 	Issues     []DiscoveryIssue     `json:"issues"`
 	NextCursor string               `json:"next_cursor,omitempty"`
+	Complete   bool                 `json:"complete"`
 }
 
 type Directory interface {
