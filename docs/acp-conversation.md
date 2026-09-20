@@ -96,8 +96,11 @@ Each explicit new/load after the first open establishes a fresh initialized
 Agent process/stdio connection within the same managed Runtime. This isolates
 untagged same-native-ID notifications. Runtime identity, queue order, operation
 records, MCP configuration and last-confirmed metadata remain owned by the
-controller; old connection callbacks cannot update the new model. It requires
-the Agent to support native load across processes. A failure to establish the
+controller; old connection callbacks cannot update the new model. Oversized
+output and read errors also check connection ownership under the controller
+lock before changing completeness, publishing a notice or stopping the Runtime.
+This includes the interval where a new model is visible while old output drains.
+The Agent must support native load across processes. A failure to establish the
 new connection fails the open without replaying a prompt. Normal read/state/
 subscribe operations never use this path. The configured Runtime timeout is
 not extended by reopening a native session.
@@ -125,6 +128,12 @@ older pages can add unseen entries, but cannot overwrite newer values or revive
 entries below the known eviction boundary. Responses from an obsolete request
 generation cannot select an older conversation. A recent-page response never
 clears a pending update to an older loaded tool.
+
+The Web cache tracks the upper order read from recent pages separately from
+metadata discovered by state/get. If a refreshed recent page skips past that
+order, its cursor becomes the next backward-read position so the unread middle
+remains reachable. Overlapping or adjacent refreshes preserve existing paging
+progress. Traversal may revisit cached entries, which merge by entry ID.
 
 On reconnect the Web view intentionally starts from a fresh recent window. It
 does not claim to have synchronized unrequested older pages. Its cache is bounded

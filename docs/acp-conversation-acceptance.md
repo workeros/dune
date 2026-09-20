@@ -23,7 +23,7 @@ in this environment; qualification in the last column is part of the result.
 | A01 | `tests/TestACPConversationReadWithoutSubscription`; `TestConversationToolPatchPreservesNullAndUnknownFields` | Input, merged answer and turn via processes without subscribers; tool current values via model tests. |
 | A02 | `TestACPConversationReadWithoutSubscription` | New SDK connection reads by Runtime and state, without operation ref or subscription. |
 | A03 | `web/e2e/acp-conversation.spec.ts` model restoration case | Reload and second browser preserve model; no extra control calls. Backend RPC journal separately proves read side effects absent. |
-| A04 | `TestConversationPagingEvictionAndRecreatedTool`; SDK conversation test | Fixed member upper bound, ascending order, new insertions excluded from old cursor. |
+| A04 | `TestConversationPagingEvictionAndRecreatedTool`; SDK conversation test; Web latest-page gap tests | Fixed member upper bound, ascending order, new insertions excluded from old cursor. Web refresh retains a cursor into unread middle ranges. |
 | A05 | tool patch test; browser model restoration case | Stable tool identity; get refreshes an older loaded page. |
 | A06 | `web/src/components/acp-model.test.mjs` older-page case | Older response adds unseen entries without overwriting newer values. |
 | A07 | `tests/TestACPConversationIndependentCursorsAcrossConnections` and invalid-cursor tests | Six parallel requests across two connections reuse the same cursor; older/end-page traversal does not consume it. Multiple deployed host Pods not exercised. |
@@ -40,7 +40,7 @@ in this environment; qualification in the last column is part of the result.
 | A18 | `TestACPLoadCoalescesOnlyAdjacentInflightOperations` | Different targets/configuration or intervening operations preserve queue order. |
 | A19 | Gateway generation-barrier test | Permission holds the actual child prompt; queued and network-delayed c1 prompts both fail after same-native reload, without body or RPC. |
 | A20 | `TestNativeSessionConfirmationSurvivesLaterSwitchAndFailedLoad`; open-outcome tests | Failed/unknown opens retain fragments, do not forge confirmed metadata. Native coverage remains unknown. |
-| A21 | `TestACPRejectsCallbacksFromOldConnectionWithSameNativeID`; SDK RPC journal | Old callbacks excluded; explicit reload creates exactly one fresh initialized connection. |
+| A21 | `TestACPRejectsCallbacksFromOldConnectionWithSameNativeID`; `TestACPConnectionReadIssuesAreIsolated`; SDK RPC journal | Old callbacks, oversized output and read errors excluded during drain and after replacement; explicit reload creates exactly one fresh initialized connection. |
 | A22 | SDK subscription-then-read test; notification tests; reducer race test | Acknowledged subscription, committed values and interval invalidations tested. |
 | A23 | `TestConversationNotificationUnionAndOverflow` | Merged revisions retain union; ID/byte overflow and conversation-wide state changes become full invalidation (also `TestConversationStateChangesInvalidateTheWholeModel`). |
 | A24 | SDK reconnect and browser restoration | Current model read independently; browser deliberately resets to a recent window. |
@@ -54,7 +54,7 @@ in this environment; qualification in the last column is part of the result.
 | A32 | independent-cursor process test plus subscription/read tests | A subscriber and independent readers coexist; traversal/reuse changes neither model revision/retention nor actual Agent RPC journal. |
 | A33 | authorization/exit test | Raw ACP and missing advertised capabilities return `UNSUPPORTED`. |
 | A34 | unopened-controller check; replay-before-result; global eviction | No model, empty loading model, and evicted empty window have separate identity/state/flags. |
-| A35 | reducer `new latest page never clears older entry refresh obligations`; browser older tool refresh | Newer recent-page revision does not cancel old-page get obligations. |
+| A35 | reducer `new latest page never clears older entry refresh obligations`; browser older tool refresh and full invalidation gap cases | Newer recent-page revision does not cancel old-page get obligations or strand unread middle entries after gets finish. |
 | A36 | Gateway barriers; host `TestAgentMessengerPreservesObservedConversationAfterSameNativeReload`; IM `TestPromptKeepsStoredGenerationAfterRuntimeRefresh` | Missing IDs fail; stale observed ID forwarded unchanged across consumers and rejected by fabricd. |
 | A37 | authorization/exit test | Exited Runtime keeps native confirmation; forget removes directory entry and rejects old selectors. |
 | A38 | `TestACPOpenOutcomeIsSettledBeforeExitAndSurvivesRetention` | Succeeded/failed/unknown opening outcome survives exit and operation/body cleanup. |
@@ -246,3 +246,39 @@ heap stayed approximately 149–150 MiB despite cumulative churn. Removing all
 models reclaimed the store's model count, retained bytes, entries and indexes.
 The 30-second test adds repeated-eviction evidence; it does not establish
 long-term production memory or latency guarantees.
+
+## Review fixes: pagination gaps and stale connection failures
+
+Both independently supplied review reproductions failed again on `c1689af`
+before the fixes and passed afterward.
+
+- `7f160d8`: Web latest-page refresh tracks the last read upper order. A jump
+  from entries 1–10 to 251–300 adopts the new cursor, preserving access to
+  11–250 after older dirty entries finish refreshing. Unit tests also cover
+  overlapping/adjacent refreshes, multiple jumps, preexisting pagination,
+  stale snapshots and eviction. The browser case reads all 300 entries through
+  five earlier-page requests without issuing an ACP control action.
+- `e37e49f`: oversized output checks connection ownership while holding the
+  controller lock through model/operation mutation and notice publication.
+  The same rule now applies to reader errors before stopping a Runtime.
+  `TestACPConnectionReadIssuesAreIsolated` covers both issues while the old
+  connection drains, after replacement, and on the current connection. It
+  checks model revision/flags, operation completeness, notices and Runtime stop
+  behavior. The raw ACP continuation test preserves omission recovery.
+
+Checks performed for these fixes:
+
+| Command | Result |
+| --- | --- |
+| `node --test /tmp/dune-main-review.obQ8wX/paging-gap.test.mjs` | PASS; original paging reproduction. |
+| `go test -overlay /tmp/dune-main-review.obQ8wX/overlay.json ./pkg/fabricd -run '^TestReview' -count=1 -v` | PASS; original stale-output reproduction. |
+| `make test TEST_FLAGS='-count=1 -timeout=600s -p=2'` | PASS, main and IM modules; process suite 201.762 seconds. |
+| `go test -race ./pkg/fabricd ./pkg/access ./pkg/client ./internal/agentservice -count=1 -timeout=180s` | PASS. |
+| `make check-go` | PASS, main and IM modules. |
+| `npm --prefix web test` | PASS, 11 tests. |
+| `make web-check web-build` | PASS; existing bundle-size warnings remain. |
+| `npm --prefix web run e2e -- acp-conversation.spec.ts` | PASS, three Chromium cases. |
+
+The real-Agent command, isolated account environment and work directory remain
+unconfigured. These fixes do not change the pending native-load acceptance or
+the resource/deployment qualification above.
