@@ -7,9 +7,10 @@ import (
 )
 
 type PromptRequest struct {
-	AgentRef string `json:"agent_ref"`
-	Text     string `json:"text"`
-	WaitMS   int    `json:"wait_ms,omitempty"`
+	ExpectedConversationID string `json:"expected_conversation_id,omitempty" jsonschema:"Caller-observed conversation_id; required for managed ACP. Never refresh automatically on retry."`
+	AgentRef               string `json:"agent_ref"`
+	Text                   string `json:"text"`
+	WaitMS                 int    `json:"wait_ms,omitempty"`
 }
 
 type KeysRequest struct {

@@ -73,7 +73,7 @@ func TestActivityTracksACPWithoutContentSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitActivity("idle")
-	if _, err := a.action(api.ACPAction{Action: "prompt", Text: "a task"}); err != nil {
+	if _, err := a.action(api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "a task"}); err != nil {
 		t.Fatal(err)
 	}
 	blocked := awaitActivity("blocked")

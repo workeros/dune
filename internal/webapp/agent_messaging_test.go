@@ -26,12 +26,12 @@ func TestAgentMessagingHTTPPreservesAcceptedOperationAndAuthenticatesScope(t *te
 			calls := 0
 			f.server.options.AgentMessenger = messengerFixture{prompt: func(scope agents.Scope, request agents.PromptRequest) (agents.Operation, error) {
 				calls++
-				if scope.OwnerID != f.owner || scope.Principal.ID != f.users[0].ID || request.AgentRef != "selected" || request.Text != "task" || request.WaitMS != 1000 {
+				if scope.OwnerID != f.owner || scope.Principal.ID != f.users[0].ID || request.ExpectedConversationID != "caller-observed-c1" || request.AgentRef != "selected" || request.Text != "task" || request.WaitMS != 1000 {
 					t.Fatal("request changed authenticated scope")
 				}
 				return agents.Operation{AgentOperation: api.AgentOperation{Ref: "accepted-operation", State: "pending"}}, &api.Error{Code: "RESULT_UNKNOWN", Detail: "optional wait interrupted"}
 			}}
-			request := agents.PromptRequest{AgentRef: "selected", Text: "task", WaitMS: 1000}
+			request := agents.PromptRequest{ExpectedConversationID: "caller-observed-c1", AgentRef: "selected", Text: "task", WaitMS: 1000}
 			out := f.request(t, "POST", "/agents/prompt", 0, request)
 			if out.Code != http.StatusServiceUnavailable || !bytes.Contains(out.Body.Bytes(), []byte("accepted-operation")) || calls != 1 {
 				t.Fatal("accepted reference lost or prompt replayed", out.Code, out.Body.String(), calls)

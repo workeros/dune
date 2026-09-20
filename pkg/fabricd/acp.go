@@ -180,8 +180,13 @@ func (a *acpController) receive(data []byte) {
 		}
 		a.mu.Lock()
 		ch := a.pending[id]
+		reply := acpReply{Result: m.Result}
+		if m.Error != nil {
+			reply.Err = formatACPError(m.Error.Code, m.Error.Message, m.Error.Data)
+		}
 		if a.active != nil && a.active.rpcID == id {
 			a.active.responded = true
+			a.settleOperationLocked(a.active, reply.Result, reply.Err)
 		}
 		if ch != nil && a.methods[id] != "session/list" {
 			a.permissions = map[string]acpPermission{}
@@ -189,10 +194,6 @@ func (a *acpController) receive(data []byte) {
 		}
 		a.mu.Unlock()
 		if ch != nil {
-			reply := acpReply{Result: m.Result}
-			if m.Error != nil {
-				reply.Err = formatACPError(m.Error.Code, m.Error.Message, m.Error.Data)
-			}
 			select {
 			case ch <- reply:
 			default:

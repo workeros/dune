@@ -2,17 +2,18 @@ package api
 
 import "encoding/json"
 
-// ACPAction is a managed request. Prompt SessionID and Cwd pin the native
-// conversation observed by the caller; omitted values bind at admission. A
-// queued prompt fails if an earlier new/load changes either value.
+// ACPAction is a managed request. Prompts require the caller's observed
+// ExpectedConversationID; intermediaries must never fill or refresh it. Native
+// SessionID/Cwd are additional selectors. Admission and dispatch both validate.
 type ACPAction struct {
-	Action       string `json:"action"`
-	Text         string `json:"text,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Cwd          string `json:"cwd,omitempty"`
-	Cursor       string `json:"cursor,omitempty"`
-	PermissionID string `json:"permission_id,omitempty"`
-	OptionID     string `json:"option_id,omitempty"`
+	ExpectedConversationID string `json:"expected_conversation_id,omitempty"`
+	Action                 string `json:"action"`
+	Text                   string `json:"text,omitempty"`
+	SessionID              string `json:"session_id,omitempty"`
+	Cwd                    string `json:"cwd,omitempty"`
+	Cursor                 string `json:"cursor,omitempty"`
+	PermissionID           string `json:"permission_id,omitempty"`
+	OptionID               string `json:"option_id,omitempty"`
 }
 
 // NativeSession is a confirmed native conversation, observed from a matching
@@ -31,10 +32,12 @@ type NativeSession struct {
 // AgentOperation identifies one accepted submission in the original fabricd
 // Runtime. A completed ACP RPC does not imply the user's task passed acceptance.
 type AgentOperation struct {
-	Ref        string `json:"operation_ref"`
-	State      string `json:"state"`
-	StopReason string `json:"stop_reason,omitempty"`
-	Error      string `json:"error,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Ref            string `json:"operation_ref"`
+	State          string `json:"state"`
+	StopReason     string `json:"stop_reason,omitempty"`
+	Error          string `json:"error,omitempty"`
+	ErrorCode      string `json:"error_code,omitempty"`
 	// NativeSession belongs to this operation's matching successful response,
 	// even when another caller has since changed the Runtime's session.
 	NativeSession *NativeSession `json:"native_session,omitempty"`

@@ -129,6 +129,24 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			}
 			key := "tool\x00" + turnID + "\x00" + id
 			entry := m.find(key)
+			// A late update may still name a retained tool after its turn ended.
+			// With multiple uses of that native ID the wire attribution is
+			// ambiguous; retain a partial object instead of choosing a turn.
+			if entry == nil && kind == "tool_call_update" && turnID == "" {
+				match := ""
+				for _, candidate := range m.entries {
+					if candidate.value.Tool != nil && candidate.value.Tool.ID == id {
+						if match != "" {
+							match = ""
+							break
+						}
+						match = candidate.key
+					}
+				}
+				if match != "" {
+					key, entry = match, m.find(match)
+				}
+			}
 			if entry == nil {
 				entry = &api.ACPEntry{Type: "tool", TurnID: turnID, ContextIncomplete: kind != "tool_call", Tool: &api.ACPTool{ID: id, Status: "unknown", Fields: map[string]json.RawMessage{}}}
 			}

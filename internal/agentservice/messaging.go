@@ -46,10 +46,13 @@ func (s *Service) Prompt(ctx context.Context, scope agents.Scope, request agents
 	}
 	var accepted api.AgentOperation
 	if runtime.Adapter == "acp" {
+		if request.ExpectedConversationID == "" {
+			return agents.Operation{}, invalid("expected_conversation_id is required for managed ACP prompts")
+		}
 		if runtime.NativeSession == nil {
 			return agents.Operation{}, &api.Error{Code: "SESSION_REQUIRED", Detail: "create or load a native ACP session before prompting"}
 		}
-		accepted, err = connection.ACPSubmit(ctx, runtime, api.ACPAction{Action: "prompt", Text: request.Text, SessionID: runtime.NativeSession.ID, Cwd: runtime.NativeSession.Cwd})
+		accepted, err = connection.ACPSubmit(ctx, runtime, api.ACPAction{ExpectedConversationID: request.ExpectedConversationID, Action: "prompt", Text: request.Text, SessionID: runtime.NativeSession.ID, Cwd: runtime.NativeSession.Cwd})
 	} else {
 		agent := ""
 		if runtime.Activity != nil {

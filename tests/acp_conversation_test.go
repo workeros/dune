@@ -58,7 +58,9 @@ func TestACPConversationReadWithoutSubscription(t *testing.T) {
 		t.Fatalf("conversation missing: %+v", state)
 	}
 	id := state.Conversation.ID
-	submit(api.ACPAction{Action: "prompt", Text: "offline conversation marker"})
+	observed, err := h.client.ACPState(h.ctx, runtime)
+	must(t, err)
+	submit(api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "offline conversation marker"})
 	// The mock persists only actual prompt updates. Independent reads must not
 	// change this transcript or dispatch another load/prompt/new request.
 	transcript := filepath.Join(h.dir, ".dune-mock-acp-history.json")

@@ -127,9 +127,11 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 	clientA := h.client
 	h.reconnect()
 	defer clientA.Close()
-	first, err := clientA.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "prompt", Text: "permission first", SessionID: "mock-session"})
+	observed, err := h.client.ACPState(h.ctx, runtime)
 	must(t, err)
-	second, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{Action: "prompt", Text: "second", SessionID: "mock-session"})
+	first, err := clientA.ACPSubmit(h.ctx, runtime, api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "permission first", SessionID: "mock-session"})
+	must(t, err)
+	second, err := h.client.ACPSubmit(h.ctx, runtime, api.ACPAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "second", SessionID: "mock-session"})
 	must(t, err)
 	if second.State != "pending" {
 		t.Fatalf("second admission: %+v", second)

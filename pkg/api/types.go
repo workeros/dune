@@ -213,6 +213,7 @@ type ExecResult struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
+	ConversationID   string         `json:"conversation_id,omitempty"`
 	ProjectID        string         `json:"project_id,omitempty"`
 	DirectoryID      string         `json:"directory_id,omitempty"`
 	Title            string         `json:"title,omitempty"`

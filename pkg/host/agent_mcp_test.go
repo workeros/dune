@@ -122,7 +122,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	if launched.Runtime == nil || launched.AgentRef == "" || launched.Operation == nil || launched.Operation.State != "completed" {
 		t.Fatal("MCP start did not prepare a native session", launched)
 	}
-	prompt := callMCP[agents.Operation](t, client, "agents_prompt", agents.PromptRequest{AgentRef: launched.AgentRef, Text: "delegated task"})
+	prompt := callMCP[agents.Operation](t, client, "agents_prompt", agents.PromptRequest{ExpectedConversationID: launched.Runtime.ConversationID, AgentRef: launched.AgentRef, Text: "delegated task"})
 	waited := callMCP[agents.WaitResult](t, client, "agents_wait", agents.WaitRequest{OperationRef: prompt.Ref, TimeoutMS: 3000})
 	if waited.Operation == nil || waited.Operation.State != "completed" || waited.Operation.Ref != prompt.Ref {
 		t.Fatal("operation completion crossed HTTP handlers", waited)

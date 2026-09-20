@@ -47,6 +47,9 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 			return api.AgentOperation{}, fmt.Errorf("session ID required")
 		}
 	case "prompt":
+		if err := a.checkPromptConversationLocked(req); err != nil {
+			return api.AgentOperation{}, err
+		}
 		if req.SessionID == "" {
 			req.SessionID = a.state.SessionID
 		}
@@ -58,6 +61,18 @@ func (a *acpController) enqueueLocked(req api.ACPAction) (api.AgentOperation, er
 		}
 	default:
 		return api.AgentOperation{}, fmt.Errorf("unsupported ACP action")
+	}
+	// Only the immediately preceding operation may share an in-flight load.
+	// MCP configuration cannot change while operations are queued/running.
+	previous := a.active
+	if len(a.queue) > 0 {
+		previous = a.queue[len(a.queue)-1]
+	}
+	if req.Action == "load" && previous != nil && previous.request.Action == "load" && previous.request.SessionID == req.SessionID && previous.request.Cwd == req.Cwd {
+		a.operations.mu.Lock()
+		status := a.operations.records[previous.ref].status
+		a.operations.mu.Unlock()
+		return status, nil
 	}
 	if len(a.queue) >= maxACPPending {
 		return api.AgentOperation{}, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "ACP pending queue is full"}
@@ -90,8 +105,15 @@ func (a *acpController) startNextLocked() {
 		a.queue[0] = nil
 		a.queue = a.queue[1:]
 		req := operation.request
-		// A preceding new/load must not redirect a prompt admitted for a different
-		// native conversation, even though both share the same Runtime process.
+		if req.Action == "prompt" {
+			if err := a.checkPromptConversationLocked(req); err != nil {
+				a.operations.mu.Lock()
+				a.operations.records[operation.ref].status.ErrorCode = "CONVERSATION_CHANGED"
+				a.operations.mu.Unlock()
+				a.publishOperation(a.operations.set(operation.ref, "failed", "", err.Error()))
+				continue
+			}
+		}
 		if req.Action == "prompt" && (req.SessionID != a.state.SessionID || req.Cwd != a.state.Cwd) {
 			a.publishOperation(a.operations.set(operation.ref, "failed", "", "native ACP session changed before execution"))
 			continue
@@ -103,6 +125,9 @@ func (a *acpController) startNextLocked() {
 		switch req.Action {
 		case "new", "load":
 			a.conversation.begin(req)
+			a.operations.mu.Lock()
+			a.operations.records[operation.ref].status.ConversationID = a.conversation.describe().ID
+			a.operations.mu.Unlock()
 			servers := a.mcpServers
 			if servers == nil {
 				servers = []any{}
@@ -145,9 +170,16 @@ func (a *acpController) runOperation(operation *acpQueuedAction, params map[stri
 	result, err := a.rpc("session/"+operation.request.Action, params, timeout, operation)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.settleOperationLocked(operation, result, err)
+}
+
+// receive calls this before reading the next protocol line or publishing exit.
+// The RPC goroutine calls it only for transport failures/timeouts; the active
+// identity makes a duplicate completion harmless.
+func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result json.RawMessage, err error) {
 	if a.active != operation {
 		return
-	} // closed() already settled the queue.
+	}
 	a.replaying.Store(false)
 	state, reason, detail := "completed", "", ""
 	if err == nil {
@@ -276,7 +308,7 @@ func (a *acpController) cancelPendingLocked(detail string) {
 }
 
 func (a *acpController) closeQueueLocked() {
-	if a.active != nil && !a.active.responded {
+	if a.active != nil {
 		a.operations.markIncomplete(a.active.ref)
 		status := a.operations.set(a.active.ref, "unknown", "", "Agent exited before operation completion; request was not replayed")
 		if a.active.request.Action == "prompt" {
@@ -328,4 +360,15 @@ func (a *acpController) finishControl(err error) {
 	} else if a.active == nil && a.state.Ready {
 		a.startNextLocked()
 	}
+}
+
+func (a *acpController) checkPromptConversationLocked(req api.ACPAction) error {
+	if req.ExpectedConversationID == "" || len(req.ExpectedConversationID) > 128 {
+		return conversationArgument("expected_conversation_id is required for managed ACP prompts")
+	}
+	current := a.conversation.describe()
+	if current == nil || current.ID != req.ExpectedConversationID {
+		return &api.Error{Code: "CONVERSATION_CHANGED", Detail: "observed conversation was replaced; request was not sent"}
+	}
+	return nil
 }

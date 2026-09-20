@@ -11,9 +11,10 @@ type AgentCapabilities struct {
 }
 
 type AgentSession struct {
-	Runtime      RuntimeHandle
-	ACPSessionID string
-	ContextLost  bool // a replacement Runtime could not load the prior ACP session
+	Runtime        RuntimeHandle
+	ConversationID string `json:"conversation_id,omitempty"`
+	ACPSessionID   string
+	ContextLost    bool // a replacement Runtime could not load the prior ACP session
 }
 
 type AgentEventKind string

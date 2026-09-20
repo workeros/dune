@@ -77,11 +77,11 @@ func (b Backend) Start(ctx context.Context, session channel.ConversationSession)
 	}); err != nil {
 		return channel.AgentSession{}, err
 	}
-	sessionID, err := newSession(readyCtx, connection, runtime, session.Target.WorkingDirectory)
+	opened, err := newSession(readyCtx, connection, runtime, session.Target.WorkingDirectory)
 	if err != nil {
 		return channel.AgentSession{}, err
 	}
-	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: sessionID}, nil
+	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: opened.NativeSession.ID, ConversationID: opened.ConversationID}, nil
 }
 
 func (b Backend) profile(ctx context.Context, session channel.ConversationSession) (api.Profile, error) {
@@ -118,19 +118,19 @@ func (b Backend) startRuntime(ctx context.Context, connection host.AgentConnecti
 	return runtime, nil
 }
 
-func newSession(ctx context.Context, connection host.AgentConnection, runtime api.Runtime, cwd string) (string, error) {
+func newSession(ctx context.Context, connection host.AgentConnection, runtime api.Runtime, cwd string) (api.AgentOperation, error) {
 	operation, err := connection.Submit(ctx, runtime, host.AgentAction{Action: "new", Cwd: cwd})
 	if err != nil {
-		return "", fmt.Errorf("create ACP session (outcome may be unknown): %w", err)
+		return api.AgentOperation{}, fmt.Errorf("create ACP session (outcome may be unknown): %w", err)
 	}
 	result, err := awaitOperation(ctx, connection, runtime, operation)
 	if err != nil {
-		return "", err
+		return api.AgentOperation{}, err
 	}
-	if result.NativeSession == nil || result.NativeSession.ID == "" {
-		return "", errors.New("ACP new did not confirm a native session ID")
+	if result.NativeSession == nil || result.NativeSession.ID == "" || result.ConversationID == "" {
+		return api.AgentOperation{}, errors.New("ACP new did not confirm a native session ID")
 	}
-	return result.NativeSession.ID, nil
+	return result, nil
 }
 
 func (b Backend) Attach(ctx context.Context, session channel.ConversationSession, existing channel.AgentSession) (channel.AgentSession, error) {
@@ -161,7 +161,7 @@ func (b Backend) Attach(ctx context.Context, session channel.ConversationSession
 	if err != nil {
 		return channel.AgentSession{}, err
 	}
-	if !state.Ready || state.SessionID != existing.ACPSessionID || state.Busy != "" {
+	if !state.Ready || state.SessionID != existing.ACPSessionID || state.Busy != "" || state.Conversation == nil || state.Conversation.ID != existing.ConversationID {
 		return channel.AgentSession{}, errors.New("IM ACP session is not ready or does not match stored session")
 	}
 	return existing, nil
@@ -184,11 +184,11 @@ func (b Backend) recoverSession(ctx context.Context, connection host.AgentConnec
 		return channel.AgentSession{}, err
 	}
 	if !state.CanLoad {
-		id, err := newSession(readyCtx, connection, runtime, conversation.Target.WorkingDirectory)
+		opened, err := newSession(readyCtx, connection, runtime, conversation.Target.WorkingDirectory)
 		if err != nil {
 			return channel.AgentSession{}, err
 		}
-		return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: id, ContextLost: true}, nil
+		return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: opened.NativeSession.ID, ConversationID: opened.ConversationID, ContextLost: true}, nil
 	}
 	operation, err := connection.Submit(readyCtx, runtime, host.AgentAction{Action: "load", Cwd: conversation.Target.WorkingDirectory, SessionID: existing.ACPSessionID})
 	if err != nil {
@@ -198,10 +198,10 @@ func (b Backend) recoverSession(ctx context.Context, connection host.AgentConnec
 	if err != nil {
 		return channel.AgentSession{}, err
 	}
-	if loaded.NativeSession == nil || loaded.NativeSession.ID != existing.ACPSessionID {
+	if loaded.NativeSession == nil || loaded.NativeSession.ID != existing.ACPSessionID || loaded.ConversationID == "" {
 		return channel.AgentSession{}, errors.New("ACP load did not confirm the requested native session")
 	}
-	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: loaded.NativeSession.ID}, nil
+	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: loaded.NativeSession.ID, ConversationID: loaded.ConversationID}, nil
 }
 
 func (b Backend) Stop(ctx context.Context, session channel.ConversationSession, existing channel.AgentSession) error {

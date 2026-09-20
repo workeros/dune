@@ -176,13 +176,13 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if _, err := connection.Submit(ctx, runtime, AgentAction{Action: "new", Cwd: f.workspace}); err != nil {
 		t.Fatal(err)
 	}
-	waitState(runtime, func(state AgentState) bool { return state.SessionID == "fake-acp-session" && state.Busy == "" })
+	observed := waitState(runtime, func(state AgentState) bool { return state.SessionID == "fake-acp-session" && state.Busy == "" })
 	subscription, err := connection.Observe(ctx, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer subscription.Close()
-	if _, err := connection.Submit(ctx, runtime, AgentAction{Action: "prompt", Text: "hello"}); err != nil {
+	if _, err := connection.Submit(ctx, runtime, AgentAction{ExpectedConversationID: observed.Conversation.ID, Action: "prompt", Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	var answer, stopReason string

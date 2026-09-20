@@ -23,7 +23,7 @@ func TestACPCredentialEchoIsRedactedFromOperationAndError(t *testing.T) {
 	}
 	replyRPC(a, rpc, map[string]string{"sessionId": "native"})
 	waitOperation(t, a, created)
-	operation := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "hello"})
+	operation := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "hello"})
 	rpc = takeRPC(t, requests)
 	emitText(a, "native", "configuration token: "+secret)
 	a.receive(api.Payload(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "error": map[string]any{"code": -32000, "message": "failed with " + secret, "data": map[string]string{"token": secret}}}))

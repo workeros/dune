@@ -26,6 +26,8 @@ func queueFixture(t *testing.T) (*acpController, <-chan queuedRPC) {
 	a := newACPController(r)
 	r.acp = a
 	a.state = api.ACPState{Ready: true, SessionID: "session-a", Cwd: "/tmp", CanLoad: true, CanList: true}
+	a.conversation.begin(api.ACPAction{Action: "new", Cwd: "/tmp"})
+	a.conversation.opened("session-a", "/tmp", "succeeded", nil)
 	requests := make(chan queuedRPC, 64)
 	go func() {
 		defer close(requests)
@@ -93,9 +95,9 @@ func readOperation(t *testing.T, a *acpController, operation api.AgentOperation)
 
 func TestACPQueueSeparatesPromptCompletionAndOutput(t *testing.T) {
 	a, requests := queueFixture(t)
-	first := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "first"})
+	first := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "first"})
 	firstRPC := takeRPC(t, requests)
-	second := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "second"})
+	second := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "second"})
 	if second.State != "pending" || a.snapshot().Pending != 1 {
 		t.Fatal("second request was not queued")
 	}
@@ -136,10 +138,10 @@ func TestACPQueueSeparatesPromptCompletionAndOutput(t *testing.T) {
 
 func TestACPQueueSerializesLoadAndRejectsRedirectedPrompt(t *testing.T) {
 	a, requests := queueFixture(t)
-	first := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "first"})
+	first := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "first"})
 	firstRPC := takeRPC(t, requests)
 	load := submitAction(t, a, api.ACPAction{Action: "load", SessionID: "session-b"})
-	stale := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "must not go to b"})
+	stale := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "must not go to b"})
 	replyRPC(a, firstRPC, map[string]string{"stopReason": "end_turn"})
 	waitOperation(t, a, first)
 	loadRPC := takeRPC(t, requests)
@@ -160,7 +162,7 @@ func TestACPQueueSerializesLoadAndRejectsRedirectedPrompt(t *testing.T) {
 		t.Fatalf("stale prompt was sent: %+v", extra)
 	default:
 	}
-	latest := submitAction(t, a, api.ACPAction{Action: "prompt", SessionID: "session-b", Text: "new task"})
+	latest := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", SessionID: "session-b", Text: "new task"})
 	latestRPC := takeRPC(t, requests)
 	emitText(a, "session-b", "new answer")
 	replyRPC(a, latestRPC, map[string]string{"stopReason": "end_turn"})
@@ -172,13 +174,13 @@ func TestACPQueueSerializesLoadAndRejectsRedirectedPrompt(t *testing.T) {
 
 func TestACPQueueCloseAndBoundedAdmission(t *testing.T) {
 	a, requests := queueFixture(t)
-	active := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "active"})
+	active := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "active"})
 	takeRPC(t, requests)
 	var pending api.AgentOperation
 	for i := 0; i < maxACPPending; i++ {
-		pending = submitAction(t, a, api.ACPAction{Action: "prompt", Text: "queued"})
+		pending = submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "queued"})
 	}
-	_, err := a.action(api.ACPAction{Action: "prompt", Text: "overflow"})
+	_, err := a.action(api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "overflow"})
 	var failure *api.Error
 	if !errors.As(err, &failure) || failure.Code != "RESOURCE_EXHAUSTED" {
 		t.Fatalf("queue limit: %v", err)
@@ -197,15 +199,15 @@ func TestACPQueueCloseAndBoundedAdmission(t *testing.T) {
 
 func TestACPQueuePinsDirectoryEvenWhenNativeIDDoesNotChange(t *testing.T) {
 	a, requests := queueFixture(t)
-	_, err := a.action(api.ACPAction{Action: "prompt", SessionID: "session-a", Cwd: "/other", Text: "wrong directory"})
+	_, err := a.action(api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", SessionID: "session-a", Cwd: "/other", Text: "wrong directory"})
 	var failure *api.Error
 	if !errors.As(err, &failure) || failure.Code != "STALE_SESSION" {
 		t.Fatal("admitted a prompt for another native directory", err)
 	}
-	first := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "first"})
+	first := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "first"})
 	firstRPC := takeRPC(t, requests)
 	load := submitAction(t, a, api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/other"})
-	queued := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "must remain in original directory"})
+	queued := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "must remain in original directory"})
 	replyRPC(a, firstRPC, map[string]string{"stopReason": "end_turn"})
 	waitOperation(t, a, first)
 	replyRPC(a, takeRPC(t, requests), map[string]any{})
@@ -218,16 +220,16 @@ func TestACPQueuePinsDirectoryEvenWhenNativeIDDoesNotChange(t *testing.T) {
 		t.Fatal("stale prompt reached Agent", request)
 	default:
 	}
-	current := submitAction(t, a, api.ACPAction{Action: "prompt", SessionID: "session-a", Cwd: "/other", Text: "current directory"})
+	current := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", SessionID: "session-a", Cwd: "/other", Text: "current directory"})
 	replyRPC(a, takeRPC(t, requests), map[string]string{"stopReason": "end_turn"})
 	waitOperation(t, a, current)
 }
 
 func TestACPQueuePermissionAndCancelBypassPending(t *testing.T) {
 	a, requests := queueFixture(t)
-	active := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "active"})
+	active := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "active"})
 	rpc := takeRPC(t, requests)
-	queued := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "queued"})
+	queued := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "queued"})
 	a.receive([]byte(`{"jsonrpc":"2.0","id":"permission","method":"session/request_permission","params":{"sessionId":"session-a","options":[{"optionId":"allow"}]}}`))
 	permission := a.snapshot().Permissions[0]
 	if _, err := a.action(api.ACPAction{Action: "permission", PermissionID: permission.ID, OptionID: "allow"}); err != nil {
@@ -295,9 +297,9 @@ func TestOperationOutputTruncationAndExpiry(t *testing.T) {
 
 func TestACPQueueNeverAdvancesOnMalformedCompletion(t *testing.T) {
 	a, requests := queueFixture(t)
-	active := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "first"})
+	active := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "first"})
 	rpc := takeRPC(t, requests)
-	queued := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "must not execute"})
+	queued := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "must not execute"})
 	replyRPC(a, rpc, map[string]string{})
 	if got := waitOperation(t, a, active); got.State != "unknown" {
 		t.Fatalf("malformed response: %+v", got)
@@ -309,7 +311,7 @@ func TestACPQueueNeverAdvancesOnMalformedCompletion(t *testing.T) {
 
 func TestACPQueueKeepsMatchedResultWhenAgentExitsImmediately(t *testing.T) {
 	a, requests := queueFixture(t)
-	operation := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "quick answer"})
+	operation := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "quick answer"})
 	rpc := takeRPC(t, requests)
 	emitText(a, "session-a", "final output")
 	replyRPC(a, rpc, map[string]string{"stopReason": "end_turn"})
@@ -321,9 +323,9 @@ func TestACPQueueKeepsMatchedResultWhenAgentExitsImmediately(t *testing.T) {
 
 func TestACPQueueDoesNotAdvanceBeforeControlWriteFinishes(t *testing.T) {
 	a, requests := queueFixture(t)
-	first := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "first"})
+	first := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "first"})
 	rpc := takeRPC(t, requests)
-	second := submitAction(t, a, api.ACPAction{Action: "prompt", Text: "second"})
+	second := submitAction(t, a, api.ACPAction{ExpectedConversationID: a.snapshot().Conversation.ID, Action: "prompt", Text: "second"})
 	// Hold the same boundary used while sending a cancel/permission response.
 	a.mu.Lock()
 	a.controlling = true
@@ -337,4 +339,119 @@ func TestACPQueueDoesNotAdvanceBeforeControlWriteFinishes(t *testing.T) {
 	rpc = takeRPC(t, requests)
 	replyRPC(a, rpc, map[string]string{"stopReason": "end_turn"})
 	waitOperation(t, a, second)
+}
+
+func TestACPConversationPreconditionAtAdmissionAndDispatch(t *testing.T) {
+	a, requests := queueFixture(t)
+	c1 := a.snapshot().Conversation.ID
+	for _, expected := range []string{"", "not-current"} {
+		_, err := a.action(api.ACPAction{Action: "prompt", ExpectedConversationID: expected, Text: "rejected"})
+		var failure *api.Error
+		want := "CONVERSATION_CHANGED"
+		if expected == "" {
+			want = "INVALID_ARGUMENT"
+		}
+		if !errors.As(err, &failure) || failure.Code != want {
+			t.Fatalf("precondition: %v", err)
+		}
+	}
+	first := submitAction(t, a, api.ACPAction{Action: "prompt", ExpectedConversationID: c1, Text: "first"})
+	firstRPC := takeRPC(t, requests)
+	load := submitAction(t, a, api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/tmp"})
+	stale := submitAction(t, a, api.ACPAction{Action: "prompt", ExpectedConversationID: c1, Text: "queued stale"})
+	replyRPC(a, firstRPC, map[string]string{"stopReason": "end_turn"})
+	waitOperation(t, a, first)
+	loadRPC := takeRPC(t, requests)
+	replyRPC(a, loadRPC, map[string]any{})
+	waitOperation(t, a, load)
+	if result := waitOperation(t, a, stale); result.State != "failed" || result.ErrorCode != "CONVERSATION_CHANGED" {
+		t.Fatalf("queued precondition: %+v", result)
+	}
+	_, err := a.action(api.ACPAction{Action: "prompt", ExpectedConversationID: c1, Text: "delayed stale"})
+	var failure *api.Error
+	if !errors.As(err, &failure) || failure.Code != "CONVERSATION_CHANGED" {
+		t.Fatal("late admission", err)
+	}
+	if a.snapshot().Conversation.ID == c1 || len(conversationPage(t, a.conversation).Entries) != 0 {
+		t.Fatal("same-native reload retained generation or appended rejected prompt")
+	}
+	select {
+	case extra := <-requests:
+		t.Fatalf("stale request dispatched: %+v", extra)
+	default:
+	}
+}
+
+func TestACPLoadCoalescesOnlyAdjacentInflightOperations(t *testing.T) {
+	a, requests := queueFixture(t)
+	load := api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/tmp"}
+	first := submitAction(t, a, load)
+	firstRPC := takeRPC(t, requests)
+	shared := submitAction(t, a, load)
+	if first.Ref != shared.Ref {
+		t.Fatal("equivalent in-flight load did not share task")
+	}
+	_, err := a.operations.wait(context.Background(), api.AgentOperationWait{Ref: shared.Ref, TimeoutMS: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intervening := submitAction(t, a, api.ACPAction{Action: "list"})
+	later := submitAction(t, a, load)
+	if later.Ref == first.Ref {
+		t.Fatal("coalesced across intervening operation")
+	}
+	replyRPC(a, firstRPC, map[string]any{})
+	waitOperation(t, a, first)
+	list := takeRPC(t, requests)
+	if list.Method != "session/list" {
+		t.Fatal("changed queue order")
+	}
+	replyRPC(a, list, map[string]any{"sessions": []any{}})
+	waitOperation(t, a, intervening)
+	last := takeRPC(t, requests)
+	if last.Method != "session/load" {
+		t.Fatal("lost later explicit load")
+	}
+	replyRPC(a, last, map[string]any{})
+	waitOperation(t, a, later)
+	select {
+	case extra := <-requests:
+		t.Fatalf("shared load sent extra RPC: %+v", extra)
+	default:
+	}
+}
+
+func TestACPOpenOutcomeIsSettledBeforeExitAndSurvivesRetention(t *testing.T) {
+	for _, outcome := range []string{"succeeded", "failed", "unknown"} {
+		t.Run(outcome, func(t *testing.T) {
+			a, requests := queueFixture(t)
+			op := submitAction(t, a, api.ACPAction{Action: "load", SessionID: "session-a"})
+			rpc := takeRPC(t, requests)
+			emitText(a, "session-a", "replayed before result")
+			if outcome == "succeeded" {
+				replyRPC(a, rpc, map[string]any{})
+			}
+			if outcome == "failed" {
+				a.receive(api.Payload(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "error": map[string]any{"code": -32000, "message": "load denied"}}))
+			}
+			a.closed()
+			waitOperation(t, a, op)
+			page := conversationPage(t, a.conversation)
+			if page.Conversation.Phase != "exited" || page.Conversation.OpenOutcome != outcome || len(page.Entries) != 1 {
+				t.Fatalf("ordered result/exit: %+v", page.Conversation)
+			}
+			if (page.Conversation.OpenError == nil) != (outcome == "succeeded") {
+				t.Fatal("open error disagrees with outcome")
+			}
+			a.operations.mu.Lock()
+			a.operations.expireLocked(time.Now().Add(operationRetention))
+			a.operations.mu.Unlock()
+			a.conversation.store.maxEntries = 0
+			a.conversation.mutate(func(*conversationModel) {})
+			empty := conversationPage(t, a.conversation)
+			if empty.Conversation.OpenOutcome != outcome || len(empty.Entries) != 0 || !empty.Conversation.PrefixEvicted {
+				t.Fatal("open result expired with output")
+			}
+		})
+	}
 }

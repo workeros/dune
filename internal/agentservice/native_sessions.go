@@ -97,6 +97,7 @@ func (s *Service) initializeACP(ctx context.Context, scope agents.Scope, connect
 	}
 	if operation.NativeSession != nil {
 		runtime.NativeSession = operation.NativeSession
+		runtime.ConversationID = operation.ConversationID
 		result.Runtime = &runtime
 	}
 	if err != nil {

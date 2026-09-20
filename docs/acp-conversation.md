@@ -39,8 +39,8 @@ read/get responses are in flight per engine. Capacity eviction removes a
 contiguous insertion-order prefix and does not depend on readership.
 
 The implementation is being delivered in vertical slices. Notification delivery,
-strict prompt-generation preconditions, and
-consumer migration are subsequent slices; this document is not a completion
+connection isolation for repeated native loads and
+consumer model migration are subsequent slices; this document is not a completion
 report for the full conversation requirements.
 
 Validation of the initial slice:
@@ -69,3 +69,25 @@ accounting is not a claim about RSS; allocation and resource measurements are
 part of the remaining acceptance work.
 
 Model/paging/capacity regression: `go test -race ./pkg/fabricd -run '^TestConversation'`.
+
+Managed prompts now require `expected_conversation_id`. It is the ID the caller
+observed when preparing its request; SDK/HTTP/host/MCP forwarding never fills or
+refreshes it. Discover it through `acp.state.conversation.conversation_id` or
+`runtime.conversation_id`. The accepted new/load operation retains its own
+`conversation_id`, independently of later Runtime changes. IM stores this ID
+with its native session and passes it unchanged with subsequent messages.
+
+```go
+operation, err := client.ACPSubmit(ctx, runtime, api.ACPAction{
+    Action: "prompt", Text: "Continue checking the files",
+    ExpectedConversationID: state.Conversation.ID,
+})
+```
+
+Missing IDs return `INVALID_ARGUMENT`; obsolete IDs return
+`CONVERSATION_CHANGED` at admission or a failed queued operation with the same
+`error_code` at dispatch. No sent message is recorded for rejected prompts.
+Adjacent equivalent in-flight loads share one operation reference; intervening
+operations retain queue order. RPC results commit synchronously in the input
+reader before process exit can change phase, preserving the independent opening
+outcome after exit and operation-log expiration.

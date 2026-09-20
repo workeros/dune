@@ -233,8 +233,8 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	var target agents.LaunchResult
 	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{Custom: &agentProfile}, &target)
 	var first, second agents.Operation
-	request(sites[0], "POST", "api/v1/agents/prompt", agents.PromptRequest{AgentRef: target.AgentRef, Text: "permission for cluster A"}, &first)
-	callMCP("agents_prompt", agents.PromptRequest{AgentRef: target.AgentRef, Text: "CLUSTER_SECOND_OPERATION"}, &second)
+	request(sites[0], "POST", "api/v1/agents/prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "permission for cluster A"}, &first)
+	callMCP("agents_prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_SECOND_OPERATION"}, &second)
 	if second.State != "pending" || first.Ref == second.Ref {
 		t.Fatal("cross-host submissions did not share one serial queue")
 	}

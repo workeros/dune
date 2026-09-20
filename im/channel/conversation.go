@@ -22,6 +22,7 @@ type ConversationSession struct {
 	ProviderThreadRef string        `json:"provider_thread_ref,omitempty"`
 	Target            AgentTarget   `json:"target"`
 	Runtime           RuntimeHandle `json:"runtime"`
+	ConversationID    string        `json:"conversation_id,omitempty"`
 	ACPSessionID      string        `json:"acp_session_id,omitempty"`
 	Address           ReplyAddress  `json:"address"`
 	Revision          int64         `json:"revision"`

@@ -232,7 +232,7 @@ func (p Processor) executeWithLeaseRenewal(ctx context.Context, item WorkItem, a
 }
 
 func (p Processor) executeTurn(ctx context.Context, item WorkItem, active ActiveBinding, session *ConversationSession, lease ConversationLease) error {
-	backendSession := AgentSession{Runtime: session.Runtime, ACPSessionID: session.ACPSessionID}
+	backendSession := AgentSession{ConversationID: session.ConversationID, Runtime: session.Runtime, ACPSessionID: session.ACPSessionID}
 	var err error
 	if backendSession.Runtime.ID == "" {
 		backendSession, err = p.Agents.Start(ctx, *session)
@@ -245,6 +245,7 @@ func (p Processor) executeTurn(ctx context.Context, item WorkItem, active Active
 	if backendSession.Runtime.ID == "" || backendSession.Runtime.Incarnation == "" || backendSession.Runtime.Generation == 0 || backendSession.Runtime.Adapter != "acp" || backendSession.ACPSessionID == "" {
 		return errors.New("IM Agent returned an incomplete managed ACP session")
 	}
+	session.ConversationID = backendSession.ConversationID
 	session.Runtime, session.ACPSessionID, session.Address = backendSession.Runtime, backendSession.ACPSessionID, item.Message.Address
 	*session, err = p.Conversations.Save(ctx, lease, *session)
 	if err != nil {

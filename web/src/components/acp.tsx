@@ -97,7 +97,7 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
   try {
    if (action === "prompt" || action === "new" || action === "load") {
     if (!agentRef) throw new Error("正在同步会话引用，请稍后提交。");
-    const accepted = await requests.submit(action, { agent_ref: agentRef, ...(action === "prompt" ? { text: extra.text } : { action, ...extra }), wait_ms: 0 });
+    const accepted = await requests.submit(action, { agent_ref: agentRef, ...(action === "prompt" ? { text: extra.text, expected_conversation_id: extra.expected_conversation_id } : { action, ...extra }), wait_ms: 0 });
     if (accepted && action === "prompt") setText((current) => current === extra.text ? "" : current);
    } else await call(binding, "acp.action", { action, ...extra }, runtime);
   }
@@ -127,6 +127,6 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
   </div>
   {!ended && !!state?.permissions.length && <div className="max-h-80 overflow-auto border-t bg-[#f6e5aa] p-4">{state.permissions.map((permission) => <section className="mb-3" key={permission.id}><h3 className="mb-2 text-sm font-bold">等待授权 · {permission.params.toolCall?.title || "Agent 工具请求"}</h3><pre aria-label="授权请求详情" className="mb-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-foreground/15 bg-card p-3 text-xs">{JSON.stringify(permission.params.toolCall, null, 2)}</pre><div className="flex flex-wrap gap-2">{permission.params.options.map((option) => <Button key={option.optionId} size="sm" variant="outline" disabled={disabled} onClick={() => void act("permission", { permission_id: permission.id, option_id: option.optionId })}>{option.name}</Button>)}</div></section>)}</div>}
   <ACPOperations prefix={prefix} enabled={true} requests={requests} renderUpdates={(updates) => <Conversation entries={updates.reduce<typeof initialConversation>((model, update) => conversationReducer(model, isRecord(update) ? { type: "update", update: update as Update } : { type: "notice", value: "无法解析的操作输出" }), initialConversation).entries} />} />
-  <form className="flex gap-2 border-t border-foreground/20 p-3" onSubmit={(event) => { event.preventDefault(); void act("prompt", { text }); }}><Textarea aria-label="发送给 Agent 的任务" placeholder="描述编码任务…" value={text} onChange={(event) => setText(event.target.value)} maxLength={65536} className="min-h-16 flex-1" /><Button type="submit" disabled={disabled || !agentRef || (busy && state?.busy !== "prompt") || !state?.session_id || !text.trim()}>{busy ? "加入队列" : "发送"}</Button></form>
+  <form className="flex gap-2 border-t border-foreground/20 p-3" onSubmit={(event) => { event.preventDefault(); void act("prompt", { text, expected_conversation_id: state?.conversation?.conversation_id ?? "" }); }}><Textarea aria-label="发送给 Agent 的任务" placeholder="描述编码任务…" value={text} onChange={(event) => setText(event.target.value)} maxLength={65536} className="min-h-16 flex-1" /><Button type="submit" disabled={disabled || !agentRef || (busy && state?.busy !== "prompt") || !state?.session_id || !state?.conversation?.conversation_id || !text.trim()}>{busy ? "加入队列" : "发送"}</Button></form>
  </div>;
 }

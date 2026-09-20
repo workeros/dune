@@ -23,7 +23,7 @@ func TestAgentNativeSessionStartupIsImmediatelyUsable(t *testing.T) {
 	if err != nil || len(page.Items) != 1 {
 		t.Fatal(page, err)
 	}
-	op, err := f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{AgentRef: page.Items[0].Ref, Text: "first task", WaitMS: 3000})
+	op, err := f.app.AgentMessenger().Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: page.Items[0].Runtime.ConversationID, AgentRef: page.Items[0].Ref, Text: "first task", WaitMS: 3000})
 	if err != nil || op.State != "completed" {
 		t.Fatal("start still required manual new", op, err)
 	}
@@ -43,7 +43,7 @@ func TestAgentNativeSessionQueueRetainsOperationAndCapturesOnlyConfirmation(t *t
 	}
 	agent := page.Items[0]
 	messenger := f.app.AgentMessenger()
-	if _, err := messenger.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{AgentRef: agent.Ref, Text: "first", WaitMS: 1}); err != nil {
+	if _, err := messenger.Prompt(t.Context(), f.agentScope(), agents.PromptRequest{ExpectedConversationID: agent.Runtime.ConversationID, AgentRef: agent.Ref, Text: "first", WaitMS: 1}); err != nil {
 		t.Fatal(err)
 	}
 	sessions := f.app.AgentNativeSessions()

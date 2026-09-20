@@ -104,11 +104,17 @@ func (r *runtime) info() api.Runtime {
 	if r.exit != nil {
 		state = "exited"
 	}
+	conversationID := ""
+	if r.acp != nil {
+		if description := r.acp.conversation.describe(); description != nil {
+			conversationID = description.ID
+		}
+	}
 	activity := r.activityLocked()
 	if r.exit != nil {
 		activity.State = "unknown"
 	}
-	return api.Runtime{ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
+	return api.Runtime{ConversationID: conversationID, ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
 }
 
 // The timeout helper owns these facts. fabricd only publishes its record; it
