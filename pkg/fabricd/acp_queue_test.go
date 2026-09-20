@@ -449,6 +449,10 @@ func TestACPOpenOutcomeIsSettledBeforeExitAndSurvivesRetention(t *testing.T) {
 			a.operations.mu.Lock()
 			a.operations.expireLocked(time.Now().Add(operationRetention))
 			a.operations.mu.Unlock()
+			retained := conversationPage(t, a.conversation)
+			if len(retained.Entries) != 1 || rawMessageText(retained.Entries[0].Message.Content[0]) != "replayed before result" {
+				t.Fatal("operation expiration erased retained conversation content")
+			}
 			a.conversation.store.maxEntries = 0
 			a.conversation.mutate(func(*conversationModel) {})
 			empty := conversationPage(t, a.conversation)

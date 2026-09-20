@@ -106,6 +106,7 @@ func (s *conversationSlot) opened(sessionID, cwd, outcome string, failure *api.A
 		if m.description.OpenOutcome != "pending" {
 			return
 		}
+		m.invalidatesAll = true
 		m.description.OpenOutcome, m.description.OpenError = outcome, boundedConversationFailure(failure)
 		m.description.Phase = outcome
 		if outcome == "succeeded" {
@@ -119,6 +120,7 @@ func (s *conversationSlot) exited() { s.exitedWithCode(nil) }
 
 func (s *conversationSlot) exitedWithCode(code *int) {
 	s.mutate(func(m *conversationModel) {
+		m.invalidatesAll = true
 		if m.description.OpenOutcome == "pending" {
 			m.description.OpenOutcome = "unknown"
 			m.description.OpenError = &api.ACPFailure{Code: "RESULT_UNKNOWN", Detail: "Agent exited before a matching open result"}
@@ -233,10 +235,16 @@ func (m *conversationModel) put(entry api.ACPEntry, key string) {
 		data = api.Payload(entry)
 	}
 	if entry.ContentOmitted {
+		if !m.description.ContentOmitted {
+			m.invalidatesAll = true
+		}
 		m.description.ContentOmitted = true
 		m.omittedUpdates++
 	}
 	if entry.ContextIncomplete {
+		if !m.description.ContextIncomplete {
+			m.invalidatesAll = true
+		}
 		m.description.ContextIncomplete = true
 	}
 	retained := conversationEntry{value: entry, key: key, bytes: len(data)}

@@ -355,6 +355,7 @@ func (a *acpController) markOutputIncomplete() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.conversation.mutate(func(m *conversationModel) {
+		m.invalidatesAll = true
 		m.description.ContentOmitted = true
 		m.description.ContextIncomplete = true
 	})

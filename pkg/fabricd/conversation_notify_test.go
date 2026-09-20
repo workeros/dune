@@ -125,3 +125,38 @@ func TestConversationSubscriberIsolationAndBoundedPendingInterval(t *testing.T) 
 		t.Fatal("diagnostic counters missing", usage)
 	}
 }
+
+func TestConversationStateChangesInvalidateTheWholeModel(t *testing.T) {
+	slot := conversationFixture(t)
+	for _, change := range []struct {
+		name  string
+		apply func()
+	}{
+		{"open", func() {
+			slot.begin(api.ACPAction{Action: "load", SessionID: "session-test"})
+			slot.store.mu.Lock()
+			slot.pending = nil
+			slot.store.mu.Unlock()
+			slot.opened("session-test", "/work", "succeeded", nil)
+		}},
+		{"plan", func() {
+			conversationUpdate(t, slot, "", `{"sessionUpdate":"plan","entries":[{"content":"next step","status":"pending","priority":"medium"}]}`)
+		}},
+		{"turn start", func() { slot.startTurn("operation", "question") }},
+		{"turn terminal", func() { slot.finishTurn(api.AgentOperation{Ref: "operation", State: "completed"}) }},
+		{"exit", func() { slot.exited() }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			slot.store.mu.Lock()
+			slot.pending = nil
+			slot.store.mu.Unlock()
+			change.apply()
+			slot.store.mu.Lock()
+			notice := slot.pending
+			slot.store.mu.Unlock()
+			if notice == nil || !notice.InvalidatesAll || len(notice.ChangedEntryIDs) != 0 || notice.Revision != slot.describe().Revision {
+				t.Fatal("state-only invalidation was indistinguishable from unchanged entries", notice)
+			}
+		})
+	}
+}

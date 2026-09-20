@@ -18,6 +18,7 @@ func conversationTurnID(ref string) string { return "turn-" + ref }
 func (s *conversationSlot) startTurn(ref, text string) {
 	s.mutate(func(m *conversationModel) {
 		turn := &api.ACPTurn{ID: conversationTurnID(ref), OperationRef: ref, State: "running"}
+		m.invalidatesAll = true
 		m.description.CurrentTurn = turn
 		m.put(api.ACPEntry{Type: "turn", TurnID: turn.ID, Turn: turn}, turn.ID)
 		m.put(api.ACPEntry{Type: "message", TurnID: turn.ID, Message: &api.ACPMessage{Role: "user", Channel: "message", Source: "client", Status: "attempted",
@@ -37,6 +38,7 @@ func (s *conversationSlot) finishTurn(operation api.AgentOperation) {
 			turn.Error = boundedConversationFailure(&api.ACPFailure{Code: "OPERATION_FAILED", Detail: operation.Error})
 		}
 		entry.Turn = turn
+		m.invalidatesAll = true
 		m.description.CurrentTurn = turn
 		m.put(*entry, id)
 		for _, retained := range m.entries {
@@ -87,6 +89,7 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			}
 			invalidID := len(nativeID) > 4096
 			if invalidID {
+				m.invalidatesAll = true
 				nativeID = ""
 				m.description.ContentOmitted = true
 			}
@@ -169,6 +172,7 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			}
 			m.put(*entry, key)
 		case "plan", "available_commands_update", "current_mode_update", "config_option_update", "usage_update":
+			m.invalidatesAll = true
 			state := make(map[string]json.RawMessage, len(m.description.State)+1)
 			for key, value := range m.description.State {
 				state[key] = value
@@ -226,7 +230,10 @@ func (a *acpController) recordConversationUpdate(params json.RawMessage) {
 	}
 	if envelope.SessionID == "" || envelope.SessionID != a.state.SessionID {
 		a.conversation.store.mergeFailure("session_mismatch")
-		a.conversation.mutate(func(m *conversationModel) { m.description.ContextIncomplete = true })
+		a.conversation.mutate(func(m *conversationModel) {
+			m.description.ContextIncomplete = true
+			m.invalidatesAll = true
+		})
 		return
 	}
 	turnID := ""
