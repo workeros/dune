@@ -26,7 +26,7 @@ in this environment; qualification in the last column is part of the result.
 | A04 | `TestConversationPagingEvictionAndRecreatedTool`; SDK conversation test | Fixed member upper bound, ascending order, new insertions excluded from old cursor. |
 | A05 | tool patch test; browser model restoration case | Stable tool identity; get refreshes an older loaded page. |
 | A06 | `web/src/components/acp-model.test.mjs` older-page case | Older response adds unseen entries without overwriting newer values. |
-| A07 | cursor tests and SDK reconnect | Stateless reuse and target isolation locally; multiple deployed host Pods not exercised. |
+| A07 | `tests/TestACPConversationIndependentCursorsAcrossConnections` and invalid-cursor tests | Six parallel requests across two connections reuse the same cursor; older/end-page traversal does not consume it. Multiple deployed host Pods not exercised. |
 | A08 | `TestConversationByteLimitedReadAndGetProgress`; oversized tests | Final JSON size bound; page/get advance, explicit unprocessed IDs. |
 | A09 | `TestConversationPagingEvictionAndRecreatedTool` | Partly and fully evicted cursor windows are distinguished and terminate. |
 | A10 | model reducer eviction test | Old response cannot revive entries below the current retention boundary. |
@@ -50,8 +50,8 @@ in this environment; qualification in the last column is part of the result.
 | A28 | open-outcome tests; authorization/exit test; existing process restart regressions | Ordered tail/exit and forget verified; memory is not a cross-fabricd-restart transcript. |
 | A29 | `pkg/access/TestConversationAuthorizationIdentityAndRetainedExit`; existing enterprise identity/access tests | All new reads/subscription carry fixed authenticated scope and exact Runtime, reject denial/revocation and stale binding; no new cross-host deployment claim. |
 | A30 | `TestACPCredentialEchoIsRedactedFromOperationAndError`; inspector/stderr redaction tests | Injected MCP credential is absent from model, operation, state and diagnostics. No arbitrary-secret detector claim. |
-| A31 | resource test, read benchmark, repeated streaming, capacity and subscriber tests | Bounded local workload, response and index checks; see measured envelope below. Not a long-running production soak. |
-| A32 | stateless read/get plus multiple SDK connections | Queries do not keep cursor/session position or influence eviction; consumers choose their own windows. |
+| A31 | burst and sustained resource tests, read benchmark, repeated streaming, capacity and subscriber tests | 30 seconds / three rounds of sustained churn with bounded retained heap, indexes and responses, plus forget reclamation. Not a long-running production soak. |
+| A32 | independent-cursor process test plus subscription/read tests | A subscriber and independent readers coexist; traversal/reuse changes neither model revision/retention nor actual Agent RPC journal. |
 | A33 | authorization/exit test | Raw ACP and missing advertised capabilities return `UNSUPPORTED`. |
 | A34 | unopened-controller check; replay-before-result; global eviction | No model, empty loading model, and evicted empty window have separate identity/state/flags. |
 | A35 | reducer `new latest page never clears older entry refresh obligations`; browser older tool refresh | Newer recent-page revision does not cancel old-page get obligations. |
@@ -210,3 +210,39 @@ by the affected race/process tests listed above.
 The 512 KiB response maximum is below the current 4 MiB protobuf message limit.
 Memory measurements use encoded responses and include serialization; network
 buffers and an external Agent remain separate resource consumers.
+
+## Sustained retention and independent readers follow-up
+
+Additional focused checks after the full regression above:
+
+```sh
+go test ./tests -run '^TestACPConversationIndependentCursorsAcrossConnections$' -count=1 -timeout=90s
+DUNE_CONVERSATION_RESOURCE_TEST=1 go test ./pkg/fabricd -run '^TestConversationSustainedResourceRetention$' -v -count=1 -timeout=90s
+go vet ./tests ./pkg/fabricd
+```
+
+All passed. The cursor test uses actual SDK → Gateway → fabricd processes,
+six parallel reads across two independent connections, an acknowledged model
+subscription and a new turn inserted after the cursor was created. It verifies
+every member of the original range exactly once, reuses the original cursor
+after reaching the end, and checks unchanged model/retention facts and Agent RPC
+traffic. This is local multi-connection evidence, not a multi-Pod deployment.
+
+Sustained measurement uses the same machine/default budgets as above: 20 model
+writers, independently allocated 64 KiB tool fields at 5 ms intervals, and eight
+readers at 10 ms intervals. Each 10-second round stops its workers before GC,
+then the next round continues using the same models, IDs and indexes. Pending
+notifications remain unconsumed and are checked against their byte limit.
+
+| Round | Writes | Reads | Retained entries / indexes | Cumulative evictions | Encoded bytes | Heap after GC |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 39,969 | 7,997 | 2,039 / 2,039 | 37,930 | 134,165,177 | 157,025,968 |
+| 2 | 39,950 | 7,996 | 2,039 / 2,039 | 77,880 | 134,165,178 | 156,758,552 |
+| 3 | 39,996 | 7,994 | 2,039 / 2,039 | 117,876 | 134,170,523 | 155,897,256 |
+
+Every writer completed at least 1,997 updates per round; every reader completed
+at least 999 reads. The largest encoded response was 461,219 bytes. Retained
+heap stayed approximately 149–150 MiB despite cumulative churn. Removing all
+models reclaimed the store's model count, retained bytes, entries and indexes.
+The 30-second test adds repeated-eviction evidence; it does not establish
+long-term production memory or latency guarantees.
