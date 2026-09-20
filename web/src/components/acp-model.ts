@@ -18,10 +18,10 @@ export type ModelGet = { conversation: ModelDescription; entries: ModelEntry[]; 
 export type ModelChange = { conversation_id: string; previous_revision: string; revision: string; changed_entry_ids?: string[]; invalidates_all: boolean };
 export type ModelCache = {
  conversation?: ModelDescription; entries: Record<string, ModelEntry>; dirty: Record<string, string>;
- notifiedThrough: string; latestRevision?: string; cursor?: string; pageLoaded: boolean;
+ notifiedThrough: string; latestRevision?: string; cursor?: string; latestThrough?: string;
  rangeEvicted: boolean; browserTruncated: boolean;
 };
-export const emptyModel: ModelCache = { entries: {}, dirty: {}, notifiedThrough: "0", pageLoaded: false, rangeEvicted: false, browserTruncated: false };
+export const emptyModel: ModelCache = { entries: {}, dirty: {}, notifiedThrough: "0", rangeEvicted: false, browserTruncated: false };
 export function integer(value: string): bigint {
  if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(value)) throw new Error("无效的会话修订或位置");
  return BigInt(value);
@@ -79,8 +79,18 @@ export function modelReducer(cache: ModelCache, action: ModelAction): ModelCache
  for (const id of processed) if (dirty[id] && !newer(dirty[id], response.conversation.revision)) delete dirty[id];
  result = { ...result, dirty };
  if (action.type === "page") {
-  if (action.direction === "older" || !cache.pageLoaded) result.cursor = action.page.has_more ? action.page.next_cursor : undefined;
-  result.pageLoaded = true;
+  const page = action.page;
+  if (action.direction === "older") result.cursor = page.has_more ? page.next_cursor : undefined;
+  else if (cache.latestThrough === undefined || !newer(cache.latestThrough, page.through_order)) {
+   // Metadata and get responses can reveal a new head without reading the
+   // intervening entries. Only latest pages extend this coverage boundary.
+   // A gap restarts backward traversal at the new window; overlapping refreshes
+   // preserve its progress, including any still-unread middle range.
+   const first = page.entries[0]?.order;
+   const gap = cache.latestThrough !== undefined && first !== undefined && integer(first) > integer(cache.latestThrough) + 1n;
+   if (cache.latestThrough === undefined || gap || !page.has_more) result.cursor = page.has_more ? page.next_cursor : undefined;
+   result.latestThrough = page.through_order;
+  }
   result.rangeEvicted ||= action.page.range_evicted;
   if (action.direction === "latest" && result.latestRevision && !newer(result.latestRevision, response.conversation.revision)) result.latestRevision = undefined;
  }

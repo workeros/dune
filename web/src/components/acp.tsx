@@ -135,7 +135,7 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
    <div ref={scroll} className="acp-conversation" aria-label="ACP 对话" onScroll={() => { const node = scroll.current; if (node) followTail.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
     {model.cache.cursor && !model.cache.browserTruncated && <Button className="mx-auto mb-3" size="sm" variant="outline" disabled={model.loading} onClick={() => void older()}>读取更早内容</Button>}
     <ModelConversation entries={entries} />
-    {model.cache.pageLoaded && !entries.length && <p className="p-4 text-sm">{model.cache.conversation?.prefix_evicted ? "会话正文已全部淘汰，打开结果仍可查询。" : model.cache.conversation?.phase === "loading" ? "Agent 尚未提供回放内容。" : "会话暂无内容。"}</p>}
+    {model.cache.latestThrough !== undefined && !entries.length && <p className="p-4 text-sm">{model.cache.conversation?.prefix_evicted ? "会话正文已全部淘汰，打开结果仍可查询。" : model.cache.conversation?.phase === "loading" ? "Agent 尚未提供回放内容。" : "会话暂无内容。"}</p>}
     {model.cache.conversation?.state && <details className="acp-activity"><summary>当前会话信息</summary><pre>{formatValue(model.cache.conversation.state)}</pre></details>}
    </div>
    {streamOpen && <ACPStream entries={streamEntries} />}

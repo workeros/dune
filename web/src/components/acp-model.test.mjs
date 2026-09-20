@@ -38,3 +38,69 @@ test('notifications during a read survive its earlier response; integer strings 
  assert.equal(cache.dirty['e-10'],'9007199254740995');
  assert.equal(cache.entries['e-10'].entry_revision,'9007199254740994');
 });
+
+const entriesBetween = (from, through, revision) => Array.from({ length: through - from + 1 }, (_, index) => entry(from + index, revision));
+const historyDescription = (head) => ({ ...description(String(head)), head_order: String(head) });
+function historyPage(cache, from, through, head, direction = 'latest') {
+ return modelReducer(cache, { type: 'page', direction, page: {
+  conversation: historyDescription(head), entries: entriesBetween(from, through, head), through_order: String(head),
+  has_more: from > 1, next_cursor: from > 1 ? `before-${from}` : undefined, range_evicted: false,
+ } });
+}
+
+test('latest refresh leaves the unread middle reachable after all dirty entries are refreshed', () => {
+ let cache = historyPage(select(historyDescription(10)), 1, 10, 10);
+ cache = modelReducer(cache, { type: 'notify', change: { conversation_id: 'c1', previous_revision: '10', revision: '300', invalidates_all: true } });
+ // Discovery of the new head must not be confused with having read its bodies.
+ cache = modelReducer(cache, { type: 'select', conversation: historyDescription(300) });
+ cache = historyPage(cache, 251, 300, 300);
+ assert.equal(cache.dirty['e-10'], '300');
+ cache = modelReducer(cache, { type: 'get', result: {
+  conversation: historyDescription(300), entries: entriesBetween(1, 10, 10), missing: [], unprocessed_entry_ids: [],
+ } });
+ assert.deepEqual(cache.dirty, {});
+ assert.equal(cache.latestRevision, undefined);
+ assert.equal(cache.cursor, 'before-251');
+ for (let before = 251; before > 1; before -= 50) {
+  assert.equal(cache.cursor, `before-${before}`);
+  cache = historyPage(cache, before - 50, before - 1, 300, 'older');
+ }
+ assert.equal(cache.cursor, undefined);
+ assert.deepEqual(Object.keys(cache.entries).sort(), entriesBetween(1, 300, 300).map((item) => item.entry_id).sort());
+});
+
+test('overlapping and adjacent latest refreshes preserve paging progress across repeated gaps', () => {
+ let cache = historyPage(select(historyDescription(150)), 101, 150, 150);
+ cache = historyPage(cache, 51, 100, 150, 'older');
+ cache = historyPage(cache, 131, 180, 180);
+ assert.equal(cache.cursor, 'before-51');
+ cache = historyPage(cache, 181, 230, 230);
+ assert.equal(cache.cursor, 'before-51');
+ cache = historyPage(cache, 351, 400, 400);
+ assert.equal(cache.cursor, 'before-351');
+ cache = historyPage(cache, 301, 350, 400, 'older');
+ cache = historyPage(cache, 381, 430, 430);
+ assert.equal(cache.cursor, 'before-301');
+ cache = historyPage(cache, 481, 530, 530);
+ assert.equal(cache.cursor, 'before-481');
+ for (let before = 481; before > 1; before -= 40) {
+  assert.equal(cache.cursor, `before-${before}`);
+  cache = historyPage(cache, before - 40, before - 1, 530, 'older');
+ }
+ assert.equal(cache.cursor, undefined);
+ assert.equal(Object.keys(cache.entries).length, 530);
+});
+
+test('an older latest snapshot cannot move coverage backward; a fully read retained window clears the cursor', () => {
+ let cache = historyPage(select(historyDescription(300)), 251, 300, 300);
+ cache = historyPage(cache, 201, 250, 300, 'older');
+ cache = historyPage(cache, 1, 10, 10);
+ assert.equal(cache.latestThrough, '300');
+ assert.equal(cache.cursor, 'before-201');
+ cache = modelReducer(cache, { type: 'page', direction: 'latest', page: {
+  conversation: { ...historyDescription(301), retained_from_order: '301' }, entries: [entry(301, 301)],
+  through_order: '301', has_more: false, range_evicted: true,
+ } });
+ assert.equal(cache.cursor, undefined);
+ assert.deepEqual(Object.keys(cache.entries), ['e-301']);
+});

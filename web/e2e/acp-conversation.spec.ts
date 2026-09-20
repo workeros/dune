@@ -72,3 +72,41 @@ test("a held old-generation page cannot replace the selected model", async ({ pa
  await expect(page.getByText("OLD-PAGE-MUST-NOT-APPEAR", { exact: true })).toHaveCount(0);
  await expect(page.getByText("FIRST-MODEL", { exact: true })).toHaveCount(0);
 });
+
+test("full invalidation keeps the unread middle reachable from the latest page", async ({ page }) => {
+ const state = workbenchState(), acp = state.acpStates["one-acp"];
+ Object.assign(acp.conversation!, { revision: "10", head_order: "10", retained_entry_count: 10 });
+ await mockWorkbench(page, state);
+ let send: (value: unknown) => void = () => {};
+ const calls: any[] = [];
+ await page.routeWebSocket(/one-acp\/events/, (socket) => { send = (value) => socket.send(JSON.stringify(value)); send({ type: "acp_state", payload: acp }); });
+ await page.route("**/runners/one/call?*", async (route) => {
+  const body = route.request().postDataJSON(); calls.push(body);
+  const conversation = acp.conversation!;
+  const reply = (value: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(value) });
+  if (body.operation === "acp.conversation.read") {
+   const before = body.payload.cursor ? Number(body.payload.cursor.slice("before-".length)) : Number(conversation.head_order) + 1;
+   const from = Math.max(1, before - 50);
+   return reply({ conversation, entries: Array.from({ length: before - from }, (_, index) => message(from + index, `HISTORY-${from + index}`, conversation.revision)),
+    through_order: conversation.head_order, has_more: from > 1, next_cursor: from > 1 ? `before-${from}` : undefined, range_evicted: false });
+  }
+  if (body.operation === "acp.conversation.get") return reply({ conversation,
+   entries: body.payload.entry_ids.map((id: string) => message(Number(id.slice(2)), `REFRESHED-${id}`, conversation.revision)), missing: [], unprocessed_entry_ids: [] });
+  return route.fallback();
+ });
+ await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+ await expect(page.locator('[data-entry-id]')).toHaveCount(10);
+ Object.assign(acp.conversation!, { revision: "300", head_order: "300", retained_entry_count: 300 });
+ send({ type: "acp_conversation_changed", payload: { conversation_id: acp.conversation!.conversation_id, previous_revision: "10", revision: "300", invalidates_all: true } });
+ await expect(page.getByText("HISTORY-300", { exact: true })).toBeAttached();
+ await expect(page.getByText("REFRESHED-e-10", { exact: true })).toBeAttached();
+ for (const before of [251, 201, 151, 101, 51]) {
+  await page.getByRole("button", { name: "读取更早内容" }).click();
+  await expect(page.locator(`[data-entry-id="e-${before - 1}"]`)).toBeAttached();
+ }
+ await expect(page.locator('[data-entry-id]')).toHaveCount(300);
+ await expect(page.getByRole("button", { name: "读取更早内容" })).toHaveCount(0);
+ expect(calls.filter((call) => call.operation === "acp.conversation.read" && call.payload.cursor).map((call) => call.payload.cursor)).toEqual(["before-251", "before-201", "before-151", "before-101", "before-51"]);
+ expect(calls.some((call) => call.operation === "acp.action")).toBe(false);
+ expect(state.starts).toBe(0);
+});
