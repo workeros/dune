@@ -215,7 +215,7 @@ func TestExecProfilePTY(t *testing.T) {
 	observer, e := h.client.Attach(h.ctx, rt, true)
 	must(t, e)
 	observer.Close()
-	must(t, h.client.Stop(h.ctx, rt))
+	must(t, testStopRuntime(h.client, h.ctx, rt))
 	receive(t, s, "exit", "")
 	list, e := h.client.List(h.ctx)
 	must(t, e)
@@ -246,7 +246,7 @@ for line in sys.stdin:
 	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "acp", "python3", "-u", path))
 	must(t, e)
 	defer s.Close()
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 	receive(t, s, "stderr", "diagnostic")
 	for _, line := range []string{`{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}`, `{"jsonrpc":"2.0","method":"notification"}`, `{"jsonrpc":"2.0","id":"permission","method":"permission"}`, `{"jsonrpc":"2.0","id":"perm","result":{"allowed":true}}`} {
 		_, e = s.Input([]byte(line))
@@ -497,7 +497,7 @@ func TestRestart(t *testing.T) {
 	if len(leftovers) != 0 {
 		t.Fatal("orphan upload files", leftovers)
 	}
-	must(t, h.client.Stop(h.ctx, rt))
+	must(t, testStopRuntime(h.client, h.ctx, rt))
 }
 func TestGitBasics(t *testing.T) {
 	h := start(t)

@@ -121,7 +121,7 @@ func TestAgentMCPInjectionStartsSwitchesAndRejectsExitedCredentials(t *testing.T
 			if readInjectedMCP(t, filename).token() != token {
 				t.Fatal("native switch rotated the process credential")
 			}
-			stopAgentRuntime(t, connection, *started.Runtime)
+			stopAgentRuntime(t, connection, *started.Runtime, started.SubmissionKey)
 			if f.app.agentService().VerifyCaller(t.Context(), credential.Scope, credential.Target) == nil {
 				t.Fatal("exited caller remained authorized")
 			}

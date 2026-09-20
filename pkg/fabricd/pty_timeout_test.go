@@ -160,7 +160,7 @@ func TestPTYExplicitStopDestroysHistoryAndTimeoutRecord(t *testing.T) {
 	}
 	defer stream.Close()
 	pid := timeoutPID(t, pidFile)
-	if err := c.Stop(ctx, r); err != nil {
+	if err := testStopRuntime(c, ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	waitTimeoutTest(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
@@ -198,7 +198,7 @@ func TestPTYWithoutTimeoutRunsWithoutHelper(t *testing.T) {
 	if err != nil || pane.PID != pid || r.StartedAt != nil || r.DeadlineAt != nil {
 		t.Fatal("untimed PTY used a helper", pane, r, err)
 	}
-	if err := c.Stop(ctx, r); err != nil {
+	if err := testStopRuntime(c, ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	assertNoTimeoutRecords(t, dir)

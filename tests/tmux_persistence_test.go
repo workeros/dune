@@ -209,5 +209,5 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 			return
 		}
 	}
-	must(t, client.Stop(ctx, rt))
+	must(t, testStopRuntime(client, ctx, rt))
 }

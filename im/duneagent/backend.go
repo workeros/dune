@@ -183,33 +183,30 @@ func (b Backend) Stop(ctx context.Context, session channel.ConversationSession, 
 	}
 	defer connection.Close()
 	runtime := toRuntime(existing.Runtime)
-	if err := connection.Stop(ctx, runtime); err != nil {
+	// This intent is derived from persisted session/Runtime identity before send.
+	// Reads always use the same ID; no retry generates another stop request.
+	submissionID := sessionSubmissionID(session, "stop-"+runtime.Incarnation)
+	receipt, err := connection.Stop(ctx, runtime, submissionID)
+	if err != nil {
 		return fmt.Errorf("stop ACP Runtime (outcome may be unknown): %w", err)
 	}
-	// runtime.stop confirms the stop request; process exit is published
-	// asynchronously. Do not report destruction while Attach can still see
-	// the old process as running. Only these read-only queries are repeated.
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		current, err := connection.Get(ctx, runtime)
-		if err != nil {
-			var apiErr *api.Error
-			if errors.As(err, &apiErr) && apiErr.Code == "STALE_RUNTIME" {
-				return nil
-			}
-			return fmt.Errorf("confirm stopped ACP Runtime (outcome may be unknown): %w", err)
+		if receipt.Admission != api.SubmissionAccepted || receipt.SubmissionID != submissionID {
+			return errors.New("original stop admission could not be confirmed")
 		}
-		if current.ID != runtime.ID || current.Incarnation != runtime.Incarnation || current.Generation != runtime.Generation || current.Adapter != "acp" {
-			return errors.New("ACP Runtime identity changed while confirming stop")
-		}
-		if current.State == "exited" {
+		if receipt.Stage == "stopped" {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("wait for ACP Runtime exit (outcome may be unknown): %w", ctx.Err())
+			return fmt.Errorf("wait for ACP Runtime stop (outcome may be unknown): %w", ctx.Err())
 		case <-ticker.C:
+		}
+		receipt, err = connection.QuerySubmission(ctx, runtime, submissionID)
+		if err != nil {
+			return fmt.Errorf("query original ACP Runtime stop (outcome may be unknown): %w", err)
 		}
 	}
 }

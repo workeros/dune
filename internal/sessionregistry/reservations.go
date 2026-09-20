@@ -142,7 +142,22 @@ func (r *Registry) ClaimControl(ctx context.Context, key api.SubmissionKey, dige
 	if err != nil {
 		return Claim{}, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, err
 	}
-	return r.claimKey(ctx, key, digest, receiver, resource)
+	return r.claimKey(ctx, key, digest, receiver, resource, "")
+}
+
+// AcceptStop consumes the Runtime's exclusive slot and records admission in
+// one transaction. A cancelled request cannot strand a claimed stop reservation
+// before its owner has permission to stop. acquired grants execution only once.
+func (r *Registry) AcceptStop(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver, ref string) (acquired bool, receipt api.SubmissionReceipt, err error) {
+	if api.ValidateSubmissionID(ref) != nil {
+		return false, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, fmt.Errorf("bounded stop operation reference required")
+	}
+	resource, err := controlResource(key.Target, ControlStop, "")
+	if err != nil {
+		return false, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, err
+	}
+	claim, receipt, err := r.claimKey(ctx, key, digest, receiver, resource, ref)
+	return claim.Acquired(), receipt, err
 }
 
 // ReleaseControl is only for an irrevocably ended target. Consumed reservations

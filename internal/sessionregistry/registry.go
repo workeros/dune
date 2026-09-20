@@ -151,10 +151,10 @@ func (r *Registry) Close() error { return r.db.Close() }
 // session host instance or the independent registry, not a network connection.
 // Acquired is false for every existing record; callers must not execute again.
 func (r *Registry) ClaimKey(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver string) (Claim, api.SubmissionReceipt, error) {
-	return r.claimKey(ctx, key, digest, receiver, "")
+	return r.claimKey(ctx, key, digest, receiver, "", "")
 }
 
-func (r *Registry) claimKey(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver, controlResource string) (Claim, api.SubmissionReceipt, error) {
+func (r *Registry) claimKey(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver, controlResource, stopRef string) (Claim, api.SubmissionReceipt, error) {
 	result := api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
 	encoded, err := encodeKey(key)
 	if err != nil {
@@ -199,13 +199,20 @@ func (r *Registry) claimKey(ctx context.Context, key api.SubmissionKey, digest [
 		}
 	}
 	claim := Claim{key: key, token: wire.ID()}
-	_, err = tx.ExecContext(ctx, `INSERT INTO submission_keys(key,digest,receiver,token,state,control_resource) VALUES(?,?,?,?,'claimed',?)`, encoded, hex.EncodeToString(digest[:]), receiver, claim.token, controlResource)
+	state, stage := "claimed", ""
+	if stopRef != "" {
+		state, stage = "accepted", "stopping"
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO submission_keys(key,digest,receiver,token,state,control_resource,operation_ref,stage) VALUES(?,?,?,?,?,?,?,?)`, encoded, hex.EncodeToString(digest[:]), receiver, claim.token, state, controlResource, stopRef, stage)
 	if err != nil {
 		return Claim{}, result, err
 	}
 	if err = tx.Commit(); err != nil {
 		// A failed commit acknowledgement grants no permission to execute.
 		return Claim{}, result, err
+	}
+	if stopRef != "" {
+		result.Admission, result.OperationRef, result.Stage = api.SubmissionAccepted, stopRef, stage
 	}
 	return claim, result, nil
 }

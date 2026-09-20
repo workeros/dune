@@ -89,7 +89,7 @@ func TestPTYOperationsShareBrowserInputAndExpireOnFabricdRestart(t *testing.T) {
 	if result.State != "delivered" {
 		t.Fatalf("input after restore: %+v", result)
 	}
-	must(t, h.client.Stop(h.ctx, runtime))
+	must(t, testStopRuntime(h.client, h.ctx, runtime))
 }
 
 func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
@@ -185,5 +185,5 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 	if _, err := h.client.ReadAgentOperation(h.ctx, wrong, api.AgentOperationRead{Ref: second.Ref}); err == nil {
 		t.Fatal("wrong Runtime read operation")
 	}
-	must(t, h.client.Stop(h.ctx, runtime))
+	must(t, testStopRuntime(h.client, h.ctx, runtime))
 }

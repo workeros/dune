@@ -24,3 +24,10 @@ func testACPSubmit(connection *client.Client, ctx context.Context, runtime api.R
 	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
 	return connection.ACPSubmit(ctx, api.SubmissionKey{SubmissionID: wire.ID(), Target: target}, action)
 }
+
+func testStopRuntime(connection *client.Client, ctx context.Context, runtime api.Runtime) error {
+	target := api.SubmissionTarget{OwnerID: testScope().OwnerID, RunnerID: testScope().Binding.RunnerID, FabricID: testScope().Binding.FabricID, MachineID: testScope().Binding.MachineID, BindingRevision: testScope().Binding.Revision}
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	_, err := connection.Stop(ctx, api.SubmissionKey{SubmissionID: "test-stop", Target: target})
+	return err
+}

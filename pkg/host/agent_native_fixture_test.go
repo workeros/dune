@@ -94,9 +94,9 @@ func errorCode(err error) string {
 	}
 	return ""
 }
-func stopAgentRuntime(t *testing.T, connection *client.Client, runtime api.Runtime) {
+func stopAgentRuntime(t *testing.T, connection *client.Client, runtime api.Runtime, key api.SubmissionKey) {
 	t.Helper()
-	if err := connection.Stop(t.Context(), runtime); err != nil {
+	if err := testStopSDK(connection, t.Context(), runtime, key); err != nil {
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(5 * time.Millisecond) {

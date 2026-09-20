@@ -90,9 +90,7 @@ func (d *Engine) Close() {
 			r.closePTYInput()
 			if r.tmux == nil {
 				_ = r.stop()
-				if r.p != nil {
-					<-r.p.Done
-				}
+				_ = r.waitStop(context.Background())
 			}
 		}
 		for _, u := range d.uploads {
@@ -145,6 +143,9 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	}
 	var e error
 	switch m.Operation {
+	case "runtime.stop":
+		d.submitStop(s, m, target)
+		return
 	case "submission.acp":
 		d.submitACP(s, m, target)
 		return
@@ -334,15 +335,12 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		if e == nil {
 			e = d.forgetRuntime(r)
 		}
-	case "runtime.get", "runtime.stop":
+	case "runtime.get":
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil {
 			if r.tmux != nil {
 				r.readNativeSession()
-			}
-			if m.Operation == "runtime.stop" {
-				e = d.stop(r)
 			}
 			result = r.info()
 		}

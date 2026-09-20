@@ -57,7 +57,8 @@ type AgentConnection interface {
 	Submit(context.Context, api.Runtime, AgentAction) (api.AgentOperation, error)
 	WaitOperation(context.Context, api.Runtime, api.AgentOperationWait) (api.AgentOperation, error)
 	ReadOperation(context.Context, api.Runtime, api.AgentOperationRead) (api.AgentOperationOutput, error)
-	Stop(context.Context, api.Runtime) error
+	Stop(context.Context, api.Runtime, string) (api.SubmissionReceipt, error)
+	QuerySubmission(context.Context, api.Runtime, string) (api.SubmissionReceipt, error)
 	Close() error
 }
 
@@ -181,6 +182,14 @@ func (c *agentConnection) ReadOperation(ctx context.Context, runtime api.Runtime
 	return c.sdk.ReadAgentOperation(ctx, runtime, request)
 }
 
-func (c *agentConnection) Stop(ctx context.Context, runtime api.Runtime) error {
-	return c.sdk.Stop(ctx, runtime)
+func (c *agentConnection) Stop(ctx context.Context, runtime api.Runtime, submissionID string) (api.SubmissionReceipt, error) {
+	target := c.target
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	return c.sdk.Stop(ctx, api.SubmissionKey{SubmissionID: submissionID, Target: target})
+}
+
+func (c *agentConnection) QuerySubmission(ctx context.Context, runtime api.Runtime, submissionID string) (api.SubmissionReceipt, error) {
+	target := c.target
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	return c.sdk.QuerySubmission(ctx, api.SubmissionKey{SubmissionID: submissionID, Target: target})
 }

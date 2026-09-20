@@ -413,7 +413,7 @@ func TestPolicyExecutionAndReadOnlyStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	t.Cleanup(func() { c.Stop(context.Background(), r) })
+	t.Cleanup(func() { testStopRuntime(c, context.Background(), r) })
 	for _, kind := range []string{"input", "resize", "signal"} {
 		observer, err := c.Attach(ctx, r, true)
 		if err != nil {
@@ -620,7 +620,7 @@ func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		t.Cleanup(func() { c.Stop(context.Background(), r) })
+		t.Cleanup(func() { testStopRuntime(c, context.Background(), r) })
 		firstInputChecks := int32(0)
 		for attempt := range 2 {
 			id, err := s.Input([]byte("printf POLICY_INPUT_OK\\n\n"))

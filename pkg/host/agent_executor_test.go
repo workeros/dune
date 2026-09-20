@@ -152,7 +152,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Stop(context.Background(), runtime)
+	defer testStopAgent(connection, context.Background(), runtime)
 	waitState := func(selected api.Runtime, ready func(AgentState) bool) AgentState {
 		t.Helper()
 		for {
@@ -206,14 +206,14 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if !strings.Contains(answer, "fake answer") || stopReason != "end_turn" {
 		t.Fatalf("managed ACP output incomplete: answer=%s stopReason=%s", answer, stopReason)
 	}
-	if err := connection.Stop(ctx, runtime); err != nil {
+	if err := testStopAgent(connection, ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := connection.Start(ctx, "replacement-launch", profile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Stop(context.Background(), replacement)
+	defer testStopAgent(connection, context.Background(), replacement)
 	replacementState := waitState(replacement, func(state AgentState) bool { return state.Ready && state.Busy == "" })
 	if !replacementState.CanLoad {
 		t.Fatal("fake ACP load capability was not published")
@@ -224,4 +224,9 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	waitState(replacement, func(state AgentState) bool {
 		return state.Ready && state.Busy == "" && state.SessionID == "fake-acp-session"
 	})
+}
+
+func testStopAgent(connection AgentConnection, ctx context.Context, runtime api.Runtime) error {
+	_, err := connection.Stop(ctx, runtime, "test-stop")
+	return err
 }

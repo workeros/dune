@@ -145,5 +145,5 @@ func TestInputLeaseSurvivesProcessPause(t *testing.T) {
 			return
 		}
 	}
-	must(t, client.Stop(ctx, runtime))
+	must(t, testStopRuntime(client, ctx, runtime))
 }

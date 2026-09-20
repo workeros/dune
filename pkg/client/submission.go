@@ -29,12 +29,19 @@ func (c *Client) Submit(parent context.Context, request api.SubmissionRequest) (
 	if key.Target.MachineID != c.Binding.Target {
 		return result, &api.Error{Code: "STALE_BINDING", Detail: "submission belongs to another machine"}
 	}
-	if request.Operation != "acp.action" || key.Target.RuntimeID == "" || !slices.Contains(c.Binding.Capabilities, "submission.acp") {
+	operation := ""
+	switch request.Operation {
+	case "acp.action":
+		operation = "submission.acp"
+	case "runtime.stop":
+		operation = request.Operation
+	}
+	if operation == "" || key.Target.RuntimeID == "" || !slices.Contains(c.Binding.Capabilities, operation) {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not advertise this submission operation"}
 	}
 	runtime := api.Runtime{ID: key.Target.RuntimeID, Incarnation: key.Target.RuntimeIncarnation, Generation: key.Target.RuntimeGeneration}
 	var observed api.SubmissionReceipt
-	if err := c.CallID(parent, "submission.acp", wire.ID(), request, &observed, &runtime); err != nil {
+	if err := c.CallID(parent, operation, wire.ID(), request, &observed, &runtime); err != nil {
 		var failure *api.Error
 		if errors.As(err, &failure) && json.Unmarshal(failure.Payload, &observed) == nil && observed.SubmissionKey == key && validSubmissionReceipt(observed) {
 			result = observed

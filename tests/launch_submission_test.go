@@ -117,7 +117,7 @@ func TestLaunchAdmissionSurvivesMissingFirstResponse(t *testing.T) {
 				if strings.Count(string(processes), "\n") != 1 || observed.Stage != "started" {
 					t.Fatal("lost response created another Agent", observed, string(processes))
 				}
-				must(t, h.client.Stop(h.ctx, *observed.Runtime))
+				must(t, testStopRuntime(h.client, h.ctx, *observed.Runtime))
 			} else if !os.IsNotExist(err) || observed.Stage != "setup" {
 				t.Fatal("interrupted setup was replayed or invented Agent success", observed, err)
 			}

@@ -30,7 +30,7 @@ func TestTerminalViewersTakeControlWithoutDisconnecting(t *testing.T) {
 	runtime, first, err := testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sh"))
 	must(t, err)
 	defer first.Close()
-	defer h.client.Stop(h.ctx, runtime)
+	defer testStopRuntime(h.client, h.ctx, runtime)
 	originalEpoch := terminalControlEvent(t, first, true, false)
 	second, err := h.client.Attach(h.ctx, runtime, false)
 	must(t, err)

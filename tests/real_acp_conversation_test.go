@@ -39,7 +39,7 @@ func TestRealACPConversationLoad(t *testing.T) {
 	runtime, stream, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	stream.Close()
-	defer h.client.Stop(h.ctx, runtime)
+	defer testStopRuntime(h.client, h.ctx, runtime)
 	initial := waitManagedACPReady(t, h, runtime)
 	if !initial.CanLoad {
 		t.Fatal("configured Agent does not advertise session/load")

@@ -3,7 +3,9 @@
 package process
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +16,36 @@ import (
 	"syscall"
 	"time"
 )
+
+// WaitGroupExit only observes the original guardian group. Waiting for the
+// guardian alone does not prove its children have exited. A surviving or reused
+// group therefore stays unconfirmed; this method never signals a persisted PID.
+func (p *Process) WaitGroupExit(ctx context.Context) error {
+	select {
+	case <-p.Done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if p.Cmd == nil || p.Cmd.Process == nil {
+		return fmt.Errorf("guardian process identity is unavailable")
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := syscall.Kill(-p.Cmd.Process.Pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("observe guardian group: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
 
 type Status struct {
 	PID   int    `json:"pid,omitempty"`

@@ -177,7 +177,7 @@ func TestAgentMCPRejectsUntrustedHTTPAndExitedCaller(t *testing.T) {
 			t.Fatal("unexpected MCP admission", got, test.status)
 		}
 	}
-	stopAgentRuntime(t, connection, *started.Runtime)
+	stopAgentRuntime(t, connection, *started.Runtime, started.SubmissionKey)
 	if got := invoke("/api/v1/agent-mcp", token, ""); got != http.StatusUnauthorized {
 		t.Fatal("exited Runtime retained MCP authority", got)
 	}

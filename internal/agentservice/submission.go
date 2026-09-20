@@ -36,14 +36,24 @@ func (s *Service) Submit(ctx context.Context, scope agents.Scope, request agents
 	if err != nil {
 		return result, err
 	}
-	if ref.Target.Runtime.Adapter != "acp" {
+	operation := "acp.action"
+	if request.Action == "stop" {
+		operation = "runtime.stop"
+	}
+	if operation == "acp.action" && ref.Target.Runtime.Adapter != "acp" {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "managed ACP Runtime required"}
 	}
-	_, connection, closeConnection, err := s.connect(ctx, scope, ref.Target, "acp.action")
+	_, connection, closeConnection, err := s.connect(ctx, scope, ref.Target, operation)
 	if err != nil {
 		return result, err
 	}
 	defer closeConnection()
+	if operation == "runtime.stop" {
+		if request.ACPAction != (api.ACPAction{Action: "stop"}) {
+			return result, invalid("stop takes no ACP action parameters")
+		}
+		return connection.Stop(ctx, key)
+	}
 	return connection.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(request.ACPAction)})
 }
 

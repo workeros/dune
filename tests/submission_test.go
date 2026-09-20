@@ -26,7 +26,7 @@ func TestManagedSubmissionAdmissionThroughGateway(t *testing.T) {
 	runtime, initial, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	initial.Close()
-	defer h.client.Stop(h.ctx, runtime)
+	defer testStopRuntime(h.client, h.ctx, runtime)
 	waitManagedACPReady(t, h, runtime)
 	key := api.SubmissionKey{SubmissionID: "open-before-send", Target: api.SubmissionTarget{
 		OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: h.c.Target, BindingRevision: 1,

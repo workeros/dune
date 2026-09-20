@@ -17,3 +17,10 @@ func testStartProfile(connection *client.Client, ctx context.Context, profile ap
 	}
 	return api.Runtime{}, stream, err
 }
+
+func testStopRuntime(connection *client.Client, ctx context.Context, runtime api.Runtime) error {
+	target := api.SubmissionTarget{OwnerID: "test-owner", RunnerID: "test-runner", FabricID: "test-fabric", MachineID: connection.Binding.Target, BindingRevision: 1}
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	_, err := connection.Stop(ctx, api.SubmissionKey{SubmissionID: "test-stop", Target: target})
+	return err
+}

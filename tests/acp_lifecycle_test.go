@@ -30,7 +30,7 @@ func TestManagedACPOriginalProcessAcrossConnectorRestart(t *testing.T) {
 	runtime, stream, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	stream.Close()
-	defer func() { _ = h.client.Stop(h.ctx, runtime) }()
+	defer func() { _ = testStopRuntime(h.client, h.ctx, runtime) }()
 	waitManagedACPReady(t, h, runtime)
 	key := api.SubmissionKey{Target: api.SubmissionTarget{
 		OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: h.c.Target, BindingRevision: 1,

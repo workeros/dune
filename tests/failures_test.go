@@ -251,7 +251,7 @@ func TestSlowConsumerIsolation(t *testing.T) {
 	defer cancel()
 	rt, s, e := testStartProfile(h.client, ctx, profile(h.dir, "pty", "/bin/sh", "-c", "seq 1 100000; echo OUTPUT_FINISHED; touch output-finished; sleep 120"))
 	must(t, e)
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 	// Do not read the attached viewer while the native server consumes output.
 	time.Sleep(3 * time.Second)
 	start := time.Now()
@@ -309,7 +309,7 @@ func TestMixedLoad(t *testing.T) {
 	defer func() {
 		for i, s := range streams {
 			s.Close()
-			h.client.Stop(h.ctx, runtimes[i])
+			testStopRuntime(h.client, h.ctx, runtimes[i])
 		}
 	}()
 	ln, e := net.Listen("tcp", "127.0.0.1:0")
@@ -402,7 +402,7 @@ func TestMockACP(t *testing.T) {
 	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "acp", mock))
 	must(t, e)
 	defer s.Close()
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 	for _, line := range []string{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}`, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"mock-session","prompt":[{"type":"text","text":"test permission"}]}}`} {
 		_, e = s.Input([]byte(line))
 		must(t, e)
@@ -470,7 +470,7 @@ func TestSignalAndInvalidInput(t *testing.T) {
 	rt, s, e = testStartProfile(h.client, h.ctx, profile(h.dir, "acp", "/bin/cat"))
 	must(t, e)
 	defer s.Close()
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 	_, e = s.Input([]byte(`{"invalid":true}`))
 	must(t, e)
 	_, e = s.Recv()

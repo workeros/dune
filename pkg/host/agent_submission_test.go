@@ -65,4 +65,17 @@ func TestAgentSubmissionLookupUsesOriginalKeyAcrossNativeSessionChange(t *testin
 	if _, err := service.QuerySubmission(t.Context(), wrong, query); err == nil {
 		t.Fatal("cross-owner query succeeded")
 	}
+	stop := agents.SubmissionRequest{SubmissionID: "saved-stop", AgentRef: launched.AgentRef, ACPAction: api.ACPAction{Action: "stop"}}
+	stopped, err := service.Submit(t.Context(), f.agentScope(), stop)
+	if err != nil || stopped.Admission != api.SubmissionAccepted || stopped.Stage != "stopped" {
+		t.Fatal("original Runtime stop depended on its changed native session", stopped, err)
+	}
+	duplicate, err = service.Submit(t.Context(), f.agentScope(), stop)
+	if err != nil || duplicate.OperationRef != stopped.OperationRef || duplicate.Stage != "stopped" {
+		t.Fatal("duplicate Runtime stop lost original result", duplicate, err)
+	}
+	observed, err = service.QuerySubmission(t.Context(), f.agentScope(), agents.SubmissionQuery{SubmissionID: stop.SubmissionID, AgentRef: stop.AgentRef})
+	if err != nil || observed.OperationRef != stopped.OperationRef || observed.Stage != "stopped" {
+		t.Fatal("original stop could not be queried", observed, err)
+	}
 }

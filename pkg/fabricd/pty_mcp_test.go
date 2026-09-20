@@ -138,7 +138,7 @@ func TestPTYMCPBridgeWaitsAndSurvivesFabricdRestart(t *testing.T) {
 	if _, err := current.ConfigureAgentMCP(ctx, runtime, config); err == nil {
 		t.Fatal("fabricd restart allowed credential replacement")
 	}
-	if err := current.Stop(ctx, runtime); err != nil {
+	if err := testStopRuntime(current, ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "sessions", "native-agents"))

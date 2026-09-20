@@ -140,7 +140,17 @@ func runSessionHost(directory string) error {
 		}
 		select {
 		case connections <- struct{}{}:
+			d.mu.Lock()
+			if d.ctx.Err() != nil {
+				d.mu.Unlock()
+				<-connections
+				conn.Close()
+				continue
+			}
+			d.active.Add(1)
+			d.mu.Unlock()
 			go func() {
+				defer d.active.Done()
 				defer func() { <-connections }()
 				serveSessionConnection(ctx, conn, d, r, reg, control)
 			}()
@@ -159,6 +169,8 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 	defer sess.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var requests sync.WaitGroup
+	defer func() { cancel(); sess.Close(); requests.Wait() }()
 	stop := context.AfterFunc(ctx, func() { sess.Close() })
 	defer stop()
 	// An unauthenticated local peer cannot retain a handshake slot forever.
@@ -205,7 +217,9 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 		}
 		select {
 		case sem <- struct{}{}:
+			requests.Add(1)
 			go func() {
+				defer requests.Done()
 				defer func() { <-sem }()
 				s := &executionStream{Stream: wire.Wrap(raw), ctx: ctx, engine: d}
 				defer s.Close()

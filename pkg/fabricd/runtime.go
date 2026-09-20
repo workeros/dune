@@ -3,6 +3,7 @@ package fabricd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/aiomni/dune/internal/agentintegration"
@@ -43,6 +44,7 @@ type subscription struct {
 }
 type runtime struct {
 	mu                     sync.Mutex
+	spawnMu                sync.Mutex
 	id, inc, adapter       string
 	title, cwd             string
 	projectID, directoryID string
@@ -50,6 +52,8 @@ type runtime struct {
 	acpStart               func() (*process.Process, error)
 	acpReadDone            chan struct{}
 	stopped                bool
+	stopDone               chan struct{}
+	stopErr                error
 	subs                   map[*subscription]bool
 	exit                   *int
 	failure                string
@@ -161,13 +165,74 @@ func (r *runtime) stop() error {
 		return nil
 	}
 	r.mu.Lock()
+	first := !r.stopped
 	r.stopped = true
+	if first {
+		r.stopDone = make(chan struct{})
+		if r.exit == nil && r.stopReason == "" {
+			r.stopReason = "stopped"
+		}
+	}
 	p := r.p
 	r.mu.Unlock()
 	if p != nil {
 		p.Close()
 	}
+	if first {
+		go r.confirmStop()
+	}
 	return nil
+}
+
+// Closing the current pipe does not wait for ACP writes or a replacement's
+// initialize. The short spawn boundary accounts for a concurrently starting
+// replacement before publishing confirmed exit.
+func (r *runtime) confirmStop() {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	r.spawnMu.Lock()
+	r.mu.Lock()
+	p := r.p
+	r.mu.Unlock()
+	r.spawnMu.Unlock()
+	var err error
+	code := -1
+	if p != nil {
+		p.Close()
+		err = p.WaitGroupExit(ctx)
+		if err == nil {
+			code = p.Exit
+		}
+	}
+	if err == nil {
+		if r.acp != nil {
+			r.acp.mu.Lock()
+			r.acp.closedWithExitLocked(&code)
+			r.acp.mu.Unlock()
+		}
+		r.finish(code)
+	}
+	r.mu.Lock()
+	r.stopErr = err
+	close(r.stopDone)
+	r.mu.Unlock()
+}
+
+func (r *runtime) waitStop(ctx context.Context) error {
+	if r.tmux != nil {
+		return nil // Destroy synchronously confirms the PTY session removal.
+	}
+	r.mu.Lock()
+	done := r.stopDone
+	r.mu.Unlock()
+	select {
+	case <-done:
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.stopErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Explicit PTY stop destroys the native session and its history. Naturally

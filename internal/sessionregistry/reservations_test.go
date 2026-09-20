@@ -1,11 +1,62 @@
 package sessionregistry
 
 import (
+	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aiomni/dune/pkg/api"
 )
+
+func TestStopAdmissionIsAtomicAndUsesOnlyItsOwnReservation(t *testing.T) {
+	dir := privateDirectory(t)
+	r := openRegistry(t, dir, 1)
+	key := testKey()
+	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.ClaimKey(t.Context(), key, Digest("prompt", nil), "host"); err != nil {
+		t.Fatal(err)
+	}
+	key.SubmissionID = "stop"
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if acquired, _, err := r.AcceptStop(ctx, key, Digest("runtime.stop", nil), "host", "cancelled-ref"); err == nil || acquired {
+		t.Fatal("cancelled admission acquired the stop slot", err)
+	}
+	var winners atomic.Int32
+	var group sync.WaitGroup
+	for range 20 {
+		group.Go(func() {
+			acquired, receipt, err := r.AcceptStop(t.Context(), key, Digest("runtime.stop", nil), "host", "original-stop")
+			if err != nil || receipt.Admission != api.SubmissionAccepted || receipt.Stage != "stopping" || receipt.OperationRef != "original-stop" {
+				t.Error("stop admission lost atomic evidence", receipt, err)
+			}
+			if acquired {
+				winners.Add(1)
+			}
+		})
+	}
+	group.Wait()
+	if winners.Load() != 1 {
+		t.Fatal("stop executed more than once", winners.Load())
+	}
+	if _, err := r.Progress(t.Context(), key, "original-stop", "stopped", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if acquired, receipt, err := r.AcceptStop(t.Context(), key, Digest("runtime.stop", nil), "host", "duplicate-ref"); err != nil || acquired || receipt.Stage != "stopped" || receipt.OperationRef != "original-stop" {
+		t.Fatal("duplicate regressed the original result", receipt, err)
+	}
+	key.SubmissionID = "another-stop"
+	_, _, err := r.AcceptStop(t.Context(), key, Digest("runtime.stop", nil), "host", "another-ref")
+	requireCode(t, err, "CONTROL_UNAVAILABLE")
+	key.SubmissionID = "forget"
+	if claim, _, err := r.ClaimControl(t.Context(), key, Digest("forget", nil), "registry", ControlForget, ""); err != nil || !claim.Acquired() {
+		t.Fatal("stop consumed the independent cleanup reservation", err)
+	}
+}
 
 func TestProtectedReservationsSurviveOrdinaryAndOtherControlExhaustion(t *testing.T) {
 	r, err := Open(t.Context(), privateDirectory(t), Options{MaxKeys: 1, MaxControls: 1})

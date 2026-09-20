@@ -78,7 +78,7 @@ func TestScrollbackProtocolAndAuthorization(t *testing.T) {
 		t.Fatalf("denied read leaked terminal content: %+v %v", got, err)
 	}
 	denied.Store(false)
-	if err := c.Stop(ctx, runtime); err != nil {
+	if err := testStopRuntime(c, ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.ScrollbackTerminal(ctx, runtime, api.TerminalScrollbackRequest{})

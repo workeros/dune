@@ -1,7 +1,9 @@
 package fabricd
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/pkg/api"
@@ -30,9 +32,31 @@ func (a *acpController) reconnect() error {
 	if drained != nil {
 		<-drained
 	}
+	r.spawnMu.Lock()
+	r.mu.Lock()
+	stopped = r.stopped
+	r.mu.Unlock()
+	if stopped {
+		r.spawnMu.Unlock()
+		return &api.Error{Code: "RUNTIME_STOPPED", Detail: "Runtime stopped before explicit session open"}
+	}
 	next, err := start()
 	if err != nil {
+		r.spawnMu.Unlock()
 		return &api.Error{Code: "ACP_OPEN_FAILED", Detail: "start isolated ACP connection: " + err.Error()}
+	}
+	// Publish ownership before waiting on any ACP lock. Stop can close this
+	// process even when an old input writer or initialization is blocked.
+	r.mu.Lock()
+	r.p = next
+	stopped = r.stopped
+	r.mu.Unlock()
+	r.spawnMu.Unlock()
+	if stopped {
+		next.Close()
+		next.Output.Close()
+		next.Stderr.Close()
+		return &api.Error{Code: "RUNTIME_STOPPED", Detail: "Runtime stopped during explicit session open"}
 	}
 	a.inputMu.Lock()
 	a.mu.Lock()
@@ -42,9 +66,10 @@ func (a *acpController) reconnect() error {
 		a.mu.Unlock()
 		a.inputMu.Unlock()
 		next.Close()
+		next.Output.Close()
+		next.Stderr.Close()
 		return &api.Error{Code: "RESULT_UNKNOWN", Detail: "Runtime stopped during explicit session open"}
 	}
-	r.p = next
 	a.connection, a.reconnecting = next, false
 	r.mu.Unlock()
 	a.mu.Unlock()
@@ -83,8 +108,15 @@ func (r *runtime) runProcess(proc *process.Process) {
 	}
 	go func() {
 		<-proc.Done
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		groupErr := proc.WaitGroupExit(ctx)
+		cancel()
 		group.Wait()
 		close(drained)
+		if groupErr != nil {
+			// EOF/guardian death alone cannot establish that the group exited.
+			return
+		}
 		if r.acp != nil {
 			r.acp.mu.Lock()
 			current := r.acp.connection == proc && !r.acp.reconnecting

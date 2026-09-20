@@ -88,6 +88,23 @@ receipt, err := connection.QuerySubmission(ctx, key)
 `stage=written` 只确认管道写完；失败保留 accepted，并标记 `input_unrecoverable`。
 控制结果使用原键查询，不进入普通操作输出日志。
 
+`Client.Stop(ctx, key)` 返回 `SubmissionReceipt`。网络 `runtime.stop` 请求体必须为
+`SubmissionRequest{SubmissionKey: key, Operation: "runtime.stop"}`，不含 ACP payload。
+提交键、Runtime 专属停止额度和 `accepted/stopping` 在同一事务内登记；普通结果缓存
+或普通键表满不会阻断停止。宿主关闭 Agent 所有权管道并核实原进程组退出后，才记录
+`stage=stopped`。显式 new/load 的并发进程替换也纳入停止范围；阻塞的 ACP 输入不能
+阻挡停止。响应丢失时使用原键查询，不重新发送一个新 ID。相同键的重复停止只返回
+原回执；`accepted/stopping` 仍然不是退出确认。PTY 的既有停止行为仍清理终端及历史。
+
+```go
+// stopKey 包含发送前保存的 submission_id 和准确的原 Runtime 身份。
+receipt, err := connection.Stop(ctx, stopKey)
+if err != nil || receipt.Stage != "stopped" {
+    // 此处保留 stopKey；重新连接后只读 QuerySubmission(ctx, stopKey)。
+    // 不把超时、EOF 或 Runtime 从目录消失当作停止成功。
+}
+```
+
 已完成控制证据达到硬上限后，限制新权限/新可取消工作；不回收证据来释放重复执行
 许可。状态和操作读取使用独立并发额度，不使用普通传输结果缓存。
 
@@ -101,11 +118,17 @@ HTTP 提供 `POST /agents/submit`（`agents.SubmissionRequest`）和
 `agent_ref + submission_id` 定位完整键。原生会话已变更或 Runtime 不在活动目录时，
 查询仍按原 Runtime 键进行；不会先读取当前原生会话来替换目标。通用 submit 直接
 传递显式 ACP 参数，prompt 的 `expected_conversation_id` 和控制目标仍由宿主验证。
+`action: "stop"` 通过同一 HTTP/MCP 入口停止所选 Runtime（包括 PTY），不带其他
+ACP 参数，也不依赖当前原生会话仍与 agent_ref 一致。`host.AgentConnection.Stop`
+同样要求调用方提供 submission_id，并提供按原 Runtime 查询回执的方法。
 返回 receipt 中的 `operation_ref` 是原 Runtime 的 SDK 操作选择器；普通
 Prompt/OpenSession 便利接口返回的 operation 引用另外封装了跨 host 路由目标。
 
 Web 的 Runtime 面板在“提交记录”中保留刷新后的查询入口。每条记录在发送前保存
 原 binding、Runtime 身份、agent_ref 和 submission_id，不保存任务或权限正文。
-普通记录上限为 64，必要控制记录独立上限为 512，序列化总量限制为 4 MiB。
+普通记录上限为 64，permission/cancel 记录独立上限为 512；stop 和 forget 各有
+256 条独立记录空间，序列化总量限制为 4 MiB。
 达到上限时要求显式移除不再需要的本地记录；不会自动丢弃未知提交来腾空间。
 “查询原提交”只读接纳证据及原操作状态，不重发操作；“移除本地记录”不停止 Agent。
+工作台的“全部提交记录”在 Runtime 已不在目录或面板关闭后仍保留查询入口。
+forget 的执行接入与崩溃恢复仍在后续实现切片中；此处的本地额度不代表清理已交付。

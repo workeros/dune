@@ -205,7 +205,6 @@ func (a *acpController) runOperation(operation *acpQueuedAction, params map[stri
 			a.closedLocked()
 			a.mu.Unlock()
 			a.r.stop()
-			a.r.finish(-1)
 			return
 		}
 	}

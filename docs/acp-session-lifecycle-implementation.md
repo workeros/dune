@@ -277,3 +277,47 @@ live attachment, independent turns, rejection of implicit replacement after stop
 and an explicit fresh start while the other conversation continues. Targeted
 Backend race tests verify missing ID rejection and propagation of the caller's
 original ID/conversation generation. No real Feishu or model service was contacted.
+
+Slice 10 stop tracer bullet: Client.Stop and runtime.stop require the caller's
+original Runtime submission key and return an admission receipt. Stop atomically
+consumes its dedicated reservation together with accepted/stopping, without an
+intermediate claim that caller cancellation could strand. It bypasses ordinary
+transport caching and operation/key capacity. After admission the host completes
+the stop independently of the calling stream. Only observed guardian-group exit
+and durable result registration produce stage stopped. Duplicate stops return
+the original receipt even after PTY removal from the active Runtime map.
+
+Process ownership now serializes replacement spawn/publication against stopping.
+A stop closes the current ownership pipe immediately; a concurrently spawned
+replacement is published before ACP locks so it is also stopped and awaited.
+Once stop is confirmed, an explicit open cannot spawn a new process. Host shutdown
+drains request handlers and process confirmation before closing the registry.
+
+AgentMessenger HTTP/MCP supports action stop for ACP and PTY. AgentConnection and
+IM supply the stop ID before sending; IM polls that original receipt, and no longer
+treats STALE_RUNTIME as successful stop. Web saves stop identity before sending,
+reserves separate stop/forget tracking slots, and exposes all saved submissions
+outside Runtime panels so removed/unavailable Runtimes remain queryable.
+
+Targeted race tests cover cancelled atomic admission, 20 duplicate stop contenders,
+ordinary key/cache exhaustion, caller cancellation during replacement spawn, a
+blocked ACP input lock, and preventing spawn after confirmed stop. The real-process
+TestStopReceiptSurvivesLostResponseAndConnectorRestart holds the actual stop result
+before SDK delivery, cancels the caller, SIGKILLs/restarts fabricd, then reads the
+original stopped receipt and checks that a neighboring Agent remains running.
+It passes along with managed survival, permission, submission and explicit
+generation-barrier process regressions. The host consumer test also stops by an
+original Agent reference after its native session has explicitly changed.
+
+The five Chromium agent-operations cases pass, including lost stop response,
+Runtime removal and reload followed by original receipt lookup; screenshot
+inspected. Web typecheck/build passes with existing bundle-size warnings.
+`go test -race ./pkg/fabricd ./pkg/host ./internal/sessionregistry ./pkg/client
+./pkg/access -count=1 -timeout=180s`, `make test-im-race check-im`, and affected
+Go package vet checks pass. These checks include existing PTY regressions.
+
+This slice does not complete L27/L51–L55. Durable forget dispatch, independent
+cleanup resource records/recovery, loss proof after host death, protected IPC
+stream scheduling under saturation, raw ACP hosting, pinned dependencies and
+platform/service-manager acceptance remain outstanding. No business Runner was
+restarted and no real Agent service was used.

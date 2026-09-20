@@ -33,7 +33,7 @@ func TestRealAgentPTY(t *testing.T) {
 	rt, s, e := testStartProfile(h.client, h.ctx, profile(work, "pty", argv...))
 	must(t, e)
 	defer s.Close()
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 	var transcript strings.Builder
 	for {
 		m, e := s.Recv()
@@ -72,7 +72,7 @@ func TestRealAgentACP(t *testing.T) {
 	rt, s, e := testStartProfile(h.client, h.ctx, profile(work, "acp", agent, "--acp"))
 	must(t, e)
 	defer s.Close()
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 	_, e = s.Input([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"dune-e2e","version":"1"}}}`))
 	must(t, e)
 	for {

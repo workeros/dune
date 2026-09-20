@@ -1,13 +1,14 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
-import { bindingKey, call, errorText, listAll, type ProfileRecord, type Runner } from "../lib/api";
+import { bindingKey, call, errorText, listAll, request, type ProfileRecord, type Runner } from "../lib/api";
 import { activityLabel, addPane, leaves, mapNode, projectFor, removePane, targetKey, type Agent, type Leaf, type Project, type Split } from "./model";
 import { useView } from "./use-view";
 import { useAgents } from "./use-agents";
 import { useReadMarkers } from "./use-read-markers";
 import { ProjectEditor, useProjects } from "./projects";
 import { SplitCanvas } from "./splits";
+import { ACPSubmissionRecovery, saveACPSubmission, recordACPReceipt } from "../components/acp-submissions";
 import { StartAgent } from "./start-agent";
 import { Diff } from "./diff";
 import { Files } from "./files";
@@ -39,7 +40,14 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
   const stop = async () => {
     if (!stopping) return;
     setStopBusy(true); setError("");
-    try { await call(stopping.target.binding, stopping.runtime.state === "running" ? "runtime.stop" : "runtime.forget", {}, stopping.runtime); setStopping(undefined); await directory.refresh(); }
+    try {
+      if (stopping.runtime.state === "running") {
+        const submissionID = saveACPSubmission(prefix, stopping.target.binding, stopping.runtime, stopping.ref ?? "", "stop");
+        const receipt = await request(`${prefix}/agents/submit`, { method: "POST", body: JSON.stringify({ submission_id: submissionID, agent_ref: stopping.ref, action: "stop" }) });
+        recordACPReceipt(submissionID, receipt);
+      } else { await call(stopping.target.binding, "runtime.forget", {}, stopping.runtime); }
+      setStopping(undefined); await directory.refresh();
+    }
     catch (cause) { setError(errorText(cause)); } finally { setStopBusy(false); }
   };
   const paneBody = (leaf: Leaf) => {
@@ -67,6 +75,7 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     <header className="parallel-header"><div><h1>并行工作台</h1><p className="muted" role="status">{saved.error ? "布局未保存" : !saved.loaded ? "读取个人布局…" : saved.saving ? "保存布局中…" : "布局已保存"}</p></div><div className="flex flex-wrap gap-2"><label className="split-choice">新会话打开方向<select value={direction} onChange={(event) => setDirection(event.target.value as Split["direction"])}><option value="horizontal">左右分屏</option><option value="vertical">上下分屏</option></select></label><Button size="sm" variant={review === "files" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "files" ? "" : "files")}>文件</Button><Button size="sm" variant={review === "git" ? "outline" : "ghost"} onClick={() => setReview((old) => old === "git" ? "" : "git")}>Git diff</Button></div></header>
     {saved.error && <div className="error-box mx-3" role="alert">{saved.error}<Button variant="outline" size="sm" onClick={() => void saved.reload()}>加载已保存布局</Button></div>}
     {(error || projects.error) && <p className="error-box mx-3" role="alert">{error || projects.error}</p>}
+    <ACPSubmissionRecovery prefix={prefix} />
     <StartAgent runners={runners} selected={selectedRunner} onSelect={onSelectRunner} profiles={profiles} project={project} onManageProfiles={onManageProfiles} onStarted={(runner, runtime) => { const agent = directory.add(runner, runtime); if (agent) open(agent); }} />
     <div className="parallel-body"><aside className="agent-navigation">
       <div className="nav-heading"><h2>项目</h2><Button size="sm" variant="ghost" onClick={() => setEditing("new")}>新建项目</Button></div>

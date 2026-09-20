@@ -96,9 +96,20 @@ func (f *fakeConnection) ReadOperation(ctx context.Context, _ api.Runtime, reque
 	f.outputs = f.outputs[1:]
 	return output, nil
 }
-func (f *fakeConnection) Stop(context.Context, api.Runtime) error {
+func (f *fakeConnection) Stop(_ context.Context, runtime api.Runtime, id string) (api.SubmissionReceipt, error) {
 	f.stops++
-	return f.stopErr
+	receipt, _ := f.QuerySubmission(context.Background(), runtime, id)
+	return receipt, f.stopErr
+}
+func (f *fakeConnection) QuerySubmission(_ context.Context, runtime api.Runtime, id string) (api.SubmissionReceipt, error) {
+	stage := "stopping"
+	if f.runtime.State == "exited" {
+		stage = "stopped"
+	}
+	if runtime.Generation != f.runtime.Generation {
+		return api.SubmissionReceipt{}, errors.New("changed identity")
+	}
+	return api.SubmissionReceipt{SubmissionKey: api.SubmissionKey{SubmissionID: id}, Admission: api.SubmissionAccepted, Stage: stage}, f.getErr
 }
 func (*fakeConnection) Close() error { return nil }
 
@@ -234,7 +245,7 @@ func TestStopRequiresConfirmedExitWithoutReplayingRequest(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			err := backend.Stop(ctx, conversation, session)
-			wantSuccess := scenario == "exited" || scenario == "stale"
+			wantSuccess := scenario == "exited"
 			if (err == nil) != wantSuccess || connection.stops != 1 {
 				t.Fatalf("stop must be sent once and confirmed: calls=%d err=%v", connection.stops, err)
 			}

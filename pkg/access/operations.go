@@ -44,7 +44,12 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		if !matchesSubmissionScope(scope, key.Target, m) {
 			return r, ErrDenied
 		}
-	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
+	case "runtime.stop":
+		var submission api.SubmissionRequest
+		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || submission.Operation != m.Operation || submission.Target.RuntimeID == "" || !matchesSubmissionScope(scope, submission.Target, m) {
+			return r, ErrDenied
+		}
+	case "machine.info", "runtime.list", "runtime.get", "runtime.forget", "runtime.capture", "runtime.scrollback", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
 	case "agent.mcp.configure":
 		var config api.AgentMCP
 		err = decode(&config)

@@ -111,7 +111,7 @@ func TestPTYNativeSessionSurvivesFabricdAndTracksOfflineSwitch(t *testing.T) {
 	if err != nil || value.NativeSession == nil || value.NativeSession.ID != second || value.NativeSession.Cwd != "/changed-native-cwd" || value.NativeSession.Sequence != 2 {
 		t.Fatal(value, err)
 	}
-	if err := current.Stop(ctx, runtime); err != nil {
+	if err := testStopRuntime(current, ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "sessions", "native-agents"))

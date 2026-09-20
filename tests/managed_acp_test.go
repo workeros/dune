@@ -46,7 +46,7 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	rt, initial, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	initial.Close()
-	defer h.client.Stop(h.ctx, rt)
+	defer testStopRuntime(h.client, h.ctx, rt)
 
 	type state struct {
 		Ready bool   `json:"ready"`
@@ -215,6 +215,6 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	if err := action(map[string]any{"action": "permission", "permission_id": stale.Permissions[0].ID, "option_id": "allow"}); err == nil {
 		t.Fatal("cancelled permission accepted")
 	}
-	err = h.client.Stop(h.ctx, rt)
+	err = testStopRuntime(h.client, h.ctx, rt)
 	must(t, err)
 }

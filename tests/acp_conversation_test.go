@@ -28,7 +28,7 @@ func TestACPConversationReadWithoutSubscription(t *testing.T) {
 	runtime, initial, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	initial.Close()
-	defer h.client.Stop(h.ctx, runtime)
+	defer testStopRuntime(h.client, h.ctx, runtime)
 	for deadline := time.Now().Add(8 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		state, err := h.client.ACPState(h.ctx, runtime)
 		must(t, err)

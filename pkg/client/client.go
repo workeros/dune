@@ -279,8 +279,12 @@ func (c *Client) Get(ctx context.Context, r api.Runtime) (api.Runtime, error) {
 	e := c.CallID(ctx, "runtime.get", wire.ID(), struct{}{}, &out, &r)
 	return out, e
 }
-func (c *Client) Stop(ctx context.Context, r api.Runtime) error {
-	return c.CallID(ctx, "runtime.stop", wire.ID(), struct{}{}, nil, &r)
+
+// Stop admits one explicit stop using the caller's original Runtime key. Only
+// a receipt with stage "stopped" confirms exit; interrupted calls remain
+// queryable using this same key and must not be replayed with a fresh identity.
+func (c *Client) Stop(ctx context.Context, key api.SubmissionKey) (api.SubmissionReceipt, error) {
+	return c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "runtime.stop"})
 }
 
 // Attach always permits PTY output viewing. With observe=false it also acquires

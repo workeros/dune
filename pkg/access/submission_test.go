@@ -96,3 +96,19 @@ func TestManagedActionsRequireIdentifiedEnvelope(t *testing.T) {
 		t.Fatal("identified action lost business authorization", request, err)
 	}
 }
+
+func TestStopRequiresOriginalIdentifiedRuntimeScope(t *testing.T) {
+	message := &pb.Message{Kind: "request", Target: "machine", RequestId: "transport-id", Operation: "runtime.stop", Payload: api.Payload(struct{}{})}
+	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+		t.Fatal("unidentified stop was authorized", err)
+	}
+	message = testACPEnvelope(message)
+	message.Operation = "runtime.stop"
+	if description, err := Describe(testScope(), message); err != nil || description.Operation != "runtime.stop" {
+		t.Fatal("identified stop lost its authorization vocabulary", description, err)
+	}
+	message.RuntimeIncarnation = "replacement-host"
+	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+		t.Fatal("stop crossed original Runtime identity", err)
+	}
+}

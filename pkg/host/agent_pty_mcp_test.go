@@ -120,7 +120,7 @@ func TestPTYMCPInjectionAuthenticatesAndRejectsExitedCaller(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer closeConnection()
-			if err := connection.Stop(t.Context(), *started.Runtime); err != nil {
+			if err := testStopSDK(connection, t.Context(), *started.Runtime, started.SubmissionKey); err != nil {
 				t.Fatal(err)
 			}
 			if f.app.agentService().VerifyCaller(t.Context(), credential.Scope, credential.Target) == nil {

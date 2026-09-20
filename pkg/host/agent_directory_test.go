@@ -124,7 +124,7 @@ func TestAgentDirectoryReadsCurrentNativeSessionsThroughGateway(t *testing.T) {
 	if _, err := directory.List(t.Context(), wrong, runner.Query{}); err == nil {
 		t.Fatal("cross-Tenant discovery accepted")
 	}
-	if err := connection.Stop(t.Context(), *launched.Runtime); err != nil {
+	if err := testStopSDK(connection, t.Context(), *launched.Runtime, launched.SubmissionKey); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -181,4 +181,11 @@ func TestAgentDirectoryKeepsHealthyRunnersWhenAnotherRunnerIsOffline(t *testing.
 	if err != nil || len(partial.Items) != 1 || len(partial.Issues) != 1 || partial.Issues[0].RunnerID != logical.ID || partial.Issues[0].Code != "OFFLINE" || partial.Runners[1].Ready {
 		t.Fatal("one offline route hid the healthy Runner", partial, err)
 	}
+}
+
+func testStopSDK(connection *client.Client, ctx context.Context, runtime api.Runtime, key api.SubmissionKey) error {
+	key.SubmissionID = "test-stop"
+	key.Target.RuntimeID, key.Target.RuntimeIncarnation, key.Target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
+	_, err := connection.Stop(ctx, key)
+	return err
 }

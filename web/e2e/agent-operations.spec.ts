@@ -1,6 +1,34 @@
 import { test, expect } from "@playwright/test";
 import { mockWorkbench, workbenchState, workbenchACPState } from "./workbench-fixture";
 
+test("stop keeps its original receipt query after the Runtime disappears and the page reloads", async ({ page }, testInfo) => {
+ const state = workbenchState(); await mockWorkbench(page, state);
+ let submitted: any, saved: any, sends = 0;
+ await page.route("**/api/v1/agents/submit", async (route) => {
+  sends++; submitted = route.request().postDataJSON();
+  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
+  expect(saved).toMatchObject({ action: "stop", agent_ref: "ref-one-acp", runtime: { id: "one-acp", incarnation: "boot-one", generation: 1 } });
+  expect(submitted).toEqual({ submission_id: saved.submission_id, agent_ref: saved.agent_ref, action: "stop" });
+  state.runtimes.one = state.runtimes.one.filter((runtime) => runtime.id !== "one-acp");
+  await route.abort("failed");
+ });
+ await page.route("**/api/v1/agents/submission", async (route) => {
+  expect(route.request().postDataJSON()).toEqual({ submission_id: submitted.submission_id, agent_ref: submitted.agent_ref });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: "accepted", operation_ref: "original-stop", stage: "stopped", target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
+ });
+ await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+ await page.getByRole("button", { name: "停止 A-ACP", exact: true }).click();
+ await page.getByRole("button", { name: "确认停止", exact: true }).click();
+ await expect.poll(() => sends).toBe(1);
+ await page.reload();
+ const records = page.getByLabel("历史提交查询", { exact: true });
+ await records.locator("summary").click();
+ await records.getByRole("button", { name: "查询原提交", exact: true }).click();
+ await expect(records.getByRole("status")).toHaveText("已停止");
+ expect(sends).toBe(1); expect(state.starts).toBe(0);
+ await page.screenshot({ path: testInfo.outputPath("stop-recovery-without-runtime.png"), fullPage: true });
+});
+
 test("busy ACP queues a task and reads only that operation across idle and output gaps", async ({ page }, testInfo) => {
  const state = workbenchState(); await mockWorkbench(page, state);
  let send: (value: unknown) => void = () => undefined;
