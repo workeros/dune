@@ -82,9 +82,9 @@ test("ACP controls save caller identity before sending and select the exact prom
  const calls: any[] = [];
  await page.route("**/api/v1/agents/submit", async (route) => {
   const body = route.request().postDataJSON(); calls.push(body);
-  const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem("dune.lastACPSubmission") ?? "null"));
-  expect(saved).toEqual({ submission_id: body.submission_id, agent_ref: body.agent_ref, prefix: "/api/v1" });
-  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: body.submission_id, admission: "accepted", stage: "written", operation_ref: "control" }) });
+  const saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), body.submission_id);
+  expect(saved).toMatchObject({ submission_id: body.submission_id, agent_ref: body.agent_ref, prefix: "/api/v1" });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: body.submission_id, admission: "accepted", stage: "written", operation_ref: "control", target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
  });
  await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
  await page.getByRole("button", { name: "允许一次", exact: true }).click();
@@ -95,4 +95,44 @@ test("ACP controls save caller identity before sending and select the exact prom
  expect(calls[1]).toMatchObject({ agent_ref: "ref-one-acp", action: "cancel", operation_ref: "original-prompt" });
  expect(calls[0].submission_id).not.toBe(calls[1].submission_id);
  expect(state.calls.some((call) => call.operation === "acp.action")).toBe(false);
+});
+
+test("lost first response survives refresh and queries the original key without replay", async ({ page }, testInfo) => {
+ const state = workbenchState(); await mockWorkbench(page, state);
+ let submitted: any, saved: any, sends = 0, queries = 0;
+ const task = "sensitive prompt never persisted";
+ await page.route("**/api/v1/agents/prompt", async (route) => {
+  sends++; submitted = route.request().postDataJSON();
+  saved = await page.evaluate((id) => JSON.parse(sessionStorage.getItem("dune.acpSubmissions") ?? "[]").find((item: any) => item.submission_id === id), submitted.submission_id);
+  expect(saved).toBeTruthy();
+  expect(JSON.stringify(saved)).not.toContain(task);
+  await route.abort("failed");
+ });
+ await page.route("**/api/v1/agents/submission", async (route) => {
+  queries++;
+  expect(route.request().postDataJSON()).toEqual({ submission_id: submitted.submission_id, agent_ref: submitted.agent_ref });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: submitted.submission_id, admission: queries === 1 ? "unknown" : "accepted", operation_ref: queries === 1 ? undefined : "original-sdk-operation", target: { ...saved.binding, binding_revision: saved.binding.revision, runtime_id: saved.runtime.id, runtime_incarnation: saved.runtime.incarnation, runtime_generation: saved.runtime.generation } }) });
+ });
+ await page.route(/\/runners\/[^/]+\/call\?/, async (route) => {
+  const body = route.request().postDataJSON();
+  if (body.operation !== "agent.operation.wait") return route.fallback();
+  expect(body.payload.operation_ref).toBe("original-sdk-operation");
+  expect(body.runtime).toEqual(saved.runtime);
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ operation_ref: "original-sdk-operation", state: "completed" }) });
+ });
+ await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+ await page.getByLabel("发送给 Agent 的任务").fill(task);
+ await page.getByRole("button", { name: "发送", exact: true }).click();
+ await expect(page.getByText(/已保存提交标识/)).toBeVisible();
+ await page.reload();
+ await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+ const records = page.getByLabel("提交恢复记录");
+ await records.locator("summary").click();
+ await records.getByRole("button", { name: "查询原提交", exact: true }).click();
+ await expect(records.getByRole("status")).toHaveText("接纳未确认");
+ await expect(records.getByRole("button", { name: "查询原提交", exact: true })).toBeEnabled();
+ await records.getByRole("button", { name: "查询原提交", exact: true }).click();
+ await expect(records.getByRole("status")).toHaveText("操作已完成");
+ expect(sends).toBe(1); expect(queries).toBe(2);
+ await page.screenshot({ path: testInfo.outputPath("submission-recovery.png"), fullPage: true });
 });

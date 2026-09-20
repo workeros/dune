@@ -241,3 +241,20 @@ pass (3 Chromium cases). Browser controls save caller identity before network se
 normal operation querying remains tied to original operation references. Complete
 multi-submission persistence/recovery UI is still pending; the current browser
 retains only its most recent raw submission identity in sessionStorage.
+
+Slice 8 browser recovery: managed ACP submissions now persist bounded recovery
+selectors before sending (64 ordinary records and 512 separately reserved control
+records, with a 4 MiB serialized cap). Records contain no task or permission
+bodies. The Runtime panel can query the original receipt after page reload, then
+read the original operation when retained. Unknown stays unknown, and the UI never
+resubmits to discover an outcome. Removing a local tracking record is explicit and
+does not send an Agent control request. Receipt updates validate the original
+binding and complete Runtime identity.
+
+`make web-check web-build`, `npm --prefix web test` (11 cases), and
+`npm --prefix web run e2e -- agent-operations.spec.ts` (4 Chromium cases) pass.
+The new browser test aborts the first prompt response, reloads, observes unknown
+and later accepted/completed through the original key, and verifies exactly one
+submission plus no prompt text in storage. Recovery screenshot inspected. Launch
+recovery still uses its earlier single lastLaunch record and needs equivalent
+multi-record UI; this slice only closes Runtime-action browser recovery.

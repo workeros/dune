@@ -103,3 +103,9 @@ HTTP 提供 `POST /agents/submit`（`agents.SubmissionRequest`）和
 传递显式 ACP 参数，prompt 的 `expected_conversation_id` 和控制目标仍由宿主验证。
 返回 receipt 中的 `operation_ref` 是原 Runtime 的 SDK 操作选择器；普通
 Prompt/OpenSession 便利接口返回的 operation 引用另外封装了跨 host 路由目标。
+
+Web 的 Runtime 面板在“提交记录”中保留刷新后的查询入口。每条记录在发送前保存
+原 binding、Runtime 身份、agent_ref 和 submission_id，不保存任务或权限正文。
+普通记录上限为 64，必要控制记录独立上限为 512，序列化总量限制为 4 MiB。
+达到上限时要求显式移除不再需要的本地记录；不会自动丢弃未知提交来腾空间。
+“查询原提交”只读接纳证据及原操作状态，不重发操作；“移除本地记录”不停止 Agent。
