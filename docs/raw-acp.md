@@ -6,8 +6,10 @@
 
 公开 schema：`RawACPState`、`RawACPTake`、`RawACPWrite`、`RawACPRead`、
 `RawACPOutput`，以及提交回执中的 `raw_input`。SDK 提供对应的状态、接管、写入和
-读取方法。Runner 只有实现相应路径后才声明 `submission.raw`、`acp.raw.state` 和
-`acp.raw.read` 能力。实现与进程验收进度见 [实施记录](acp-session-lifecycle-implementation.md)。
+读取方法。Runner 声明 `submission.raw`、`acp.raw.state`、`acp.raw.read` 和
+`acp.persistent` 能力；实际 Runtime 返回 `persistent_acp=true`、`acp_mode=raw`。
+managed Runtime 返回 `acp_mode=managed`，两种输入入口不可混用。
+实现与进程验收进度见 [实施记录](acp-session-lifecycle-implementation.md)。
 
 客户端首次发送前持有并保存完整 Runtime `SubmissionKey`。接管和写入分别使用
 `acp.raw.take`、`acp.raw.write`，共用原 Runtime 的提交键命名空间。接管请求包含
@@ -34,3 +36,16 @@ window.next、window.closed。落后于 oldest 返回 STREAM_GAP 和当前窗口
 stdout 窗口 8 MiB，stderr 窗口 1 MiB，单次读取 256 KiB。消息与接管回执使用独立
 注册索引的普通提交额度，不挤占 stop／forget 预留。机器最多 16 个活动宿主，窗口
 预算因而有机器级上限；这些计费预算不等同于实际 RSS。
+
+`runtime.attach` 对 ACP 仅提供观察，关闭订阅不停止进程；原始字节通过
+`ReadRawACP` 按位置读取。无标识 `Stream.Input` 和 signal 不能写入 ACP，
+显式停止使用带提交键的 `Stop`。永久输入错误不会封锁读输出或停止入口。
+
+可执行 SDK 示例见 [samples/raw-acp](../samples/raw-acp/main.go)。先保存含完整
+Runtime 身份的 SubmissionKey JSON；每次接管或写入使用新的、已保存的提交键。
+`-action state` 只读当前流身份，`-action take -stream ID -owner CALLER_ID -epoch N`
+提交输入接管。使用原接管回执的 epoch 及 owner，执行
+`-action write -stream ID -owner CALLER_ID -epoch N -message message.jsonl`。
+示例按文件原字节计算长度和摘要，不补换行；中断后使用该次原键执行 `-action query`。
+`-action read -stream ID -channel stdout -offset N` 返回含原字节 base64 的结构化页；
+STREAM_GAP 同时输出窗口并以错误退出，不自动跳到新位置。

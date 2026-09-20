@@ -597,9 +597,9 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		}
 	}
 	base := Request{Operation: "runtime.attach", Resource: Resource{Observe: false}}
-	r, err := continuation(base, RuntimeIdentity{ID: "runtime", Adapter: "acp"}, &pb.Message{Kind: "input", Data: []byte(`{"method":"session/prompt","text":"secret"}`)})
-	if err != nil || r.Operation != "acp.raw" || r.Suboperation != "exchange" {
-		t.Fatal("raw ACP was not checked as a whole", err)
+	_, err = continuation(base, RuntimeIdentity{ID: "runtime", Adapter: "acp"}, &pb.Message{Kind: "input", Data: []byte(`{"method":"session/prompt","text":"secret"}`)})
+	if err == nil {
+		t.Fatal("unidentified raw input bypassed submission admission")
 	}
 }
 

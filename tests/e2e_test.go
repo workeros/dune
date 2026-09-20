@@ -247,22 +247,22 @@ for line in sys.stdin:
 	must(t, e)
 	defer s.Close()
 	defer testStopRuntime(h.client, h.ctx, rt)
-	receive(t, s, "stderr", "diagnostic")
+	raw := newRawTestClient(t, h, rt)
+	s.Close()
+	raw.receive(t, "stderr", "diagnostic")
 	for _, line := range []string{`{"jsonrpc":"2.0","id":1,"method":"unknown","params":{}}`, `{"jsonrpc":"2.0","method":"notification"}`, `{"jsonrpc":"2.0","id":"permission","method":"permission"}`, `{"jsonrpc":"2.0","id":"perm","result":{"allowed":true}}`} {
-		_, e = s.Input([]byte(line))
+		e = raw.writeLine(line)
 		must(t, e)
-		receive(t, s, "data", "jsonrpc")
+		raw.receive(t, "stdout", "jsonrpc")
 	}
-	_, e = s.Input([]byte(`{"jsonrpc":"2.0","method":"bad"}`))
-	must(t, e)
-	for {
-		_, e = s.Recv()
-		if e != nil {
-			if !strings.Contains(e.Error(), "INVALID_ACP") {
-				t.Fatal(e)
-			}
-			break
-		}
+	must(t, raw.writeLine(`{"jsonrpc":"2.0","method":"bad"}`))
+	raw.receive(t, "stdout", "not-json")
+	// Raw output is byte transport; malformed Agent output does not invoke a
+	// managed parser or silently stop the original process.
+	got, err := h.client.Get(h.ctx, rt)
+	must(t, err)
+	if got.State != "running" {
+		t.Fatal(got)
 	}
 }
 func TestFilesUploads(t *testing.T) {

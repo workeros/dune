@@ -294,6 +294,7 @@ func TestMixedLoad(t *testing.T) {
 	h := start(t)
 	var streams []*sdk.Stream
 	var runtimes []api.Runtime
+	var rawClients []*rawACPTestClient
 	for _, adapter := range []string{"pty", "pty", "acp", "acp"} {
 		var p api.Profile
 		if adapter == "pty" {
@@ -305,6 +306,10 @@ func TestMixedLoad(t *testing.T) {
 		must(t, e)
 		streams = append(streams, s)
 		runtimes = append(runtimes, rt)
+		if adapter == "acp" {
+			rawClients = append(rawClients, newRawTestClient(t, h, rt))
+			s.Close()
+		}
 	}
 	defer func() {
 		for i, s := range streams {
@@ -376,9 +381,14 @@ func TestMixedLoad(t *testing.T) {
 				message = fmt.Sprintf(`{"jsonrpc":"2.0","method":"%s"}`, token)
 			}
 			start := time.Now()
-			_, e = s.Input([]byte(message))
-			must(t, e)
-			receive(t, s, "data", token)
+			if i >= 2 {
+				must(t, rawClients[i-2].writeLine(message))
+				rawClients[i-2].receive(t, "stdout", token)
+			} else {
+				_, e = s.Input([]byte(message))
+				must(t, e)
+				receive(t, s, "data", token)
+			}
 			latencies = append(latencies, time.Since(start))
 		}
 	}
@@ -403,18 +413,20 @@ func TestMockACP(t *testing.T) {
 	must(t, e)
 	defer s.Close()
 	defer testStopRuntime(h.client, h.ctx, rt)
+	raw := newRawTestClient(t, h, rt)
+	s.Close()
 	for _, line := range []string{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}`, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"mock-session","prompt":[{"type":"text","text":"test permission"}]}}`} {
-		_, e = s.Input([]byte(line))
+		e = raw.writeLine(line)
 		must(t, e)
-		receive(t, s, "data", "jsonrpc")
+		raw.receive(t, "stdout", "jsonrpc")
 	}
-	_, e = s.Input([]byte(`{"jsonrpc":"2.0","id":"mock-permission","result":{"outcome":{"outcome":"selected","optionId":"allow"}}}`))
+	e = raw.writeLine(`{"jsonrpc":"2.0","id":"mock-permission","result":{"outcome":{"outcome":"selected","optionId":"allow"}}}`)
 	must(t, e)
-	receive(t, s, "data", "Mock permission response received")
-	receive(t, s, "data", "end_turn")
-	_, e = s.Input([]byte(`{"jsonrpc":"2.0","id":4,"method":"unknown"}`))
+	raw.receive(t, "stdout", "Mock permission response received")
+	raw.receive(t, "stdout", "end_turn")
+	e = raw.writeLine(`{"jsonrpc":"2.0","id":4,"method":"unknown"}`)
 	must(t, e)
-	receive(t, s, "data", "Method not found")
+	raw.receive(t, "stdout", "Method not found")
 }
 
 func TestPendingStreamLimit(t *testing.T) {
@@ -471,11 +483,16 @@ func TestSignalAndInvalidInput(t *testing.T) {
 	must(t, e)
 	defer s.Close()
 	defer testStopRuntime(h.client, h.ctx, rt)
-	_, e = s.Input([]byte(`{"invalid":true}`))
-	must(t, e)
-	_, e = s.Recv()
-	if e == nil || !strings.Contains(e.Error(), "INPUT_FAILED") {
+	raw := newRawTestClient(t, h, rt)
+	s.Close()
+	e = raw.writeLine(`{"invalid":true}`)
+	if e == nil || !strings.Contains(e.Error(), "INVALID_ARGUMENT") {
 		t.Fatal("invalid ACP input was accepted", e)
+	}
+	out, err := h.client.ReadRawACP(h.ctx, rt, api.RawACPRead{StreamID: raw.state.StreamID, Channel: "stdout"})
+	must(t, err)
+	if len(out.Data) != 0 {
+		t.Fatal("invalid input reached stdin")
 	}
 }
 

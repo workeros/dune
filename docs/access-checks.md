@@ -47,8 +47,11 @@ type Service interface {
 连接也不另建连接级缓存。空闲流同样按期限刷新和关闭；拒绝、错误、超时或自然到期
 均停止放行，迟到回复不能恢复已关闭流。机器连接保留独立凭据检查。
 
-托管 ACP 的每次 prompt/permission/cancel 是新 request；原始 ACP 正文不解析，
-只能按 `acp.raw/exchange` 整体执行流授权，不能宣称检查其中每条 JSON-RPC。
+托管 ACP 的每次 prompt/permission/cancel 是新 request。原始 ACP 的完整消息写入
+和所有权接管分别按 `acp.raw/write`、`acp.raw/take` 新 request 鉴权，核验提交键与
+原 binding、Runtime 一致；不解析其中具体 ACP method 的业务权限。
+原始字节观察走 `acp.raw.state`／`acp.raw.read`，不能提升为输入者。无标识的 ACP
+交互流 input／signal 已移除，协议与续接边界见 [原始 ACP](raw-acp.md)。
 
 票据不写数据库，不能由另一进程消费。Web 后端应通过自己的本地 Gateway 入口
 拨号；该 Gateway 如非 owner，再使用 mTLS peer 单跳转发。owner 独立重验当前

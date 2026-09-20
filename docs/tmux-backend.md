@@ -15,7 +15,7 @@ PTY 使用单一、私有的 tmux server。结构为：浏览器 xterm → HTTP/
 
 ## 多页面查看与输入接管
 
-PTY 的输出订阅与输入权分离。`Attach(..., false)` 在空闲时获取输入权，已有输入者时仍成功接入并只读查看，不再返回 `INPUT_OWNED`。`Attach(..., true)` 是权限受限的观察订阅，不能提升为输入者。原始 ACP 的独占输入语义不变。
+PTY 的输出订阅与输入权分离。`Attach(..., false)` 在空闲时获取输入权，已有输入者时仍成功接入并只读查看，不再返回 `INPUT_OWNED`。`Attach(..., true)` 是权限受限的观察订阅，不能提升为输入者。原始 ACP 通过独立宿主与带提交键的接管／写入 API 保持单输入所有者，见 [原始 ACP](raw-acp.md)。
 
 附着流使用 `control` 消息请求 `acquire`（仅空闲时获取）、`take`（用户主动接管）、`release`（释放）。服务端广播各连接自己的 `{writable, available}` 和 `control_epoch`。接管只变更输入者，旧连接继续收输出；重连不自动发送 `take`。断开释放输入权，旧连接的延迟清理不能清掉新输入者。WebSocket 沿用 ping/pong 和 45 秒读超时处理失联连接。
 

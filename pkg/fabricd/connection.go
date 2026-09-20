@@ -59,7 +59,13 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 		b.Limits["streams_"+string(class)] = usage.Limit
 	}
 	b.Limits["acp_conversation_bytes"] = api.MaxACPConversationBytes
-	b.Capabilities = append(append([]string(nil), b.Capabilities...), "submission.acp")
+	b.Capabilities = append(append([]string(nil), b.Capabilities...), "submission.acp", "submission.raw", "acp.raw.state", "acp.raw.read", "acp.persistent")
+	b.Limits["raw_acp_message_bytes"] = api.RawACPMaxMessageBytes
+	b.Limits["raw_acp_pending_bytes"] = api.RawACPMaxPendingBytes
+	b.Limits["raw_acp_pending_messages"] = api.RawACPMaxPendingMessages
+	b.Limits["raw_acp_stdout_bytes"] = api.RawACPStdoutBytes
+	b.Limits["raw_acp_stderr_bytes"] = api.RawACPStderrBytes
+	b.Limits["raw_acp_read_bytes"] = api.RawACPMaxReadBytes
 	b.Limits["acp_conversations_bytes"] = api.MaxACPConversationsBytes
 	b.Limits["acp_conversation_entries"] = api.MaxACPConversationEntries
 	b.Limits["acp_entry_bytes"] = api.MaxACPEntryBytes

@@ -238,7 +238,12 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 	}
 	target := launch.Target
 	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = r.id, r.inc, 1
-	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: r.info()}
+	description := r.info()
+	description.PersistentACP, description.ACPMode = true, "raw"
+	if p.ManagedACP {
+		description.ACPMode = "managed"
+	}
+	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: description}
 	if err := savePrivateFile(filepath.Join(directory, "instance.json"), reg.Instance); err != nil {
 		return err
 	}

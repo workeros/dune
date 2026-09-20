@@ -3,6 +3,7 @@ package fabricd
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -41,6 +42,10 @@ func sameSession(a, b sessionRegistration) bool {
 // runSessionHost is the only owner of the existing Runtime/controller. Its
 // lifetime is independent of every connector and subscription that visits it.
 func runSessionHost(directory string) error {
+	return runSessionHostWithRawWriter(directory, nil)
+}
+
+func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Writer) error {
 	if err := tmux.PrivateDir(directory); err != nil {
 		return err
 	}
@@ -53,7 +58,7 @@ func runSessionHost(directory string) error {
 		return err
 	}
 	reg := boot.Registration
-	if filepath.Base(directory) != reg.Runtime.ID || reg.Installation != installationID(boot.StateDir) || !boot.Profile.ManagedACP || boot.Profile.Adapter != "acp" {
+	if filepath.Base(directory) != reg.Runtime.ID || reg.Installation != installationID(boot.StateDir) || boot.Profile.Adapter != "acp" {
 		return fmt.Errorf("ACP bootstrap identity does not match its installation")
 	}
 	socket, err := sessionSocket(reg)
@@ -111,10 +116,18 @@ func runSessionHost(directory string) error {
 	if err != nil {
 		return err
 	}
-	r.acp = newACPController(r)
-	r.acp.requireMCP = boot.Profile.RequireAgentMCP
-	r.acp.reserveControl = func(kind, id string) error { return d.registry.ReserveControl(ctx, reg.Target, kind, id) }
-	r.acp.releaseControl = func(kind, id string) { _ = d.registry.ReleaseControl(ctx, reg.Target, kind, id) }
+	if boot.Profile.ManagedACP {
+		r.acp = newACPController(r)
+		r.acp.requireMCP = boot.Profile.RequireAgentMCP
+		r.acp.reserveControl = func(kind, id string) error { return d.registry.ReserveControl(ctx, reg.Target, kind, id) }
+		r.acp.releaseControl = func(kind, id string) { _ = d.registry.ReleaseControl(ctx, reg.Target, kind, id) }
+	} else {
+		var writer io.Writer = r.p.Input
+		if wrap != nil {
+			writer = wrap(writer)
+		}
+		r.raw = newRawACP(ctx, d.registry, "acp:"+r.inc, writer)
+	}
 	now := time.Now().UTC()
 	r.startedAt = &now
 	if boot.Profile.Start.TimeoutSeconds > 0 {
@@ -126,7 +139,9 @@ func runSessionHost(directory string) error {
 		return err
 	}
 	r.runProcess(r.p)
-	go r.acp.initialize()
+	if r.acp != nil {
+		go r.acp.initialize()
+	}
 	reg.Runtime = r.info()
 	if err := savePrivateFile(filepath.Join(directory, "registration.json"), reg); err != nil {
 		return err
@@ -294,7 +309,7 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 
 func sessionOperation(operation string) bool {
 	switch operation {
-	case "submission.acp", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.mcp.configure", "agent.operation.wait", "agent.operation.read", "runtime.attach", "runtime.get", "runtime.stop":
+	case "submission.acp", "submission.raw", "acp.raw.state", "acp.raw.read", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.mcp.configure", "agent.operation.wait", "agent.operation.read", "runtime.attach", "runtime.get", "runtime.stop":
 		return true
 	default:
 		return false
@@ -303,7 +318,7 @@ func sessionOperation(operation string) bool {
 
 func sessionMutation(operation string) bool {
 	switch operation {
-	case "submission.acp", "agent.mcp.configure", "runtime.stop":
+	case "submission.acp", "submission.raw", "agent.mcp.configure", "runtime.stop":
 		return true
 	default:
 		return false

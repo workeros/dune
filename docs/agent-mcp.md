@@ -41,7 +41,7 @@ bridge 固定目标 URL，不接受 userinfo、query 或 fragment，不跟随 HT
 
 SDK `ConfigureAgentMCP` 经 Gateway 调用 `agent.mcp.configure`，参数仅含宿主 endpoint 与本次凭据。fabricd 在 ACP initialize 确认后、首次原生会话之前接受一次配置；后续替换或并发第二次配置返回冲突。`agentCapabilities.mcpCapabilities.http` 为 true 时生成 HTTP 配置，否则使用当前 Runner 程序的内部 stdio bridge；宿主不指定 Runner 的 executable 路径。
 
-Profile 的 `require_agent_mcp` 对 managed ACP 门禁原生动作，未配置 MCP 时不会受理 new/load。配置保存在 controller 内存，后续所有 new/load（含 Web 通用动作入口）复用；公开 state 只返回 `mcp_transport`。退出 Runtime 或 fabricd 后不恢复 ACP 凭据配置。原始 ACP 透传仍由调用方自行提供配置。
+Profile 的 `require_agent_mcp` 对 managed ACP 门禁原生动作，未配置 MCP 时不会受理 new/load。配置保存在 controller 内存，后续所有 new/load（含 Web 通用动作入口）复用；公开 state 只返回 `mcp_transport`。fabricd 重连不重建原宿主中的 ACP 凭据配置；宿主或 Runtime 退出后不恢复该内存配置。原始 ACP 透传仍由调用方自行提供配置。
 
 ## fabricd 原生 PTY 配置
 

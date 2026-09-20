@@ -73,28 +73,24 @@ func TestRealAgentACP(t *testing.T) {
 	must(t, e)
 	defer s.Close()
 	defer testStopRuntime(h.client, h.ctx, rt)
-	_, e = s.Input([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"dune-e2e","version":"1"}}}`))
+	raw := newRawTestClient(t, h, rt)
+	s.Close()
+	e = raw.writeLine(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"dune-e2e","version":"1"}}}`)
 	must(t, e)
 	for {
-		m, e := s.Recv()
-		must(t, e)
-		if m.Kind == "stderr" {
-			t.Log("Agent diagnostic:", string(m.Data))
+		line := raw.nextLine(t, "stdout")
+		var reply struct {
+			ID     int             `json:"id"`
+			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
 		}
-		if m.Kind == "data" {
-			var reply struct {
-				ID     int             `json:"id"`
-				Result json.RawMessage `json:"result"`
-				Error  json.RawMessage `json:"error"`
+		must(t, json.Unmarshal(line, &reply))
+		if reply.ID == 1 {
+			if len(reply.Result) == 0 {
+				t.Fatalf("initialize rejected: %s", line)
 			}
-			must(t, json.Unmarshal(m.Data, &reply))
-			if reply.ID == 1 {
-				if len(reply.Result) == 0 {
-					t.Fatalf("initialize rejected: %s", m.Data)
-				}
-				t.Logf("Real ACP initialize passed: %s --acp: %s", agent, m.Data)
-				return
-			}
+			t.Logf("Real ACP initialize passed: %s --acp: %s", agent, line)
+			return
 		}
 	}
 }

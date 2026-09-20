@@ -73,7 +73,7 @@
 - 明确拒绝、刷新失败或期限到达后停止放行；迟到响应不能复活已关闭授权。空闲流也要按期限关闭。
 - Authenticate 返回单独的认证结果（例如 AuthenticatedSession，包含 User 与 ExpiresAt），更新本地实现和 SandDance 适配器；不把凭据期限塞进持久用户身份，也不为缓存增加 Refresh/Subscribe 接口。离线 JWT 验签无法发现的上游注销不属于可观察撤销。
 - peer owner 沿用现有上下文独立查询权威接口，维护自己流内的许可；保留现有 peer 身份、nonce 和请求摘要验证，不增加可转发的授权证据或跨副本缓存同步。target、incarnation/generation、route、epoch、Runtime 和 input grant 继续逐次检查。
-- 托管 ACP 的每次 prompt / permission / cancel 是新操作；原始 ACP 正文不解析，只能承诺原始流的授权窗口，不能宣称其中每个 JSON-RPC 都单独实时鉴权。
+- 托管 ACP 的每次 prompt / permission / cancel 是新操作；原始 ACP 每条完整消息通过独立提交请求鉴权，业务策略按 raw/write 授权，不解析内部 ACP method 权限。
 
 持续用户流复用 pkg/access 中现有 checkedStream.leases/watch 作为唯一许可缓存与刷新器。authorization 按固定 ConnectionAccess 组合一次实时检查：身份 → Runner → 宿主策略，返回不晚于“调用开始 + 5 秒、凭据期限、策略期限”的决定；access 只处理决定与期限，不依赖 SQL 或企业身份实现。新 request/action 走实时检查，连续消息查现有流许可。收掉同一路径中 Web 每帧重查和重复的用户连接刷新职责；保留 Web 准入校验及无用户策略的机器连接自身校验，不另建全局 Session 缓存或连接缓存。
 

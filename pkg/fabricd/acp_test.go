@@ -287,20 +287,6 @@ func TestACPConnectionReadIssuesAreIsolated(t *testing.T) {
 	}
 }
 
-func TestRawACPOversizedLineContinuesWithoutController(t *testing.T) {
-	r := &runtime{adapter: "acp", subs: map[*subscription]bool{}}
-	s, err := r.subscribe(false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	following := `{"jsonrpc":"2.0","id":"following","result":{}}` + "\n"
-	r.readACP(strings.NewReader(strings.Repeat("x", acpInputLimit(machineMemoryBytes())+1) + "\n" + following))
-	first, second := <-s.q, <-s.q
-	if first.Kind != "acp_notice" || second.Kind != "data" || string(second.Data) != following || r.stopped {
-		t.Fatalf("raw ACP did not continue after omission: first=%q second=%q", first.Kind, second.Kind)
-	}
-}
-
 func TestACPInputLimitScalesWithMachineSize(t *testing.T) {
 	for _, test := range []struct {
 		memory uint64

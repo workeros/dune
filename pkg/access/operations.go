@@ -28,6 +28,19 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	decode := func(out any) error { return json.Unmarshal(m.Payload, out) }
 	var err error
 	switch m.Operation {
+	case "submission.raw":
+		var submission api.SubmissionRequest
+		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || !oneOf(submission.Operation, "acp.raw.take", "acp.raw.write") || submission.Target.RuntimeID == "" || !matchesSubmissionScope(scope, submission.Target, m) {
+			return r, ErrDenied
+		}
+		r.Operation, r.Suboperation = "acp.raw", "take"
+		if submission.Operation == "acp.raw.write" {
+			r.Suboperation = "write"
+		}
+	case "acp.raw.state", "acp.raw.read":
+		if r.Runtime.ID == "" || r.Runtime.Incarnation == "" || r.Runtime.Generation == 0 {
+			return r, ErrDenied
+		}
 	case "submission.acp":
 		var submission api.SubmissionRequest
 		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || submission.Operation != "acp.action" || submission.Target.RuntimeID == "" || !matchesSubmissionScope(scope, submission.Target, m) {
@@ -231,10 +244,7 @@ func continuation(base Request, runtime RuntimeIdentity, m *pb.Message) (Request
 		r.Suboperation = m.Kind
 		r.Mode = action.Action
 	case "input":
-		if runtime.Adapter == "acp" {
-			r.Operation = "acp.raw"
-			r.Suboperation = "exchange"
-		} else if runtime.Adapter == "pty" {
+		if runtime.Adapter == "pty" {
 			r.Suboperation = "input"
 		} else {
 			return r, ErrDenied
@@ -245,6 +255,9 @@ func continuation(base Request, runtime RuntimeIdentity, m *pb.Message) (Request
 		}
 		r.Suboperation = "resize"
 	case "signal":
+		if runtime.Adapter != "pty" {
+			return r, ErrDenied
+		}
 		r.Suboperation = "signal"
 		r.Mode = string(m.Data)
 		if !oneOf(r.Mode, "INT", "TERM", "HUP", "QUIT") {

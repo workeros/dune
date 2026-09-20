@@ -63,6 +63,7 @@ type runtime struct {
 	tmux                   *tmux.Session
 	done                   chan struct{}
 	acp                    *acpController
+	raw                    *rawACP
 	host                   *sessionProxy
 	target                 api.SubmissionTarget
 	activity               api.AgentActivity
@@ -127,7 +128,15 @@ func (r *runtime) info() api.Runtime {
 	if r.exit != nil {
 		activity.State = "unknown"
 	}
-	return api.Runtime{ConversationID: conversationID, ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
+	info := api.Runtime{ConversationID: conversationID, ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
+	if r.acp != nil || r.raw != nil {
+		info.PersistentACP = true
+		info.ACPMode = "managed"
+		if r.raw != nil {
+			info.ACPMode = "raw"
+		}
+	}
+	return info
 }
 
 // The timeout helper owns these facts. fabricd only publishes its record; it
@@ -147,6 +156,9 @@ func (r *runtime) readTimeoutState(state *process.PTYState) {
 	}
 }
 func (r *runtime) stop() error {
+	if r.raw != nil {
+		r.raw.closeInput()
+	}
 	if r.tmux != nil {
 		r.closePTYInput()
 		// Publish completion before a closing viewer can report EOF.
@@ -205,6 +217,15 @@ func (r *runtime) confirmStop() {
 		}
 	}
 	if err == nil {
+		if r.raw != nil {
+			select {
+			case <-r.raw.done:
+			case <-ctx.Done():
+				err = ctx.Err()
+			}
+		}
+	}
+	if err == nil {
 		if r.acp != nil {
 			r.acp.mu.Lock()
 			r.acp.closedWithExitLocked(&code)
@@ -250,6 +271,9 @@ func (d *Engine) stop(r *runtime) error {
 }
 
 func (r *runtime) finish(code int) {
+	if r.raw != nil {
+		r.raw.closeInput()
+	}
 	r.mu.Lock()
 	if r.exit != nil {
 		r.mu.Unlock()
@@ -490,15 +514,6 @@ func (r *runtime) acceptACPLineFrom(b []byte, connection *process.Process) bool 
 	}
 	if r.acp != nil {
 		r.acp.receive(b)
-	} else if len(b)+1024 <= wire.MaxMessage {
-		r.emit(&pb.Message{Kind: "data", Data: append(append([]byte(nil), b...), '\n')})
-	} else {
-		r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
-			"code":          "MESSAGE_OMITTED",
-			"detail":        "ACP output exceeded the transport frame; content was omitted and the Runtime continues",
-			"message_bytes": len(b),
-			"limit_bytes":   wire.MaxMessage - 1024,
-		})})
 	}
 	return true
 }
@@ -759,26 +774,7 @@ func (d *Engine) createAgent(p api.Profile, machine string, r *runtime, launch a
 		r.readTimeoutState(state)
 		return nil
 	}
-	if p.ManagedACP {
-		return d.launchSession(p, machine, r, launch)
-	}
-	argv, _ = p.Start.Args()
-	proc, err := process.Start(argv, p.WorkingDirectory, environment(p.Env))
-	if err != nil {
-		return err
-	}
-	r.p = proc
-	r.runProcess(proc)
-	if p.Start.TimeoutSeconds > 0 {
-		go func() {
-			select {
-			case <-r.done:
-			case <-time.After(time.Duration(p.Start.TimeoutSeconds) * time.Second):
-				_ = r.stop()
-			}
-		}()
-	}
-	return nil
+	return d.launchSession(p, machine, r, launch)
 }
 func (d *Engine) attach(s *executionStream, m *pb.Message) {
 	r, e := d.lookup(m)
@@ -795,8 +791,8 @@ func (d *Engine) attach(s *executionStream, m *pb.Message) {
 		s.Fail("UNSUPPORTED", fmt.Errorf("conversation subscription requires managed ACP observation"))
 		return
 	}
-	if r.acp != nil && !a.Observe {
-		s.Fail("UNSUPPORTED", fmt.Errorf("managed ACP input requires a caller-owned submission"))
+	if r.adapter == "acp" && !a.Observe {
+		s.Fail("UNSUPPORTED", fmt.Errorf("ACP input requires a caller-owned submission"))
 		return
 	}
 	sub, e := r.subscribe(!a.Observe, a.Conversation)
@@ -828,6 +824,11 @@ func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 			return
 		}
 	}
+	if r.raw != nil {
+		if s.Send(&pb.Message{Kind: "raw_acp_state", Payload: api.Payload(r.raw.state())}) != nil {
+			return
+		}
+	}
 	go func() {
 		for {
 			m, e := s.Recv()
@@ -848,22 +849,12 @@ func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 			}
 			switch m.Kind {
 			case "input":
-				if r.acp != nil {
-					done <- fmt.Errorf("managed ACP input requires a caller-owned submission")
+				if r.adapter == "acp" {
+					done <- fmt.Errorf("ACP input requires a caller-owned submission")
 					return
 				}
 				if len(m.Data) > wire.ChunkSize {
 					e = fmt.Errorf("input exceeds chunk limit")
-				} else if r.adapter == "acp" {
-					b := bytes.TrimSuffix(m.Data, []byte{'\n'})
-					if bytes.ContainsRune(b, '\n') {
-						e = fmt.Errorf("one ACP message per input required")
-					} else {
-						e = validateRPC(b)
-						if e == nil {
-							e = r.p.Write(append(append([]byte(nil), b...), '\n'))
-						}
-					}
 				} else {
 					e = r.p.Write(m.Data)
 				}

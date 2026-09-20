@@ -289,8 +289,13 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 		return result, conflict()
 	}
 	var rawInput []byte
+	stage := ""
 	if input != nil {
 		rawInput = api.Payload(input)
+		stage = "accepted"
+		if input.Sequence == 0 {
+			stage = "completed"
+		}
 	}
 	if record.state != "claimed" {
 		if record.state != state || record.operationRef != operationRef || record.errorCode != code || string(record.rawInput) != string(rawInput) {
@@ -303,14 +308,14 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 			return result, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE submission_keys SET state=?,operation_ref=?,error_code=?,raw_input=? WHERE key=?`, state, operationRef, code, rawInput, encoded)
+	_, err = tx.ExecContext(ctx, `UPDATE submission_keys SET state=?,operation_ref=?,error_code=?,raw_input=?,stage=? WHERE key=?`, state, operationRef, code, rawInput, stage, encoded)
 	if err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {
 		return result, err
 	}
-	return api.SubmissionReceipt{SubmissionKey: claim.key, Admission: api.SubmissionAdmission(state), OperationRef: operationRef, ErrorCode: code, RawInput: input}, nil
+	return api.SubmissionReceipt{SubmissionKey: claim.key, Admission: api.SubmissionAdmission(state), OperationRef: operationRef, ErrorCode: code, RawInput: input, Stage: stage}, nil
 }
 
 type record struct {

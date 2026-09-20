@@ -660,3 +660,72 @@ uses ten minutes for thousands of FULL-synchronous registry writes. Optional moc
 response recording and a bounded prompt-gate timeout are test facilities.
 Affected fabricd/mock vet and whitespace checks pass. No real-Agent, service
 manager or external-platform evidence is claimed. The full goal remains active.
+
+## Slice 17 — raw ACP host, exact byte writes and bounded resumption
+
+Commit 8000e39 first fixed the public raw input/output and SDK contracts, with
+durable input identity/order stored alongside the original submission receipt.
+Raw and managed ACP now use the same independent host/guardian registration and
+stop/forget lifecycle. Raw hosts never create an ACP controller. Runtime discovery
+reports persistent_acp and acp_mode; Runner capabilities advertise the implemented
+raw state/read/submission paths and their actual limits.
+
+Each raw input owner is explicitly taken with a caller-saved submission key,
+stream identity, expected epoch and caller-generated owner ID. Full JSON-RPC
+messages (original LF/CRLF, SHA-256 and length) are admitted under that owner and
+written by one host-owned writer. Accepted order and input epoch survive receipt
+queries; duplicate submissions cannot execute again after ownership changes.
+Short writes finish without interleaving. Uncertain pipe errors permanently seal
+input, discard queued unwritten messages with not_sent evidence, and preserve
+read/stop access. A stalled write does not hold the state or admission mutex.
+
+Each original pipe is drained independently into a fixed byte ring: stdout
+8 MiB, stderr 1 MiB. Reads copy at most 256 KiB and report STREAM_GAP with exact
+window positions. Output is never parsed/reencoded or put through tmux terminal
+I/O. Network observers cannot block the pipe readers. Raw input is limited to
+1 MiB per complete message, 4 MiB and 32 outstanding messages including the writer.
+The ordinary durable key budget also applies; stop/forget reservations are separate.
+Legacy ACP Stream.Input and signal continuations are removed. ACP Attach is an
+observer; current raw byte access is through the public read API.
+
+Process evidence on the local macOS arm64 host:
+
+- TestRawOriginalPipeAcrossConnectorCrashAndInputTakeover installs a pipe wrapper
+  only in the test executable. It forwards 17 original bytes, pauses, then returns
+  deterministic short writes. After actual fabricd SIGKILL/reconnect and input
+  takeover, the original Agent records exactly 7270 bytes: the two complete input
+  messages in order, once each, including split Unicode and CRLF. In the error
+  variant it reads only the original 17-byte prefix; queued input is not_sent and
+  another connector restart, take and write cannot append anything. Process logs
+  prove one original PID and anonymous pipes. Both variants stop successfully.
+- TestRawIncompleteNetworkInputAndOfflineOutputGap closes an actual Gateway
+  stream with an incomplete length-prefixed submission: Agent input remains zero
+  bytes and the original key is unknown. While fabricd is killed, the same Agent
+  emits 9437186 bytes without a subscriber. On reconnect the 8388608-byte stdout
+  window reports a 1048578-byte gap. SDK reads match the original retained tail
+  byte-for-byte, including arbitrary UTF-8 boundaries; stderr stays separate.
+- Unit fault/budget tests independently exercise message framing, duplicate and
+  old-owner fencing, cancellation after admission, irreversible input errors,
+  default pending byte and count limits, and exact wrapping output windows.
+- TestRawFullQueueAndBlockedStdinCannotBlockStop fills the unchanged 4 MiB input
+  budget while a real Agent does not read stdin. New input is rejected; stop
+  closes the original blocked pipe and confirms process-group exit promptly.
+  The active write reports input_unrecoverable and all following messages report
+  not_sent. This process test also passes with race enabled.
+
+Full fabricd/client/sessionregistry race suites pass (the expensive final L54
+test was already run separately in slice 16). Access/wire race suites pass;
+additional raw gap/count/policy tests pass independently. Existing public raw,
+mock-Agent, mixed PTY/raw and invalid-input process tests were migrated to caller-
+owned keys and explicit byte reads and pass. Managed original-host reconnect,
+generation barriers, offline permissions and PTY process regressions pass. The
+real-Agent test entry point was updated but remains unexecuted: the Agent setting
+is absent. The new public samples/raw-acp compiles; affected vet and diff checks
+pass. No Web source changed. Public docs now distinguish managed parsing from
+raw byte transport and no longer claim ACP necessarily dies with fabricd.
+
+Remaining full-goal work includes discovery completeness and bounded restoration,
+pinned runtime dependencies and upgrade/rollback preflight, platform service
+isolation and release evidence, remaining public consumer recovery/SandDance
+integration, and the final requirement-by-requirement L01–L55 audit. Local raw
+tests do not substitute for those deliverables or real-Agent acceptance.

@@ -81,6 +81,16 @@ func TestReplacementConnectionRejectsOldStreamInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer acp.Close()
+	rawState, err := original.RawACPState(ctx, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := api.SubmissionKey{SubmissionID: "take", Target: api.SubmissionTarget{OwnerID: "test-owner", RunnerID: "test-runner", FabricID: "test-fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: agent.ID, RuntimeIncarnation: agent.Incarnation, RuntimeGeneration: agent.Generation}}
+	take, err := original.TakeRawACP(ctx, key, api.RawACPTake{StreamID: rawState.StreamID, OwnerID: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawState.InputEpoch = take.RawInput.InputEpoch
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -106,13 +116,13 @@ func TestReplacementConnectionRejectsOldStreamInput(t *testing.T) {
 	if _, err := pty.Input([]byte("touch " + forbidden + "\n")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := acp.Input([]byte("{\"jsonrpc\":\"2.0\",\"method\":\"old-connection\"}\n")); err != nil {
-		t.Fatal(err)
-	}
+	key.SubmissionID = "late-raw-write"
+	_, err = original.WriteRawACP(ctx, key, rawWriteRequest(rawState, "original", []byte("{\"jsonrpc\":\"2.0\",\"method\":\"old-connection\"}\n")))
+	requireSubmissionCode(t, err, "STALE_BINDING")
 	if _, err := port.Write([]byte("OLD_CONNECTION")); err != nil {
 		t.Fatal(err)
 	}
-	for name, stream := range map[string]*client.Stream{"terminal": pty, "raw ACP": acp, "port": port.Stream} {
+	for name, stream := range map[string]*client.Stream{"terminal": pty, "port": port.Stream} {
 		for {
 			_, err := stream.Recv()
 			if err == nil {

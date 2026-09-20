@@ -8,11 +8,11 @@
 
 Gateway HTTP 服务使用 fasthttp，WebSocket 升级使用 fasthttp/websocket。默认使用 HTTP/WebSocket（ws），支持配置 0.0.0.0 对外监听，dev token 通过 Authorization Bearer 头传递；空/错误 token 在升级前拒绝。fabricd/SDK 都是 Yamux client，Gateway 为 server。WebSocket binary 消息适配为字节流，不依赖 WS 消息边界。
 
-每个 Yamux stream 的应用消息为 **4 字节 big-endian uint32 长度 + protobuf Message**。读取长度后先验证 `1..1MiB`，再分配缓冲。protobuf 承载上下文、操作、消息类型、错误和原始数据；`payload` 是 API Go 类型定义的 UTF-8 JSON。这是明确固定的混合编码，不使用旧协议的 `stream_id/seq/ack_seq`。
+每个 Yamux stream 的应用消息为 **4 字节 big-endian uint32 长度 + protobuf Message**。读取长度后先验证 `1..4MiB`，再分配缓冲。protobuf 承载上下文、操作、消息类型、错误和原始数据；`payload` 是 API Go 类型定义的 UTF-8 JSON。这是明确固定的混合编码，不使用旧协议的 `stream_id/seq/ack_seq`。
 
 第一条 stream 必须在 5s 内发送 hello（版本、角色、target）。fabricd 额外提交随机 incarnation、递增 connection generation 和能力清单；SDK 收到当前 daemon 的绑定。之后每条业务 stream 的首消息是 request，含 request_id、operation、target、incarnation、connection_generation；Runtime 操作还需 runtime_id、runtime_incarnation 和 runtime_generation。Gateway 和 daemon 均校验绑定。连接重新建立需新的 SDK Client；旧 stream 不恢复。
 
-fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal、原始 ACP 和端口 data/eof 通过所属 stream 保持连接关联；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录模式另外校验当前 owner epoch。
+fabricd 对每条入站业务消息在解码后、交给操作处理器前，复核原反向连接及引擎仍有效、原 connection generation 仍为当前值。后续 PTY 输入/resize/signal 和端口 data/eof 通过所属 stream 保持连接关联；原始 ACP 每条完整消息使用带调用方提交键的独立 request；取消前已进入 Yamux 缓冲的字节不能绕过这次检查。失效消息返回 `STALE_BINDING` 并结束相应订阅，不回滚已经受理的操作，也不销毁既有 Runtime。连接还须满足下述有界输入租约；目录模式另外校验当前 owner epoch。
 
 fabricd 在 hello 中提交随机 `input_lease_id`，Gateway 的 welcome 提供同一标识及最多 15000ms 的相对期限。fabricd 从自己发出 challenge 前的本地单调时间计时，确认仍有效后回复 `lease_ready`；Gateway 收到确认才发布路由。未确认或确认失败的新连接不会替换原路由。此处的租约只限制当前反向连接，不赋予集群机器归属。
 
@@ -40,7 +40,7 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 官方工作台已通过 `host.Options.Cluster` / `dune web --cluster-config` 装配 PostgreSQL 目录、双向 TLS peer、请求级用户上下文、配置准入、就绪检查和限时排空。正式三进程回归覆盖一跳路由、分区、进程暂停、双用户双机器及旧输入隔离；Linux 验收在同一主机运行三个实例并使用另一主机的 PostgreSQL。该证据不等同于三台独立 Linux 主机或 PostgreSQL HA。协议核心不导入 SQL、HTTP 或产品身份，第二层提供同一元数据后端的目录、用户上下文和独立 peer 接入。
 
-`dune-mvp/2` 与旧版本不混用：Gateway、fabricd、Web 宿主和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
+`dune-mvp/2` 与旧版本不混用：Gateway、fabricd、Web 宿主和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，以及由独立会话宿主管理的 managed／raw ACP；升级依赖保留和服务管理器验收进度见 [生命周期实施记录](acp-session-lifecycle-implementation.md)。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 
 业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.prepare 依次发送 accepted、逐步 setup progress、Profile result 后结束；SDK 将 accepted、步骤开始、步骤完成、失败和整体成功作为类型化 `ProfileProgress` 交给调用方。profile.start 要求完整调用方提交键，返回独立接纳回执的阶段 progress 和 StartResult，随后成为交互 stream；见[提交合同](acp-submissions.md)。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 
@@ -60,28 +60,30 @@ Profile 要求 `version: 1`、`kind: environment|agent` 和绝对 `working_direc
 
 ## Runtime 与进程
 
-Runtime ID、incarnation 随机生成，generation 为 1；本版不提供 Runtime restart/replacement，因此不存在复用 ID 的路径。最多 64 条 Runtime；达到上限明确拒绝。PTY 元数据随 tmux 会话跨 fabricd 重启恢复；ACP 状态随 fabricd 生命周期结束。
+Runtime ID、incarnation 随机生成，generation 为 1。独立索引最多预留 16 个活动 Runtime、256 个保留身份；达到上限拒绝新启动。PTY 元数据随 tmux 会话跨 fabricd 重启恢复；managed／raw ACP 由独立宿主保持原 Agent、管道和状态。显式 managed new/load 按业务合同替换 Agent 连接并隔离旧回调，Runtime／宿主身份不变。
 
-ACP/Exec 使用短生命周期 guardian，daemon 所有权管道断开时清理普通进程组。PTY 已改用私有 tmux server；它独立于 fabricd 生命周期，详见 [tmux 后端](tmux-backend.md)。Runtime 元数据与终端历史由开发机 tmux 保存，不根据裸 PID 接管进程。
+Exec 的 guardian 仍由 fabricd 持有；ACP guardian 由独立宿主持有，fabricd 断线不关闭其所有权管道。ACP 宿主使用独立私有 tmux server，匿名 stdin/stdout 与 stderr 管道不经过 tmux 终端字节路径。PTY 仍由其私有 tmux server 托管，详见 [tmux 后端](tmux-backend.md)。独立注册索引与实时 IPC 核实 ACP 身份；裸 PID 不授予接管或信号权限。
 
 PTY 支持原始 bytes、resize（1..200 行、1..400 列）、INT/QUIT 输入及 TERM/HUP 显式销毁。一个输入 owner，其他连接为只读 tmux viewer。重新 attach 恢复当前画面，tmux copy-mode 浏览有界历史；`runtime.capture` 仅提供诊断快照，网页不使用快照绘制。
 
-ACP stdout 逐行验证 JSON-RPC 2.0 对象、字符串/数字 ID、request/notification/response envelope；unknown method 原样传递。Agent 错误会保留 `error.data.details`，与整条 ACP 消息共用下述统一上限。stderr 单独发送。线协议帧最大 4MiB。开发机按物理内存把 ACP 单行读取上限设为 2MiB、4MiB 或 8MiB，把历史回放队列设为 8MiB、16MiB 或 32MiB；传输帧上限不随机器变化。超过浏览器事件预算的消息文本按 UTF-8 分片，大型工具字段有界省略；超过本机单行上限的事件产生省略通知并继续读取后续 RPC，不因历史中的单条大消息终止 Runtime。单次输入最大 32KiB 且只有一条 JSON 消息。语法或 envelope 无效的 stdout 仍终止 Runtime 并报告 INVALID_ACP，无效输入关闭该订阅并报告 INPUT_FAILED。daemon 不解释 ACP 会话、权限或任务完成。mock 示例中的会话/权限逻辑属于示例 Agent，不属于 daemon。
+managed ACP stdout 逐行验证 JSON-RPC 2.0，原宿主持有 controller、队列、权限、模型和操作结果。单行和模型上限见 [会话模型](acp-conversation.md)。非法 managed stdout 报告 INVALID_ACP；大历史消息仍按有界省略规则处理。
+
+原始 ACP 不重编码 stdout，也不根据输出内容停止 Agent。输入先有界收齐一条完整 JSON-RPC 消息，再持久接纳；原宿主串行 writer 写完，连接断开和所有权接管不取消已接纳消息。半包错误永久封锁输入。stdout／stderr 通过独立有界字节窗口续读，缺口明确报告 STREAM_GAP；完整 schema、默认值与示例见 [原始 ACP](raw-acp.md)。
 
 ## 资源与背压
 
 | 资源 | 限制 |
 | --- | --- |
 | Gateway 会话（含待握手） | 256 |
-| 每会话待请求/活跃业务 stream | 64；首条请求超时 5s |
-| Gateway 全局活跃转发 | 512 |
-| daemon 活跃处理器 | 每条有效 tunnel 64 |
+| 每会话业务 stream | 普通 64；read/wait/permission/cancel/stop/forget 各预留 16；首请求读者 8，超时 5s |
+| Gateway 全局活跃转发 | 普通 512；各预留类别 128；首请求读者 64 |
+| fabricd／ACP 宿主处理器 | 跨连接普通 64；各预留类别 16；首请求读者 8 |
 | Yamux 单流接收窗口 | 256KiB |
-| protobuf 单消息 | 1MiB |
+| protobuf 单消息 | 4MiB |
 | PTY/Ports/upload chunk | 32KiB |
 | 单 Runtime 订阅 | 8；每订阅 16 条在途消息 |
 | upload/Ports bulk 并发 | 4（Ports 持续占一个） |
-| Runtime / upload 内存记录 | 各 64 |
+| Runtime / upload 记录 | 活动 Runtime 16、保留身份 256；upload 64 |
 | unary 结果缓存 | 256 条，至多 60s，先到限制先淘汰 |
 | Environment Profile | JSON 最多 1MiB；步骤名/失败详情各最多 4KiB；内存尝试至多 256 条；终态至多保留 60s |
 | Exec/Git/Profile stdout/stderr | 每项 128KiB，超出持续排空并分别标记 truncated |

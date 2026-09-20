@@ -13,8 +13,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if code, handled := rawHostTestHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	if code, handled := RunHelper(os.Args[1:]); handled {
 		os.Exit(code)
+	}
+	if os.Getenv("DUNE_RAW_TEST_RECORD") != "" {
+		os.Exit(runRawRecorder())
 	}
 	if os.Getenv("DUNE_TEST_NATIVE_CLI") == "1" {
 		os.Exit(runNativeCLIFixture())

@@ -100,6 +100,11 @@ func (r *runtime) runProcess(proc *process.Process) {
 	var group sync.WaitGroup
 	group.Add(1)
 	go func() {
+		if r.raw != nil {
+			defer group.Done()
+			r.raw.stdout.consume(proc.Output)
+			return
+		}
 		if r.acp == nil {
 			r.read(proc.Output, "data", &group)
 			return
@@ -110,7 +115,14 @@ func (r *runtime) runProcess(proc *process.Process) {
 	}()
 	if proc.Stderr != nil {
 		group.Add(1)
-		go r.read(proc.Stderr, "stderr", &group)
+		go func() {
+			if r.raw != nil {
+				defer group.Done()
+				r.raw.stderr.consume(proc.Stderr)
+				return
+			}
+			r.read(proc.Stderr, "stderr", &group)
+		}()
 	}
 	go func() {
 		<-proc.Done

@@ -163,6 +163,9 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	case "submission.acp":
 		d.submitACP(s, m, target)
 		return
+	case "submission.raw":
+		d.submitRaw(s, m, target)
+		return
 	case "submission.get":
 		d.querySubmission(s, m, target)
 		return
@@ -231,6 +234,22 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	searchRequest := false
 	var conversationReadStarted time.Time
 	switch m.Operation {
+	case "acp.raw.state", "acp.raw.read":
+		var r *runtime
+		r, e = d.lookup(m)
+		if e == nil && r.raw == nil {
+			e = &api.Error{Code: "UNSUPPORTED", Detail: "Runtime is not raw ACP"}
+		}
+		if e == nil {
+			if m.Operation == "acp.raw.state" {
+				result = r.raw.state()
+			} else {
+				var request api.RawACPRead
+				if e = wire.Decode(m, &request); e == nil {
+					result, e = r.raw.read(request)
+				}
+			}
+		}
 	case "exec":
 		var a api.Exec
 		e = wire.Decode(m, &a)
@@ -438,6 +457,7 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		res = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "OPERATION_FAILED", Detail: e.Error()}
 		if ae, ok := e.(*api.Error); ok {
 			res.Code = ae.Code
+			res.Payload = ae.Payload
 		}
 	}
 	if retainResult {
@@ -580,7 +600,7 @@ func (d *Engine) cacheRoomLocked() bool {
 // the ordinary transport cache. Repeating a read has no business side effect.
 func sessionRead(operation string) bool {
 	switch operation {
-	case "machine.info", "runtime.list", "runtime.get", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "runtime.capture", "runtime.scrollback", "profile.status":
+	case "machine.info", "runtime.list", "runtime.get", "acp.state", "acp.raw.state", "acp.raw.read", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "runtime.capture", "runtime.scrollback", "profile.status":
 		return true
 	default:
 		return false
