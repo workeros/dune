@@ -146,17 +146,20 @@ func (b Backend) Attach(ctx context.Context, session channel.ConversationSession
 	selected := toRuntime(existing.Runtime)
 	current, err := connection.Get(ctx, selected)
 	if err != nil {
-		var apiErr *api.Error
-		if errors.As(err, &apiErr) && apiErr.Code == "STALE_RUNTIME" {
-			return b.recoverSession(ctx, connection, session, existing)
-		}
 		return channel.AgentSession{}, fmt.Errorf("find Dune Runtime for ACP attach (outcome may be unknown): %w", err)
 	}
 	if current.ID != selected.ID || current.Incarnation != selected.Incarnation || current.Generation != selected.Generation || current.Adapter != "acp" {
 		return channel.AgentSession{}, errors.New("IM ACP Runtime identity changed")
 	}
-	if current.State == "exited" {
-		return b.recoverSession(ctx, connection, session, existing)
+	if current.State == "exited" || current.State == "lost" {
+		code := "RUNTIME_EXITED"
+		if current.State == "lost" {
+			code = "RUNTIME_LOST"
+		}
+		return channel.AgentSession{}, &api.Error{Code: code, Detail: "original IM ACP Runtime ended; explicitly create a new session to continue"}
+	}
+	if current.Availability != "" {
+		return channel.AgentSession{}, &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "original IM ACP host is temporarily unavailable"}
 	}
 	if current.State != "running" {
 		return channel.AgentSession{}, fmt.Errorf("IM ACP Runtime has unexpected state %q", current.State)
@@ -169,43 +172,6 @@ func (b Backend) Attach(ctx context.Context, session channel.ConversationSession
 		return channel.AgentSession{}, errors.New("IM ACP session is not ready or does not match stored session")
 	}
 	return existing, nil
-}
-
-func (b Backend) recoverSession(ctx context.Context, connection host.AgentConnection, conversation channel.ConversationSession, existing channel.AgentSession) (channel.AgentSession, error) {
-	if existing.ACPSessionID == "" {
-		return channel.AgentSession{}, errors.New("previous ACP session ID is missing; cannot recover context")
-	}
-	runtime, err := b.startRuntime(ctx, connection, conversation)
-	if err != nil {
-		return channel.AgentSession{}, err
-	}
-	readyCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	state, err := awaitState(readyCtx, connection, runtime, func(state host.AgentState) bool {
-		return state.Ready && state.Busy == "" && state.SessionID == ""
-	})
-	if err != nil {
-		return channel.AgentSession{}, err
-	}
-	if !state.CanLoad {
-		opened, err := newSession(readyCtx, connection, runtime, sessionSubmissionID(conversation, "new"), conversation.Target.WorkingDirectory)
-		if err != nil {
-			return channel.AgentSession{}, err
-		}
-		return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: opened.NativeSession.ID, ConversationID: opened.ConversationID, ContextLost: true}, nil
-	}
-	operation, err := connection.Submit(readyCtx, runtime, host.AgentAction{SubmissionID: sessionSubmissionID(conversation, "load"), Action: "load", Cwd: conversation.Target.WorkingDirectory, SessionID: existing.ACPSessionID})
-	if err != nil {
-		return channel.AgentSession{}, fmt.Errorf("load previous ACP session (outcome may be unknown): %w", err)
-	}
-	loaded, err := awaitOperation(readyCtx, connection, runtime, operation)
-	if err != nil {
-		return channel.AgentSession{}, err
-	}
-	if loaded.NativeSession == nil || loaded.NativeSession.ID != existing.ACPSessionID || loaded.ConversationID == "" {
-		return channel.AgentSession{}, errors.New("ACP load did not confirm the requested native session")
-	}
-	return channel.AgentSession{Runtime: toHandle(runtime), ACPSessionID: loaded.NativeSession.ID, ConversationID: loaded.ConversationID}, nil
 }
 
 func (b Backend) Stop(ctx context.Context, session channel.ConversationSession, existing channel.AgentSession) error {

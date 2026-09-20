@@ -79,7 +79,7 @@ worker；不要为同一队列建立只认识部分 Binding 的多个 Service。
 `CredentialResolver.ResolveCredentials` 根据持久 Binding 的 `CredentialRef` 返回飞书凭据 JSON。
 `ProfileResolver.ResolveAgentProfile` 由宿主按会话目标的 `profile_id` 和
 `profile_revision` 读取同一 Tenant 内的不可变 Agent Profile。`Backend.Profiles`
-必须提供该实现；启动和失效 Runtime 恢复都使用完整 Profile，保留 setup、start、
+必须提供该实现；显式启动新会话使用完整 Profile，保留 setup、start、
 环境变量和超时，只覆盖绑定工作目录并启用 managed ACP。宿主可使用 Dune `pkg/profiles.Store.Get` 读取固定修订，再应用业务环境变量与授权规则。
 Runner 不保存 AgentConfig。绑定与已有会话固定修订；Profile 更新不会隐式改变已接受目标。
 
@@ -124,13 +124,15 @@ Profile ID、正整数 Profile revision、绝对工作目录。凭据 JSON 包�
 
 `Service.Stop` 停止入站和 worker，不销毁各会话的 Agent Runtime。重新建立 Service 后可 Attach
 仍存活的会话。显式 `duneagent.Backend.Stop` 发出一次停止请求并等待 Runtime 退出确认；
-查询失败或超时返回结果未知，不自动重放停止请求。旧 Runtime 明确失效后，Attach 才会新启进程，
-按 ACP 的 `loadSession` 能力恢复；不支持加载时新建会话并在回复中提示上下文未恢复。
+查询失败或超时返回结果未知，不自动重放停止请求。Attach
+不会自动新建 Runtime 或调用 new/load。连接暂不可用时保留原目标；已退出或已丢失时返回明确错误，只有用户显式新建会话才启动新 Agent。
 
 `Status` 查看连接状态和队列计数，`Issues` 按 Tenant/Binding 返回有界、脱敏的失败和未知结果。
 回调 `callback_ready` 只证明本地 handler 可用。
 
-事件先持久入队再 ACK，Agent 提交和外部投递前均有持久屏障。提交后断线不自动重放 prompt，
+事件先持久入队再 ACK，Agent 提交和外部投递前均有持久屏障。
+`AgentBackend.Prompt` 的 `PromptRequest.SubmissionID` 必填；Processor 从持久化的 binding/event ID 生成稳定值。
+直接调用 Backend 时，调用方必须在首发前保存 ID；新的回合使用新 ID，同一回合不能换 ID 重试。提交后断线不自动重放 prompt，
 发送或 CardKit 更新未知也不自动重发。`ReconcileConfirmedDelivery` 仅恢复已持久确认 Agent
 完成且完整送达的回合；`ReconcileRejectedDelivery` 仅恢复明确未调用平台 API 的本地拒绝。
 其他未知结果继续隔离，需宿主核查，不能把重启当作重试。
@@ -151,7 +153,7 @@ make check-go        # 同时检查两个 module
 
 本地自动化覆盖双入口持久 ACK/重投、同 Tenant 多机器人、会话隔离与串行、换版、队列和租约，
 以及已提交回合的跨进程恢复边界。回调的三种模式 × 私聊/群话题矩阵穿过真实 Dune host、Gateway、
-fabricd 和本地假 ACP 子进程，再调用假飞书 API；另测 Attach、Stop 和 `session/load`。
+fabricd 和本地假 ACP 子进程，再调用假飞书 API；另测 Attach、Stop、丢失后拒绝隐式重建和显式新建。
 WebSocket 测试使用飞书 SDK 连接本地假网关，覆盖三种模式的群话题整链。
 这些测试没有模型调用，也不能证明飞书平台已经验收。
 

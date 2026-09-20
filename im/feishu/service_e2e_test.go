@@ -44,7 +44,8 @@ func (a *localAgentBackend) Attach(_ context.Context, session channel.Conversati
 	return existing, nil
 }
 
-func (a *localAgentBackend) Prompt(_ context.Context, _ channel.ConversationSession, _ channel.AgentSession, prompt string, emit func(channel.AgentEvent) error) (string, error) {
+func (a *localAgentBackend) Prompt(_ context.Context, _ channel.ConversationSession, _ channel.AgentSession, request channel.PromptRequest, emit func(channel.AgentEvent) error) (string, error) {
+	prompt := request.Text
 	answer := "answer: " + prompt
 	if err := emit(channel.AgentEvent{Kind: channel.AgentDelta, Text: answer}); err != nil {
 		return "", err

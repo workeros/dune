@@ -117,7 +117,8 @@ func (f *fakeAgentBackend) Attach(_ context.Context, _ channel.ConversationSessi
 	session.ContextLost = f.contextLostOnAttach
 	return session, nil
 }
-func (f *fakeAgentBackend) Prompt(_ context.Context, _ channel.ConversationSession, session channel.AgentSession, input string, emit func(channel.AgentEvent) error) (string, error) {
+func (f *fakeAgentBackend) Prompt(_ context.Context, _ channel.ConversationSession, session channel.AgentSession, request channel.PromptRequest, emit func(channel.AgentEvent) error) (string, error) {
+	input := request.Text
 	f.prompts = append(f.prompts, session.Runtime.ID+":"+input)
 	if f.promptErr != nil {
 		return "", f.promptErr
@@ -168,7 +169,7 @@ type waitingPromptBackend struct {
 	release chan struct{}
 }
 
-func (b waitingPromptBackend) Prompt(ctx context.Context, _ channel.ConversationSession, _ channel.AgentSession, _ string, _ func(channel.AgentEvent) error) (string, error) {
+func (b waitingPromptBackend) Prompt(ctx context.Context, _ channel.ConversationSession, _ channel.AgentSession, _ channel.PromptRequest, _ func(channel.AgentEvent) error) (string, error) {
 	close(b.started)
 	select {
 	case <-b.release:

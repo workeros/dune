@@ -258,3 +258,22 @@ and later accepted/completed through the original key, and verifies exactly one
 submission plus no prompt text in storage. Recovery screenshot inspected. Launch
 recovery still uses its earlier single lastLaunch record and needs equivalent
 multi-record UI; this slice only closes Runtime-action browser recovery.
+
+Slice 9 IM continuity: removed the implicit replacement/load/new branch from
+Backend.Attach. Stale lookup, lost/exited Runtime and temporarily unavailable host
+now preserve the original selection and return an error. A new Runtime requires
+explicit caller intent. PromptRequest now carries a mandatory caller submission
+ID; Processor derives it from the persisted inbound binding/event identity. Direct
+Backend callers supply and retain their own ID. This replaces the earlier prompt
+ID derivation from session revision, which a direct caller could reuse across
+separate turns. Launch/initial-new still derive stable IDs from their persisted
+session revision before sending.
+
+The first full IM regression exposed two direct calls using the same revision and
+thus correctly deduplicating to the first answer. After making turn identity
+explicit and migrating callers, `make test-im-race check-im` passes across channel,
+duneagent, feishu and sqlite. The real local Gateway/Agent integration now checks
+live attachment, independent turns, rejection of implicit replacement after stop,
+and an explicit fresh start while the other conversation continues. Targeted
+Backend race tests verify missing ID rejection and propagation of the caller's
+original ID/conversation generation. No real Feishu or model service was contacted.

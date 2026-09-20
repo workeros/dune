@@ -274,7 +274,7 @@ func (p Processor) executeTurn(ctx context.Context, item WorkItem, active Active
 		}
 	}
 	cumulative := visiblePrefix
-	final, err := p.Agents.Prompt(ctx, *session, backendSession, item.Message.Text, func(event AgentEvent) error {
+	final, err := p.Agents.Prompt(ctx, *session, backendSession, PromptRequest{SubmissionID: delivery, Text: item.Message.Text}, func(event AgentEvent) error {
 		switch event.Kind {
 		case AgentDelta:
 			if event.Text == "" {

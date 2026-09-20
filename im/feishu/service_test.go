@@ -67,7 +67,7 @@ func (unusedAgentBackend) Start(context.Context, channel.ConversationSession) (c
 func (unusedAgentBackend) Attach(context.Context, channel.ConversationSession, channel.AgentSession) (channel.AgentSession, error) {
 	panic("unused")
 }
-func (unusedAgentBackend) Prompt(context.Context, channel.ConversationSession, channel.AgentSession, string, func(channel.AgentEvent) error) (string, error) {
+func (unusedAgentBackend) Prompt(context.Context, channel.ConversationSession, channel.AgentSession, channel.PromptRequest, func(channel.AgentEvent) error) (string, error) {
 	panic("unused")
 }
 func (unusedAgentBackend) Stop(context.Context, channel.ConversationSession, channel.AgentSession) error {

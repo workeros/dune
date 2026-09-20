@@ -206,7 +206,7 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 	return backend, channel.AgentTarget{RunnerID: scope.RunnerID, ProfileID: "im-test-agent", ProfileRevision: 1, WorkingDirectory: t.TempDir()}
 }
 
-func TestDuneGatewaySessionIsolationAttachAndLoad(t *testing.T) {
+func TestDuneGatewaySessionIsolationAttachAndExplicitNew(t *testing.T) {
 	backend, target := gatewayAgentFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -225,10 +225,12 @@ func TestDuneGatewaySessionIsolationAttachAndLoad(t *testing.T) {
 	if sessions[0].Runtime.ID == sessions[1].Runtime.ID || sessions[0].ACPSessionID == sessions[1].ACPSessionID {
 		t.Fatal("two conversations share an ACP process/session")
 	}
+	sequence := 0
 	prompt := func(i int, want string) {
+		sequence++
 		t.Helper()
 		var visible strings.Builder
-		answer, err := backend.Prompt(ctx, conversations[i], sessions[i], "hello", func(event channel.AgentEvent) error {
+		answer, err := backend.Prompt(ctx, conversations[i], sessions[i], channel.PromptRequest{SubmissionID: fmt.Sprintf("prompt-%d", sequence), Text: "hello"}, func(event channel.AgentEvent) error {
 			if event.Kind == channel.AgentDelta {
 				visible.WriteString(event.Text)
 			}
@@ -248,12 +250,17 @@ func TestDuneGatewaySessionIsolationAttachAndLoad(t *testing.T) {
 	if err := backend.Stop(ctx, conversations[0], sessions[0]); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := backend.Attach(ctx, conversations[0], sessions[0])
-	if err != nil || recovered.ContextLost || recovered.ACPSessionID != sessions[0].ACPSessionID || recovered.Runtime.ID == sessions[0].Runtime.ID {
-		t.Fatalf("ACP load did not recover into a new Runtime: %+v %v", recovered, err)
+	if _, err := backend.Attach(ctx, conversations[0], sessions[0]); err == nil {
+		t.Fatal("attachment silently replaced the stopped Runtime")
 	}
-	sessions[0] = recovered
-	t.Cleanup(func() { _ = backend.Stop(context.Background(), conversations[0], recovered) })
-	prompt(0, "turn 3: hello")
+	// A new persisted revision is a separate explicit caller intent.
+	conversations[0].Revision++
+	created, err := backend.Start(ctx, conversations[0])
+	if err != nil || created.Runtime.ID == sessions[0].Runtime.ID {
+		t.Fatal("explicit new did not create a fresh Runtime", created, err)
+	}
+	sessions[0] = created
+	t.Cleanup(func() { _ = backend.Stop(context.Background(), conversations[0], created) })
+	prompt(0, "turn 1: hello")
 	prompt(1, "turn 2: hello")
 }

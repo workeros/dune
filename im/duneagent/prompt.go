@@ -16,7 +16,11 @@ import (
 
 const maxAnswerBytes = 1 << 20
 
-func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSession, session channel.AgentSession, input string, emit func(channel.AgentEvent) error) (string, error) {
+func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSession, session channel.AgentSession, request channel.PromptRequest, emit func(channel.AgentEvent) error) (string, error) {
+	input := request.Text
+	if err := api.ValidateSubmissionID(request.SubmissionID); err != nil {
+		return "", &api.Error{Code: "INVALID_ARGUMENT", Detail: err.Error()}
+	}
 	if err := b.ValidateInput(input); err != nil {
 		return "", err
 	}
@@ -44,7 +48,7 @@ func (b Backend) Prompt(ctx context.Context, conversation channel.ConversationSe
 		}
 		return "", errors.New("IM ACP Runtime identity changed or process exited")
 	}
-	operation, err := connection.Submit(ctx, runtime, host.AgentAction{SubmissionID: sessionSubmissionID(conversation, "prompt"), ExpectedConversationID: session.ConversationID, Action: "prompt", Text: input, SessionID: session.ACPSessionID})
+	operation, err := connection.Submit(ctx, runtime, host.AgentAction{SubmissionID: request.SubmissionID, ExpectedConversationID: session.ConversationID, Action: "prompt", Text: input, SessionID: session.ACPSessionID})
 	if err != nil {
 		return "", fmt.Errorf("submit ACP prompt (outcome may be unknown): %w", err)
 	}

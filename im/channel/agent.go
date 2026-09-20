@@ -32,11 +32,18 @@ type AgentEvent struct {
 	Text string
 }
 
+// PromptRequest identifies one caller intent before the first backend send.
+// The Processor derives the ID from its durably stored inbound event.
+type PromptRequest struct {
+	SubmissionID string
+	Text         string
+}
+
 type AgentBackend interface {
 	Capabilities(context.Context, ConversationSession) (AgentCapabilities, error)
 	Start(context.Context, ConversationSession) (AgentSession, error)
 	Attach(context.Context, ConversationSession, AgentSession) (AgentSession, error)
-	Prompt(context.Context, ConversationSession, AgentSession, string, func(AgentEvent) error) (string, error)
+	Prompt(context.Context, ConversationSession, AgentSession, PromptRequest, func(AgentEvent) error) (string, error)
 	Stop(context.Context, ConversationSession, AgentSession) error
 }
 

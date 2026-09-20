@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -178,30 +179,29 @@ func TestAttachRequiresExactRuntimeAndSessionIdentity(t *testing.T) {
 	}
 }
 
-func TestAttachLoadsPreviousSessionAfterDefinitiveRuntimeLoss(t *testing.T) {
-	backend, conversation, connection := testBackend()
-	connection.getErr = &api.Error{Code: "STALE_RUNTIME", Detail: "old process gone"}
-	connection.state.CanLoad = true
-	previous := channel.AgentSession{ConversationID: "conversation-a", Runtime: channel.RuntimeHandle{ID: "old-runtime", Incarnation: "old-inc", Generation: 1, Adapter: "acp"}, ACPSessionID: "prior-session"}
-	recovered, err := backend.Attach(context.Background(), conversation, previous)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if recovered.Runtime.ID != "runtime-a" || recovered.ACPSessionID != "prior-session" || recovered.ContextLost || connection.starts != 1 || len(connection.actions) != 1 || connection.actions[0].Action != "load" {
-		t.Fatalf("previous ACP session was not loaded: recovered=%+v starts=%d actions=%v", recovered, connection.starts, connection.actions)
-	}
-}
-
-func TestAttachStartsFreshSessionAndSignalsContextLossWhenLoadUnsupported(t *testing.T) {
-	backend, conversation, connection := testBackend()
-	connection.getErr = &api.Error{Code: "STALE_RUNTIME", Detail: "old process gone"}
-	previous := channel.AgentSession{ConversationID: "conversation-a", Runtime: channel.RuntimeHandle{ID: "old-runtime", Incarnation: "old-inc", Generation: 1, Adapter: "acp"}, ACPSessionID: "prior-session"}
-	recovered, err := backend.Attach(context.Background(), conversation, previous)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !recovered.ContextLost || recovered.ACPSessionID != "acp-session-a" || len(connection.actions) != 1 || connection.actions[0].Action != "new" {
-		t.Fatalf("context loss was not reported: recovered=%+v actions=%v", recovered, connection.actions)
+func TestAttachNeverReplacesEndedOrUnavailableRuntime(t *testing.T) {
+	for _, outcome := range []string{"stale", "exited", "lost", "unavailable"} {
+		for _, canLoad := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/load-%t", outcome, canLoad), func(t *testing.T) {
+				backend, conversation, connection := testBackend()
+				connection.state.CanLoad = canLoad
+				previous := channel.AgentSession{ConversationID: "conversation-a", Runtime: toHandle(connection.runtime), ACPSessionID: "prior-session"}
+				switch outcome {
+				case "stale":
+					connection.getErr = &api.Error{Code: "STALE_RUNTIME", Detail: "original host cannot be verified"}
+				case "unavailable":
+					connection.runtime.Availability = "unavailable"
+				default:
+					connection.runtime.State = outcome
+				}
+				if _, err := backend.Attach(context.Background(), conversation, previous); err == nil {
+					t.Fatal("unavailable original Runtime was attached")
+				}
+				if connection.starts != 0 || len(connection.actions) != 0 {
+					t.Fatal("attachment replaced the Agent or submitted new/load", connection.starts, connection.actions)
+				}
+			})
+		}
 	}
 }
 
@@ -258,7 +258,7 @@ func TestPromptStreamsOnlyAssistantAnswerAndDoesNotDuplicateFullFinal(t *testing
 	)}
 	session := channel.AgentSession{ConversationID: "conversation-a", Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	var events []channel.AgentEvent
-	final, err := backend.Prompt(context.Background(), conversation, session, "question", func(event channel.AgentEvent) error {
+	final, err := backend.Prompt(context.Background(), conversation, session, channel.PromptRequest{SubmissionID: "caller-prompt", Text: "question"}, func(event channel.AgentEvent) error {
 		events = append(events, event)
 		return nil
 	})
@@ -278,7 +278,7 @@ func TestPromptOperationReadInterruptionIsUnknownNotSuccess(t *testing.T) {
 	connection.state.SessionID = "acp-session-a"
 	connection.outputs = []api.AgentOperationOutput{outputPage("running", update("agent_message_chunk", "partial"))}
 	session := channel.AgentSession{ConversationID: "conversation-a", Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
-	if _, err := backend.Prompt(context.Background(), conversation, session, "question", func(channel.AgentEvent) error { return nil }); err == nil {
+	if _, err := backend.Prompt(context.Background(), conversation, session, channel.PromptRequest{SubmissionID: "caller-prompt", Text: "question"}, func(channel.AgentEvent) error { return nil }); err == nil {
 		t.Fatal("interrupted ACP stream was reported complete")
 	}
 }
@@ -292,7 +292,7 @@ func TestPromptCancellationStopsOperationRead(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := backend.Prompt(ctx, conversation, session, "question", func(channel.AgentEvent) error { return nil })
+		_, err := backend.Prompt(ctx, conversation, session, channel.PromptRequest{SubmissionID: "caller-prompt", Text: "question"}, func(channel.AgentEvent) error { return nil })
 		done <- err
 	}()
 	select {
@@ -326,7 +326,7 @@ func TestPromptFullAssistantMessageCanReviseStreamedDeltas(t *testing.T) {
 	)}
 	session := channel.AgentSession{ConversationID: "conversation-a", Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 	var events []channel.AgentEvent
-	final, err := backend.Prompt(context.Background(), conversation, session, "question", func(event channel.AgentEvent) error {
+	final, err := backend.Prompt(context.Background(), conversation, session, channel.PromptRequest{SubmissionID: "caller-prompt", Text: "question"}, func(event channel.AgentEvent) error {
 		events = append(events, event)
 		return nil
 	})
@@ -353,7 +353,7 @@ func TestPromptRejectsOutputFromAnotherOperationAndGaps(t *testing.T) {
 			connection.outputs = []api.AgentOperationOutput{output}
 			session := channel.AgentSession{ConversationID: "conversation-a", Runtime: toHandle(connection.runtime), ACPSessionID: "acp-session-a"}
 			var emitted bool
-			_, err := backend.Prompt(context.Background(), conversation, session, "question", func(channel.AgentEvent) error { emitted = true; return nil })
+			_, err := backend.Prompt(context.Background(), conversation, session, channel.PromptRequest{SubmissionID: "caller-prompt", Text: "question"}, func(channel.AgentEvent) error { emitted = true; return nil })
 			if err == nil || emitted {
 				t.Fatal("unrelated/incomplete output was accepted")
 			}
@@ -382,8 +382,17 @@ func TestPromptKeepsStoredGenerationAfterRuntimeRefresh(t *testing.T) {
 	backend, conversation, connection := testBackend()
 	connection.runtime.ConversationID = "fresh-c2"
 	connection.outputs = []api.AgentOperationOutput{{AgentOperation: api.AgentOperation{Ref: "prompt-operation", State: "completed"}}}
-	_, _ = backend.Prompt(context.Background(), conversation, channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "session-a", ConversationID: "observed-c1"}, "task", func(channel.AgentEvent) error { return nil })
-	if len(connection.actions) != 1 || connection.actions[0].ExpectedConversationID != "observed-c1" {
+	_, _ = backend.Prompt(context.Background(), conversation, channel.AgentSession{Runtime: toHandle(connection.runtime), ACPSessionID: "session-a", ConversationID: "observed-c1"}, channel.PromptRequest{SubmissionID: "caller-prompt", Text: "task"}, func(channel.AgentEvent) error { return nil })
+	if len(connection.actions) != 1 || connection.actions[0].ExpectedConversationID != "observed-c1" || connection.actions[0].SubmissionID != "caller-prompt" {
 		t.Fatal("IM rebound the pending prompt to fresh Runtime metadata")
+	}
+}
+
+func TestPromptRejectsMissingCallerIDBeforeOpeningConnection(t *testing.T) {
+	backend := Backend{}
+	_, err := backend.Prompt(context.Background(), channel.ConversationSession{}, channel.AgentSession{}, channel.PromptRequest{Text: "task"}, func(channel.AgentEvent) error { return nil })
+	var invalid *api.Error
+	if !errors.As(err, &invalid) || invalid.Code != "INVALID_ARGUMENT" {
+		t.Fatal("missing ID reached the unconfigured connector", err)
 	}
 }
