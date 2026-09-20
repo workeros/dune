@@ -60,6 +60,7 @@ type runtime struct {
 	ptyActivityMu          sync.Mutex
 	ptyProbeAfter          time.Time
 	operations             *operationLog
+	conversations          *conversationStore
 	ptyInput               *ptyInputQueue
 	control                terminalControl
 }
@@ -693,7 +694,7 @@ func (d *Engine) updateProfileAttempt(executionID, state string, progress api.Pr
 }
 
 func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func()) {
-	r := &runtime{id: wire.ID(), inc: d.inc, adapter: p.Adapter, subs: map[*subscription]bool{}, done: make(chan struct{})}
+	r := &runtime{id: wire.ID(), inc: d.inc, adapter: p.Adapter, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
 	argv, _ := p.Start.Args()
 	r.title = filepath.Base(argv[0])
 	r.cwd = p.WorkingDirectory

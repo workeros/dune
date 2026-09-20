@@ -102,6 +102,7 @@ func (a *acpController) startNextLocked() {
 		params := map[string]any{}
 		switch req.Action {
 		case "new", "load":
+			a.conversation.begin(req)
 			servers := a.mcpServers
 			if servers == nil {
 				servers = []any{}
@@ -127,6 +128,7 @@ func (a *acpController) startNextLocked() {
 			a.r.emit(&pb.Message{Kind: "acp_reset"})
 		}
 		if req.Action == "prompt" {
+			a.conversation.startTurn(operation.ref, string(a.redactCredential([]byte(req.Text))))
 			a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": req.SessionID, "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]string{"type": "text", "text": req.Text}}})})
 		}
 		go a.runOperation(operation, params)
@@ -175,6 +177,24 @@ func (a *acpController) runOperation(operation *acpQueuedAction, params map[stri
 			record.status.NativeSession = native
 		}
 		a.operations.mu.Unlock()
+	}
+	status := api.AgentOperation{Ref: operation.ref, State: state, StopReason: reason, Error: detail}
+	if operation.request.Action == "new" || operation.request.Action == "load" {
+		outcome := "succeeded"
+		var failure *api.ACPFailure
+		if err != nil {
+			outcome = state
+			code := "ACP_OPEN_FAILED"
+			var apiFailure *api.Error
+			if errors.As(err, &apiFailure) {
+				code = apiFailure.Code
+			}
+			failure = &api.ACPFailure{Code: code, Detail: detail}
+		}
+		a.conversation.opened(a.state.SessionID, a.state.Cwd, outcome, failure)
+	}
+	if operation.request.Action == "prompt" {
+		a.conversation.finishTurn(status)
 	}
 	a.publishOperation(a.operations.set(operation.ref, state, reason, detail))
 	a.active = nil
@@ -258,7 +278,11 @@ func (a *acpController) cancelPendingLocked(detail string) {
 func (a *acpController) closeQueueLocked() {
 	if a.active != nil && !a.active.responded {
 		a.operations.markIncomplete(a.active.ref)
-		a.publishOperation(a.operations.set(a.active.ref, "unknown", "", "Agent exited before operation completion; request was not replayed"))
+		status := a.operations.set(a.active.ref, "unknown", "", "Agent exited before operation completion; request was not replayed")
+		if a.active.request.Action == "prompt" {
+			a.conversation.finishTurn(status)
+		}
+		a.publishOperation(status)
 		a.active = nil
 	}
 	a.cancelPendingLocked("Agent exited; queued request was not sent")

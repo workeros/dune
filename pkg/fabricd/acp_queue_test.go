@@ -25,7 +25,7 @@ func queueFixture(t *testing.T) (*acpController, <-chan queuedRPC) {
 	r := &runtime{cwd: "/tmp", subs: map[*subscription]bool{}, p: &process.Process{Input: writer}}
 	a := newACPController(r)
 	r.acp = a
-	a.state = acpState{Ready: true, SessionID: "session-a", Cwd: "/tmp", CanLoad: true, CanList: true}
+	a.state = api.ACPState{Ready: true, SessionID: "session-a", Cwd: "/tmp", CanLoad: true, CanList: true}
 	requests := make(chan queuedRPC, 64)
 	go func() {
 		defer close(requests)

@@ -7,6 +7,25 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
+// ACPState discovers the current model without attaching or opening a session.
+func (c *Client) ACPState(ctx context.Context, runtime api.Runtime) (api.ACPState, error) {
+	var state api.ACPState
+	err := c.CallID(ctx, "acp.state", wire.ID(), struct{}{}, &state, &runtime)
+	return state, err
+}
+
+func (c *Client) ReadACPConversation(ctx context.Context, runtime api.Runtime, request api.ACPConversationRead) (api.ACPConversationPage, error) {
+	var page api.ACPConversationPage
+	err := c.CallID(ctx, "acp.conversation.read", wire.ID(), request, &page, &runtime)
+	return page, err
+}
+
+func (c *Client) GetACPConversationEntries(ctx context.Context, runtime api.Runtime, request api.ACPConversationGet) (api.ACPConversationEntries, error) {
+	var entries api.ACPConversationEntries
+	err := c.CallID(ctx, "acp.conversation.get", wire.ID(), request, &entries, &runtime)
+	return entries, err
+}
+
 // ConfigureAgentMCP releases the ACP session gate or native PTY MCP bridge.
 // An unconfirmed response must not trigger a new launch or token rotation.
 func (c *Client) ConfigureAgentMCP(ctx context.Context, runtime api.Runtime, config api.AgentMCP) (api.AgentMCPStatus, error) {

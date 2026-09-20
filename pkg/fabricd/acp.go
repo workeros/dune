@@ -17,26 +17,8 @@ import (
 )
 
 type acpPermission struct {
-	ID     string          `json:"id"`
-	Params json.RawMessage `json:"params"`
-	rpcID  json.RawMessage
-}
-type acpState struct {
-	OperationRef string          `json:"operation_ref,omitempty"`
-	Pending      int             `json:"pending"`
-	Revision     uint64          `json:"revision"`
-	Ready        bool            `json:"ready"`
-	Busy         string          `json:"busy"`
-	SessionID    string          `json:"session_id"`
-	Cwd          string          `json:"cwd"`
-	CanList      bool            `json:"can_list"`
-	CanLoad      bool            `json:"can_load"`
-	MCPTransport string          `json:"mcp_transport,omitempty"`
-	Agent        json.RawMessage `json:"agent,omitempty"`
-	Permissions  []acpPermission `json:"permissions"`
-	List         json.RawMessage `json:"list,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	StopReason   string          `json:"stop_reason,omitempty"`
+	api.ACPPermission
+	rpcID json.RawMessage
 }
 type acpReply struct {
 	Result json.RawMessage
@@ -54,7 +36,7 @@ type acpController struct {
 	controlMu      sync.Mutex
 	controlling    bool
 	r              *runtime
-	state          acpState
+	state          api.ACPState
 	pending        map[string]chan acpReply
 	permissions    map[string]acpPermission
 	methods        map[string]string
@@ -64,6 +46,7 @@ type acpController struct {
 	queue          []*acpQueuedAction
 	active         *acpQueuedAction
 	operations     *operationLog
+	conversation   *conversationSlot
 	nativeSequence int64
 	requireMCP     bool
 	mcpHTTP        bool
@@ -73,17 +56,21 @@ type acpController struct {
 
 func newACPController(r *runtime) *acpController {
 	r.updateActivity("working", "acp", "", "")
-	return &acpController{r: r, operations: r.operationLog(), state: acpState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	if r.conversations == nil {
+		r.conversations = newConversationStore()
+	}
+	return &acpController{r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
 }
-func (a *acpController) snapshotLocked() acpState {
+func (a *acpController) snapshotLocked() api.ACPState {
 	s := a.state
-	s.Permissions = make([]acpPermission, 0, len(a.permissions))
+	s.Conversation = a.conversation.describe()
+	s.Permissions = make([]api.ACPPermission, 0, len(a.permissions))
 	for _, p := range a.permissions {
-		s.Permissions = append(s.Permissions, p)
+		s.Permissions = append(s.Permissions, p.ACPPermission)
 	}
 	return s
 }
-func (a *acpController) snapshot() acpState {
+func (a *acpController) snapshot() api.ACPState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.snapshotLocked()
@@ -151,6 +138,7 @@ func (a *acpController) closed() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.closeQueueLocked()
+	a.conversation.exited()
 	a.state.Ready = false
 	a.state.Busy = ""
 	a.permissions = map[string]acpPermission{}
@@ -235,7 +223,7 @@ func (a *acpController) receive(data []byte) {
 		}
 		if valid {
 			key := wire.ID()
-			a.permissions[key] = acpPermission{ID: key, Params: append(json.RawMessage(nil), m.Params...), rpcID: m.ID}
+			a.permissions[key] = acpPermission{ACPPermission: api.ACPPermission{ID: key, Params: append(json.RawMessage(nil), m.Params...)}, rpcID: m.ID}
 			a.publishLocked()
 			a.mu.Unlock()
 			return
@@ -276,6 +264,8 @@ func formatACPError(code int, message string, data json.RawMessage) error {
 }
 
 func (a *acpController) emitUpdate(params json.RawMessage) {
+	params = redactMCPConfiguration(params)
+	a.recordConversationUpdate(params)
 	a.recordUpdate(params)
 	if len(params) <= acpBrowserUpdateBytes {
 		a.r.emit(&pb.Message{Kind: "acp_update", Payload: params})

@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -30,31 +30,33 @@ type profileAttempt struct {
 	at     time.Time
 }
 type Engine struct {
-	cleaner     *process.Cleaner
-	starts      chan struct{}
-	mu          sync.Mutex
-	inc         string
-	generation  uint64
-	runtimes    map[string]*runtime
-	uploads     map[string]*upload
-	cache       map[string]*cached
-	attempts    map[string]*profileAttempt
-	bulk        chan struct{}
-	searchSlots chan struct{}
-	fileMu      sync.Mutex
-	gitLocks    gitRepositoryLocks
-	ctx         context.Context
-	tmux        *tmux.Server
-	stateDir    string
-	cancel      context.CancelFunc
-	closeOnce   sync.Once
-	active      sync.WaitGroup
-	lock        *os.File
+	cleaner           *process.Cleaner
+	starts            chan struct{}
+	mu                sync.Mutex
+	inc               string
+	generation        uint64
+	runtimes          map[string]*runtime
+	uploads           map[string]*upload
+	cache             map[string]*cached
+	attempts          map[string]*profileAttempt
+	bulk              chan struct{}
+	searchSlots       chan struct{}
+	conversations     *conversationStore
+	conversationReads chan struct{}
+	fileMu            sync.Mutex
+	gitLocks          gitRepositoryLocks
+	ctx               context.Context
+	tmux              *tmux.Server
+	stateDir          string
+	cancel            context.CancelFunc
+	closeOnce         sync.Once
+	active            sync.WaitGroup
+	lock              *os.File
 }
 
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
-	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), ctx: ctx}
+	return &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
 }
 
 // Close stops the connector and owned ACP processes and releases its state lock.
@@ -180,16 +182,40 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 				}
 			}
 		}
-	case "acp.state", "acp.action":
+	case "acp.state", "acp.action", "acp.conversation.read", "acp.conversation.get":
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil && r.acp == nil {
 			e = &api.Error{Code: "UNSUPPORTED", Detail: "session is not managed ACP"}
 		}
 		if e == nil {
-			if m.Operation == "acp.state" {
+			if m.Operation == "acp.conversation.read" || m.Operation == "acp.conversation.get" {
+				select {
+				case d.conversationReads <- struct{}{}:
+					defer func() { <-d.conversationReads }()
+				default:
+					s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("conversation read concurrency limit reached"))
+					return
+				}
+			}
+			switch m.Operation {
+			case "acp.state":
 				result = r.acp.snapshot()
-			} else {
+			case "acp.conversation.read":
+				var request api.ACPConversationRead
+				if e = wire.Decode(m, &request); e == nil {
+					result, e = r.acp.conversation.read(request)
+				} else {
+					e = conversationArgument("invalid conversation read request")
+				}
+			case "acp.conversation.get":
+				var request api.ACPConversationGet
+				if e = wire.Decode(m, &request); e == nil {
+					result, e = r.acp.conversation.get(request)
+				} else {
+					e = conversationArgument("invalid conversation get request")
+				}
+			case "acp.action":
 				var a api.ACPAction
 				e = wire.Decode(m, &a)
 				if e == nil {
@@ -272,6 +298,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 		if e == nil {
 			r.closePTYInput()
+			if r.acp != nil {
+				r.acp.conversation.remove()
+			}
 		}
 	case "runtime.get", "runtime.stop":
 		var r *runtime
@@ -359,7 +388,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 	}
 	d.mu.Lock()
-	if searchRequest || m.Operation == "agent.operation.read" || m.Operation == "runtime.scrollback" {
+	if searchRequest || m.Operation == "agent.operation.read" || m.Operation == "runtime.scrollback" || m.Operation == "acp.conversation.read" || m.Operation == "acp.conversation.get" {
 		// Retain deduplication without duplicating up to 256 large read responses.
 		d.cache[m.RequestId].result = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "RESULT_UNKNOWN", Detail: "read response is not retained; issue a new read"}
 	} else {

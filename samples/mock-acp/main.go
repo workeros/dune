@@ -67,6 +67,17 @@ func main() {
 			}
 			continue
 		}
+		if path := os.Getenv("DUNE_MOCK_RPC_LOG"); path != "" {
+			log, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				panic(err)
+			}
+			_, err = fmt.Fprintln(log, m.Method)
+			_ = log.Close()
+			if err != nil {
+				panic(err)
+			}
+		}
 		switch m.Method {
 		case "initialize":
 			caps := map[string]any{}
