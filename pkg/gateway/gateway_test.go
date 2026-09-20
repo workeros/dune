@@ -286,7 +286,9 @@ func TestDaemonRouteRequiresConfirmedLease(t *testing.T) {
 	}
 	original := session(t, ctx, g, gateway.RoleDaemon, daemonHandler)
 	local, remote := net.Pipe()
+	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		_ = g.ServeConn(ctx, remote, gateway.BindingContext{Target: "machine", Role: gateway.RoleDaemon}, daemonHandler)
 	}()
 	replacement, err := yamux.Client(local, wire.Config())
@@ -321,12 +323,20 @@ func TestDaemonRouteRequiresConfirmedLease(t *testing.T) {
 	if err != nil || wire.Decode(probe, &selected) != nil || selected.Incarnation != "boot" || original.IsClosed() {
 		t.Fatal("unconfirmed handshake replaced original route", selected, err)
 	}
-	if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: "wrong-challenge"}); err != nil {
-		t.Fatal(err)
-	}
+	// The rejected peer closes immediately; Yamux shutdown may win the race
+	// with either the sender's acknowledgement or the diagnostic error frame.
+	_ = control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: "wrong-challenge"})
 	_ = control.SetReadDeadline(time.Now().Add(time.Second))
 	failure, err := control.Recv()
-	if err != nil || failure.Code != "HANDSHAKE" || original.IsClosed() || !g.Online("machine") {
+	if err == nil && failure.Code != "HANDSHAKE" {
+		t.Fatal("invalid confirmation was not rejected", failure)
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("invalid confirmation kept the replacement connection alive")
+	}
+	if original.IsClosed() || !g.Online("machine") {
 		t.Fatal("invalid confirmation changed original route", failure, err)
 	}
 }
