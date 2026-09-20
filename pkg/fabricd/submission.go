@@ -52,6 +52,7 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 		failSubmission(s, receipt, err)
 		return
 	}
+	d.recordLifecycle("admission_receipt", runtime, receipt.OperationRef, "", 0)
 	_ = s.Send(&pb.Message{Kind: "result", RequestId: message.RequestId, Payload: api.Payload(receipt)})
 }
 

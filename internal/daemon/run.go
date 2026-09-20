@@ -6,7 +6,6 @@ import (
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/transport/ws"
-	"log"
 	"time"
 )
 
@@ -32,7 +31,7 @@ func Run(ctx context.Context, c config.Config, readyFile, readyNonce string) err
 		conn, e := ws.Dial(ctx, c.Gateway, c.Token, tc)
 		if e != nil && e.Error() != lastFailure {
 			lastFailure = e.Error()
-			log.Printf("Gateway connection unavailable: %v", e)
+			d.RecordGatewayUnavailable()
 		}
 		if e == nil {
 			lastFailure = ""

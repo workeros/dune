@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"slices"
 	"time"
 
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/wire"
@@ -57,6 +57,7 @@ func (d *Engine) submitForget(s *executionStream, message *pb.Message, machine s
 		err = submissionDecisionError(receipt)
 	}
 	if err == nil && acquired {
+		d.events.Record(lifecycle.Entry{Kind: "cleanup_accepted", RuntimeID: key.Target.RuntimeID, RuntimeIncarnation: key.Target.RuntimeIncarnation, OperationRef: receipt.OperationRef})
 		err = d.cleanupPoint(key, "accepted")
 		if err == nil {
 			execution := d.scheduleCleanup(key, receipt.OperationRef)
@@ -208,7 +209,7 @@ func (d *Engine) runCleanupRecovery() {
 			return
 		case <-ticker.C:
 			if err := d.recoverCleanups(); err != nil && d.ctx.Err() == nil {
-				log.Print("ACP cleanup recovery could not read independent registry")
+				d.recordLifecycle("cleanup_recovery_failed", nil, "", "REGISTRY_UNAVAILABLE", d.sessionTerm)
 			}
 		}
 	}
@@ -236,6 +237,9 @@ func (d *Engine) executeCleanup(ctx context.Context, job sessionregistry.Cleanup
 		checkpointCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		_, checkpointErr := d.registry.CheckpointCleanup(checkpointCtx, job, step, code)
 		cancel()
+		if checkpointErr == nil {
+			d.events.Record(lifecycle.Entry{Kind: "cleanup_" + step, RuntimeID: job.Key.Target.RuntimeID, RuntimeIncarnation: job.Key.Target.RuntimeIncarnation, OperationRef: job.Reference, Code: code})
+		}
 		if err != nil || checkpointErr != nil {
 			return
 		}
@@ -245,6 +249,7 @@ func (d *Engine) executeCleanup(ctx context.Context, job sessionregistry.Cleanup
 		}
 	}
 	d.discoveryScanMu.Lock()
+	d.events.Record(lifecycle.Entry{Kind: "cleanup_completed", RuntimeID: job.Key.Target.RuntimeID, RuntimeIncarnation: job.Key.Target.RuntimeIncarnation, OperationRef: job.Reference})
 	d.mu.Lock()
 	r := d.runtimes[job.Key.Target.RuntimeID]
 	if r != nil && r.inc == job.Key.Target.RuntimeIncarnation {

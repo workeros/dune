@@ -275,5 +275,6 @@ func (d *Engine) submitRaw(s *executionStream, message *pb.Message, machine stri
 		failSubmission(s, receipt, err)
 		return
 	}
+	d.recordLifecycle("admission_receipt", r, receipt.OperationRef, "", 0)
 	_ = s.Send(&pb.Message{Kind: "result", Payload: api.Payload(receipt)})
 }

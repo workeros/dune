@@ -63,6 +63,7 @@ func (d *Engine) stopSubmission(ctx context.Context, r *runtime, key api.Submiss
 	}
 	// From here onward the accepted operation belongs to its host. Cancellation
 	// affects only delivery of the response, never the original stop itself.
+	d.recordLifecycle("stop_accepted", r, receipt.OperationRef, "", 0)
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
 	if err = d.stop(r); err == nil {

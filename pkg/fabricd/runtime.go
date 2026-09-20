@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/aiomni/dune/internal/agentintegration"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
@@ -66,6 +67,7 @@ type runtime struct {
 	raw                    *rawACP
 	host                   *sessionProxy
 	hostInfo               *api.ACPHostInfo
+	events                 *lifecycle.Log
 	target                 api.SubmissionTarget
 	activity               api.AgentActivity
 	nativeSession          *api.NativeSession
@@ -132,6 +134,7 @@ func (r *runtime) info() api.Runtime {
 	info := api.Runtime{ConversationID: conversationID, ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
 	if r.hostInfo != nil {
 		host := *r.hostInfo
+		host.LifecycleLog = lifecycleUsage(r.events)
 		if r.p != nil && r.p.Cmd != nil && r.p.Cmd.Process != nil {
 			host.AgentPID, host.GroupID = r.p.PID, r.p.Cmd.Process.Pid
 		}

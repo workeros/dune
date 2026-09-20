@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 )
@@ -31,6 +32,7 @@ type conversationSlot struct {
 	model       *conversationModel
 	pending     *api.ACPConversationChanged
 	publish     func(api.ACPConversationChanged)
+	events      *lifecycle.Log
 }
 
 type conversationModel struct {
@@ -154,6 +156,7 @@ func (s *conversationSlot) commitLocked() {
 	s.store.bytes -= m.bytes
 	m.measure()
 	for len(m.entries) > 0 && (m.bytes > s.store.maxModelBytes || len(m.entries) > s.store.maxEntries) {
+		s.recordBufferGap()
 		m.evictFirst()
 		s.store.usage.Evictions++
 		m.measure()
@@ -176,6 +179,7 @@ func (s *conversationSlot) commitLocked() {
 			break
 		} // descriptions are separately bounded by Runtime admission.
 		s.store.bytes -= victim.bytes
+		victimSlot.recordBufferGap()
 		victim.evictFirst()
 		s.store.usage.Evictions++
 		if victim != m {
@@ -187,6 +191,12 @@ func (s *conversationSlot) commitLocked() {
 		s.store.bytes += victim.bytes
 	}
 	s.notifyLocked(previous)
+}
+
+func (s *conversationSlot) recordBufferGap() {
+	if !s.model.description.PrefixEvicted {
+		s.events.Record(lifecycle.Entry{Kind: "conversation_gap", RuntimeID: s.runtimeID, RuntimeIncarnation: s.incarnation})
+	}
 }
 
 func (m *conversationModel) measure() {

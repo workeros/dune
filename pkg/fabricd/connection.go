@@ -3,7 +3,6 @@ package fabricd
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 
 	"github.com/aiomni/dune/internal/sessionregistry"
@@ -92,7 +91,8 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 		return err
 	}
 	go input.Watch(ctx, func() { sess.Close() })
-	log.Printf("fabricd connected incarnation=%s generation=%d", d.inc, gen)
+	d.recordLifecycle("gateway_attached", nil, "", "", d.sessionTerm)
+	defer d.recordLifecycle("gateway_detached", nil, "", "", d.sessionTerm)
 	go func() { _ = renewInputLease(ctx, input, ctrl, accepted); sess.Close() }()
 	for {
 		raw, err := sess.AcceptStream()

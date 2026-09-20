@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/pkg/api"
 )
@@ -51,6 +52,9 @@ func TestOriginalHostRetainsProgramAcrossReleaseDeletionAndExplicitOpen(t *testi
 		t.Fatal(before, err)
 	}
 	identity := *before.ACPHost
+	if identity.LifecycleLog == nil || identity.LifecycleLog.Bytes.Limit != lifecycle.MaxBytes || identity.LifecycleLog.WriteErrors != 0 {
+		t.Fatal("missing bounded log diagnostics", identity)
+	}
 	pinned := filepath.Join(h.state, "acp", "runtimes", runtime.ID, "program")
 	if err := retainedprogram.Verify(pinned, retainedprogram.Identity{SHA256: identity.ProgramSHA256, Bytes: identity.ProgramBytes}); err != nil {
 		t.Fatal(err)
@@ -82,12 +86,41 @@ func TestOriginalHostRetainsProgramAcrossReleaseDeletionAndExplicitOpen(t *testi
 	if err != nil || strings.Count(string(rpcs), "initialize\n") != 2 || strings.Count(string(rpcs), "session/new\n") != 2 {
 		t.Fatal("replacement happened outside explicit open", string(rpcs), err)
 	}
+	const privatePrompt = "private-prompt-must-never-enter-lifecycle-log"
+	prompt, err := h.client.ACPSubmit(h.ctx, cleanupTestKey(runtime, "private-log-probe"), api.ACPAction{Action: "prompt", Text: privatePrompt, ExpectedConversationID: after.ConversationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err = h.client.WaitAgentOperation(h.ctx, runtime, api.AgentOperationWait{Ref: prompt.Ref, TimeoutMS: 5000})
+	if err != nil || prompt.State != "completed" {
+		t.Fatal(prompt, err)
+	}
 	if err := testStopRuntime(h.client, h.ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
+	logPath := filepath.Join(h.state, "acp", "runtimes", runtime.ID, "host-events.jsonl")
+	waitTimeoutTest(t, func() bool {
+		body, _ := os.ReadFile(logPath)
+		if strings.Contains(string(body), privatePrompt) {
+			t.Fatal("lifecycle log retained prompt content")
+		}
+		if len(body) > lifecycle.MaxBytes {
+			t.Fatal("host lifecycle log exceeded bound")
+		}
+		for _, kind := range []string{"host_started", "admission_receipt", "attach", "detach", "control_takeover", "stop_accepted", "agent_exit"} {
+			if !strings.Contains(string(body), `"kind":"`+kind+`"`) {
+				return false
+			}
+		}
+		return true
+	})
 	if err := testForgetRuntime(h.client, h.ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
+	waitTimeoutTest(t, func() bool {
+		body, _ := os.ReadFile(filepath.Join(h.state, "connector-events.jsonl"))
+		return strings.Contains(string(body), `"kind":"cleanup_completed"`) && strings.Contains(string(body), runtime.ID)
+	})
 	if _, err := os.Lstat(pinned); !os.IsNotExist(err) {
 		t.Fatal("completed forget retained the helper", err)
 	}

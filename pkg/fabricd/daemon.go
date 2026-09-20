@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
@@ -33,6 +34,7 @@ type profileAttempt struct {
 type Engine struct {
 	cleaner           *process.Cleaner
 	registry          *sessionregistry.Registry
+	events            *lifecycle.Log
 	submissionReads   chan struct{}
 	stateReads        chan struct{}
 	discoveryReads    chan struct{}
@@ -121,6 +123,7 @@ func (d *Engine) Close() {
 		if d.registry != nil {
 			_ = d.registry.Close()
 		}
+		d.events.Close()
 		if d.lock != nil {
 			_ = syscall.Flock(int(d.lock.Fd()), syscall.LOCK_UN)
 			_ = d.lock.Close()
@@ -380,6 +383,7 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		info := api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics(), StreamCapacity: d.streams.Snapshot()}
 		connector := d.connectorInfo()
 		info.Connector, info.Tmux = &connector, d.tmuxVersions(s.ctx)
+		info.LifecycleLog = lifecycleUsage(d.events)
 		if e == nil && d.registry != nil {
 			var capacity api.SubmissionCapacity
 			capacity, e = d.registry.Capacity(s.ctx)

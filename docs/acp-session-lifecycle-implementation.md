@@ -987,3 +987,36 @@ validated expensive L53/L54 fixtures excluded), as do affected-package vet and
 whitespace checks. The source-deletion/explicit-open regression remains in that
 fabricd run. Native service managers and external Agent/platform execution remain
 deferred; no Web source changed in this slice.
+
+## Slice 24 — bounded lifecycle diagnostics
+
+Original hosts and connectors now write private lifecycle JSONL through one
+nonblocking 64-entry queue each. Each file is capped at 64 KiB with explicit
+window-reset records, and encoded events are capped below 1536 bytes. A partial
+final record left by a crash is reset on the next process's first write. Producers
+do not wait for disk, queue pressure drops events, and public diagnostic usage
+reports bytes, queue, drops and write errors. Admission and cleanup truth remains
+in the independent registry; lifecycle logs are best-effort observations.
+
+Host start/exit, final Agent exit, admission receipts, launch/stop acceptance,
+attach/detach, control takeover/rejection, identity/protocol mismatch, the first
+managed/raw buffer gap, and cleanup checkpoints/results use fixed fields without
+prompt/tool/permission bodies or environments. Continuous connector Gateway and
+cleanup-recovery logs move into the same bounded sink. Standard command startup
+stderr and native service-manager log retention still need the final audit; this
+slice does not claim that every external service log file is bounded.
+
+The log unit tests pass with race enabled: disk rotation, 10,000 attempted events with
+no consumer (64 queued, all others counted as dropped), unsafe filenames/symlinks,
+invalid body strings, and reopening a partial record. The retained-program process
+test now asserts host lifecycle events across fabricd SIGKILL and explicit Agent
+replacement, confirms private prompt text is absent, and finds cleanup completion
+in the independent connector log after forget removes the Runtime directory.
+Separate managed model-eviction and real raw offline-output process cases confirm
+gap logging without retaining protocol content. Broader checks follow below.
+
+The lifecycle/fabricd race suites pass (123.2 seconds for fabricd, excluding the
+previously validated expensive L53/L54 fixtures). The added gap checks pass with
+race separately. All three installer regressions pass in 36.7 seconds, including
+different build stamps, in-flight work, rollback and PTY deadlines. Affected vet
+and whitespace checks pass. No external/native service-manager acceptance ran.

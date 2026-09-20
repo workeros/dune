@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/agentintegration"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/sessionregistry"
@@ -80,6 +81,11 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 	if err := d.discoverSessions(); err != nil {
 		return nil, err
 	}
+	d.events, err = lifecycle.Open(stateDir, "connector-events.jsonl")
+	if err != nil {
+		return nil, err
+	}
+	d.recordLifecycle("connector_started", nil, "", "", d.sessionTerm)
 	sessions, err := d.tmux.Restore()
 	if err != nil {
 		return nil, err

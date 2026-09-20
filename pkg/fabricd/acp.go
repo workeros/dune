@@ -69,6 +69,9 @@ func newACPController(r *runtime) *acpController {
 	a := &acpController{connection: r.p, r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc, func(change api.ACPConversationChanged) {
 		r.emit(&pb.Message{Kind: "acp_conversation_changed", Payload: api.Payload(change)})
 	}), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	r.conversations.mu.Lock()
+	a.conversation.events = r.events
+	r.conversations.mu.Unlock()
 	a.renewConnection = a.reconnect
 	return a
 }

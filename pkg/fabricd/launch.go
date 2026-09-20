@@ -104,6 +104,7 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 	d.mu.Lock()
 	d.launching[r.id] = r.inc
 	d.mu.Unlock()
+	d.recordLifecycle("launch_accepted", r, receipt.OperationRef, "", d.sessionTerm)
 	defer func() { d.mu.Lock(); delete(d.launching, r.id); d.mu.Unlock() }()
 	progress := func(stage, code string, runtime *api.Runtime) error {
 		observed, err := d.registry.Progress(d.ctx, key, receipt.OperationRef, stage, code, runtime)

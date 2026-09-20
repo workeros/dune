@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/buildinfo"
+	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
@@ -97,9 +98,15 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	if err != nil {
 		return err
 	}
+	d.events, err = lifecycle.Open(directory, "host-events.jsonl")
+	if err != nil {
+		return err
+	}
 	r := &runtime{target: reg.Target, id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
 	hostStarted := time.Now().UTC()
 	build := buildinfo.Current()
+	r.events = d.events
+	defer d.recordLifecycle("host_exit", r, "", "", 0)
 	r.hostInfo = &api.ACPHostInfo{Build: &build, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted}
 	bootID, err := process.BootID()
 	if err != nil {
@@ -143,6 +150,12 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 			writer = wrap(writer)
 		}
 		r.raw = newRawACP(ctx, d.registry, "acp:"+r.inc, writer)
+		r.raw.stdout.onGap = func(count uint64) {
+			d.events.Record(lifecycle.Entry{Kind: "stdout_gap", RuntimeID: r.id, RuntimeIncarnation: r.inc, HostInstance: reg.Instance, Count: count})
+		}
+		r.raw.stderr.onGap = func(count uint64) {
+			d.events.Record(lifecycle.Entry{Kind: "stderr_gap", RuntimeID: r.id, RuntimeIncarnation: r.inc, HostInstance: reg.Instance, Count: count})
+		}
 	}
 	now := time.Now().UTC()
 	r.startedAt = &now
@@ -155,6 +168,7 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 		return err
 	}
 	r.runProcess(r.p)
+	d.recordLifecycle("host_started", r, boot.Launch.OperationRef, "", 0)
 	if r.acp != nil {
 		go r.acp.initialize()
 	}
@@ -166,6 +180,7 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	_, _ = d.registry.Progress(ctx, boot.Launch.SubmissionKey, boot.Launch.OperationRef, "started", "", &reg.Runtime)
 	go func() {
 		<-r.done
+		d.recordLifecycle("agent_exit", r, "", r.info().StopReason, 0)
 		terminal := reg
 		terminal.Runtime = r.info()
 		_ = d.registry.RecordHostRuntime(ctx, reg.Target, reg.Instance, terminal.Runtime)
@@ -244,18 +259,28 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 	m, err := ctrl.Recv()
 	var hello sessionHello
 	if err != nil || m.Kind != "host.connect" || wire.Decode(m, &hello) != nil || !sameSession(hello.Registration, reg) {
+		code := "HOST_IDENTITY_MISMATCH"
+		if hello.Registration.Version != reg.Version {
+			code = "SESSION_PROTOCOL_UNSUPPORTED"
+		}
+		d.recordLifecycle("handshake_rejected", r, "", code, 0)
 		ctrl.Fail("HOST_IDENTITY_MISMATCH", fmt.Errorf("ACP host identity does not match registration"))
 		return
 	}
 	if !hello.Probe {
 		control.mu.Lock()
 		if hello.Term == 0 || !wire.ValidID(hello.Connector) || hello.Term < control.term || (hello.Term == control.term && hello.Connector != control.connector) {
+			d.recordLifecycle("control_rejected", r, "", "STALE_CONTROL", hello.Term)
 			control.mu.Unlock()
 			ctrl.Fail("STALE_CONTROL", fmt.Errorf("connector control term is obsolete"))
 			return
 		}
 		old := control.current
+		if hello.Term > control.term {
+			d.recordLifecycle("control_takeover", r, "", "", hello.Term)
+		}
 		control.term, control.connector, control.current = hello.Term, hello.Connector, sess
+		d.recordLifecycle("attach", r, "", "", hello.Term)
 		r.mu.Lock()
 		if r.hostInfo != nil {
 			now := time.Now().UTC()
@@ -264,6 +289,7 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 		r.mu.Unlock()
 		control.mu.Unlock()
 		defer func() {
+			d.recordLifecycle("detach", r, "", "", hello.Term)
 			control.mu.Lock()
 			defer control.mu.Unlock()
 			if control.current == sess {

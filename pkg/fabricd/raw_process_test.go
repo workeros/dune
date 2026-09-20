@@ -227,6 +227,10 @@ func TestRawIncompleteNetworkInputAndOfflineOutputGap(t *testing.T) {
 	if gap.Window != stateAfter.Stdout || len(gap.Data) != 0 {
 		t.Fatal("SDK lost gap position", gap)
 	}
+	waitTimeoutTest(t, func() bool {
+		body, _ := os.ReadFile(filepath.Join(h.state, "acp", "runtimes", r.ID, "host-events.jsonl"))
+		return strings.Contains(string(body), `"kind":"stdout_gap"`)
+	})
 	var retained []byte
 	for offset := gap.Window.Oldest; offset < gap.Window.Next; {
 		page, err := h.client.ReadRawACP(h.ctx, r, api.RawACPRead{StreamID: state.StreamID, Channel: "stdout", Offset: offset})

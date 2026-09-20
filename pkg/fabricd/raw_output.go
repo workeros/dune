@@ -15,6 +15,7 @@ type rawOutputWindow struct {
 	data   []byte
 	next   uint64
 	closed bool
+	onGap  func(uint64)
 }
 
 func newRawOutputWindow(limit int) *rawOutputWindow {
@@ -25,6 +26,9 @@ func (w *rawOutputWindow) append(data []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	end := w.next + uint64(len(data))
+	if w.next <= uint64(len(w.data)) && end > uint64(len(w.data)) && w.onGap != nil {
+		w.onGap(end - uint64(len(w.data)))
+	}
 	if len(data) > len(w.data) {
 		w.next += uint64(len(data) - len(w.data))
 		data = data[len(data)-len(w.data):]
