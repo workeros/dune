@@ -1115,3 +1115,32 @@ tests pass in 7.6 seconds. Forty-two completed earlier IM fixture servers were
 retired after verifying their owner, deleted temporary-test directories and all
 pane commands; no business server was selected. The default Makefile package
 timeout is now 900 seconds to accommodate the real L53/L54 race saturation cases.
+
+## Slice 29 — deadline expiry without a connector and bounded tmux queries
+
+The new raw/managed process regression kills fabricd, waits for the original
+host's durable timeout fact before creating a replacement connector, and checks
+the original deadline, host PID, Runtime identity and single Agent execution.
+The targeted race case passes in 10.4 seconds. This proves the timer continues
+while the connector is absent, rather than merely checking a deadline after
+reconnect.
+
+The final main-module race run exposed a real query hang when tmux itself was
+suspended. tmux passes stdio descriptors to its server with SCM_RIGHTS; killing
+a timed-out client can leave a pipe descriptor in an unread socket message.
+Go's default output drain then waits indefinitely. Command and version probes
+now bound that drain with WaitDelay, and stderr collection is also bounded.
+A private-server SIGSTOP regression checks pane and version reads return before
+SIGCONT, then verifies the original server still works. The full tmux race suite
+passes in 5.4 seconds; the previously failing host-loss process case passes in
+11.6 seconds. The other full-run failure was a help assertion matching the word
+"executable" as an exec command; command-position matching fixes that fixture
+and its targeted race case passes in 4.8 seconds.
+
+The initial full main-module race completed with all other test packages passing,
+including the 551.0-second fabricd suite and its L53/L54 saturation cases. All four
+IM packages pass race (feishu 26.1 seconds). Static/schema checks and the 29-case
+browser suite pass. The affected fabricd/process suites are being rerun after
+the tmux fix; final evidence and rebuilt artifact identities will be recorded
+in the delivery report. No native service manager or external Agent/platform
+acceptance ran.

@@ -10,7 +10,7 @@ sh dune-install.sh upgrade https://dune.example.com [CA_CERT]
 
 接入只接受不存在的配置；有效、损坏配置和悬空链接都直接报错，不消费令牌。下载/校验失败且尚未提交 enrollment，可以在令牌有效期内重试。提交后响应丢失或配置保存失败会明确报告结果未知和 Runner ID，不重放请求也不取回凭据：先在网页核对这个 Runner；未绑定可取消待接入，已绑定但无有效凭据则解绑后生成新命令。取消/解绑结果未知时先读取状态。
 
-配置完整而程序或服务安装失败时使用 repair。upgrade 要求已有安装，始终沿用配置与绑定；已撤销的凭据不会被隐式重绑，fabricd 日志会报告 Gateway 拒绝凭据。新版本地初始化成功不等于 Gateway 在线，网络状态由工作台另行展示。
+配置完整而程序或服务安装失败时使用 repair。upgrade 要求已有安装，始终沿用配置与绑定；已撤销的凭据不会被隐式重绑。安装服务的有界日志只记录 Gateway 不可用等状态码，详细错误需前台诊断，见 [ACP 诊断](acp-diagnostics.md)。新版本地初始化成功不等于 Gateway 在线，网络状态由工作台另行展示。
 
 安装器下载完整四平台归档与 SHA256 清单，验证后才安装。程序放入 `$DUNE_INSTALL_DIR/releases/<id>`，默认 `~/.local/share/dune`；稳定入口为 `current/dune`，可将 `current` 加入 PATH。配置默认 `~/.config/dune/config.yaml`，可用 `DUNE_CONFIG` 指定；服务名默认 dune，可用 `DUNE_SERVICE_NAME` 指定。更改文件名不意味着支持多账号共享同一 SessionDir/服务。
 

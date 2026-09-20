@@ -142,10 +142,14 @@ func (s *Server) runOutput(out io.Writer, args ...string) error {
 
 func (s *Server) runOutputContext(ctx context.Context, out io.Writer, args ...string) error {
 	cmd := exec.CommandContext(ctx, s.Binary, s.args(args...)...)
+	// tmux sends stdio descriptors to its server. If that server is stopped,
+	// killing the client can leave a pipe open in an unread SCM_RIGHTS message.
+	// Bound the output drain too; cancellation must not wait for server recovery.
+	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Env = clientEnv()
-	var stderr bytes.Buffer
+	stderr := &output{limit: 64 * 1024}
 	cmd.Stdout = out
-	cmd.Stderr = &stderr
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("tmux did not confirm operation: %w", ctx.Err())

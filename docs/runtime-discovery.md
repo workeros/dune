@@ -85,5 +85,6 @@ resolve the retained executable. Copying uses a distinct inode, exclusive
 creation and file/directory synchronization; release overwrite or deletion
 cannot change it. One program is limited to 256 MiB; the existing 16-Runtime
 reservation bounds retained program data at 4 GiB per installation. Explicit
-forget removes the original copy after stopping its owner. Upgrade protocol
-preflight and release/service-manager acceptance remain separate work.
+forget removes the original copy after stopping its owner. The implemented
+[upgrade preflight](acp-upgrades.md) checks the original hosts before switching
+connectors; platform service-manager acceptance remains a separate check.

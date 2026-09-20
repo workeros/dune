@@ -20,6 +20,7 @@ func (s *Server) Versions(ctx context.Context) api.TmuxVersion {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	client := exec.CommandContext(ctx, s.Binary, "-V")
+	client.WaitDelay = 100 * time.Millisecond
 	client.Env = clientEnv()
 	clientOut := &output{limit: 256}
 	client.Stdout, client.Stderr = clientOut, &output{limit: 1024}
@@ -43,6 +44,7 @@ func (s *Server) Versions(ctx context.Context) api.TmuxVersion {
 		return info
 	}
 	server := exec.CommandContext(ctx, s.Binary, "-N", "-S", s.Socket, "display-message", "-p", "#{pid}\t#{version}")
+	server.WaitDelay = 100 * time.Millisecond
 	server.Env = clientEnv()
 	serverOut := &output{limit: 256}
 	server.Stdout, server.Stderr = serverOut, &output{limit: 1024}
