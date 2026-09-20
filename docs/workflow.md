@@ -40,6 +40,9 @@ IM 的本地 Gateway/ACP 整链测试需要与主仓库测试相同的 `bin/tmux
 
 交付前运行全量 Go、静态检查和 Web 构建。仅文档改动可按实际影响缩小。
 
+ACP 常驻宿主的本地交付证据、L01–L55 覆盖边界与后续 SandDance/平台验收入口见
+[生命周期交接报告](acp-session-lifecycle-acceptance.md)。
+
 ## PostgreSQL 回归
 
 设置 `DUNE_TEST_POSTGRES` 指向专用测试数据库。测试会创建并删除随机 schema，

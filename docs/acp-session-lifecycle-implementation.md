@@ -12,6 +12,10 @@ perform full acceptance. Real-Agent and external-platform environments will be
 provided later; these are deferred acceptance items, not blockers for completing
 the Dune local phase. This phase does not change SandDance integration code.
 
+The local phase is complete. The [delivery report](acp-session-lifecycle-acceptance.md)
+records final regression results, matching release artifacts, L01–L55 evidence
+and the remaining SandDance/external acceptance work.
+
 ## Slices
 
 1. Public submission identity, admission observations, and a persistent registry
@@ -1140,7 +1144,14 @@ and its targeted race case passes in 4.8 seconds.
 The initial full main-module race completed with all other test packages passing,
 including the 551.0-second fabricd suite and its L53/L54 saturation cases. All four
 IM packages pass race (feishu 26.1 seconds). Static/schema checks and the 29-case
-browser suite pass. The affected fabricd/process suites are being rerun after
-the tmux fix; final evidence and rebuilt artifact identities will be recorded
-in the delivery report. No native service manager or external Agent/platform
-acceptance ran.
+browser suite pass. After the tmux fix, the affected fabricd suite passes in
+132.5 seconds (excluding the two already-passing saturation cases), and the
+complete tests package passes in 278.4 seconds. Static/schema checks pass again.
+
+All four release archives were rebuilt from clean commit `03632d1`, then checked
+for matching VCS metadata, hashes, executable permissions, safe member paths,
+exact program/dependency contents and pinned license manifests. The final
+delivery report changes only documentation. No native service manager or
+external Agent/platform acceptance ran. Local implementation, regression and
+handoff are complete under the user's confirmed scope; the report preserves
+partial and deferred acceptance items for SandDance's next phase.
