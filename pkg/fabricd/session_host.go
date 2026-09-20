@@ -250,7 +250,7 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 
 func sessionOperation(operation string) bool {
 	switch operation {
-	case "submission.acp", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.mcp.configure", "agent.operation.wait", "agent.operation.read", "runtime.attach", "runtime.get", "runtime.stop":
+	case "submission.acp", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.mcp.configure", "agent.operation.wait", "agent.operation.read", "runtime.attach", "runtime.get", "runtime.stop":
 		return true
 	default:
 		return false
@@ -259,7 +259,7 @@ func sessionOperation(operation string) bool {
 
 func sessionMutation(operation string) bool {
 	switch operation {
-	case "submission.acp", "acp.action", "agent.mcp.configure", "runtime.stop":
+	case "submission.acp", "agent.mcp.configure", "runtime.stop":
 		return true
 	default:
 		return false

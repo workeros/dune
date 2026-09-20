@@ -10,6 +10,12 @@ import (
 )
 
 func (s *Server) agentMessagingRoutes(prefix string) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/submit", agentMessageHandler(s, "workspace.write", func(ctx context.Context, scope agents.Scope, request agents.SubmissionRequest) (api.SubmissionReceipt, error) {
+		return s.options.AgentMessenger.Submit(ctx, scope, request)
+	}))
+	s.mux.HandleFunc("POST "+prefix+"/agents/submission", agentMessageHandler(s, "workspace.read", func(ctx context.Context, scope agents.Scope, request agents.SubmissionQuery) (api.SubmissionReceipt, error) {
+		return s.options.AgentMessenger.QuerySubmission(ctx, scope, request)
+	}))
 	s.mux.HandleFunc("POST "+prefix+"/agents/prompt", agentMessageHandler(s, "workspace.write", func(ctx context.Context, scope agents.Scope, request agents.PromptRequest) (agents.Operation, error) {
 		return s.options.AgentMessenger.Prompt(ctx, scope, request)
 	}))

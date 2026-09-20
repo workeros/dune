@@ -217,3 +217,27 @@ The old direct acp.action network route is still awaiting removal together with
 Web controls/history migration; stop/forget admission, raw ACP, discovery/upgrade
 and complete L01–L55 acceptance remain outstanding. These are intermediate
 commits, not a completed lifecycle delivery.
+
+Slice 7 public managed submission route: removed direct acp.action from fabricd
+and host IPC operation allowlists/capabilities. All managed network actions use
+the caller-key envelope; access checks still inspect the actual business action.
+Web permissions/cancel/history now use AgentMessenger.Submit, with the exact
+active prompt reference for cancel. Host/HTTP/MCP expose Submit and QuerySubmission
+using original agent_ref + submission_id. Receipt lookup bypasses native-session
+validation, and host pre-service cancellation retains caller identity.
+
+The initial host race run exposed remaining references to the removed transport
+capability; those callsites now select submission.acp while preserving the business
+authorization vocabulary. `go test -race ./pkg/host -count=1 -timeout=180s` passes
+after that fix. Access/fabricd/internal agentmcp/webapp race suites pass; added
+access tests reject unidentified actions. The public host test proves one execution
+per key, old-key lookup after explicit native replacement, local cancellation
+identity retention and cross-owner rejection. Generation barriers, process restart,
+shared operations and managed permissions process tests pass. The old cancellation
+test now supplies its exact observed operation_ref as required by the new schema.
+
+`make web-check web-build` and `npm --prefix web run e2e -- agent-operations.spec.ts`
+pass (3 Chromium cases). Browser controls save caller identity before network send;
+normal operation querying remains tied to original operation references. Complete
+multi-submission persistence/recovery UI is still pending; the current browser
+retains only its most recent raw submission identity in sessionStorage.

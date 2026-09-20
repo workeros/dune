@@ -92,7 +92,7 @@ func (e *agentExecutor) Open(ctx context.Context, scope AgentScope) (AgentConnec
 		finish()
 		return nil, authorization.ErrNotFound
 	}
-	sdk, closeClient, err := (&runnerExecutor{app: e.app}).connect(ctx, scope.Principal, scope.OwnerID, *resource.Runner.Binding, "acp.action")
+	sdk, closeClient, err := (&runnerExecutor{app: e.app}).connect(ctx, scope.Principal, scope.OwnerID, *resource.Runner.Binding, "submission.acp")
 	if err != nil {
 		finish()
 		return nil, err

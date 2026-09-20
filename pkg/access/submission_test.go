@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -73,5 +74,25 @@ func TestSubmissionEnvelopeDescribesActualBusinessAction(t *testing.T) {
 	message.Payload = api.Payload(request)
 	if _, err := Describe(scope, message); err == nil {
 		t.Fatal("submission key escaped owner scope")
+	}
+}
+
+func testACPEnvelope(message *pb.Message) *pb.Message {
+	scope := testScope()
+	message.RuntimeId, message.RuntimeIncarnation, message.RuntimeGeneration = "runtime", "host", 1
+	key := api.SubmissionKey{SubmissionID: "caller-id", Target: api.SubmissionTarget{OwnerID: scope.OwnerID, RunnerID: scope.Binding.RunnerID, FabricID: scope.Binding.FabricID, MachineID: scope.Binding.MachineID, BindingRevision: scope.Binding.Revision, RuntimeID: message.RuntimeId, RuntimeIncarnation: message.RuntimeIncarnation, RuntimeGeneration: message.RuntimeGeneration}}
+	message.Payload = api.Payload(api.SubmissionRequest{SubmissionKey: key, Operation: message.Operation, Payload: message.Payload})
+	message.Operation = "submission.acp"
+	return message
+}
+
+func TestManagedActionsRequireIdentifiedEnvelope(t *testing.T) {
+	message := &pb.Message{Kind: "request", Target: "machine", RequestId: "transport-id", Operation: "acp.action", Payload: api.Payload(api.ACPAction{Action: "permission", PermissionID: "permission", OptionID: "allow"})}
+	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+		t.Fatal("unidentified action was authorized", err)
+	}
+	message = testACPEnvelope(message)
+	if request, err := Describe(testScope(), message); err != nil || request.Operation != "acp.action" || request.Suboperation != "permission" {
+		t.Fatal("identified action lost business authorization", request, err)
 	}
 }

@@ -4,7 +4,7 @@ import { orderedEntries, type ModelEntry } from "./acp-model";
 import { ACPOperations, useACPOperations } from "./acp-operations";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
-import { socketURL, call, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
+import { socketURL, request, errorText, eventPath, type Binding, type Runtime } from "@/lib/api";
 
 import { conversationReducer, initialConversation, isRecord, readString, formatValue, type Update, type MessageEntry, type ActivityEntry, type ToolEntry, type Entry, type StreamEntry, type BrowserEvent } from "./acp-state";
 
@@ -100,7 +100,12 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
     if (!agentRef) throw new Error("正在同步会话引用，请稍后提交。");
     const accepted = await requests.submit(action, { agent_ref: agentRef, ...(action === "prompt" ? { text: extra.text, expected_conversation_id: extra.expected_conversation_id } : { action, ...extra }), wait_ms: 0 });
     if (accepted && action === "prompt") setText((current) => current === extra.text ? "" : current);
-   } else await call(binding, "acp.action", { action, ...extra }, runtime);
+   } else {
+    if (!agentRef) throw new Error("正在同步会话引用，请稍后提交。");
+    const submissionID = crypto.randomUUID();
+    sessionStorage.setItem("dune.lastACPSubmission", JSON.stringify({ submission_id: submissionID, agent_ref: agentRef, prefix }));
+    await request(`${prefix}/agents/submit`, { method: "POST", body: JSON.stringify({ submission_id: submissionID, agent_ref: agentRef, action, ...extra }) });
+   }
   }
   catch (e) { setError(errorText(e)); } finally { setSending(false); }
  };
@@ -110,7 +115,7 @@ export function ACPPane({ binding, runtime, agentRef, prefix, onNativeChange }: 
    <span role="status">{ended ? "已退出" : connected ? state?.busy ? `执行中 · ${state.busy}` : "已连接" : "重连中"}{!!state?.pending && ` · 排队 ${state.pending}`} {!ended && state?.stop_reason ? ` · ${state.stop_reason}` : ""}</span>
    <Button size="sm" variant="outline" disabled={disabled || !agentRef} onClick={() => void act("new")}>新建对话</Button>
    <Button size="sm" variant="ghost" disabled={disabled || busy || !state?.can_list} onClick={() => void act("list")}>Agent 历史</Button>
-   {!ended && busy && <Button size="sm" variant="ghost" disabled={disabled || state?.busy !== "prompt"} onClick={() => void act("cancel")}>取消任务</Button>}
+   {!ended && busy && <Button size="sm" variant="ghost" disabled={disabled || state?.busy !== "prompt"} onClick={() => void act("cancel", { operation_ref: state?.operation_ref ?? "" })}>取消任务</Button>}
    <Button className="ml-auto" size="sm" variant={streamOpen ? "outline" : "ghost"} aria-pressed={streamOpen} onClick={() => dispatch({ type: "toggleStream" })}>ACP Stream{streamEntries.length ? ` · ${streamEntries.length}` : ""}</Button>
   </div>
   <div className="flex flex-wrap gap-2 border-b border-foreground/10 p-3">

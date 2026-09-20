@@ -148,7 +148,13 @@ func (s *Service) connect(ctx context.Context, scope agents.Scope, target workbe
 	if resource.Runner.Binding == nil || *resource.Runner.Binding != target.Binding {
 		return resource, nil, nil, runner.ErrBindingChanged
 	}
-	connection, closeConnection, err := s.Dial(ctx, scope, target.Binding, operation)
+	capability := operation
+	// The permission vocabulary describes the business action; the advertised
+	// transport capability is the mandatory identified submission envelope.
+	if operation == "acp.action" {
+		capability = "submission.acp"
+	}
+	connection, closeConnection, err := s.Dial(ctx, scope, target.Binding, capability)
 	return resource, connection, closeConnection, err
 }
 

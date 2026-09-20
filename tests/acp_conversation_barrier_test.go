@@ -224,8 +224,8 @@ func TestACPConversationGenerationBarriersThroughGateway(t *testing.T) {
 	canceled, cancel := context.WithCancel(h.ctx)
 	cancel()
 	_, _ = h.client.WaitAgentOperation(canceled, runtime, api.AgentOperationWait{Ref: shared.Ref})
-	var accepted json.RawMessage
-	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), api.ACPAction{Action: "permission", PermissionID: permission, OptionID: "allow"}, &accepted, &runtime))
+	_, err = testACPControl(h.client, h.ctx, runtime, api.ACPAction{Action: "permission", PermissionID: permission, OptionID: "allow"})
+	must(t, err)
 	if wait(active).State != "completed" || wait(load).State != "completed" {
 		t.Fatal("explicit release did not complete prompt and shared load")
 	}

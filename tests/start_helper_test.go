@@ -23,3 +23,8 @@ func testACPSubmit(connection *client.Client, ctx context.Context, runtime api.R
 	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = runtime.ID, runtime.Incarnation, runtime.Generation
 	return connection.ACPSubmit(ctx, api.SubmissionKey{SubmissionID: wire.ID(), Target: target}, action)
 }
+
+func testACPControl(connection *client.Client, ctx context.Context, runtime api.Runtime, action api.ACPAction) (api.SubmissionReceipt, error) {
+	target := api.SubmissionTarget{OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: connection.Binding.Target, BindingRevision: 1, RuntimeID: runtime.ID, RuntimeIncarnation: runtime.Incarnation, RuntimeGeneration: runtime.Generation}
+	return connection.ACPControl(ctx, api.SubmissionKey{SubmissionID: wire.ID(), Target: target}, action)
+}

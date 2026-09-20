@@ -2,7 +2,6 @@ package tests
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -157,8 +156,8 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 			t.Fatal("permission did not arrive")
 		}
 	}
-	var accepted json.RawMessage
-	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), api.ACPAction{Action: "permission", PermissionID: permissions.Permissions[0].ID, OptionID: "allow"}, &accepted, &runtime))
+	_, err = testACPControl(h.client, h.ctx, runtime, api.ACPAction{Action: "permission", PermissionID: permissions.Permissions[0].ID, OptionID: "allow"})
+	must(t, err)
 	for _, operation := range []api.AgentOperation{first, second} {
 		result, err := h.client.WaitAgentOperation(h.ctx, runtime, api.AgentOperationWait{Ref: operation.Ref, TimeoutMS: 3000})
 		must(t, err)

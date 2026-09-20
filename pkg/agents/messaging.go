@@ -66,6 +66,8 @@ type ReadResult struct {
 // Messenger owns neither queues nor output buffers. Every call reauthorizes
 // the scope and uses SDK/Gateway to reach the selected fabricd Runtime.
 type Messenger interface {
+	Submit(context.Context, Scope, SubmissionRequest) (api.SubmissionReceipt, error)
+	QuerySubmission(context.Context, Scope, SubmissionQuery) (api.SubmissionReceipt, error)
 	Prompt(context.Context, Scope, PromptRequest) (Operation, error)
 	SendKeys(context.Context, Scope, KeysRequest) (Operation, error)
 	Wait(context.Context, Scope, WaitRequest) (WaitResult, error)

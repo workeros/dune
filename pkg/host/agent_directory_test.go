@@ -47,7 +47,7 @@ func startDirectoryACP(t *testing.T, f executorFixture, request agents.StartRequ
 	if err != nil {
 		t.Fatal(err)
 	}
-	connection, closeConnection, err := (&runnerExecutor{app: f.app}).connect(t.Context(), f.principal, f.owner, f.binding, "acp.action")
+	connection, closeConnection, err := (&runnerExecutor{app: f.app}).connect(t.Context(), f.principal, f.owner, f.binding, "submission.acp")
 	if err != nil {
 		t.Fatal(err)
 	}

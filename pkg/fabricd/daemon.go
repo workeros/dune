@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"submission.get", "profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"submission.get", "profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -235,7 +235,7 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 				}
 			}
 		}
-	case "acp.state", "acp.action", "acp.conversation.read", "acp.conversation.get":
+	case "acp.state", "acp.conversation.read", "acp.conversation.get":
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil && r.acp == nil {
@@ -271,12 +271,7 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 				} else {
 					e = conversationArgument("invalid conversation get request")
 				}
-			case "acp.action":
-				var a api.ACPAction
-				e = wire.Decode(m, &a)
-				if e == nil {
-					result, e = r.acp.action(a)
-				}
+
 			}
 		}
 	case "pty.prompt", "pty.keys":

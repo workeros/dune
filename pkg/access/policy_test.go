@@ -558,7 +558,11 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"profile.status", api.ProfileStatusRequest{ExecutionID: "attempt-1"}, "", ""},
 	}
 	for _, tc := range cases {
-		r, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
+		message := &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)}
+		if tc.op == "acp.action" {
+			message = testACPEnvelope(message)
+		}
+		r, err := Describe(testScope(), message)
 		if err != nil || r.Suboperation != tc.sub || r.Mode != tc.mode {
 			t.Fatal("operation not mapped", tc.op, err)
 		}
@@ -583,7 +587,11 @@ func TestOperationMappingRejectsUnknownAndKeepsContentPrivate(t *testing.T) {
 		{"upload", api.Upload{Action: "commit", ID: "handle", Path: "/forged/allowed/path"}},
 		{"acp.action", map[string]string{"action": "prompt", "cwd": "/forged/allowed/path"}},
 	} {
-		r, err := Describe(testScope(), &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)})
+		message := &pb.Message{Kind: "request", Target: "machine", RequestId: "request", Operation: tc.op, Payload: api.Payload(tc.body)}
+		if tc.op == "acp.action" {
+			message = testACPEnvelope(message)
+		}
+		r, err := Describe(testScope(), message)
 		if err != nil || r.Resource.Path != "" || r.Resource.Directory != "" {
 			t.Fatal("ignored client fields impersonated effective resource attributes", tc.op, err)
 		}

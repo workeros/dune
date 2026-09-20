@@ -90,3 +90,16 @@ receipt, err := connection.QuerySubmission(ctx, key)
 
 已完成控制证据达到硬上限后，限制新权限/新可取消工作；不回收证据来释放重复执行
 许可。状态和操作读取使用独立并发额度，不使用普通传输结果缓存。
+
+托管 ACP 的网络入口统一为 `submission.acp`；不再接受无键 `acp.action` 请求。
+Gateway 将 envelope 内的实际 action 交给授权策略，策略仍分别检查
+new/load/list/prompt/permission/cancel，envelope 本身不授予宽泛操作权限。
+
+HTTP 提供 `POST /agents/submit`（`agents.SubmissionRequest`）和
+`POST /agents/submission`（`agents.SubmissionQuery`）；MCP 对应
+`agents_submit` 和 `agents_submission`。两者以当前授权 Owner 和调用方原
+`agent_ref + submission_id` 定位完整键。原生会话已变更或 Runtime 不在活动目录时，
+查询仍按原 Runtime 键进行；不会先读取当前原生会话来替换目标。通用 submit 直接
+传递显式 ACP 参数，prompt 的 `expected_conversation_id` 和控制目标仍由宿主验证。
+返回 receipt 中的 `operation_ref` 是原 Runtime 的 SDK 操作选择器；普通
+Prompt/OpenSession 便利接口返回的 operation 引用另外封装了跨 host 路由目标。

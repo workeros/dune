@@ -30,12 +30,12 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	switch m.Operation {
 	case "submission.acp":
 		var submission api.SubmissionRequest
-		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || submission.Operation != "acp.action" || !matchesSubmissionScope(scope, submission.Target, m) {
+		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || submission.Operation != "acp.action" || submission.Target.RuntimeID == "" || !matchesSubmissionScope(scope, submission.Target, m) {
 			return r, ErrDenied
 		}
 		// Authorize the actual business action, never a broad envelope grant.
-		inner := &pb.Message{Kind: m.Kind, RequestId: m.RequestId, Operation: submission.Operation, Target: m.Target, RuntimeId: m.RuntimeId, RuntimeIncarnation: m.RuntimeIncarnation, RuntimeGeneration: m.RuntimeGeneration, Payload: submission.Payload}
-		return Describe(scope, inner)
+		r.Operation = "acp.action"
+		return describeACPAction(r, submission.Payload)
 	case "submission.get":
 		var key api.SubmissionKey
 		if err = decode(&key); err != nil || key.Validate() != nil {
@@ -176,19 +176,6 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		if !oneOf(a.Action, "older", "newer", "close") {
 			return r, ErrDenied
 		}
-	case "acp.action":
-		var a struct {
-			Action string
-			Cwd    string
-		}
-		err = decode(&a)
-		r.Suboperation = a.Action
-		if oneOf(a.Action, "new", "load", "list") {
-			r.Resource.Directory = a.Cwd
-		}
-		if !oneOf(a.Action, "new", "load", "list", "prompt", "permission", "cancel") {
-			return r, ErrDenied
-		}
 	case "ports.connect":
 		var a api.Port
 		err = decode(&a)
@@ -302,4 +289,16 @@ func launchWorktreeRequest(scope Scope, message *pb.Message) (*Request, error) {
 	}
 	request, err := Describe(scope, &pb.Message{Kind: "request", RequestId: message.RequestId, Operation: "worktree.create", Target: message.Target, Payload: api.Payload(launch.Worktree)})
 	return &request, err
+}
+
+func describeACPAction(r Request, payload []byte) (Request, error) {
+	var action api.ACPAction
+	if json.Unmarshal(payload, &action) != nil || !oneOf(action.Action, "new", "load", "list", "prompt", "permission", "cancel") {
+		return r, ErrDenied
+	}
+	r.Suboperation = action.Action
+	if oneOf(action.Action, "new", "load", "list") {
+		r.Resource.Directory = action.Cwd
+	}
+	return r, nil
 }

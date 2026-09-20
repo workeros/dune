@@ -117,6 +117,12 @@ func registerTools(server *mcp.Server, options Options) {
 	addTool(server, "agents_prompt", "Send text to an exact Agent. Managed ACP requires expected_conversation_id observed from runtime.conversation_id; preserve it across retries. ACP returns operation_ref; pending has no output yet. PTY delivered only confirms input, not task completion. Optional wait_ms (0..30000) waits only this submission. Never replay an unknown result.", false, func(ctx context.Context, scope agents.Scope, input agents.PromptRequest) (any, error) {
 		return options.Messenger.Prompt(ctx, scope, input)
 	})
+	addTool(server, "agents_submit", "Submit a managed ACP action with caller-owned submission_id saved before sending. Supports new/load/list/prompt/permission/cancel. Prompts require expected_conversation_id; cancel requires the exact active operation_ref; permissions require permission_id and option_id. Returns admission receipt, not task success. Never replay an unknown result.", false, func(ctx context.Context, scope agents.Scope, input agents.SubmissionRequest) (any, error) {
+		return options.Messenger.Submit(ctx, scope, input)
+	})
+	addTool(server, "agents_submission", "Read an original submission_id and agent_ref after a lost response or reconnect. Querying has no Agent control side effects; unknown does not mean rejected. Returned operation_ref is the Runtime's SDK operation selector.", true, func(ctx context.Context, scope agents.Scope, input agents.SubmissionQuery) (any, error) {
+		return options.Messenger.QuerySubmission(ctx, scope, input)
+	})
 	addTool(server, "agents_wait", "Choose operation_ref to wait for that submission, or agent_ref to observe activity. These selectors are exclusive. A PTY idle observation does not prove a prompt was processed. timeout_ms is 0..30000; timeout does not cancel or resend.", true, func(ctx context.Context, scope agents.Scope, input agents.WaitRequest) (any, error) {
 		return options.Messenger.Wait(ctx, scope, input)
 	})

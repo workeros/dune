@@ -139,6 +139,7 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	must(t, err)
 	stream.Close()
 	type state struct {
+		OperationRef string               `json:"operation_ref"`
 		Conversation *api.ACPConversation `json:"conversation"`
 		Ready        bool                 `json:"ready"`
 		Busy         string               `json:"busy"`
@@ -165,8 +166,16 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 		return state{}
 	}
 	action := func(a map[string]any) error {
-		var out json.RawMessage
-		return h.client.CallID(h.ctx, "acp.action", wire.ID(), a, &out, &rt)
+		var request api.ACPAction
+		if err := json.Unmarshal(api.Payload(a), &request); err != nil {
+			return err
+		}
+		if request.Action == "permission" || request.Action == "cancel" {
+			_, err := testACPControl(h.client, h.ctx, rt, request)
+			return err
+		}
+		_, err := testACPSubmit(h.client, h.ctx, rt, request)
+		return err
 	}
 	await(func(s state) bool { return s.Ready })
 	must(t, action(map[string]any{"action": "new"}))
@@ -178,10 +187,10 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	}
 	must(t, action(map[string]any{"action": "prompt", "expected_conversation_id": observed.Conversation.ID, "text": "offline permission"}))
 	pending := await(func(s state) bool { return len(s.Permissions) == 1 })
-	var queued json.RawMessage
-	must(t, h.client.CallID(h.ctx, "acp.action", wire.ID(), map[string]any{"action": "new"}, &queued, &rt))
-	if !strings.Contains(string(queued), `"state":"pending"`) {
-		t.Fatalf("concurrent new did not queue: %s", queued)
+	queued, err := testACPSubmit(h.client, h.ctx, rt, api.ACPAction{Action: "new"})
+	must(t, err)
+	if queued.State != "pending" {
+		t.Fatalf("concurrent new did not queue: %+v", queued)
 	}
 	if _, err := h.client.Attach(h.ctx, rt, false); err == nil {
 		t.Fatal("raw ACP input was not rejected")
@@ -201,7 +210,7 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	observed = await(func(s state) bool { return s.Busy == "" && len(s.Permissions) == 0 })
 	must(t, action(map[string]any{"action": "prompt", "expected_conversation_id": observed.Conversation.ID, "text": "permission cancellation"}))
 	stale := await(func(s state) bool { return len(s.Permissions) == 1 })
-	must(t, action(map[string]any{"action": "cancel"}))
+	must(t, action(map[string]any{"action": "cancel", "operation_ref": stale.OperationRef}))
 	await(func(s state) bool { return s.Busy == "" && len(s.Permissions) == 0 })
 	if err := action(map[string]any{"action": "permission", "permission_id": stale.Permissions[0].ID, "option_id": "allow"}); err == nil {
 		t.Fatal("cancelled permission accepted")

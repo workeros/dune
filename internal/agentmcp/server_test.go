@@ -32,7 +32,7 @@ func TestMCPErrorPreservesProgressWithoutSecretsOrAutomaticReplay(t *testing.T) 
 	handler := New(Options{Messenger: messenger, Authenticate: func(context.Context, string) (agents.Scope, error) {
 		return agents.Scope{OwnerID: "verified-tenant", Principal: identity.User{ID: "verified-user"}}, nil
 	}})
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agents_prompt","arguments":{"agent_ref":"selected","text":"task","wait_ms":1}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agents_prompt","arguments":{"agent_ref":"selected","submission_id":"saved-before-send","text":"task","wait_ms":1}}}`
 	request := httptest.NewRequest("POST", "/agent-mcp", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-credential")
 	request.Header.Set("Content-Type", "application/json")

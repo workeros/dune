@@ -26,7 +26,7 @@ test("busy ACP queues a task and reads only that operation across idle and outpu
  await page.getByLabel("发送给 Agent 的任务").fill("任务 B");
  await page.getByRole("button", { name: "加入队列", exact: true }).click();
  await expect(page.getByLabel("任务 1", { exact: true })).toContainText("排队中");
- expect(submissions).toEqual([{ agent_ref: "ref-one-acp", text: "任务 B", expected_conversation_id: "conversation-one-acp", wait_ms: 0 }]);
+ expect(submissions).toEqual([{ submission_id: expect.any(String), agent_ref: "ref-one-acp", text: "任务 B", expected_conversation_id: "conversation-one-acp", wait_ms: 0 }]);
  acp.busy = ""; acp.revision++; send({ type: "acp_state", payload: acp });
  await expect.poll(() => waits.length).toBeGreaterThan(0);
  await expect(page.getByLabel("任务 1", { exact: true })).toContainText("排队中");
@@ -72,6 +72,27 @@ test("ACP native actions use shared references and unknown prompt receipts are r
  await expect(page.getByLabel("任务 3", { exact: true })).toContainText("结果未知");
  await expect(page.getByText(/已保留本次操作，可以继续查询/)).toBeVisible();
  await page.waitForTimeout(1200);
- expect(calls.map((call) => call.body)).toEqual([{ agent_ref: "ref-one-acp", action: "new", wait_ms: 0 }, { agent_ref: "ref-one-acp", action: "load", session_id: "saved-native", wait_ms: 0 }, { agent_ref: "ref-one-acp", text: "do once", expected_conversation_id: "conversation-one-acp", wait_ms: 0 }]);
+ expect(calls.map((call) => call.body)).toEqual([{ submission_id: expect.any(String), agent_ref: "ref-one-acp", action: "new", wait_ms: 0 }, { submission_id: expect.any(String), agent_ref: "ref-one-acp", action: "load", session_id: "saved-native", wait_ms: 0 }, { submission_id: expect.any(String), agent_ref: "ref-one-acp", text: "do once", expected_conversation_id: "conversation-one-acp", wait_ms: 0 }]);
  expect(state.calls.filter((call) => call.operation === "acp.action")).toHaveLength(0);
+});
+
+test("ACP controls save caller identity before sending and select the exact prompt", async ({ page }) => {
+ const state = workbenchState(); await mockWorkbench(page, state);
+ state.acpStates["one-acp"] = { ...workbenchACPState("one-acp"), ready: true, busy: "prompt", operation_ref: "original-prompt", permissions: [{ id: "original-permission", params: { toolCall: { title: "测试工具" }, options: [{ optionId: "allow", name: "允许一次", kind: "allow_once" }] } }] };
+ const calls: any[] = [];
+ await page.route("**/api/v1/agents/submit", async (route) => {
+  const body = route.request().postDataJSON(); calls.push(body);
+  const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem("dune.lastACPSubmission") ?? "null"));
+  expect(saved).toEqual({ submission_id: body.submission_id, agent_ref: body.agent_ref, prefix: "/api/v1" });
+  await route.fulfill({ contentType: "application/json", body: JSON.stringify({ submission_id: body.submission_id, admission: "accepted", stage: "written", operation_ref: "control" }) });
+ });
+ await page.goto("/"); await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+ await page.getByRole("button", { name: "允许一次", exact: true }).click();
+ await expect.poll(() => calls.length).toBe(1);
+ await page.getByRole("button", { name: "取消任务", exact: true }).click();
+ await expect.poll(() => calls.length).toBe(2);
+ expect(calls[0]).toMatchObject({ agent_ref: "ref-one-acp", action: "permission", permission_id: "original-permission", option_id: "allow" });
+ expect(calls[1]).toMatchObject({ agent_ref: "ref-one-acp", action: "cancel", operation_ref: "original-prompt" });
+ expect(calls[0].submission_id).not.toBe(calls[1].submission_id);
+ expect(state.calls.some((call) => call.operation === "acp.action")).toBe(false);
 });

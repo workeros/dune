@@ -770,7 +770,7 @@ func (d *Engine) attach(s *executionStream, m *pb.Message) {
 		return
 	}
 	if r.acp != nil && !a.Observe {
-		s.Fail("UNSUPPORTED", fmt.Errorf("managed ACP input must use acp.action"))
+		s.Fail("UNSUPPORTED", fmt.Errorf("managed ACP input requires a caller-owned submission"))
 		return
 	}
 	sub, e := r.subscribe(!a.Observe, a.Conversation)
@@ -823,7 +823,7 @@ func (d *Engine) interact(s *executionStream, r *runtime, sub *subscription) {
 			switch m.Kind {
 			case "input":
 				if r.acp != nil {
-					done <- fmt.Errorf("managed ACP input must use acp.action")
+					done <- fmt.Errorf("managed ACP input requires a caller-owned submission")
 					return
 				}
 				if len(m.Data) > wire.ChunkSize {

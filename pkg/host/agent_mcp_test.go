@@ -87,7 +87,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	defer server.Close()
 	client := connectMCP(t, server.URL+"/api/v1/agent-mcp", token)
 	tools, err := client.ListTools(t.Context(), nil)
-	if err != nil || len(tools.Tools) != 9 {
+	if err != nil || len(tools.Tools) != 11 {
 		t.Fatal("tool catalog", tools, err)
 	}
 	for _, tool := range tools.Tools {

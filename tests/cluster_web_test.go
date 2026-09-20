@@ -292,7 +292,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	if len(state.Permissions) != 1 {
 		t.Fatal("first operation did not hold its native permission")
 	}
-	request(sites[2], "POST", runnerBase+"/call"+query, map[string]any{"operation": "acp.action", "runtime": target.Runtime, "payload": api.ACPAction{Action: "permission", PermissionID: state.Permissions[0].ID, OptionID: "allow"}}, nil)
+	request(sites[2], "POST", "api/v1/agents/submit", agents.SubmissionRequest{SubmissionID: wire.ID(), AgentRef: target.AgentRef, ACPAction: api.ACPAction{Action: "permission", PermissionID: state.Permissions[0].ID, OptionID: "allow"}}, nil)
 	for _, operation := range []agents.Operation{first, second} {
 		callMCP("agents_wait", agents.WaitRequest{OperationRef: operation.Ref, TimeoutMS: 5000}, &waited)
 		if waited.Operation == nil || waited.Operation.State != "completed" {
