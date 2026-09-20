@@ -28,6 +28,15 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	decode := func(out any) error { return json.Unmarshal(m.Payload, out) }
 	var err error
 	switch m.Operation {
+	case "submission.get":
+		var key api.SubmissionKey
+		if err = decode(&key); err != nil || key.Validate() != nil {
+			return r, ErrDenied
+		}
+		target := key.Target
+		if target.OwnerID != scope.OwnerID || target.RunnerID != scope.Binding.RunnerID || target.FabricID != scope.Binding.FabricID || target.MachineID != scope.Binding.MachineID || target.BindingRevision != scope.Binding.Revision || target.RuntimeID != m.RuntimeId || target.RuntimeIncarnation != m.RuntimeIncarnation || target.RuntimeGeneration != m.RuntimeGeneration {
+			return r, ErrDenied
+		}
 	case "machine.info", "runtime.list", "runtime.get", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
 	case "agent.mcp.configure":
 		var config api.AgentMCP

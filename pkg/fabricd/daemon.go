@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -17,7 +18,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"submission.get", "profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.action", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -31,6 +32,8 @@ type profileAttempt struct {
 }
 type Engine struct {
 	cleaner           *process.Cleaner
+	registry          *sessionregistry.Registry
+	submissionReads   chan struct{}
 	starts            chan struct{}
 	mu                sync.Mutex
 	inc               string
@@ -57,6 +60,7 @@ type Engine struct {
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
+	engine.submissionReads = make(chan struct{}, 8)
 	go engine.conversations.run(ctx)
 	return engine
 }
@@ -88,6 +92,9 @@ func (d *Engine) Close() {
 		if d.cleaner != nil {
 			d.cleaner.Close()
 		}
+		if d.registry != nil {
+			_ = d.registry.Close()
+		}
 		if d.lock != nil {
 			_ = syscall.Flock(int(d.lock.Fd()), syscall.LOCK_UN)
 			_ = d.lock.Close()
@@ -114,6 +121,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		return
 	}
 	switch m.Operation {
+	case "submission.get":
+		d.querySubmission(s, m, target)
+		return
 	case "profile.prepare":
 		d.prepare(s, m)
 		return

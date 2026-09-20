@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/internal/agentintegration"
 	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/api"
 )
@@ -56,6 +57,10 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 		return nil, err
 	}
 	d.stateDir = stateDir
+	d.registry, err = sessionregistry.Open(ctx, filepath.Join(stateDir, "registry"), sessionregistry.Options{})
+	if err != nil {
+		return nil, err
+	}
 	sessions, err := d.tmux.Restore()
 	if err != nil {
 		return nil, err

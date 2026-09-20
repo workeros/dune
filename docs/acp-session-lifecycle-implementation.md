@@ -58,3 +58,21 @@ The registry currently provides bounded minimum evidence and exclusive claims.
 It is not yet connected to public execution, and protected control reservations,
 safe evidence reclamation, host IPC, and lifecycle cleanup are subsequent slices.
 These foundation tests do not mark any L01–L55 end-to-end case passed.
+
+Slice 2 read path: `Client.QuerySubmission` follows SDK → Gateway → fabricd →
+the independent registry. It validates the caller's complete key, preserves that
+key and context/structured errors, bypasses transport response caching, and does
+not require an active Runtime. Hosted access checks owner, complete binding and
+outer Runtime selectors before permitting the read.
+
+`go test ./tests -run '^TestSubmissionQueryAcrossFabricdRestart$' -count=1
+-timeout=90s -v` passes with a real Gateway and replacement fabricd process after
+SIGKILL. The test seeds admission evidence directly in the registry, then proves
+the public read returns the same receipt after restart without creating an Agent.
+This is a receipt-read tracer bullet, not Agent survival or public write admission.
+
+Targeted race checks for QuerySubmission, submission authorization, and the
+engine state lock pass. `go vet ./pkg/api ./internal/sessionregistry ./pkg/client
+./pkg/access ./pkg/fabricd` passes.
+The full `go test -race ./pkg/client ./pkg/access ./pkg/fabricd -count=1
+-timeout=180s` also passes (including existing authorization, ACP and PTY tests).
