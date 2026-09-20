@@ -34,20 +34,31 @@ func (s *conversationSlot) finishTurn(operation api.AgentOperation) {
 		}
 		turn := &api.ACPTurn{ID: id, OperationRef: operation.Ref, State: operation.State, StopReason: operation.StopReason}
 		if operation.Error != "" {
-			turn.Error = &api.ACPFailure{Code: "OPERATION_FAILED", Detail: operation.Error}
+			turn.Error = boundedConversationFailure(&api.ACPFailure{Code: "OPERATION_FAILED", Detail: operation.Error})
 		}
 		entry.Turn = turn
 		m.description.CurrentTurn = turn
 		m.put(*entry, id)
 		for _, retained := range m.entries {
 			value := retained.value
-			if value.TurnID != id || value.Message == nil || value.Message.Role != "agent" {
+			if value.TurnID != id {
 				continue
 			}
-			message := *value.Message
-			message.Status = operation.State
-			value.Message = &message
-			m.put(value, retained.key)
+			if value.Message != nil && value.Message.Role == "agent" {
+				message := *value.Message
+				message.Status = operation.State
+				value.Message = &message
+				m.put(value, retained.key)
+			}
+			if value.Tool != nil && value.Tool.Status != "completed" && value.Tool.Status != "failed" {
+				tool := *value.Tool
+				tool.Status, tool.StatusReason = "unknown", "turn_ended_without_tool_result"
+				if operation.State == "cancelled" {
+					tool.Status = "interrupted"
+				}
+				value.Tool = &tool
+				m.put(value, retained.key)
+			}
 		}
 	})
 }
@@ -56,6 +67,9 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 	kind := rawString(update, "sessionUpdate")
 	if kind == "" {
 		kind = rawString(update, "session_update")
+	}
+	if len(kind) > 256 {
+		kind = "unknown_oversized_type"
 	}
 	s.mutate(func(m *conversationModel) {
 		switch kind {
@@ -70,6 +84,11 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			nativeID := rawString(update, "messageId")
 			if nativeID == "" {
 				nativeID = rawString(update, "message_id")
+			}
+			invalidID := len(nativeID) > 4096
+			if invalidID {
+				nativeID = ""
+				m.description.ContentOmitted = true
 			}
 			key := ""
 			var entry *api.ACPEntry
@@ -86,6 +105,11 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			}
 			if entry == nil {
 				entry = &api.ACPEntry{Type: "message", TurnID: turnID, Message: &api.ACPMessage{Role: role, Channel: channel, MessageID: nativeID, Source: "agent", Status: "unknown", Content: []json.RawMessage{}}}
+				entry.ContextIncomplete = m.description.PrefixEvicted
+			}
+			if invalidID {
+				entry.ContextIncomplete = true
+				entry.ContentOmitted = true
 			}
 			if turnID != "" && role == "agent" {
 				entry.Message.Status = "streaming"
@@ -96,10 +120,10 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			m.put(*entry, key)
 		case "tool_call", "tool_call_update":
 			id := rawString(update, "toolCallId")
-			if id == "" {
+			if id == "" || len(id) > 4096 {
 				id = rawString(update, "tool_call_id")
 			}
-			if id == "" {
+			if id == "" || len(id) > 4096 {
 				m.put(api.ACPEntry{Type: "activity", ContextIncomplete: true, Activity: &api.ACPActivity{UpdateType: kind, Data: api.Payload(update)}}, "")
 				return
 			}
@@ -112,7 +136,18 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 				entry.Tool.Fields[field] = value
 			}
 			if status, ok := update["status"]; ok {
-				_ = json.Unmarshal(status, &entry.Tool.Status)
+				entry.Tool.Status, entry.Tool.StatusReason = "unknown", ""
+				var nativeStatus string
+				if json.Unmarshal(status, &nativeStatus) == nil && nativeStatus != "" {
+					entry.Tool.Status = nativeStatus
+				}
+				if len(entry.Tool.Status) > 256 {
+					entry.Tool.Status = "unknown"
+					entry.ContentOmitted = true
+				}
+			}
+			if kind == "tool_call" {
+				entry.ContextIncomplete = false
 			}
 			m.put(*entry, key)
 		case "plan", "available_commands_update", "current_mode_update", "config_option_update", "usage_update":
@@ -122,7 +157,7 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			}
 			state[kind] = api.Payload(update)
 			if len(api.Payload(state)) > api.MaxACPConversationStateBytes {
-				state[kind] = json.RawMessage(`{"duneOmitted":true}`)
+				state = boundConversationFields(state, api.MaxACPConversationStateBytes)
 				m.description.ContentOmitted = true
 			}
 			m.description.State = state
@@ -133,6 +168,12 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 }
 
 func appendConversationContent(message *api.ACPMessage, content json.RawMessage) {
+	if len(message.Tail) > 0 {
+		tail := &api.ACPMessage{Content: message.Tail}
+		appendConversationContent(tail, content)
+		message.Tail = tail.Content
+		return
+	}
 	var next map[string]json.RawMessage
 	if json.Unmarshal(content, &next) == nil && rawString(next, "type") == "text" && len(message.Content) > 0 {
 		last := len(message.Content) - 1

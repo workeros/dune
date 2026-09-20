@@ -39,7 +39,7 @@ read/get responses are in flight per engine. Capacity eviction removes a
 contiguous insertion-order prefix and does not depend on readership.
 
 The implementation is being delivered in vertical slices. Notification delivery,
-full oversized-content retention, strict prompt-generation preconditions, and
+strict prompt-generation preconditions, and
 consumer migration are subsequent slices; this document is not a completion
 report for the full conversation requirements.
 
@@ -54,3 +54,18 @@ the initial subscriber, reads recorded input/output, checks stable read/get and
 cursor identities, then loads native history into a fresh generation. Its RPC
 journal verifies that independent reads add no Agent calls. It is not a real
 Agent acceptance test.
+
+Oversized text retains bounded ACP content blocks for the prefix plus a separate
+`message.tail` after an explicitly omitted gap. Further chunks update the tail
+under the same entry ID. Tools preserve explicit null/empty values; oversized
+fields use structured omission markers including the original JSON type.
+UTF-8 and JSON escaping count toward the final encoded entry budget. Session
+state is limited to 64 KiB. These limits are currently fixed (the defaults are
+also hard maxima), advertised in Runner binding limits.
+
+`machine.info.acp_conversations` reports model/entry/encoded-byte counts,
+evictions, omitted updates, read bytes/time and in-flight loads. Encoded-byte
+accounting is not a claim about RSS; allocation and resource measurements are
+part of the remaining acceptance work.
+
+Model/paging/capacity regression: `go test -race ./pkg/fabricd -run '^TestConversation'`.

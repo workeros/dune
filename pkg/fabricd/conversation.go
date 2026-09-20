@@ -20,6 +20,7 @@ type conversationStore struct {
 	maxBytes      int
 	maxModelBytes int
 	maxEntries    int
+	usage         api.ACPConversationUsage
 }
 
 type conversationSlot struct {
@@ -30,12 +31,13 @@ type conversationSlot struct {
 }
 
 type conversationModel struct {
-	description api.ACPConversation
-	entries     []conversationEntry
-	index       map[string]uint64
-	bytes       int
-	updated     uint64
-	entryBytes  int
+	description    api.ACPConversation
+	entries        []conversationEntry
+	index          map[string]uint64
+	bytes          int
+	updated        uint64
+	entryBytes     int
+	omittedUpdates uint64
 }
 
 type conversationEntry struct {
@@ -98,7 +100,7 @@ func (s *conversationSlot) opened(sessionID, cwd, outcome string, failure *api.A
 		if m.description.OpenOutcome != "pending" {
 			return
 		}
-		m.description.OpenOutcome, m.description.OpenError = outcome, failure
+		m.description.OpenOutcome, m.description.OpenError = outcome, boundedConversationFailure(failure)
 		m.description.Phase = outcome
 		if outcome == "succeeded" {
 			m.description.Phase = "ready"
@@ -123,7 +125,9 @@ func (s *conversationSlot) mutate(change func(*conversationModel)) {
 	if s.model == nil {
 		return
 	}
+	previousOmissions := s.model.omittedUpdates
 	change(s.model)
+	s.store.usage.OmittedUpdates += s.model.omittedUpdates - previousOmissions
 	s.commitLocked()
 }
 
@@ -136,6 +140,7 @@ func (s *conversationSlot) commitLocked() {
 	m.measure()
 	for len(m.entries) > 0 && (m.bytes > s.store.maxModelBytes || len(m.entries) > s.store.maxEntries) {
 		m.evictFirst()
+		s.store.usage.Evictions++
 		m.measure()
 	}
 	s.store.bytes += m.bytes
@@ -156,6 +161,7 @@ func (s *conversationSlot) commitLocked() {
 		} // descriptions are separately bounded by Runtime admission.
 		s.store.bytes -= victim.bytes
 		victim.evictFirst()
+		s.store.usage.Evictions++
 		if victim != m {
 			victim.description.Revision++
 		}
@@ -192,12 +198,15 @@ func (m *conversationModel) put(entry api.ACPEntry, key string) {
 		entry.ID = "e-" + strconv.FormatUint(entry.Order, 10)
 	}
 	data := api.Payload(entry)
-	if len(data) > api.MaxACPEntryBytes {
+	tooManyFields := entry.Tool != nil && len(entry.Tool.Fields) > 128
+	tooManyBlocks := entry.Message != nil && (len(entry.Message.Content) > 128 || len(entry.Message.Tail) > 128)
+	if len(data) > api.MaxACPEntryBytes || tooManyFields || tooManyBlocks {
 		entry = boundedConversationEntry(entry)
 		data = api.Payload(entry)
 	}
 	if entry.ContentOmitted {
 		m.description.ContentOmitted = true
+		m.omittedUpdates++
 	}
 	if entry.ContextIncomplete {
 		m.description.ContextIncomplete = true
@@ -224,22 +233,4 @@ func (m *conversationModel) find(key string) *api.ACPEntry {
 	var entry api.ACPEntry
 	_ = json.Unmarshal(api.Payload(m.entries[order-m.entries[0].value.Order].value), &entry)
 	return &entry
-}
-
-func boundedConversationEntry(entry api.ACPEntry) api.ACPEntry {
-	entry.ContentOmitted = true
-	if entry.Message != nil {
-		message := *entry.Message
-		message.Content = []json.RawMessage{api.Payload(map[string]any{"type": "text", "text": "[ACP content omitted: entry exceeds retention budget]"})}
-		entry.Message = &message
-	}
-	if entry.Tool != nil {
-		tool := *entry.Tool
-		tool.Fields = map[string]json.RawMessage{"duneOmitted": json.RawMessage("true")}
-		entry.Tool = &tool
-	}
-	if entry.Activity != nil {
-		entry.Activity = &api.ACPActivity{UpdateType: entry.Activity.UpdateType, Data: json.RawMessage(`{"duneOmitted":true}`)}
-	}
-	return entry
 }

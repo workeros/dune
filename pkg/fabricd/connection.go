@@ -50,6 +50,14 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	gen := d.generation
 	d.mu.Unlock()
 	b := api.Binding{Capabilities: capabilities, Limits: map[string]int{"message_bytes": wire.MaxMessage, "streams": wire.MaxStreams, "bulk": 4, "runtimes": 64, "uploads": 64, "dedup_entries": 256, "chunk_bytes": wire.ChunkSize, "profile_bytes": api.MaxProfileBytes, "profile_attempts": api.MaxProfileAttempts, "profile_status_seconds": api.ProfileStatusRetentionSeconds, "profile_step_name_bytes": api.MaxProfileStepNameBytes, "profile_failure_detail_bytes": api.MaxProfileFailureDetailBytes, "exec_output_bytes": api.MaxExecOutputBytes, "scrollback_lines": api.MaxTerminalScrollbackLines, "scrollback_bytes": api.MaxTerminalScrollbackBytes}}
+	b.Limits["acp_conversation_bytes"] = api.MaxACPConversationBytes
+	b.Limits["acp_conversations_bytes"] = api.MaxACPConversationsBytes
+	b.Limits["acp_conversation_entries"] = api.MaxACPConversationEntries
+	b.Limits["acp_entry_bytes"] = api.MaxACPEntryBytes
+	b.Limits["acp_conversation_response_bytes"] = api.MaxACPConversationResponseBytes
+	b.Limits["acp_conversation_read_limit"] = api.MaxACPConversationLimit
+	b.Limits["acp_conversation_reads"] = cap(d.conversationReads)
+
 	input := wire.NewInputWindow()
 	challenge := wire.ID()
 	if err := input.Begin(challenge); err != nil {

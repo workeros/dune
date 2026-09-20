@@ -158,6 +158,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 	}
 	var result any
 	searchRequest := false
+	var conversationReadStarted time.Time
 	switch m.Operation {
 	case "exec":
 		var a api.Exec
@@ -190,13 +191,16 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		}
 		if e == nil {
 			if m.Operation == "acp.conversation.read" || m.Operation == "acp.conversation.get" {
+				conversationReadStarted = time.Now()
 				select {
 				case d.conversationReads <- struct{}{}:
 					defer func() { <-d.conversationReads }()
 				default:
-					s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("conversation read concurrency limit reached"))
-					return
+					e = &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "conversation read concurrency limit reached"}
 				}
+			}
+			if e != nil {
+				break
 			}
 			switch m.Operation {
 			case "acp.state":
@@ -276,7 +280,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 	case "machine.info":
 		home, err := os.UserHomeDir()
 		e = err
-		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH}
+		result = api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics()}
 	case "runtime.forget":
 		var r *runtime
 		r, e = d.lookup(m)
@@ -381,6 +385,9 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		e = &api.Error{Code: "UNSUPPORTED", Detail: "unknown operation"}
 	}
 	res := &pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(result)}
+	if !conversationReadStarted.IsZero() {
+		d.conversations.recordRead(len(res.Payload), time.Since(conversationReadStarted))
+	}
 	if e != nil {
 		res = &pb.Message{Kind: "error", RequestId: m.RequestId, Code: "OPERATION_FAILED", Detail: e.Error()}
 		if ae, ok := e.(*api.Error); ok {

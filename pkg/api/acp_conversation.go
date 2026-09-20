@@ -1,6 +1,9 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 const (
 	DefaultACPConversationLimit     = 50
@@ -72,17 +75,25 @@ type ACPConversation struct {
 // ACPEntry is one current protocol object, not an ACP chunk or an executable
 // permission. Exactly one payload matches Type: message, tool, activity, turn.
 type ACPEntry struct {
-	ID                string       `json:"entry_id"`
-	Order             uint64       `json:"order,string"`
-	Revision          uint64       `json:"entry_revision,string"`
-	Type              string       `json:"type"`
-	TurnID            string       `json:"turn_id,omitempty"`
-	Message           *ACPMessage  `json:"message,omitempty"`
-	Tool              *ACPTool     `json:"tool,omitempty"`
-	Activity          *ACPActivity `json:"activity,omitempty"`
-	Turn              *ACPTurn     `json:"turn,omitempty"`
-	ContentOmitted    bool         `json:"content_omitted"`
-	ContextIncomplete bool         `json:"context_incomplete"`
+	ID                string        `json:"entry_id"`
+	Order             uint64        `json:"order,string"`
+	Revision          uint64        `json:"entry_revision,string"`
+	Type              string        `json:"type"`
+	TurnID            string        `json:"turn_id,omitempty"`
+	Message           *ACPMessage   `json:"message,omitempty"`
+	Tool              *ACPTool      `json:"tool,omitempty"`
+	Activity          *ACPActivity  `json:"activity,omitempty"`
+	Turn              *ACPTurn      `json:"turn,omitempty"`
+	ContentOmitted    bool          `json:"content_omitted"`
+	ContextIncomplete bool          `json:"context_incomplete"`
+	Omissions         []ACPOmission `json:"omissions,omitempty"`
+}
+
+// ACPOmission describes retained partial data without pretending a truncated
+// value was the original protocol field. Unknown lost byte counts are omitted.
+type ACPOmission struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 type ACPMessage struct {
@@ -92,14 +103,17 @@ type ACPMessage struct {
 	Source    string            `json:"source"`
 	Status    string            `json:"status"`
 	Content   []json.RawMessage `json:"content"`
+	// Tail follows an omitted region after Content. It is not contiguous text.
+	Tail []json.RawMessage `json:"tail,omitempty"`
 }
 
 // Fields preserve ACP's presence/null distinction and structured content. ID is
 // the native tool identifier, scoped by the entry's conversation and known turn.
 type ACPTool struct {
-	ID     string                     `json:"tool_call_id"`
-	Status string                     `json:"status"`
-	Fields map[string]json.RawMessage `json:"fields"`
+	ID           string                     `json:"tool_call_id"`
+	Status       string                     `json:"status"`
+	StatusReason string                     `json:"status_reason,omitempty"`
+	Fields       map[string]json.RawMessage `json:"fields"`
 }
 
 type ACPActivity struct {
@@ -120,6 +134,37 @@ type ACPConversationRead struct {
 	Cursor         string `json:"cursor,omitempty"`
 	// Nil selects the default. Explicit zero is invalid.
 	Limit *int `json:"limit,omitempty"`
+}
+
+func (r *ACPConversationRead) UnmarshalJSON(data []byte) error {
+	type request ACPConversationRead
+	var decoded request
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if limit, ok := fields["limit"]; ok && string(limit) == "null" {
+		return fmt.Errorf("limit cannot be null")
+	}
+	*r = ACPConversationRead(decoded)
+	return nil
+}
+
+// ACPConversationUsage is aggregate, bounded diagnostic data. EncodedBytes is
+// retained JSON accounting, not an estimate of process RSS.
+type ACPConversationUsage struct {
+	Models          int    `json:"models"`
+	EncodedBytes    int    `json:"encoded_bytes"`
+	Entries         int    `json:"entries"`
+	Evictions       uint64 `json:"evictions"`
+	OmittedUpdates  uint64 `json:"omitted_updates"`
+	ReadCount       uint64 `json:"read_count"`
+	ReadBytes       uint64 `json:"read_bytes"`
+	ReadNanoseconds uint64 `json:"read_nanoseconds"`
+	InFlightLoads   int    `json:"in_flight_loads"`
 }
 
 type ACPConversationPage struct {

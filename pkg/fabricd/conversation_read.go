@@ -49,6 +49,9 @@ func (s *conversationSlot) read(request api.ACPConversationRead) (api.ACPConvers
 	}
 	cursor := conversationCursor{Runtime: s.runtimeID, Incarnation: s.incarnation, Conversation: request.ConversationID}
 	if request.Cursor != "" {
+		if len(request.Cursor) > 4096 {
+			return page, &api.Error{Code: "INVALID_CURSOR", Detail: "cursor exceeds size limit"}
+		}
 		data, err := base64.RawURLEncoding.DecodeString(request.Cursor)
 		if len(request.Cursor) > 4096 || err != nil || json.Unmarshal(data, &cursor) != nil || encodeConversationCursor(cursor) != request.Cursor || cursor.Runtime != s.runtimeID || cursor.Incarnation != s.incarnation {
 			return page, &api.Error{Code: "INVALID_CURSOR", Detail: "cursor is invalid or belongs to another Runtime"}
