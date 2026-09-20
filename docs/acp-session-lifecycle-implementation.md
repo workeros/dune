@@ -366,3 +366,55 @@ resume only original idempotent cleanup, and retain completed independent receip
 This evidence foundation does not mark L51/L52/L55 complete; raw ACP, complete
 discovery issue reporting, stream control reservations, retained-host reclamation,
 upgrade/binary pinning and target-platform service-manager acceptance also remain.
+
+Slice 12 fixed cleanup admission and evidence: replaced ClaimControl plus
+AcceptForget with one transaction that checks the original shared key before
+lifecycle verification, verifies the exact host snapshot under the same database
+boundary as group registration, consumes the preallocated forget slot, freezes
+the resource plan and seals the Runtime namespace. Neither cancellation nor a
+failed exit/loss proof consumes the cleanup reservation. Stop/forget can no
+longer use the non-atomic control-claim path. A late host state publication also
+checks the namespace seal.
+
+Before its Agent start gate, the host registers the Runtime directory and socket
+device/inode identities plus its instance marker. tmux receives the instance
+marker atomically with session creation. Host retirement checks that marker and
+targets an immutable tmux session ID inside a conditional server command, keeping
+a reused session name or neighboring host intact. Runtime directory deletion and
+socket retirement still need the checked-handle cleanup executor; recording these
+identities alone is not filesystem cleanup acceptance.
+
+Cleanup plans and three ordered checkpoints live outside the Runtime directory.
+The public receipt now exposes confirmed/remaining cleanup steps without exposing
+paths or process-control authority. Generic progress cannot bypass those steps.
+Executor terms fence late checkpoint publication; physical actions must also
+retain the existing fabricd.lock until drained. Only the final confirmed step
+releases the live Runtime reservation. Read-only receipt/pending-plan queries do
+not bind an executor or advance cleanup. Completed receipts, plans and identity
+seals remain bounded by the retained Runtime pool.
+
+Targeted tests cover ordinary evidence exhaustion, cancelled admission, twenty
+contenders across two registry connections, shared-key conflicts before live/lost
+verification, a paused loss proof racing group registration, each checkpoint
+across registry reopen, stale executor publication, no generic completion bypass,
+and tmux instance/name reuse. The broader registry race suite exposed a journal
+open/unlink race: an optional SQLite journal can be unlinked after its descriptor
+is opened. The validator now permits that already-unlinked optional descriptor
+while still requiring the main database to remain linked and rejecting hardlinks.
+The cross-process admission test then passed ten race-enabled repetitions.
+
+The real-process connector survival, independent host loss, lost stop response,
+and explicit ACP generation-barrier regressions pass together. The affected
+fabricd/client/API and tmux race suites pass. This slice does not connect the
+network forget request or run a cleanup recovery executor; those remain the next
+tracer bullet, including filesystem path reuse and L51/L52/L55 process barriers.
+No L51–L55 acceptance claim is made from registry-only tests. No business Runner
+or real Agent service was used.
+
+Final slice checks: `go test -race ./internal/sessionregistry -count=1
+-timeout=60s` and affected-package `go vet` pass after the journal fix. The tmux
+instance cleanup test also covers a missing marker, which must remain an identity
+error rather than being reported as resource absence. It passes with race enabled.
+Runtime launch now exclusively creates its directory and cannot overwrite an
+existing instance marker/bootstrap; the connector-survival process test passes
+again after that change.

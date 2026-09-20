@@ -12,7 +12,7 @@ func TestHostEvidenceSurvivesReopenAndCannotReplaceIdentity(t *testing.T) {
 	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
 		t.Fatal(err)
 	}
-	host := HostRecord{Target: key.Target, Instance: "original-host", BootID: "kernel-boot", PID: 1234, Runtime: api.Runtime{ID: key.Target.RuntimeID, Incarnation: key.Target.RuntimeIncarnation, Generation: key.Target.RuntimeGeneration, State: "starting"}, Registration: api.Payload(map[string]string{"instance": "original-host"})}
+	host := HostRecord{Target: key.Target, Instance: "original-host", BootID: "kernel-boot", PID: 1234, Runtime: api.Runtime{ID: key.Target.RuntimeID, Incarnation: key.Target.RuntimeIncarnation, Generation: key.Target.RuntimeGeneration, State: "starting"}, Registration: api.Payload(map[string]string{"instance": "original-host"}), Resources: testResources(key.Target, "original-host")}
 	if err := r.RegisterHost(t.Context(), host); err != nil {
 		t.Fatal(err)
 	}
@@ -45,11 +45,7 @@ func TestHostEvidenceSurvivesReopenAndCannotReplaceIdentity(t *testing.T) {
 		t.Fatal(hosts, err)
 	}
 	key.SubmissionID = "forget"
-	claim, _, err := r.ClaimControl(t.Context(), key, Digest("forget", nil), "registry", ControlForget, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.AcceptForget(t.Context(), claim, "original-cleanup"); err != nil {
+	if _, _, err := r.AcceptForget(t.Context(), key, "original-cleanup", func(HostRecord) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.RecordGroup(t.Context(), key.Target, host.Instance, 1, 9999); err == nil {
@@ -64,7 +60,7 @@ func TestExitedHostCannotRegisterAnotherProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := api.Runtime{ID: key.Target.RuntimeID, Incarnation: key.Target.RuntimeIncarnation, Generation: key.Target.RuntimeGeneration, State: "running"}
-	if err := r.RegisterHost(t.Context(), HostRecord{Target: key.Target, Instance: "host", BootID: "boot", PID: 1234, Runtime: runtime, Registration: []byte(`{}`)}); err != nil {
+	if err := r.RegisterHost(t.Context(), HostRecord{Target: key.Target, Instance: "host", BootID: "boot", PID: 1234, Runtime: runtime, Registration: []byte(`{}`), Resources: testResources(key.Target, "host")}); err != nil {
 		t.Fatal(err)
 	}
 	runtime.State = "exited"

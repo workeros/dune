@@ -87,7 +87,11 @@ func runSessionHost(directory string) error {
 	}
 	reserved := reg.Runtime
 	reserved.State = "starting"
-	if err := d.registry.RegisterHost(ctx, sessionregistry.HostRecord{Target: reg.Target, Instance: reg.Instance, BootID: bootID, PID: os.Getpid(), Runtime: reserved, Registration: api.Payload(reg)}); err != nil {
+	resources, err := captureSessionResources(directory, socket, reg)
+	if err != nil {
+		return err
+	}
+	if err := d.registry.RegisterHost(ctx, sessionregistry.HostRecord{Target: reg.Target, Instance: reg.Instance, BootID: bootID, PID: os.Getpid(), Runtime: reserved, Registration: api.Payload(reg), Resources: resources}); err != nil {
 		return err
 	}
 	argv, _ := boot.Profile.Start.Args()

@@ -133,6 +133,13 @@ Web 的 Runtime 面板在“提交记录”中保留刷新后的查询入口。�
 工作台的“全部提交记录”在 Runtime 已不在目录或面板关闭后仍保留查询入口。
 forget 的执行接入与崩溃恢复仍在后续实现切片中；此处的本地额度不代表清理已交付。
 
+清理回执 schema 已增加 `cleanup.confirmed` 和 `cleanup.remaining`，步骤依次为
+`host`、`ipc`、`runtime_directory`。独立索引只在收到当前执行器的步骤确认后推进，
+全部步骤确认才将 `stage` 标为 `completed` 并释放该 Runtime 的活动配额；原提交键、
+固定资源计划、完成回执和身份封闭记录继续保留。步骤出错保留 `accepted/cleaning`
+和有界错误码，不把目录缺项或读回回执解释为清理已完成。该 schema 和索引事务已
+实现；网络 forget、实际步骤执行与恢复调度尚未接入，不能据此认定 L51/L52 已通过。
+
 ## 宿主丢失的证据
 
 独立索引在 Agent 执行前保存原 Runtime、宿主实例、机器启动标识和宿主进程记录。

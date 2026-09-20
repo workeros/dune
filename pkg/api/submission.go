@@ -94,6 +94,15 @@ type SubmissionReceipt struct {
 	Runtime      *Runtime            `json:"runtime,omitempty"`
 	Stage        string              `json:"stage,omitempty"`
 	ErrorCode    string              `json:"error_code,omitempty"`
+	Cleanup      *CleanupProgress    `json:"cleanup,omitempty"`
+}
+
+// CleanupProgress contains only durably confirmed steps of the original forget.
+// Reading it never schedules work. Paths and process-control authority remain
+// private to the installation's independent registry.
+type CleanupProgress struct {
+	Confirmed []string `json:"confirmed"`
+	Remaining []string `json:"remaining"`
 }
 
 // SubmissionRequest carries one frozen business request. Operation selects the

@@ -21,12 +21,13 @@ type HostRecord struct {
 	Phase           string
 	Runtime         api.Runtime
 	Registration    json.RawMessage
+	Resources       CleanupResources
 }
 
 // RegisterHost can activate an identity once. In particular, starting another
 // host with a copied bootstrap cannot overwrite the original process evidence.
 func (r *Registry) RegisterHost(ctx context.Context, host HostRecord) error {
-	if host.Target.Validate() != nil || host.Target.RuntimeID == "" || api.ValidateSubmissionID(host.Instance) != nil || api.ValidateSubmissionID(host.BootID) != nil || host.PID <= 1 || len(host.Registration) > 64*1024 || !json.Valid(host.Registration) || !matchingRuntime(host.Target, host.Runtime) {
+	if host.Target.Validate() != nil || host.Target.RuntimeID == "" || api.ValidateSubmissionID(host.Instance) != nil || api.ValidateSubmissionID(host.BootID) != nil || host.PID <= 1 || len(host.Registration) > 64*1024 || !json.Valid(host.Registration) || !matchingRuntime(host.Target, host.Runtime) || host.Resources.Validate(host.Target, host.Instance) != nil {
 		return fmt.Errorf("complete bounded host registration required")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -37,7 +38,7 @@ func (r *Registry) RegisterHost(ctx context.Context, host HostRecord) error {
 	if err := checkRuntimeOpen(ctx, tx, host.Target); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO session_hosts(target,instance,boot_id,pid,runtime,registration) VALUES(?,?,?,?,?,?)`, encodeTarget(host.Target), host.Instance, host.BootID, host.PID, api.Payload(host.Runtime), host.Registration)
+	_, err = tx.ExecContext(ctx, `INSERT INTO session_hosts(target,instance,boot_id,pid,runtime,registration,resources) VALUES(?,?,?,?,?,?,?)`, encodeTarget(host.Target), host.Instance, host.BootID, host.PID, api.Payload(host.Runtime), host.Registration, api.Payload(host.Resources))
 	if err != nil {
 		return err
 	}
@@ -85,26 +86,34 @@ func (r *Registry) RecordHostRuntime(ctx context.Context, target api.SubmissionT
 	if runtime.State == "exited" {
 		phase = "exited"
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE session_hosts SET runtime=?,phase=? WHERE target=? AND instance=? AND phase='active'`, api.Payload(runtime), phase, encodeTarget(target), instance)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := checkRuntimeOpen(ctx, tx, target); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE session_hosts SET runtime=?,phase=? WHERE target=? AND instance=? AND phase='active'`, api.Payload(runtime), phase, encodeTarget(target), instance)
 	if err != nil {
 		return err
 	}
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return conflict()
 	}
-	return nil
+	return tx.Commit()
 }
 
-const hostColumns = `h.target,h.instance,h.boot_id,h.pid,h.group_id,h.group_generation,h.phase,h.runtime,h.registration`
+const hostColumns = `h.target,h.instance,h.boot_id,h.pid,h.group_id,h.group_generation,h.phase,h.runtime,h.registration,h.resources`
 
 func scanHost(row interface{ Scan(...any) error }) (HostRecord, error) {
 	var host HostRecord
-	var target, runtime []byte
-	err := row.Scan(&target, &host.Instance, &host.BootID, &host.PID, &host.GroupID, &host.GroupGeneration, &host.Phase, &runtime, &host.Registration)
+	var target, runtime, resources []byte
+	err := row.Scan(&target, &host.Instance, &host.BootID, &host.PID, &host.GroupID, &host.GroupGeneration, &host.Phase, &runtime, &host.Registration, &resources)
 	if err != nil {
 		return host, err
 	}
-	if json.Unmarshal(target, &host.Target) != nil || json.Unmarshal(runtime, &host.Runtime) != nil || host.Target.Validate() != nil || !matchingRuntime(host.Target, host.Runtime) || api.ValidateSubmissionID(host.Instance) != nil || api.ValidateSubmissionID(host.BootID) != nil || host.PID <= 1 || host.GroupID < 0 || (host.Phase != "active" && host.Phase != "exited") {
+	if json.Unmarshal(target, &host.Target) != nil || json.Unmarshal(runtime, &host.Runtime) != nil || json.Unmarshal(resources, &host.Resources) != nil || host.Resources.Validate(host.Target, host.Instance) != nil || host.Target.Validate() != nil || !matchingRuntime(host.Target, host.Runtime) || api.ValidateSubmissionID(host.Instance) != nil || api.ValidateSubmissionID(host.BootID) != nil || host.PID <= 1 || host.GroupID < 0 || (host.Phase != "active" && host.Phase != "exited") {
 		return host, fmt.Errorf("invalid persisted host identity")
 	}
 	return host, nil

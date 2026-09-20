@@ -53,7 +53,8 @@ func TestStopAdmissionIsAtomicAndUsesOnlyItsOwnReservation(t *testing.T) {
 	_, _, err := r.AcceptStop(t.Context(), key, Digest("runtime.stop", nil), "host", "another-ref")
 	requireCode(t, err, "CONTROL_UNAVAILABLE")
 	key.SubmissionID = "forget"
-	if claim, _, err := r.ClaimControl(t.Context(), key, Digest("forget", nil), "registry", ControlForget, ""); err != nil || !claim.Acquired() {
+	registerCleanupHost(t, r, key.Target)
+	if acquired, _, err := r.AcceptForget(t.Context(), key, "cleanup", verifyExited); err != nil || !acquired {
 		t.Fatal("stop consumed the independent cleanup reservation", err)
 	}
 }
@@ -83,7 +84,7 @@ func TestProtectedReservationsSurviveOrdinaryAndOtherControlExhaustion(t *testin
 	if receipt, err := r.Get(t.Context(), key); err != nil || receipt.Admission != api.SubmissionUnknown {
 		t.Fatal("ordinary pressure blocked reads or manufactured rejection", receipt, err)
 	}
-	for _, item := range []struct{ kind, id string }{{ControlPermission, "permission"}, {ControlCancel, "operation"}, {ControlStop, ""}, {ControlForget, ""}} {
+	for _, item := range []struct{ kind, id string }{{ControlPermission, "permission"}, {ControlCancel, "operation"}} {
 		key.SubmissionID = item.kind
 		digest := Digest(item.kind, []byte(item.id))
 		claim, _, err := r.ClaimControl(t.Context(), key, digest, "host", item.kind, item.id)
@@ -160,11 +161,8 @@ func TestLaunchAndForgetEvidenceOutliveRuntimeResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	key.SubmissionID = "forget-before-send"
-	claim, _, err = r.ClaimControl(t.Context(), key, Digest("forget", nil), "registry", ControlForget, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accepted, err = r.AcceptForget(t.Context(), claim, "cleanup-original")
+	registerCleanupHost(t, r, key.Target)
+	_, accepted, err = r.AcceptForget(t.Context(), key, "cleanup-original", verifyExited)
 	if err != nil || accepted.Stage != "cleaning" {
 		t.Fatal(accepted, err)
 	}
@@ -181,9 +179,16 @@ func TestLaunchAndForgetEvidenceOutliveRuntimeResources(t *testing.T) {
 	if err != nil || observed.Admission != api.SubmissionAccepted || observed.Stage != "cleaning" || observed.OperationRef != "cleanup-original" {
 		t.Fatal("cleanup crash lost admission or fabricated completion", observed, err)
 	}
-	finished, err := r.Progress(t.Context(), key, "cleanup-original", "completed", "", nil)
-	if err != nil || finished.Stage != "completed" {
-		t.Fatal(finished, err)
+	job, err := r.BindCleanup(t.Context(), key, "cleanup-original", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range cleanupSteps {
+		finished, err := r.CheckpointCleanup(t.Context(), job, step, "")
+		if err != nil {
+			t.Fatal(finished, err)
+		}
+		job.Confirmed++
 	}
 	if err := r.ReserveRuntime(t.Context(), key.Target); err == nil {
 		t.Fatal("forgotten Runtime identity was reused")
@@ -191,8 +196,8 @@ func TestLaunchAndForgetEvidenceOutliveRuntimeResources(t *testing.T) {
 	if _, err := r.Progress(t.Context(), key, "cleanup-original", "cleaning", "", nil); err == nil {
 		t.Fatal("completed cleanup regressed")
 	}
-	duplicate, receipt, err := r.ClaimControl(t.Context(), key, Digest("forget", nil), "registry", ControlForget, "")
-	if err != nil || duplicate.Acquired() || receipt.Stage != "completed" {
+	duplicate, receipt, err := r.AcceptForget(t.Context(), key, "duplicate", verifyExited)
+	if err != nil || duplicate || receipt.Stage != "completed" {
 		t.Fatal("forgotten Runtime lost its independent duplicate receipt", receipt, err)
 	}
 	var failure *api.Error

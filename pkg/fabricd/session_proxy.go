@@ -220,12 +220,19 @@ func (p *sessionProxy) forward(s *executionStream, request *pb.Message, skipAcce
 
 func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch api.SubmissionReceipt) error {
 	directory := filepath.Join(d.stateDir, "acp", "runtimes", r.id)
-	if err := tmux.PrivateDir(directory); err != nil {
+	if err := tmux.PrivateDir(filepath.Dir(directory)); err != nil {
+		return err
+	}
+	// Never overwrite the marker or bootstrap of an existing resource path.
+	if err := os.Mkdir(directory, 0700); err != nil {
 		return err
 	}
 	target := launch.Target
 	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = r.id, r.inc, 1
 	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: r.info()}
+	if err := savePrivateFile(filepath.Join(directory, "instance.json"), reg.Instance); err != nil {
+		return err
+	}
 	boot := sessionBootstrap{Launch: launch, Registration: reg, StateDir: d.stateDir, Profile: p, Environment: environment(p.Env)}
 	if err := savePrivateFile(filepath.Join(directory, "bootstrap.json"), boot); err != nil {
 		return err
@@ -234,7 +241,7 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 	if err != nil {
 		return err
 	}
-	if err := d.acpTmux.CreateHost(r.id, executable, directory); err != nil {
+	if err := d.acpTmux.CreateHost(r.id, reg.Instance, executable, directory); err != nil {
 		return err
 	}
 	r.host = &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc, registry: d.registry}

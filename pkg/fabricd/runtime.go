@@ -257,7 +257,7 @@ func (d *Engine) forgetRuntime(r *runtime) error {
 		if state.Availability != "" || state.State != "exited" {
 			return &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "cleanup requires confirmed Agent exit"}
 		}
-		if err := d.acpTmux.DestroyHost(r.id); err != nil {
+		if err := d.acpTmux.DestroyHost(r.id, r.host.registration.Instance); err != nil {
 			return err
 		}
 		r.host.close()

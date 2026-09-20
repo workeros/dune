@@ -138,6 +138,9 @@ func (r *Registry) ReserveControl(ctx context.Context, target api.SubmissionTarg
 // ClaimControl uses the SAME submission-key table as ordinary operations.
 // Missing/invalid targets consume nothing; their absence remains unknown.
 func (r *Registry) ClaimControl(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver, kind, id string) (Claim, api.SubmissionReceipt, error) {
+	if kind != ControlPermission && kind != ControlCancel {
+		return Claim{}, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, fmt.Errorf("stop and forget require atomic admission")
+	}
 	resource, err := controlResource(key.Target, kind, id)
 	if err != nil {
 		return Claim{}, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, err

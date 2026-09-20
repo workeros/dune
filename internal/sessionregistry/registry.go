@@ -123,7 +123,7 @@ func (r *Registry) initialize(ctx context.Context) error {
 		key TEXT PRIMARY KEY, digest TEXT NOT NULL, receiver TEXT NOT NULL,
 		token TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('claimed','accepted','not_accepted')),
 		operation_ref TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
-		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB, worktree BLOB);
+		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB, worktree BLOB, cleanup BLOB);
 		CREATE TABLE IF NOT EXISTS runtime_reservations (
 			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0);
 		CREATE TABLE IF NOT EXISTS control_reservations (
@@ -133,7 +133,10 @@ func (r *Registry) initialize(ctx context.Context) error {
 			target TEXT PRIMARY KEY REFERENCES runtime_reservations(target), instance TEXT NOT NULL UNIQUE,
 			boot_id TEXT NOT NULL, pid INTEGER NOT NULL, group_id INTEGER NOT NULL DEFAULT 0,
 			group_generation INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'active',
-			runtime BLOB NOT NULL, registration BLOB NOT NULL)`)
+			runtime BLOB NOT NULL, registration BLOB NOT NULL, resources BLOB NOT NULL);
+		CREATE TABLE IF NOT EXISTS cleanup_jobs (
+			key TEXT PRIMARY KEY REFERENCES submission_keys(key), host BLOB NOT NULL,
+			confirmed INTEGER NOT NULL DEFAULT 0, executor_term INTEGER NOT NULL DEFAULT 0)`)
 	if err != nil {
 		return err
 	}
@@ -301,6 +304,7 @@ type record struct {
 	worktree                                                                        []byte
 	digest, receiver, token, state, operationRef, errorCode, stage, controlResource string
 	runtime                                                                         []byte
+	cleanup                                                                         []byte
 }
 
 func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
@@ -315,6 +319,9 @@ func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
 	if len(r.worktree) != 0 {
 		_ = json.Unmarshal(r.worktree, &receipt.Worktree)
 	}
+	if len(r.cleanup) != 0 {
+		_ = json.Unmarshal(r.cleanup, &receipt.Cleanup)
+	}
 	return receipt
 }
 
@@ -324,8 +331,8 @@ type queryRow interface {
 
 func readRecord(ctx context.Context, db queryRow, key string) (record, error) {
 	var result record
-	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime,worktree FROM submission_keys WHERE key=?`, key).Scan(
-		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime, &result.worktree)
+	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime,worktree,cleanup FROM submission_keys WHERE key=?`, key).Scan(
+		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime, &result.worktree, &result.cleanup)
 	return result, err
 }
 
@@ -377,8 +384,11 @@ func prepareFile(path string, create bool) error {
 		return err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !ok || int(stat.Uid) != os.Getuid() || stat.Nlink != 1 {
-		return fmt.Errorf("registry files must be private regular files owned by this user without hard links")
+	// A concurrently committing SQLite connection can unlink its journal after
+	// this open. That old descriptor (Nlink=0) is harmless; the main database
+	// must remain linked, and multiple links are never accepted for any file.
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !ok || int(stat.Uid) != os.Getuid() || stat.Nlink > 1 || (create && stat.Nlink != 1) {
+		return fmt.Errorf("%s must be a private regular registry file owned by this user without hard links", filepath.Base(path))
 	}
 	return nil
 }
