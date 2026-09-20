@@ -39,7 +39,6 @@ read/get responses are in flight per engine. Capacity eviction removes a
 contiguous insertion-order prefix and does not depend on readership.
 
 The implementation is being delivered in vertical slices. Notification delivery,
-connection isolation for repeated native loads and
 consumer model migration are subsequent slices; this document is not a completion
 report for the full conversation requirements.
 
@@ -91,3 +90,13 @@ Adjacent equivalent in-flight loads share one operation reference; intervening
 operations retain queue order. RPC results commit synchronously in the input
 reader before process exit can change phase, preserving the independent opening
 outcome after exit and operation-log expiration.
+
+Each explicit new/load after the first open establishes a fresh initialized
+Agent process/stdio connection within the same managed Runtime. This isolates
+untagged same-native-ID notifications. Runtime identity, queue order, operation
+records, MCP configuration and last-confirmed metadata remain owned by the
+controller; old connection callbacks cannot update the new model. It requires
+the Agent to support native load across processes. A failure to establish the
+new connection fails the open without replaying a prompt. Normal read/state/
+subscribe operations never use this path. The configured Runtime timeout is
+not extended by reopening a native session.

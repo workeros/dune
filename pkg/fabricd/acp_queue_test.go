@@ -25,6 +25,9 @@ func queueFixture(t *testing.T) (*acpController, <-chan queuedRPC) {
 	r := &runtime{cwd: "/tmp", subs: map[*subscription]bool{}, p: &process.Process{Input: writer}}
 	a := newACPController(r)
 	r.acp = a
+	// Scheduling tests use a controllable synthetic wire; connection replacement
+	// itself is covered by the subprocess and old-connection callback tests.
+	a.renewConnection = func() error { a.mu.Lock(); a.reconnecting = false; a.mu.Unlock(); return nil }
 	a.state = api.ACPState{Ready: true, SessionID: "session-a", Cwd: "/tmp", CanLoad: true, CanList: true}
 	a.conversation.begin(api.ACPAction{Action: "new", Cwd: "/tmp"})
 	a.conversation.opened("session-a", "/tmp", "succeeded", nil)
@@ -453,5 +456,28 @@ func TestACPOpenOutcomeIsSettledBeforeExitAndSurvivesRetention(t *testing.T) {
 				t.Fatal("open result expired with output")
 			}
 		})
+	}
+}
+
+func TestACPRejectsCallbacksFromOldConnectionWithSameNativeID(t *testing.T) {
+	a, _ := queueFixture(t)
+	old := a.connection
+	fresh := &process.Process{}
+	a.mu.Lock()
+	a.connection = fresh
+	a.conversation.begin(api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/tmp"})
+	a.mu.Unlock()
+	update := api.Payload(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "session-a", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "from fresh connection"}}}})
+	if !a.r.acceptACPLineFrom(update, old) || !a.r.acceptACPLineFrom([]byte("invalid old bytes"), old) {
+		t.Fatal("old connection affected live parsing")
+	}
+	if len(conversationPage(t, a.conversation).Entries) != 0 {
+		t.Fatal("old callback crossed conversation boundary")
+	}
+	if !a.r.acceptACPLineFrom(update, fresh) {
+		t.Fatal("fresh connection rejected")
+	}
+	if page := conversationPage(t, a.conversation); len(page.Entries) != 1 || rawMessageText(page.Entries[0].Message.Content[0]) != "from fresh connection" {
+		t.Fatal("fresh replay was not retained")
 	}
 }

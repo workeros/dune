@@ -244,6 +244,7 @@ func TestACPCapabilityCombinationsAndLoad(t *testing.T) {
 			r := &runtime{cwd: "/tmp", subs: map[*subscription]bool{}, p: &process.Process{Input: wr}}
 			a := newACPController(r)
 			r.acp = a
+			a.renewConnection = func() error { a.mu.Lock(); a.reconnecting = false; a.mu.Unlock(); return nil }
 			go func() {
 				dec := json.NewDecoder(rd)
 				for {

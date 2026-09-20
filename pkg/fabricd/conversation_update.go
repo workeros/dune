@@ -215,6 +215,14 @@ func (a *acpController) recordConversationUpdate(params json.RawMessage) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	select {
+	case <-a.done:
+		return
+	default:
+	}
+	if a.reconnecting {
+		return
+	}
 	if envelope.SessionID == "" || envelope.SessionID != a.state.SessionID {
 		a.conversation.mutate(func(m *conversationModel) { m.description.ContextIncomplete = true })
 		return

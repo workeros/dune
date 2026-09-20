@@ -20,6 +20,7 @@ type acpQueuedAction struct {
 	ref       string
 	rpcID     string
 	responded bool
+	reconnect bool
 }
 
 // Called with the controller lock: validation, admission and order are shared
@@ -124,6 +125,9 @@ func (a *acpController) startNextLocked() {
 		params := map[string]any{}
 		switch req.Action {
 		case "new", "load":
+			operation.reconnect = a.openedOnce
+			a.openedOnce = true
+			a.reconnecting = operation.reconnect
 			a.conversation.begin(req)
 			a.operations.mu.Lock()
 			a.operations.records[operation.ref].status.ConversationID = a.conversation.describe().ID
@@ -163,6 +167,18 @@ func (a *acpController) startNextLocked() {
 }
 
 func (a *acpController) runOperation(operation *acpQueuedAction, params map[string]any) {
+	if operation.reconnect {
+		if err := a.renewConnection(); err != nil {
+			a.mu.Lock()
+			a.state.Ready, a.reconnecting = false, false
+			a.settleOperationLocked(operation, nil, err)
+			a.closedLocked()
+			a.mu.Unlock()
+			a.r.stop()
+			a.r.finish(-1)
+			return
+		}
+	}
 	timeout := 60 * time.Second
 	if operation.request.Action == "prompt" {
 		timeout = 0
@@ -340,6 +356,10 @@ func (a *acpController) recordUpdate(params json.RawMessage) {
 func (a *acpController) markOutputIncomplete() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.conversation.mutate(func(m *conversationModel) {
+		m.description.ContentOmitted = true
+		m.description.ContextIncomplete = true
+	})
 	if a.active != nil {
 		a.operations.markIncomplete(a.active.ref)
 	}

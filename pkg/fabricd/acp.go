@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -32,26 +33,31 @@ const (
 )
 
 type acpController struct {
-	mu             sync.Mutex
-	controlMu      sync.Mutex
-	controlling    bool
-	r              *runtime
-	state          api.ACPState
-	pending        map[string]chan acpReply
-	permissions    map[string]acpPermission
-	methods        map[string]string
-	done           chan struct{}
-	once           sync.Once
-	replaying      atomic.Bool
-	queue          []*acpQueuedAction
-	active         *acpQueuedAction
-	operations     *operationLog
-	conversation   *conversationSlot
-	nativeSequence int64
-	requireMCP     bool
-	mcpHTTP        bool
-	mcpServers     []any
-	mcpSecret      atomic.Pointer[string]
+	inputMu         sync.Mutex
+	connection      *process.Process
+	openedOnce      bool
+	reconnecting    bool
+	renewConnection func() error
+	mu              sync.Mutex
+	controlMu       sync.Mutex
+	controlling     bool
+	r               *runtime
+	state           api.ACPState
+	pending         map[string]chan acpReply
+	permissions     map[string]acpPermission
+	methods         map[string]string
+	done            chan struct{}
+	once            sync.Once
+	replaying       atomic.Bool
+	queue           []*acpQueuedAction
+	active          *acpQueuedAction
+	operations      *operationLog
+	conversation    *conversationSlot
+	nativeSequence  int64
+	requireMCP      bool
+	mcpHTTP         bool
+	mcpServers      []any
+	mcpSecret       atomic.Pointer[string]
 }
 
 func newACPController(r *runtime) *acpController {
@@ -59,7 +65,9 @@ func newACPController(r *runtime) *acpController {
 	if r.conversations == nil {
 		r.conversations = newConversationStore()
 	}
-	return &acpController{r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	a := &acpController{connection: r.p, r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	a.renewConnection = a.reconnect
+	return a
 }
 func (a *acpController) snapshotLocked() api.ACPState {
 	s := a.state
@@ -85,7 +93,10 @@ func (a *acpController) send(v any) error {
 	// Publish before writing so a fast Agent response cannot appear before the
 	// request in the inspector. A subsequent write error is surfaced separately.
 	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": json.RawMessage(a.redactCredential(redactMCPConfiguration(b)))})})
-	if err := a.r.p.Write(append(b, '\n')); err != nil {
+	a.r.mu.Lock()
+	p := a.r.p
+	a.r.mu.Unlock()
+	if err := p.Write(append(b, '\n')); err != nil {
 		return err
 	}
 	return nil
@@ -134,11 +145,17 @@ func (a *acpController) rpc(method string, params any, timeout time.Duration, op
 	}
 }
 func (a *acpController) closed() {
-	a.once.Do(func() { close(a.done) })
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.closedLocked()
+}
+
+func (a *acpController) closedLocked() { a.closedWithExitLocked(nil) }
+
+func (a *acpController) closedWithExitLocked(code *int) {
+	a.once.Do(func() { close(a.done) })
 	a.closeQueueLocked()
-	a.conversation.exited()
+	a.conversation.exitedWithCode(code)
 	a.state.Ready = false
 	a.state.Busy = ""
 	a.permissions = map[string]acpPermission{}
@@ -360,6 +377,15 @@ func splitACPText(text string, limit int) []string {
 	return parts
 }
 func (a *acpController) initialize() {
+	if err := a.initializeConnection(); err != nil {
+		a.mu.Lock()
+		a.state.Error, a.state.Busy = err.Error(), ""
+		a.publishLocked()
+		a.mu.Unlock()
+		a.r.stop()
+	}
+}
+func (a *acpController) initializeConnection() error {
 	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
 	var init struct {
 		Version      int             `json:"protocolVersion"`
@@ -378,31 +404,29 @@ func (a *acpController) initialize() {
 		err = fmt.Errorf("unsupported ACP protocol version; expected 1")
 	}
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if err != nil {
-		a.state.Error = err.Error()
-		a.state.Busy = ""
-		a.publishLocked()
-		a.mu.Unlock()
-		a.r.stop()
-		return
+		return err
 	}
 	select {
 	case <-a.done:
-		a.mu.Unlock()
-		return
+		return &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP exited during initialization"}
 	default:
 	}
+	if a.state.MCPTransport == "http" && !init.Capabilities.MCP.HTTP {
+		return &api.Error{Code: "UNSUPPORTED", Detail: "isolated connection no longer supports the configured HTTP MCP transport"}
+	}
 	a.state.Ready = true
-	a.state.Busy = ""
+	if a.active == nil {
+		a.state.Busy = ""
+	}
 	a.state.Agent = init.Info
 	a.state.CanLoad = init.Capabilities.Load
 	a.mcpHTTP = init.Capabilities.MCP.HTTP
 	var object map[string]any
 	a.state.CanList = json.Unmarshal(init.Capabilities.Sessions.List, &object) == nil && object != nil
 	a.publishLocked()
-	a.mu.Unlock()
-	// The caller chooses new/load after initialization; the shared launcher
-	// creates an initial session and the restorer loads the saved native ID.
+	return nil
 }
 func (a *acpController) action(req api.ACPAction) (any, error) {
 	if req.Action == "permission" || req.Action == "cancel" {

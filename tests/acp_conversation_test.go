@@ -112,6 +112,11 @@ func TestACPConversationReadWithoutSubscription(t *testing.T) {
 	}
 	// Native replay is ingested even though there is no active prompt.
 	submit(api.ACPAction{Action: "load", SessionID: "mock-session", Cwd: h.dir})
+	reopenedRPCs, err := os.ReadFile(rpcLog)
+	must(t, err)
+	if strings.Count(string(reopenedRPCs), "initialize\n") != 2 || strings.Count(string(reopenedRPCs), "session/load\n") != 1 {
+		t.Fatal("explicit reload did not establish one fresh initialized connection", string(reopenedRPCs))
+	}
 	loaded, err := h.client.ACPState(h.ctx, runtime)
 	must(t, err)
 	if loaded.Conversation.ID == id {

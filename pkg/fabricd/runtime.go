@@ -46,6 +46,9 @@ type runtime struct {
 	title, cwd             string
 	projectID, directoryID string
 	p                      *process.Process
+	acpStart               func() (*process.Process, error)
+	acpReadDone            chan struct{}
+	stopped                bool
 	subs                   map[*subscription]bool
 	exit                   *int
 	failure                string
@@ -152,6 +155,7 @@ func (r *runtime) stop() error {
 		return nil
 	}
 	r.mu.Lock()
+	r.stopped = true
 	p := r.p
 	r.mu.Unlock()
 	if p != nil {
@@ -350,7 +354,9 @@ func (r *runtime) read(rd io.Reader, kind string, wg *sync.WaitGroup) {
 	}
 }
 
-func (r *runtime) readACP(rd io.Reader) {
+func (r *runtime) readACP(rd io.Reader) { r.readACPConnection(rd, nil) }
+
+func (r *runtime) readACPConnection(rd io.Reader, connection *process.Process) {
 	lineLimit, _ := acpMemoryLimits(machineMemoryBytes())
 	reader := bufio.NewReaderSize(rd, 64*1024)
 	line := make([]byte, 0, 64*1024)
@@ -378,7 +384,7 @@ func (r *runtime) readACP(rd io.Reader) {
 					"message_bytes": lineBytes,
 					"limit_bytes":   lineLimit,
 				})})
-			} else if !r.acceptACPLine(line) {
+			} else if !r.acceptACPLineFrom(line, connection) {
 				return
 			}
 			line = line[:0]
@@ -395,7 +401,19 @@ func (r *runtime) readACP(rd io.Reader) {
 	}
 }
 
-func (r *runtime) acceptACPLine(b []byte) bool {
+func (r *runtime) acceptACPLine(b []byte) bool { return r.acceptACPLineFrom(b, nil) }
+
+func (r *runtime) acceptACPLineFrom(b []byte, connection *process.Process) bool {
+	if r.acp != nil {
+		r.acp.inputMu.Lock()
+		defer r.acp.inputMu.Unlock()
+		r.acp.mu.Lock()
+		current := !r.acp.reconnecting && (connection == nil || r.acp.connection == connection)
+		r.acp.mu.Unlock()
+		if !current {
+			return true
+		}
+	}
 	if e := validateRPC(b); e != nil {
 		r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: e.Error()})
 		r.stop()
@@ -733,13 +751,15 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 		d.interact(s, r, sub)
 		return
 	}
-	proc, e := process.Start(argv, p.WorkingDirectory, environment(p.Env))
+	processEnvironment := environment(p.Env)
+	proc, e := process.Start(argv, p.WorkingDirectory, processEnvironment)
 	if e != nil {
 		s.Fail("START_FAILED", e)
 		return
 	}
 	r.p = proc
 	if p.ManagedACP {
+		r.acpStart = func() (*process.Process, error) { return process.Start(argv, p.WorkingDirectory, processEnvironment) }
 		r.acp = newACPController(r)
 		r.acp.requireMCP = p.RequireAgentMCP
 	}
@@ -748,33 +768,14 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 	d.runtimes[r.id] = r
 	releaseSlot()
 	d.mu.Unlock()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go r.read(proc.Output, "data", &wg)
-	if proc.Stderr != nil {
-		wg.Add(1)
-		go r.read(proc.Stderr, "stderr", &wg)
-	}
-	go func() {
-		<-proc.Done
-		wg.Wait()
-		r.mu.Lock()
-		code := proc.Exit
-		r.exit = &code
-		r.mu.Unlock()
-		if r.acp != nil {
-			r.acp.closed()
-		}
-		r.emit(&pb.Message{Kind: "exit", Payload: api.Payload(code)})
-		proc.Close()
-	}()
+	r.runProcess(proc)
 	if r.acp != nil {
 		go r.acp.initialize()
 	}
 	if p.Start.TimeoutSeconds > 0 {
 		go func() {
 			select {
-			case <-proc.Done:
+			case <-r.done:
 			case <-time.After(time.Duration(p.Start.TimeoutSeconds) * time.Second):
 				r.stop()
 			}

@@ -109,13 +109,19 @@ func (s *conversationSlot) opened(sessionID, cwd, outcome string, failure *api.A
 	})
 }
 
-func (s *conversationSlot) exited() {
+func (s *conversationSlot) exited() { s.exitedWithCode(nil) }
+
+func (s *conversationSlot) exitedWithCode(code *int) {
 	s.mutate(func(m *conversationModel) {
 		if m.description.OpenOutcome == "pending" {
 			m.description.OpenOutcome = "unknown"
 			m.description.OpenError = &api.ACPFailure{Code: "RESULT_UNKNOWN", Detail: "Agent exited before a matching open result"}
 		}
 		m.description.Phase = "exited"
+		if code != nil {
+			value := *code
+			m.description.ExitCode = &value
+		}
 	})
 }
 
