@@ -51,6 +51,8 @@ type Engine struct {
 	ctx               context.Context
 	tmux              *tmux.Server
 	stateDir          string
+	acpTmux           *tmux.Server
+	sessionTerm       uint64
 	cancel            context.CancelFunc
 	closeOnce         sync.Once
 	active            sync.WaitGroup
@@ -65,7 +67,8 @@ func newEngine(parent context.Context) *Engine {
 	return engine
 }
 
-// Close stops the connector and owned ACP processes and releases its state lock.
+// Close releases connector resources and its state lock. Independent ACP hosts
+// retain their Agent, controller, queue and pipes; host shutdown owns their cleanup.
 // It is idempotent and preserves tmux sessions and their working content.
 func (d *Engine) Close() {
 	d.closeOnce.Do(func() {
@@ -78,6 +81,10 @@ func (d *Engine) Close() {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		for _, r := range d.runtimes {
+			if r.host != nil {
+				r.host.close()
+				continue
+			}
 			r.closePTYInput()
 			if r.tmux == nil {
 				_ = r.stop()
@@ -120,6 +127,21 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		s.Fail("INVALID_ARGUMENT", fmt.Errorf("request ID too long"))
 		return
 	}
+	d.dispatch(s, m, target)
+}
+
+func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
+	if m.RuntimeId != "" && m.Operation != "submission.get" && m.Operation != "runtime.forget" {
+		if r, err := d.lookup(m); err == nil && r.host != nil {
+			if !sessionOperation(m.Operation) {
+				s.Fail("UNSUPPORTED", fmt.Errorf("operation is not available on an ACP host"))
+				return
+			}
+			r.host.forward(s, m, false)
+			return
+		}
+	}
+	var e error
 	switch m.Operation {
 	case "submission.acp":
 		d.submitACP(s, m, target)
@@ -300,26 +322,7 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64) {
 		var r *runtime
 		r, e = d.lookup(m)
 		if e == nil {
-			d.mu.Lock()
-			r.mu.Lock()
-			if r.exit == nil {
-				e = fmt.Errorf("stop the runtime before deleting its retained terminal history")
-			} else {
-				if r.tmux != nil {
-					e = r.tmux.Destroy()
-				}
-				if e == nil {
-					delete(d.runtimes, r.id)
-				}
-			}
-			r.mu.Unlock()
-			d.mu.Unlock()
-		}
-		if e == nil {
-			r.closePTYInput()
-			if r.acp != nil {
-				r.acp.conversation.remove()
-			}
+			e = d.forgetRuntime(r)
 		}
 	case "runtime.get", "runtime.stop":
 		var r *runtime

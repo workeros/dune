@@ -84,6 +84,9 @@ func start(t *testing.T) *harness {
 		if server, err := tmux.Open(c.SessionDir); err == nil {
 			_ = server.Close()
 		}
+		if server, err := tmux.Open(filepath.Join(c.SessionDir, "acp")); err == nil {
+			_ = server.Close()
+		}
 		cancel()
 		h.log.Close()
 		logBytes, _ := os.ReadFile(h.log.Name())

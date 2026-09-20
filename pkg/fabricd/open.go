@@ -1,5 +1,6 @@
-// Package fabricd provides the Dune execution engine. It owns PTY/ACP, files,
-// Git, ports, and runtime lifecycle, without HTTP, identity, or product storage.
+// Package fabricd provides the Dune execution engine and private ACP host.
+// Connectors route persistent ACP operations to their independent host; HTTP,
+// identity and product storage remain outside this package.
 package fabricd
 
 import (
@@ -57,6 +58,17 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 		return nil, err
 	}
 	d.stateDir = stateDir
+	d.sessionTerm, err = nextSessionTerm(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	d.acpTmux, err = tmux.Open(filepath.Join(stateDir, "acp"))
+	if err != nil {
+		return nil, err
+	}
+	if err := d.discoverSessions(); err != nil {
+		return nil, err
+	}
 	d.registry, err = sessionregistry.Open(ctx, filepath.Join(stateDir, "registry"), sessionregistry.Options{})
 	if err != nil {
 		return nil, err
@@ -129,6 +141,14 @@ func RunHelper(args []string) (code int, handled bool) {
 			case <-done:
 			case <-ctx.Done():
 			}
+		}
+		return 0, true
+	case "_acp_host":
+		if len(args) != 2 {
+			return 1, true
+		}
+		if err := runSessionHost(args[1]); err != nil {
+			return 1, true
 		}
 		return 0, true
 	case "_cleanup":

@@ -29,7 +29,7 @@ type operationRecord struct {
 }
 
 // operationLog owns only bounded result retention, independent of transports
-// and scheduling. References exist only in this Runtime's fabricd instance.
+// and scheduling. References belong to this Runtime and survive connector replacement.
 type operationLog struct {
 	mu      sync.Mutex
 	records map[string]*operationRecord
@@ -133,7 +133,7 @@ func (l *operationLog) findLocked(ref string) (*operationRecord, error) {
 	if record := l.records[ref]; record != nil {
 		return record, nil
 	}
-	return nil, &api.Error{Code: "OPERATION_EXPIRED", Detail: "operation is absent, expired, or belongs to another fabricd Runtime"}
+	return nil, &api.Error{Code: "OPERATION_EXPIRED", Detail: "operation is absent, expired, or belongs to another Runtime"}
 }
 
 func (l *operationLog) wait(ctx context.Context, request api.AgentOperationWait) (api.AgentOperation, error) {

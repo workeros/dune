@@ -14,17 +14,25 @@ import (
 // Already admitted operations are not rolled back when the connection changes.
 type executionStream struct {
 	*wire.Stream
-	ctx        context.Context
-	engine     *Engine
-	generation uint64
-	input      *wire.InputWindow
-	epoch      uint64
+	ctx          context.Context
+	engine       *Engine
+	generation   uint64
+	input        *wire.InputWindow
+	epoch        uint64
+	receiveCheck func(*pb.Message) error
 }
 
 func (s *executionStream) Recv() (*pb.Message, error) {
 	m, err := s.Stream.Recv()
 	if err != nil {
 		return nil, err
+	}
+	if s.receiveCheck != nil {
+		if err := s.receiveCheck(m); err != nil {
+			s.Fail("STALE_CONTROL", err)
+			return nil, err
+		}
+		return m, nil
 	}
 	s.engine.mu.Lock()
 	current := s.engine.generation

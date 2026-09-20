@@ -36,6 +36,7 @@ func TestReplacementConnectionRejectsOldStreamInput(t *testing.T) {
 		engine.Close()
 		wg.Wait()
 		engine.tmux.Close()
+		engine.acpTmux.Close()
 	})
 	connect := func() *client.Client {
 		t.Helper()

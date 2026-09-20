@@ -213,6 +213,9 @@ type ExecResult struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
+	// Availability describes the current connection, independently of State.
+	// Unavailable preserves the last confirmed lifecycle fact.
+	Availability     string         `json:"availability,omitempty"`
 	ConversationID   string         `json:"conversation_id,omitempty"`
 	ProjectID        string         `json:"project_id,omitempty"`
 	DirectoryID      string         `json:"directory_id,omitempty"`

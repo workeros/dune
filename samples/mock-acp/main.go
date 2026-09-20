@@ -22,6 +22,16 @@ type message struct {
 }
 
 func main() {
+	if path := os.Getenv("DUNE_MOCK_PROCESS_LOG"); path != "" {
+		input, _ := os.Stdin.Stat()
+		output, _ := os.Stdout.Stat()
+		log, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			panic(err)
+		}
+		_ = json.NewEncoder(log).Encode(map[string]any{"pid": os.Getpid(), "stdin_pipe": input.Mode()&os.ModeNamedPipe != 0, "stdout_pipe": output.Mode()&os.ModeNamedPipe != 0})
+		_ = log.Close()
+	}
 	scan := bufio.NewScanner(os.Stdin)
 	scan.Buffer(make([]byte, 4096), 256*1024)
 	enc := json.NewEncoder(os.Stdout)
@@ -120,6 +130,19 @@ func main() {
 			}
 			reply(m.ID, map[string]any{})
 		case "session/prompt":
+			if address := os.Getenv("DUNE_MOCK_PROMPT_GATE"); address != "" && strings.Contains(string(m.Params), "barrier") {
+				gate, err := net.DialTimeout("tcp", address, 5*time.Second)
+				if err != nil {
+					panic(err)
+				}
+				_ = gate.SetDeadline(time.Now().Add(30 * time.Second))
+				_, _ = gate.Write([]byte{1})
+				var release [1]byte
+				if _, err := gate.Read(release[:]); err != nil {
+					panic(err)
+				}
+				_ = gate.Close()
+			}
 			var params struct {
 				Prompt []struct {
 					Text string `json:"text"`

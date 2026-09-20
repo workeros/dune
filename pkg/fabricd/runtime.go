@@ -59,6 +59,7 @@ type runtime struct {
 	tmux                   *tmux.Session
 	done                   chan struct{}
 	acp                    *acpController
+	host                   *sessionProxy
 	activity               api.AgentActivity
 	nativeSession          *api.NativeSession
 	ptyActivityMu          sync.Mutex
@@ -102,6 +103,9 @@ func machineMemoryBytes() uint64 {
 }
 
 func (r *runtime) info() api.Runtime {
+	if r.host != nil {
+		return r.host.information()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	state := "running"
@@ -178,6 +182,46 @@ func (d *Engine) stop(r *runtime) error {
 	}
 	return nil
 }
+
+// forgetRuntime performs cleanup after the caller's admission boundary. It
+// requires confirmed exit; a failed IPC probe never authorizes deletion.
+func (d *Engine) forgetRuntime(r *runtime) error {
+	if r.host != nil {
+		state := r.info()
+		if state.Availability != "" || state.State != "exited" {
+			return &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "cleanup requires confirmed Agent exit"}
+		}
+		if err := d.acpTmux.DestroyHost(r.id); err != nil {
+			return err
+		}
+		r.host.close()
+		if err := os.RemoveAll(r.host.directory); err != nil {
+			return err
+		}
+	} else {
+		r.mu.Lock()
+		if r.exit == nil {
+			r.mu.Unlock()
+			return fmt.Errorf("stop the runtime before deleting retained history")
+		}
+		if r.tmux != nil {
+			if err := r.tmux.Destroy(); err != nil {
+				r.mu.Unlock()
+				return err
+			}
+		}
+		r.mu.Unlock()
+		r.closePTYInput()
+		if r.acp != nil {
+			r.acp.conversation.remove()
+		}
+	}
+	d.mu.Lock()
+	delete(d.runtimes, r.id)
+	d.mu.Unlock()
+	return nil
+}
+
 func (r *runtime) finish(code int) {
 	r.mu.Lock()
 	if r.exit != nil {
@@ -635,7 +679,7 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 		_ = s.Send(&pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(result)})
 		return
 	}
-	d.startAgent(s, p, releaseSlot)
+	d.startAgent(s, p, releaseSlot, m.Target)
 }
 
 func profileSetupFailure(executionID, kind string, step int, stepName string, result api.ExecResult, cause error) (api.ProfileProgress, *api.ProfileFailure) {
@@ -715,7 +759,7 @@ func (d *Engine) updateProfileAttempt(executionID, state string, progress api.Pr
 	attempt.at = time.Now()
 }
 
-func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func()) {
+func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(), machine string) {
 	r := &runtime{id: wire.ID(), inc: d.inc, adapter: p.Adapter, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
 	argv, _ := p.Start.Args()
 	r.title = filepath.Base(argv[0])
@@ -749,6 +793,24 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 		d.interact(s, r, sub)
 		return
 	}
+	if p.ManagedACP {
+		if err := d.launchSession(p, machine, r); err != nil {
+			s.Fail("RESULT_UNKNOWN", err)
+			return
+		}
+		d.mu.Lock()
+		d.runtimes[r.id] = r
+		releaseSlot()
+		d.mu.Unlock()
+		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info())}) != nil {
+			return
+		}
+		r.host.mu.Lock()
+		request := r.host.request("runtime.attach", api.Attach{Observe: true})
+		r.host.mu.Unlock()
+		r.host.forward(s, request, true)
+		return
+	}
 	processEnvironment := environment(p.Env)
 	proc, e := process.Start(argv, p.WorkingDirectory, processEnvironment)
 	if e != nil {
@@ -756,11 +818,6 @@ func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(
 		return
 	}
 	r.p = proc
-	if p.ManagedACP {
-		r.acpStart = func() (*process.Process, error) { return process.Start(argv, p.WorkingDirectory, processEnvironment) }
-		r.acp = newACPController(r)
-		r.acp.requireMCP = p.RequireAgentMCP
-	}
 	sub, _ := r.subscribe(true, false)
 	d.mu.Lock()
 	d.runtimes[r.id] = r

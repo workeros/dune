@@ -172,6 +172,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		engine.Close()
 		competitor.Close()
 		engine.tmux.Close()
+		engine.acpTmux.Close()
 	}()
 	connectFabric := func(g *gateway.Gateway, e *Engine) <-chan error {
 		left, right := net.Pipe()

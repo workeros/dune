@@ -95,3 +95,36 @@ The feature branch still has the old consumer entry points pending migration;
 this is an intermediate slice, not a compatibility commitment. Agent lifetime
 is still owned by fabricd at this point. Protected controls, launch admission,
 independent host ownership, and L01–L55 process acceptance remain outstanding.
+
+Slice 3 process tracer bullet: managed ACP now runs inside `_acp_host`, hosted
+by a separate private tmux server under the installation's `acp` directory.
+The host reuses the original controller, queue, model, operations and process
+guardian. The connector stores only an IPC proxy. Agent argv/environment use
+a private bootstrap file removed by the host; tmux receives no protocol data.
+The Agent has anonymous stdin/stdout pipes and separately consumed stderr.
+
+Private Yamux IPC validates installation, machine, host instance and full Runtime
+identity. A persistent connector control term fences older connectors; takeover
+is serialized with business admission. Read-only handshakes do not take control.
+Engine.Close closes proxies while leaving independent hosts alive. Discovery
+reopens the original endpoint without initialize/new/load. Unreachable proxies
+keep their last lifecycle description with `availability: unavailable`.
+
+`go test -race ./pkg/access ./pkg/fabricd -count=1 -timeout=180s` passes.
+`go test ./pkg/host ./tests -run
+'Test(ACPConversation|ManagedACPOriginal|ManagedSubmission)' -count=1
+-timeout=180s` passes (pkg/host had no matching tests).
+`TestManagedACPOriginalProcessAcrossConnectorRestart` uses real tmux, Gateway,
+host, Agent and replacement fabricd processes. After SIGKILL, blocked and queued
+prompts finish while fabricd is absent; their original receipts and operations
+remain readable. A subsequent SIGTERM/restart preserves the same permission and
+model. A single Agent process log confirms genuine pipes and no extra
+initialize/new/load. Existing explicit load/generation barrier tests pass.
+`TestSessionHostControlFencesOlderConnectorsAndProbesAreReadOnly` and private-file
+checks pass under race detection. Client/tmux race checks also pass.
+
+Still pending: raw ACP ownership, independent launch/forget admission (the
+existing forget execution is only routed cleanup at this slice), shared machine
+quotas, protected control evidence, complete discovery diagnostics, fixed binary
+dependencies, service-manager/platform tests and public consumer contract migration.
+No full L01–L55 completion claim is made by this process tracer bullet.

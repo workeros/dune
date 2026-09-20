@@ -64,6 +64,9 @@ func policyFixture(t *testing.T, checker Checker, valid func() bool) (context.Co
 		cancel()
 		g.Close()
 		engine.Close()
+		if manager, err := tmux.Open(filepath.Join(dir, "acp")); err == nil {
+			_ = manager.Close()
+		}
 		wg.Wait()
 		manager, err := tmux.Open(dir)
 		if err == nil {

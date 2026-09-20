@@ -107,6 +107,9 @@ func openExecutorFixtureFor(t *testing.T, duration time.Duration) executorFixtur
 		cancel()
 		app.Close()
 		engine.Close()
+		if manager, err := tmux.Open(filepath.Join(engineDir, "acp")); err == nil {
+			_ = manager.Close()
+		}
 		wg.Wait()
 		if manager, err := tmux.Open(engineDir); err == nil {
 			_ = manager.Close()
