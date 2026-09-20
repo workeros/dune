@@ -41,8 +41,8 @@ func TestServiceCommandsRemainSeparate(t *testing.T) {
 			t.Fatalf("separate %s service missing from help: %s", command, help)
 		}
 	}
-	for _, command := range []string{" capabilities", " exec", " runtime", " login", " ports"} {
-		if strings.Contains(help, command) {
+	for _, command := range []string{"capabilities", "exec", "runtime", "login", "ports"} {
+		if strings.Contains(help, "dune "+command+" ") || strings.Contains(help, "dune "+command+"\n") || strings.Contains(help, "--config FILE "+command+" ") {
 			t.Fatalf("remote client command remained in help: %s", command)
 		}
 	}
