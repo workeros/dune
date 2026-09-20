@@ -282,3 +282,28 @@ Checks performed for these fixes:
 The real-Agent command, isolated account environment and work directory remain
 unconfigured. These fixes do not change the pending native-load acceptance or
 the resource/deployment qualification above.
+
+## Already-admitted callback follow-up
+
+An A21/A26 audit found that physical connection replacement waits for the input
+reader, but an explicit open can publish its new model while an admitted line
+is being parsed. Permission requests and RPC replies now recheck `reconnecting`
+under the controller lock before changing state. RPC validation errors reuse
+the guarded reader-failure path before stopping the Runtime.
+
+`TestACPInFlightCallbacksCannotCrossLoadBoundary` fixes the controller in that
+post-admission interval and submits a same-native-ID permission and a late
+reply separately. Both cases failed before the fix: state revision advanced,
+and the permission became actionable in the new state. Both now leave model
+and controller revisions, permission state and pending replies unchanged.
+
+Validation passed:
+
+- Targeted queue, open-outcome, coalescing and connection regressions with `-race`.
+- `go test -race ./pkg/fabricd ./pkg/host -count=1 -timeout=180s`.
+- `make test TEST_FLAGS='-count=1 -timeout=600s -p=2'`, including main and IM
+  modules; the cross-process suite completed in 203.115 seconds.
+- `make check-go` for both modules.
+
+Web sources were unchanged by this follow-up. The real-Agent load acceptance
+still requires its dedicated configuration.
