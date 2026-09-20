@@ -1,6 +1,6 @@
 TEST_PKGS ?= ./...
 IM_TEST_PKGS ?= ./...
-TEST_FLAGS ?= -count=1 -timeout=180s
+TEST_FLAGS ?= -count=1 -timeout=900s
 
 .PHONY: build test test-race test-im test-im-race check check-go check-im check-proto tools proto
 build: tmux rg

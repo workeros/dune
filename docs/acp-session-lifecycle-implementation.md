@@ -1107,3 +1107,11 @@ added. The corrected mixed-build switch/rollback case passes in 17.3 seconds;
 the other two installer cases passed in the preceding 33.8-second run. Startup
 tests drive 600 failures through the CLI and verify bounded, body-free diagnostics;
 concurrent-writer and lifecycle race tests pass. Full regression follows.
+
+The IM Gateway fixture now explicitly retires its own private PTY/ACP servers
+after closing fabricd. Connector close intentionally no longer terminates hosts,
+so the old fixture cleanup was leaving test processes behind. Focused IM process
+tests pass in 7.6 seconds. Forty-two completed earlier IM fixture servers were
+retired after verifying their owner, deleted temporary-test directories and all
+pane commands; no business server was selected. The default Makefile package
+timeout is now 900 seconds to accommodate the real L53/L54 race saturation cases.

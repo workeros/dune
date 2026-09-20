@@ -13,6 +13,10 @@ Go 版本以 `go.mod` 为准。Go 源码修改后运行 `gofmt`；Web 使用仓�
 protobuf schema 修改后运行 `make proto`，再运行 wire、Gateway、fabricd 和
 client 的相关测试。
 
+`make test` / `make test-race` 默认每个测试包最多 900 秒。ACP 的 L53/L54
+进程回归会实际打满普通及必要控制证据预算；race 下可持续数分钟，不能用原
+180 秒期限截断后视作功能失败。定向快速检查可覆盖 `TEST_FLAGS`。
+
 `make build` 同时准备固定版本的 tmux 和 ripgrep。四平台归档、搜索依赖与授权说明
 的打包方式见[发行说明](releases.md)。
 

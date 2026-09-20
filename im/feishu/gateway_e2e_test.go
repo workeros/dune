@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/tmux"
+
 	"github.com/aiomni/dune/im/channel"
 	"github.com/aiomni/dune/im/duneagent"
 	"github.com/aiomni/dune/pkg/api"
@@ -170,7 +172,16 @@ func gatewayAgentFixture(t *testing.T) (duneagent.Backend, channel.AgentTarget) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(engine.Close)
+	t.Cleanup(func() {
+		engine.Close()
+		// Closing fabricd deliberately preserves hosts. The isolated fixture
+		// owns these two private servers and must explicitly retire them.
+		for _, dir := range []string{stateDir, filepath.Join(stateDir, "acp")} {
+			if server, err := tmux.Open(dir); err == nil {
+				_ = server.Close()
+			}
+		}
+	})
 	conn, err := ws.Dial(ctx, enrolled.Gateway, enrolled.Credential, nil)
 	if err != nil {
 		t.Fatal(err)
