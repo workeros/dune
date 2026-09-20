@@ -73,6 +73,17 @@ func main() {
 			os.Exit(1)
 		}
 		if m.Method == "" {
+			if path := os.Getenv("DUNE_MOCK_RESPONSE_LOG"); path != "" {
+				log, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+				if err != nil {
+					panic(err)
+				}
+				_, err = fmt.Fprintln(log, string(scan.Bytes()))
+				_ = log.Close()
+				if err != nil {
+					panic(err)
+				}
+			}
 			if string(m.ID) == `"mock-permission"` && pending != nil {
 				finish(pending, "Mock permission response received: "+string(m.Result))
 				pending = nil
@@ -135,7 +146,15 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
-				_ = gate.SetDeadline(time.Now().Add(30 * time.Second))
+				timeout := 30 * time.Second
+				if configured := os.Getenv("DUNE_MOCK_PROMPT_GATE_TIMEOUT"); configured != "" {
+					var err error
+					timeout, err = time.ParseDuration(configured)
+					if err != nil || timeout <= 0 || timeout > 10*time.Minute {
+						panic("invalid mock prompt gate timeout")
+					}
+				}
+				_ = gate.SetDeadline(time.Now().Add(timeout))
 				_, _ = gate.Write([]byte{1})
 				var release [1]byte
 				if _, err := gate.Read(release[:]); err != nil {

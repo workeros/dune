@@ -64,21 +64,27 @@ func TestCleanupProcessHelper(t *testing.T) {
 }
 
 type cleanupProcessHarness struct {
-	t       *testing.T
-	ctx     context.Context
-	state   string
-	g       *gateway.Gateway
-	client  *client.Client
-	cmd     *exec.Cmd
-	control net.Conn
-	events  *bufio.Reader
-	log     *os.File
+	t        *testing.T
+	ctx      context.Context
+	state    string
+	g        *gateway.Gateway
+	client   *client.Client
+	cmd      *exec.Cmd
+	control  net.Conn
+	events   *bufio.Reader
+	log      *os.File
+	lifetime time.Duration
 }
 
 func newCleanupProcessHarness(t *testing.T) *cleanupProcessHarness {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Second)
-	h := &cleanupProcessHarness{t: t, ctx: ctx, state: filepath.Join(t.TempDir(), "state"), g: gateway.New()}
+	return newCleanupProcessHarnessWithLifetime(t, 80*time.Second)
+}
+
+func newCleanupProcessHarnessWithLifetime(t *testing.T, lifetime time.Duration) *cleanupProcessHarness {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), lifetime)
+	h := &cleanupProcessHarness{t: t, ctx: ctx, lifetime: lifetime, state: filepath.Join(t.TempDir(), "state"), g: gateway.New()}
 	var err error
 	h.log, err = os.Create(filepath.Join(t.TempDir(), "process.log"))
 	if err != nil {
@@ -117,7 +123,7 @@ func (h *cleanupProcessHarness) start(point string) {
 		h.t.Fatal(err)
 	}
 	defer daemon.Close()
-	h.cmd = exec.Command(os.Args[0], "-test.run=^TestCleanupProcessHelper$", "-test.timeout=90s")
+	h.cmd = exec.Command(os.Args[0], "-test.run=^TestCleanupProcessHelper$", "-test.timeout="+(h.lifetime+10*time.Second).String())
 	h.cmd.Env = append(os.Environ(), "DUNE_CLEANUP_TEST_CONTROL="+control.Addr().String(), "DUNE_CLEANUP_TEST_DAEMON="+daemon.Addr().String(), "DUNE_CLEANUP_TEST_STATE="+h.state, "DUNE_CLEANUP_TEST_POINT="+point)
 	h.cmd.Stdout, h.cmd.Stderr = h.log, h.log
 	if err := h.cmd.Start(); err != nil {

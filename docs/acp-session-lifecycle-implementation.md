@@ -625,3 +625,38 @@ service acceptance is claimed.
 After the final policy split, the real-tmux
 TestPTYOperationsShareBrowserInputAndExpireOnFabricdRestart process regression
 also passes with race enabled.
+
+## Slice 16 — completed control evidence and competing submissions (L54)
+
+TestCompletedControlEvidenceAndCompetingSubmissionsPreserveOtherTargets fills
+the unchanged production defaults: 4096 ordinary keys and 4096 entries each for
+permission/cancel, including existing effective target reservations. Historical
+completed controls are prepared through real ReserveControl/ClaimControl/Accept/
+Progress registry transitions; they are fixtures, not historical Agent executions.
+Three real pending permissions and one already-admitted prompt remain active.
+
+At full permission capacity, the admitted probe asks for a new permission. Its
+Agent-side response log proves a resource error with no selected result; the host
+does not publish an unreserved permission. Full cancel evidence refuses a new
+prompt. After fabricd SIGKILL/reconnect, original pending permission IDs and all
+durable usage counts remain unchanged. Four competing valid answers and then
+four competing valid cancels each have one winner. Before effective cancellation,
+the test waits for the previous unused reservation to release and refills it,
+proving the cancel pool is actually at the hard limit.
+
+Concurrent exact duplicates, altered payloads and expired-target requests cannot
+consume new evidence, execute again or take a third effective target's reservation.
+That target can still answer. Original historical duplicates remain queryable,
+stop completes for all four active Agents, and forget completes for an ended host
+without losing its historical control receipts. Process/RPC/response logs prove
+one original Agent and initialize/new/prompt per target, one effective permission
+response per target, and exactly one cancel for its original prompt.
+
+The final race-enabled process test passes in 354 seconds with unchanged product
+limits. An earlier run also passed before adding the two reservation-release
+barriers; only the final run establishes the strengthened saturation assertions.
+The shared harness's normal 80-second lifetime remains unchanged; this fixture
+uses ten minutes for thousands of FULL-synchronous registry writes. Optional mock
+response recording and a bounded prompt-gate timeout are test facilities.
+Affected fabricd/mock vet and whitespace checks pass. No real-Agent, service
+manager or external-platform evidence is claimed. The full goal remains active.
