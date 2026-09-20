@@ -215,6 +215,7 @@ type ExecResult struct {
 type Runtime struct {
 	// Availability describes the current connection, independently of State.
 	// Unavailable preserves the last confirmed lifecycle fact.
+	// Lost requires independent proof that the original host/group no longer exist.
 	Availability     string         `json:"availability,omitempty"`
 	ConversationID   string         `json:"conversation_id,omitempty"`
 	ProjectID        string         `json:"project_id,omitempty"`

@@ -2,6 +2,7 @@ package fabricd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -29,6 +32,7 @@ type sessionProxy struct {
 	connector    string
 	connection   *yamux.Session
 	control      *wire.Stream
+	registry     *sessionregistry.Registry
 }
 
 func (p *sessionProxy) close() {
@@ -150,7 +154,27 @@ func (p *sessionProxy) information() api.Runtime {
 	}
 	// A failed probe is not a confirmed process exit.
 	last.Availability = "unavailable"
+	if p.lossProven() {
+		last.State, last.Availability, last.StopReason, last.ExitCode = "lost", "lost", "host_lost", nil
+	}
 	return last
+}
+
+func (p *sessionProxy) lossProven() bool {
+	if p.registry == nil {
+		return false
+	}
+	p.mu.Lock()
+	reg := p.registration
+	p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	record, err := p.registry.Host(ctx, reg.Target)
+	if err != nil || record.Instance != reg.Instance {
+		return false
+	}
+	absent, err := process.Absent(record.BootID, record.PID, record.GroupID)
+	return err == nil && absent
 }
 
 func (p *sessionProxy) forward(s *executionStream, request *pb.Message, skipAccepted bool) {
@@ -160,6 +184,9 @@ func (p *sessionProxy) forward(s *executionStream, request *pb.Message, skipAcce
 		var failure *api.Error
 		if errors.As(err, &failure) {
 			code = failure.Code
+		}
+		if p.lossProven() {
+			code, err = "SESSION_LOST", errors.New("original ACP host and process group no longer exist")
 		}
 		s.Fail(code, err)
 		return
@@ -210,7 +237,7 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 	if err := d.acpTmux.CreateHost(r.id, executable, directory); err != nil {
 		return err
 	}
-	r.host = &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc}
+	r.host = &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc, registry: d.registry}
 	// No retry can launch another host. These bounded probes only establish the
 	// original endpoint after tmux's asynchronous child startup.
 	deadline := time.Now().Add(10 * time.Second)
@@ -235,26 +262,21 @@ func (d *Engine) discoverSessions() error {
 	if err := tmux.PrivateDir(root); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(root)
+	hosts, err := d.registry.Hosts(d.ctx)
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		if !wire.ValidID(entry.Name()) || !entry.IsDir() {
-			continue
-		}
-		directory := filepath.Join(root, entry.Name())
-		if err := tmux.PrivateDir(directory); err != nil {
-			continue
-		}
+	for _, host := range hosts {
 		var reg sessionRegistration
-		if err := privateFile(filepath.Join(directory, "registration.json"), 64*1024, &reg); err != nil || reg.Installation != installationID(d.stateDir) || reg.Runtime.ID != entry.Name() {
-			continue
+		if json.Unmarshal(host.Registration, &reg) != nil || reg.Installation != installationID(d.stateDir) || reg.Target != host.Target || reg.Instance != host.Instance {
+			return fmt.Errorf("registered ACP host identity could not be verified")
 		}
 		if _, err := sessionSocket(reg); err != nil {
-			continue
+			return err
 		}
-		d.runtimes[reg.Runtime.ID] = &runtime{id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", host: &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc}}
+		reg.Runtime = host.Runtime
+		directory := filepath.Join(root, reg.Runtime.ID)
+		d.runtimes[reg.Runtime.ID] = &runtime{id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", host: &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc, registry: d.registry}}
 	}
 	return nil
 }

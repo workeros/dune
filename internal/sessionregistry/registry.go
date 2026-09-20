@@ -128,7 +128,12 @@ func (r *Registry) initialize(ctx context.Context) error {
 			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0);
 		CREATE TABLE IF NOT EXISTS control_reservations (
 			resource TEXT PRIMARY KEY, target TEXT NOT NULL, kind TEXT NOT NULL,
-			consumed_key TEXT NOT NULL DEFAULT '', FOREIGN KEY(target) REFERENCES runtime_reservations(target))`)
+			consumed_key TEXT NOT NULL DEFAULT '', FOREIGN KEY(target) REFERENCES runtime_reservations(target));
+		CREATE TABLE IF NOT EXISTS session_hosts (
+			target TEXT PRIMARY KEY REFERENCES runtime_reservations(target), instance TEXT NOT NULL UNIQUE,
+			boot_id TEXT NOT NULL, pid INTEGER NOT NULL, group_id INTEGER NOT NULL DEFAULT 0,
+			group_generation INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'active',
+			runtime BLOB NOT NULL, registration BLOB NOT NULL)`)
 	if err != nil {
 		return err
 	}

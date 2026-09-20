@@ -74,6 +74,9 @@ export function projectFor(agent: Agent, projects: Project[]) {
   });
 }
 export function activityLabel(runtime: AgentRuntime): string {
+	if (runtime.state === "lost" || runtime.availability === "lost") return "已丢失";
+	if (runtime.availability === "unavailable") return "暂不可用";
+	if (runtime.state === "starting") return "启动待确认";
   if (runtime.state !== "running") return runtime.stop_reason === "timed_out" ? "已超时" : "已退出";
   return ({ working: "执行中", idle: "空闲", blocked: "等待回应", unknown: "状态未知" } as const)[runtime.activity?.state ?? "unknown"];
 }

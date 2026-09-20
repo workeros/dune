@@ -55,12 +55,13 @@ export function ParallelWorkbench({ runners, runnersLoading, selectedRunner, onS
     const bindingValid = runner && bindingKey(runner.binding) === bindingKey(leaf.pane.target.binding);
     const projectName = projects.projects.find((item) => item.id === leaf.pane.project_id)?.name ?? "未归类";
     const key = bindingKey(leaf.pane.target.binding), discoveryError = directory.errors[key];
-    const available = bindingValid && runner.online && agent;
+    const available = bindingValid && runner.online && agent && agent.runtime.state !== "lost" && agent.runtime.availability !== "lost";
     let unavailable = "正在核验会话…";
     if (!runnersLoading && !runner) unavailable = "原开发环境暂不可访问";
     else if (runner && !bindingValid) unavailable = "原环境绑定已失效，请从列表选择当前会话。";
     else if (runner && !runner.online) unavailable = "开发环境离线，等待重新连接。";
     else if (discoveryError) unavailable = `暂时无法核验会话：${discoveryError}`;
+    else if (agent?.runtime.state === "lost" || agent?.runtime.availability === "lost") unavailable = "原会话进程已确认丢失。未确认任务的结果仍未知，可查询原提交记录。";
     else if (directory.checked.has(key) && !agent) unavailable = "原会话已结束，可以新建 Agent。";
     return <div className="agent-pane-card"><header>
       <button className="pane-title" onClick={() => focus(leaf.id)} title={`${projectName} · ${runner?.name ?? leaf.pane.target.binding.runner_id}`}><strong>{agent?.runtime.title ?? leaf.pane.target.runtime.adapter.toUpperCase()}</strong><small>{projectName} · {runner?.name ?? "原环境"}</small></button>

@@ -2,6 +2,19 @@ import { test, expect } from "@playwright/test";
 import { mockWorkbench, workbenchState } from "./workbench-fixture";
 import { addPane, leaves } from "../src/workbench/model";
 
+test("confirmed host loss preserves the original pane and never opens a replacement", async ({ page }, testInfo) => {
+  const state = workbenchState();
+  const original = state.runtimes.one.find((runtime) => runtime.id === "one-acp")!;
+  original.state = "lost"; original.availability = "lost"; original.stop_reason = "host_lost";
+  await mockWorkbench(page, state); await page.goto("/");
+  await page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true }).click();
+  await expect(page.locator(".pane-status")).toContainText("已丢失");
+  await expect(page.getByText("原会话进程已确认丢失。未确认任务的结果仍未知，可查询原提交记录。", { exact: true })).toBeVisible();
+  expect(state.connections.some((path) => path.includes("one-acp"))).toBe(false);
+  expect(state.starts).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath("lost-original-runtime.png"), fullPage: true });
+});
+
 test("four mixed Agents split across projects and Runners, retain connections and restore", async ({ page, browser }) => {
   const state = workbenchState();
   await mockWorkbench(page, state); await page.goto("/");

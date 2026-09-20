@@ -81,8 +81,26 @@ func runSessionHost(directory string) error {
 		return err
 	}
 	r := &runtime{target: reg.Target, id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+	bootID, err := process.BootID()
+	if err != nil {
+		return err
+	}
+	reserved := reg.Runtime
+	reserved.State = "starting"
+	if err := d.registry.RegisterHost(ctx, sessionregistry.HostRecord{Target: reg.Target, Instance: reg.Instance, BootID: bootID, PID: os.Getpid(), Runtime: reserved, Registration: api.Payload(reg)}); err != nil {
+		return err
+	}
 	argv, _ := boot.Profile.Start.Args()
-	r.acpStart = func() (*process.Process, error) { return process.Start(argv, r.cwd, boot.Environment) }
+	var processGeneration uint64
+	r.acpStart = func() (*process.Process, error) {
+		return process.StartRegistered(argv, r.cwd, boot.Environment, func(group int) error {
+			generation, err := d.registry.RecordGroup(ctx, reg.Target, reg.Instance, processGeneration, group)
+			if err == nil {
+				processGeneration = generation
+			}
+			return err
+		})
+	}
 	r.p, err = r.acpStart()
 	if err != nil {
 		return err
@@ -98,6 +116,9 @@ func runSessionHost(directory string) error {
 		r.deadlineAt = &deadline
 	}
 	d.runtimes[r.id] = r
+	if err := d.registry.RecordHostRuntime(ctx, reg.Target, reg.Instance, r.info()); err != nil {
+		return err
+	}
 	r.runProcess(r.p)
 	go r.acp.initialize()
 	reg.Runtime = r.info()
@@ -110,6 +131,7 @@ func runSessionHost(directory string) error {
 		<-r.done
 		terminal := reg
 		terminal.Runtime = r.info()
+		_ = d.registry.RecordHostRuntime(ctx, reg.Target, reg.Instance, terminal.Runtime)
 		_ = savePrivateFile(filepath.Join(directory, "registration.json"), terminal)
 	}()
 	if r.deadlineAt != nil {

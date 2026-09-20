@@ -1,5 +1,6 @@
 // Package process starts owned process groups through a short-lived guardian.
-// The guardian remains the group leader until cleanup; no persisted PID is used.
+// The guardian remains the group leader until cleanup. Persisted group numbers
+// are only used for absence checks; control always uses its ownership pipe.
 package process
 
 import (
@@ -36,7 +37,7 @@ func (p *Process) WaitGroupExit(ctx context.Context) error {
 		if errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, syscall.EPERM) {
 			return fmt.Errorf("observe guardian group: %w", err)
 		}
 		select {
@@ -48,9 +49,10 @@ func (p *Process) WaitGroupExit(ctx context.Context) error {
 }
 
 type Status struct {
-	PID   int    `json:"pid,omitempty"`
-	Exit  *int   `json:"exit,omitempty"`
-	Error string `json:"error,omitempty"`
+	GuardianPID int    `json:"guardian_pid,omitempty"`
+	PID         int    `json:"pid,omitempty"`
+	Exit        *int   `json:"exit,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 type Process struct {
 	Cmd    *exec.Cmd
@@ -66,6 +68,13 @@ type Process struct {
 }
 
 func Start(argv []string, cwd string, env []string) (*Process, error) {
+	return StartRegistered(argv, cwd, env, nil)
+}
+
+// StartRegistered keeps the guardian behind a launch barrier until register
+// persists its group identity. Owner death or an uncertain registration cannot
+// start the Agent. The callback must not retain argv/environment in metadata.
+func StartRegistered(argv []string, cwd string, env []string, register func(int) error) (*Process, error) {
 	exe, e := os.Executable()
 	if e != nil {
 		return nil, e
@@ -123,16 +132,42 @@ func Start(argv []string, cwd string, env []string) (*Process, error) {
 	if e != nil {
 		p.Close()
 		sr.Close()
+		if p.Output != nil {
+			p.Output.Close()
+		}
+		if p.Stderr != nil {
+			p.Stderr.Close()
+		}
 		return nil, e
 	}
 	dec := json.NewDecoder(sr)
 	var st Status
-	if e = dec.Decode(&st); e != nil || st.Error != "" {
+	_ = sr.SetReadDeadline(time.Now().Add(5 * time.Second))
+	e = dec.Decode(&st)
+	if e == nil && st.GuardianPID != cmd.Process.Pid {
+		e = fmt.Errorf("guardian launch identity does not match its parent")
+	}
+	if e == nil && register != nil {
+		e = register(st.GuardianPID)
+	}
+	if e == nil {
+		_ = lw.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_, e = fmt.Fprintln(lw, "start")
+	}
+	if e == nil {
+		_ = sr.SetReadDeadline(time.Now().Add(5 * time.Second))
+		e = dec.Decode(&st)
+	}
+	if e != nil || st.Error != "" {
 		p.Close()
 		cmd.Wait()
 		sr.Close()
+		p.Output.Close()
+		p.Stderr.Close()
 		return nil, fmt.Errorf("guardian start: %v %s", e, st.Error)
 	}
+	_ = sr.SetReadDeadline(time.Time{})
+	_ = lw.SetWriteDeadline(time.Time{})
 	go func() {
 		var end Status
 		if dec.Decode(&end) == nil && end.Exit != nil {
@@ -200,15 +235,13 @@ func Guard(args []string) int {
 		}
 	}()
 	enc := json.NewEncoder(status)
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if e := cmd.Start(); e != nil {
-		_ = enc.Encode(Status{Error: e.Error()})
-		return 127
+	if enc.Encode(Status{GuardianPID: os.Getpid()}) != nil {
+		return 125
 	}
-	_ = enc.Encode(Status{PID: cmd.Process.Pid})
+	var command string
+	if _, err := fmt.Fscanln(life, &command); err != nil || command != "start" {
+		return 125
+	}
 	go func() {
 		for {
 			var n int
@@ -219,6 +252,15 @@ func Guard(args []string) int {
 			syscall.Kill(-os.Getpid(), syscall.Signal(n))
 		}
 	}()
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if e := cmd.Start(); e != nil {
+		_ = enc.Encode(Status{Error: e.Error()})
+		return 127
+	}
+	_ = enc.Encode(Status{PID: cmd.Process.Pid})
 	e := cmd.Wait()
 	code := 0
 	if e != nil {

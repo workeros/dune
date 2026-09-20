@@ -321,3 +321,48 @@ cleanup resource records/recovery, loss proof after host death, protected IPC
 stream scheduling under saturation, raw ACP hosting, pinned dependencies and
 platform/service-manager acceptance remain outstanding. No business Runner was
 restarted and no real Agent service was used.
+
+Slice 11 independent loss evidence: a guardian now waits behind a launch gate
+until the host has durably registered its group. Host death or uncertain commit
+before that gate cannot execute the Agent. The independent registry records one
+immutable host activation, kernel boot identity and current process generation
+per reserved Runtime; an explicit replacement requires the previous group to
+have exited. New group registration checks the same admission seal used by
+cleanup. Terminal host state cannot be reversed into a new process.
+
+Discovery reads this bounded host index, so missing Runtime files no longer hide
+the original identity. A failed handshake preserves unavailable; independent
+proof that both original host and group are absent yields lost and SESSION_LOST
+for operation access. No persisted PID is signalled, and loss never manufactures
+task success or replays the accepted request. The Web preserves the lost panel
+and does not open another process or stream for it.
+
+Process/registry race tests pass for no child before registration, uncertain
+registration rejection, owner death between registration and gate release,
+cross-instance/generation fencing, terminal state and cleanup seals, independent
+capacity, and record reopen. Existing stop/restart and explicit generation-barrier
+process tests pass. TestHostLossUsesIndependentEvidenceAndDoesNotReplay passes
+with a real blocked mock Agent: a genuinely suspended host remains unavailable;
+after SIGKILL and guardian cleanup, deleting the Runtime directory and restarting
+fabricd still discovers lost, preserves the original accepted key and creates no
+replacement. Its fault injection suspends the isolated tmux supervisor as well,
+because tmux otherwise resumes stopped pane children. This does not touch a
+business Runner or any shared tmux server.
+
+The first broad host regression exposed transient EPERM from the macOS group
+existence check during process reaping. EPERM now remains inconclusive within
+the bounded wait; it never proves absence. The targeted host Messenger regression
+then passes five runs. Nine workbench Chromium cases pass, including lost-panel
+retention, and Web typecheck/build passes with existing bundle-size warnings.
+The final `go test -race ./pkg/host ./pkg/fabricd ./internal/process
+./internal/sessionregistry -count=1 -timeout=180s` and affected-package vet checks
+pass. The Dune command builds for Linux/macOS amd64/arm64; these are compile
+checks, not platform runtime or service-manager acceptance. Lost-panel screenshot
+inspected. No real Agent service was called.
+
+Remaining cleanup work: record fixed filesystem/tmux/socket resource identities,
+atomically accept forget with the resource plan and namespace seal, fence and
+resume only original idempotent cleanup, and retain completed independent receipts.
+This evidence foundation does not mark L51/L52/L55 complete; raw ACP, complete
+discovery issue reporting, stream control reservations, retained-host reclamation,
+upgrade/binary pinning and target-platform service-manager acceptance also remain.

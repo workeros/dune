@@ -18,6 +18,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "_guard" {
+		os.Exit(Guard(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "_pty_guard" {
 		os.Exit(PTYGuard(os.Args[2:]))
 	}

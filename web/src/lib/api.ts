@@ -29,6 +29,7 @@ export function runnerPath(binding: Binding, suffix: string): string {
   return `/api/v1/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
 }
 export type Runtime = {
+ availability?: "unavailable" | "lost";
  project_id?: string; directory_id?: string; id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };
 export type AgentActivity = { state: "unknown" | "working" | "idle" | "blocked"; source: string; agent?: string; foreground?: string; epoch: string; sequence: number };
 export type AgentRuntime = Runtime & { activity?: AgentActivity };

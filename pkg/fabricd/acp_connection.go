@@ -29,6 +29,12 @@ func (a *acpController) reconnect() error {
 	}
 	old.Close()
 	<-old.Done
+	groupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	err := old.WaitGroupExit(groupCtx)
+	cancel()
+	if err != nil {
+		return &api.Error{Code: "RESULT_UNKNOWN", Detail: "previous ACP process group exit is unconfirmed: " + err.Error()}
+	}
 	if drained != nil {
 		<-drained
 	}

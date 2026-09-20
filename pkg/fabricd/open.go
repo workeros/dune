@@ -66,11 +66,11 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := d.discoverSessions(); err != nil {
-		return nil, err
-	}
 	d.registry, err = sessionregistry.Open(ctx, filepath.Join(stateDir, "registry"), sessionregistry.Options{})
 	if err != nil {
+		return nil, err
+	}
+	if err := d.discoverSessions(); err != nil {
 		return nil, err
 	}
 	sessions, err := d.tmux.Restore()
