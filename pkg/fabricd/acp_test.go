@@ -3,10 +3,13 @@ package fabricd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/aiomni/dune/internal/process"
@@ -203,6 +206,98 @@ func TestACPOversizedLineIsOmittedAndFollowingRPCContinues(t *testing.T) {
 	r.mu.Unlock()
 	if exited {
 		t.Fatal("oversized ACP notification stopped the Runtime")
+	}
+}
+
+func TestACPConnectionReadIssuesAreIsolated(t *testing.T) {
+	lineLimit := acpInputLimit(machineMemoryBytes())
+	oversized := string(api.Payload(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+		"sessionId": "session-a", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": strings.Repeat("x", lineLimit+1)}},
+	}})) + "\n"
+	for _, phase := range []string{"draining", "replaced", "current"} {
+		for _, issue := range []string{"oversized", "read_error"} {
+			t.Run(phase+"/"+issue, func(t *testing.T) {
+				a, _ := queueFixture(t)
+				old := a.connection
+				a.mu.Lock()
+				// The native ID is deliberately reused. Only connection ownership
+				// can distinguish late output from the previous conversation.
+				a.conversation.begin(api.ACPAction{Action: "load", SessionID: "session-a", Cwd: "/tmp"})
+				operation, err := a.operations.create()
+				if err != nil {
+					a.mu.Unlock()
+					t.Fatal(err)
+				}
+				a.active = &acpQueuedAction{ref: operation.Ref, request: api.ACPAction{Action: "load"}}
+				if phase == "draining" {
+					a.reconnecting = true
+				} else if phase == "replaced" {
+					a.connection = &process.Process{}
+				}
+				a.mu.Unlock()
+				before := a.conversation.describe()
+				s, err := a.r.subscribe(false, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var output io.Reader = strings.NewReader(oversized)
+				if issue == "read_error" {
+					output = iotest.ErrReader(errors.New("ACP pipe read failed"))
+				}
+				a.r.readACPConnection(output, old)
+				after := a.conversation.describe()
+				omitted := phase == "current" && issue == "oversized"
+				if omitted {
+					if after.Revision != before.Revision+1 || !after.ContentOmitted || !after.ContextIncomplete {
+						t.Fatalf("current omission was not recorded: %+v", after)
+					}
+				} else if !reflect.DeepEqual(before, after) {
+					t.Fatalf("read issue changed the conversation: before=%+v after=%+v", before, after)
+				}
+				if got := readOperation(t, a, operation).Incomplete; got != omitted {
+					t.Fatalf("operation incomplete=%v; want %v", got, omitted)
+				}
+				a.r.mu.Lock()
+				stopped := a.r.stopped
+				a.r.mu.Unlock()
+				if stopped != (phase == "current" && issue == "read_error") {
+					t.Fatalf("unexpected Runtime stop: %v", stopped)
+				}
+				if phase == "current" {
+					wantKind := "acp_notice"
+					if issue == "read_error" {
+						wantKind = "error"
+					}
+					select {
+					case event := <-s.q:
+						if event.Kind != wantKind {
+							t.Fatalf("got event %q; want %q", event.Kind, wantKind)
+						}
+					default:
+						t.Fatal("current connection issue was not published")
+					}
+				}
+				select {
+				case event := <-s.q:
+					t.Fatalf("unexpected event from read issue: %s", event.Kind)
+				default:
+				}
+			})
+		}
+	}
+}
+
+func TestRawACPOversizedLineContinuesWithoutController(t *testing.T) {
+	r := &runtime{adapter: "acp", subs: map[*subscription]bool{}}
+	s, err := r.subscribe(false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	following := `{"jsonrpc":"2.0","id":"following","result":{}}` + "\n"
+	r.readACP(strings.NewReader(strings.Repeat("x", acpInputLimit(machineMemoryBytes())+1) + "\n" + following))
+	first, second := <-s.q, <-s.q
+	if first.Kind != "acp_notice" || second.Kind != "data" || string(second.Data) != following || r.stopped {
+		t.Fatalf("raw ACP did not continue after omission: first=%q second=%q", first.Kind, second.Kind)
 	}
 }
 

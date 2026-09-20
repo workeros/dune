@@ -351,9 +351,7 @@ func (a *acpController) recordUpdate(params json.RawMessage) {
 	a.operations.append(a.active.ref, params)
 }
 
-func (a *acpController) markOutputIncomplete() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+func (a *acpController) markOutputIncompleteLocked() {
 	a.conversation.mutate(func(m *conversationModel) {
 		m.invalidatesAll = true
 		m.description.ContentOmitted = true

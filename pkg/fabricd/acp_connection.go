@@ -7,6 +7,12 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
+// The caller holds a.mu through any mutation or publication for this output.
+// A new model is already visible while the previous connection is draining.
+func (a *acpController) acceptsOutputLocked(connection *process.Process) bool {
+	return !a.reconnecting && (connection == nil || a.connection == connection)
+}
+
 // Explicit opens on a used connection get a new process/stdio connection.
 // ACP session/update has no generation field, so draining/reusing the old
 // connection cannot safely distinguish late updates when a native ID is reused.

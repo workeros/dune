@@ -353,15 +353,7 @@ func (r *runtime) readACPConnection(rd io.Reader, connection *process.Process) {
 		}
 		if !more && (lineBytes > 0 || err == nil) {
 			if oversized {
-				if r.acp != nil {
-					r.acp.markOutputIncomplete()
-				}
-				r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
-					"code":          "MESSAGE_OMITTED",
-					"detail":        "ACP output exceeded this machine's per-message memory limit; content was omitted and the Runtime continues",
-					"message_bytes": lineBytes,
-					"limit_bytes":   lineLimit,
-				})})
+				r.omitACPLineFrom(connection, lineBytes, lineLimit)
 			} else if !r.acceptACPLineFrom(line, connection) {
 				return
 			}
@@ -371,12 +363,40 @@ func (r *runtime) readACPConnection(rd io.Reader, connection *process.Process) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: err.Error()})
-				r.stop()
+				r.failACPReadFrom(connection, err)
 			}
 			return
 		}
 	}
+}
+
+func (r *runtime) omitACPLineFrom(connection *process.Process, lineBytes, lineLimit int) {
+	if r.acp != nil {
+		r.acp.mu.Lock()
+		defer r.acp.mu.Unlock()
+		if !r.acp.acceptsOutputLocked(connection) {
+			return
+		}
+		r.acp.markOutputIncompleteLocked()
+	}
+	r.emit(&pb.Message{Kind: "acp_notice", Payload: api.Payload(map[string]any{
+		"code":          "MESSAGE_OMITTED",
+		"detail":        "ACP output exceeded this machine's per-message memory limit; content was omitted and the Runtime continues",
+		"message_bytes": lineBytes,
+		"limit_bytes":   lineLimit,
+	})})
+}
+
+func (r *runtime) failACPReadFrom(connection *process.Process, err error) {
+	if r.acp != nil {
+		r.acp.mu.Lock()
+		defer r.acp.mu.Unlock()
+		if !r.acp.acceptsOutputLocked(connection) {
+			return
+		}
+	}
+	r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: err.Error()})
+	r.stop()
 }
 
 func (r *runtime) acceptACPLine(b []byte) bool { return r.acceptACPLineFrom(b, nil) }
