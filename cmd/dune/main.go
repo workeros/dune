@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -78,6 +79,15 @@ func run() error {
 		return fmt.Errorf("%w; initialize with dune init", err)
 	}
 	switch args[0] {
+	case "upgrade-check":
+		report := fabricd.CheckUpgrade(ctx, machineConfig.SessionDir)
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			return err
+		}
+		if !report.Allowed {
+			return fmt.Errorf("uninterrupted connector replacement refused; see upgrade-check issues")
+		}
+		return nil
 	case "repair", "upgrade":
 		installFlags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		home, _ := os.UserHomeDir()
@@ -103,7 +113,18 @@ func run() error {
 		if machineConfig.SessionDir == "" {
 			return fmt.Errorf("background connector requires session_dir; use dune enroll first")
 		}
-		return service.Run(args[1], *configPath, *name, *readyFile, *readyNonce)
+		if args[1] == "install" {
+			var stop context.CancelFunc
+			ctx, stop = context.WithTimeout(ctx, 45*time.Second)
+			defer stop()
+			gate, report := fabricd.PrepareUpgrade(ctx, machineConfig.SessionDir)
+			if gate == nil {
+				_ = json.NewEncoder(os.Stderr).Encode(report)
+				return fmt.Errorf("uninterrupted connector replacement refused before stopping fabricd; see upgrade-check issues")
+			}
+			defer gate.Close()
+		}
+		return service.Run(ctx, args[1], *configPath, *name, *readyFile, *readyNonce)
 	case "fabricd":
 		daemonFlags := flag.NewFlagSet("fabricd", flag.ContinueOnError)
 		readyFile := daemonFlags.String("ready-file", "", "private startup receipt path")

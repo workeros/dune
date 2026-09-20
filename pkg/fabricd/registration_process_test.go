@@ -78,10 +78,18 @@ func TestLateOriginalHostRegistrationRecoversWithoutAnotherLaunch(t *testing.T) 
 	if err := json.NewDecoder(paused).Decode(&original); err != nil {
 		t.Fatal(err)
 	}
+	if guard, report := PrepareUpgrade(h.ctx, h.state); guard != nil || report.Allowed || report.Issues[0].Code != "LAUNCH_IN_PROGRESS" {
+		t.Fatal("upgrade crossed in-flight original launch", report)
+	}
 	h.kill()
 	if err := <-startDone; err == nil {
 		t.Fatal("unregistered launch unexpectedly confirmed")
 	}
+	guard, report := PrepareUpgrade(h.ctx, h.state)
+	if guard == nil || !report.Allowed || len(report.Hosts) != 1 || report.Hosts[0].Runtime.ID != original.ID || report.Hosts[0].Protocol != sessionProtocol {
+		t.Fatal("preflight missed the late original registration", report)
+	}
+	defer guard.Close()
 	h.start("")
 	receipt, err := h.client.QuerySubmission(h.ctx, key)
 	if err != nil || receipt.Admission != api.SubmissionAccepted || receipt.Runtime == nil || receipt.Runtime.ID != original.ID || receipt.Stage != "host_starting" {
@@ -106,6 +114,7 @@ func TestLateOriginalHostRegistrationRecoversWithoutAnotherLaunch(t *testing.T) 
 	if err != nil || !state.Ready {
 		t.Fatal(state, err)
 	}
+	guard.Close()
 	receipt, err = h.client.QuerySubmission(h.ctx, key)
 	if err != nil || receipt.Stage != "started" || receipt.Runtime == nil || receipt.Runtime.ID != original.ID {
 		t.Fatal(receipt, err)

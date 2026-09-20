@@ -6,6 +6,12 @@ Dune baseline `bd17acc`. The requirement describes the target, not capabilities
 already shipped. Implementation uses tracer bullets: each slice must establish
 an observable contract and its verification before the next slice expands it.
 
+Current delivery scope, confirmed by the user: finish Dune's local implementation,
+regression and handoff materials first. SandDance will then Review, integrate and
+perform full acceptance. Real-Agent and external-platform environments will be
+provided later; these are deferred acceptance items, not blockers for completing
+the Dune local phase. This phase does not change SandDance integration code.
+
 ## Slices
 
 1. Public submission identity, admission observations, and a persistent registry
@@ -894,3 +900,47 @@ whitespace checks pass. No Web source changed.
 Upgrade/rollback preflight, actual connector/tmux version diagnostics, platform
 service-manager evidence, remaining consumer/SandDance recovery and the final
 L01–L55 audit still remain. No real-Agent claim is made by the mock process test.
+
+## Slice 22 — guarded connector upgrade preflight
+
+The proposed executable exposes upgrade-check JSON and checks the independent
+registry before service replacement. SQLite mode=ro/query_only prevents schema
+or admission mutation. Existing registrations must use the supported protocol
+(currently exactly 1); retained helper digests are verified through pinned private
+directory handles. Already-sealed cleanup may have removed its helper. Missing
+registry plus a live connector lock explicitly refuses the initial legacy
+transition. No force option stops or recreates sessions.
+
+New launches hold a shared file gate from before key claim through publication;
+attached observer streams release it. Target service install holds the exclusive
+gate across recheck and service switch, with a bounded install deadline. An
+in-flight launch refuses upgrade; a gated launch persists its original rejected
+key before reporting not_accepted. A later duplicate remains rejected after the
+gate opens or fabricd is replaced. Existing host controls never acquire the gate.
+Pending original launches are checked using their pre-side-effect recorded
+protocol even when fabricd died before the host registered.
+
+TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches uses real gateway,
+connector, host and mock Agent, with isolated service-manager substitutes. It
+proves unsupported protocol and missing retained program refuse before any
+service-manager call; original processes remain callable. New launch rejection
+preserves its exact key and never executes after the gate opens or after two
+installation switches. An already-attached observer does not block the switch,
+existing host work completes while gated, its operation result survives both
+switches, and stop/forget work while gated. Logs contain one original Agent,
+initialize, new and prompt. The initial release is actually deleted. These are
+same-build switches, not different-version or native service-manager acceptance.
+
+The late-registration process test now also proves upgrade refuses while the
+original launch is in progress, then includes that same pending Runtime after
+connector SIGKILL. Its original host registers and becomes callable while the
+upgrade gate remains held, without another Agent or initialize. Read-only registry
+and gate tests pass with race enabled, including failed write attempts and unsafe
+gate files. Broader affected regressions are recorded after completion below.
+
+The launchgate/retainedprogram/sessionregistry/service/install/fabricd race suites
+pass (124.6 seconds for fabricd; the previously validated expensive L53/L54
+fixtures are excluded). All three installer process regressions pass in 29.6
+seconds, including PTY deadline/history continuity and incorrect startup receipts.
+Affected-package vet and whitespace checks pass. Native service managers and
+external Agent/platform acceptance remain deferred by the user.

@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"strings"
 )
 
-func Run(action, config, name, readyFile, readyNonce string) error {
+func Run(ctx context.Context, action, config, name, readyFile, readyNonce string) error {
 	if (readyFile == "") != (readyNonce == "") {
 		return fmt.Errorf("startup receipt path and nonce must be supplied together")
 	}
@@ -33,7 +34,7 @@ func Run(action, config, name, readyFile, readyNonce string) error {
 		return err
 	}
 	run := func(cmd string, args ...string) error {
-		c := exec.Command(cmd, args...)
+		c := exec.CommandContext(ctx, cmd, args...)
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		return c.Run()
@@ -88,7 +89,10 @@ func Run(action, config, name, readyFile, readyNonce string) error {
 			if readyFile != "" {
 				extra = `<string>--ready-file</string><string>` + esc(readyFile) + `</string><string>--ready-nonce</string><string>` + esc(readyNonce) + `</string>`
 			}
-			_ = exec.Command("launchctl", "bootout", domain+"/"+label).Run()
+			_ = exec.CommandContext(ctx, "launchctl", "bootout", domain+"/"+label).Run()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			body := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + esc(label) + `</string><key>ProgramArguments</key><array><string>` + esc(exe) + `</string><string>--config</string><string>` + esc(path) + `</string><string>fabricd</string>` + extra + `</array><key>EnvironmentVariables</key><dict><key>PATH</key><string>` + esc(os.Getenv("PATH")) + `</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>AbandonProcessGroup</key><true/><key>StandardOutPath</key><string>` + esc(log) + `</string><key>StandardErrorPath</key><string>` + esc(log) + `</string></dict></plist>`
 			if err = os.WriteFile(plist, []byte(body), 0600); err != nil {
 				return err

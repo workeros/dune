@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/aiomni/dune/internal/launchgate"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
@@ -29,6 +30,14 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 	if s.Send(&pb.Message{Kind: "accepted", RequestId: message.RequestId}) != nil {
 		return
 	}
+	gate, gateErr := launchgate.Acquire(d.stateDir, false)
+	releaseGate := func() {
+		if gate != nil {
+			gate.Close()
+			gate = nil
+		}
+	}
+	defer releaseGate()
 	claim, receipt, err := d.registry.ClaimKey(s.ctx, key, sessionregistry.Digest("profile.start", api.Payload(request)), "registry:launch")
 	if err != nil {
 		failSubmission(s, receipt, err)
@@ -42,6 +51,20 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 			code = receipt.ErrorCode
 		}
 		failSubmission(s, receipt, &api.Error{Code: code, Detail: "original launch already has admission evidence; query its original key"})
+		return
+	}
+	if gateErr != nil {
+		code := "LAUNCH_GATE_UNAVAILABLE"
+		if errors.Is(gateErr, launchgate.ErrBusy) {
+			code = "UPGRADE_IN_PROGRESS"
+		}
+		// Only the durable rejection seals this key. If persistence fails, keep
+		// unknown; neither this request nor a later duplicate may execute it.
+		receipt, err = d.registry.Reject(d.ctx, claim, code)
+		if err == nil {
+			err = &api.Error{Code: code, Detail: "new Runtime admission is gated by connector replacement"}
+		}
+		failSubmission(s, receipt, err)
 		return
 	}
 	p := request.Profile
@@ -154,6 +177,9 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 		failSubmission(s, receipt, err)
 		return
 	}
+	// The attached observer can outlive this connector. It must not hold the
+	// upgrade gate after the original host has been published.
+	releaseGate()
 	if r.host != nil {
 		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(api.StartResult{SubmissionReceipt: receipt})}) != nil {
 			return

@@ -3,6 +3,7 @@
 package retainedprogram
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -96,6 +97,23 @@ func Verify(path string, expected Identity) error {
 		return err
 	}
 	defer program.Close()
+	return verify(context.Background(), program, expected)
+}
+
+// VerifyIn checks a program through the caller's pinned Runtime directory.
+func VerifyIn(ctx context.Context, root *os.Root, name string, expected Identity) error {
+	if err := expected.Validate(); err != nil {
+		return err
+	}
+	program, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	defer program.Close()
+	return verify(ctx, program, expected)
+}
+
+func verify(ctx context.Context, program *os.File, expected Identity) error {
 	info, err := program.Stat()
 	if err != nil {
 		return err
@@ -105,11 +123,23 @@ func Verify(path string, expected Identity) error {
 		return fmt.Errorf("retained program file identity is invalid")
 	}
 	digest := sha256.New()
-	if _, err := io.Copy(digest, io.LimitReader(program, MaxBytes+1)); err != nil {
+	if _, err := io.Copy(digest, io.LimitReader(contextReader{ctx, program}, MaxBytes+1)); err != nil {
 		return err
 	}
 	if hex.EncodeToString(digest.Sum(nil)) != expected.SHA256 {
 		return fmt.Errorf("retained program digest differs")
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
 }

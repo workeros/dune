@@ -3,6 +3,7 @@ package tests
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/sdk"
 )
 
@@ -52,6 +54,7 @@ type installManager struct {
 	hold, wrongNonce bool
 	pending          *installStart
 	starts           chan installStart
+	actions          []string
 }
 
 func (m *installManager) stop() {
@@ -93,6 +96,7 @@ func (m *installManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing action", 400)
 		return
 	}
+	m.actions = append(m.actions, args[0])
 	switch args[0] {
 	case "stop", "bootout":
 		m.stop()
@@ -220,8 +224,10 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 		manager.stop()
 		manager.mu.Unlock()
 		gateway.stop(t, syscall.SIGTERM)
-		if native, err := tmux.Open(fixture.cfg.SessionDir); err == nil {
-			_ = native.Close()
+		for _, directory := range []string{fixture.cfg.SessionDir, filepath.Join(fixture.cfg.SessionDir, "acp")} {
+			if native, err := tmux.Open(directory); err == nil {
+				_ = native.Close()
+			}
 		}
 		server.Close()
 		cancel()
@@ -235,6 +241,154 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 		}
 	})
 	return fixture
+}
+
+func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T) {
+	f := newInstallerFixture(t)
+	oldRelease := f.repair()
+	client := f.dial()
+	defer func() { client.Close() }()
+	mock := filepath.Join(t.TempDir(), "mock-acp")
+	if output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput(); err != nil {
+		t.Fatal(string(output), err)
+	}
+	work := t.TempDir()
+	p := profile(work, "acp", mock)
+	p.ManagedACP = true
+	p.Env = map[string]string{"DUNE_MOCK_PROCESS_LOG": filepath.Join(work, "agent.log"), "DUNE_MOCK_RPC_LOG": filepath.Join(work, "rpc.log")}
+	rt, observer, err := testStartProfile(client, f.ctx, p)
+	must(t, err)
+	defer observer.Close()
+	waitInstaller(t, func() bool { state, err := client.ACPState(f.ctx, rt); return err == nil && state.Ready })
+	opened, err := testACPSubmit(client, f.ctx, rt, api.ACPAction{Action: "new"})
+	must(t, err)
+	opened, err = client.WaitAgentOperation(f.ctx, rt, api.AgentOperationWait{Ref: opened.Ref, TimeoutMS: 5000})
+	must(t, err)
+	if opened.State != "completed" {
+		t.Fatal(opened)
+	}
+	before, err := client.Get(f.ctx, rt)
+	must(t, err)
+	if before.ACPHost == nil {
+		t.Fatal("missing host diagnostics")
+	}
+	identity := *before.ACPHost
+	pinned := filepath.Join(f.cfg.SessionDir, "acp", "runtimes", rt.ID, "program")
+	// The initial observer remains attached: only launch publication holds the
+	// shared gate, not this long-lived stream.
+	guard, report := fabricd.PrepareUpgrade(f.ctx, f.cfg.SessionDir)
+	if guard == nil || !report.Allowed || len(report.Hosts) != 1 {
+		t.Fatal(report)
+	}
+	defer guard.Close()
+	target := api.SubmissionTarget{OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: client.Binding.Target, BindingRevision: 1}
+	key := api.SubmissionKey{SubmissionID: "launch-during-upgrade", Target: target}
+	request := api.StartRequest{SubmissionKey: key, Profile: p}
+	checkRejected := func() {
+		t.Helper()
+		result, stream, err := client.Start(f.ctx, request)
+		if stream != nil {
+			stream.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "UPGRADE_IN_PROGRESS") || result.SubmissionKey != key || result.Admission != api.SubmissionNotAccepted {
+			t.Fatal("gate refusal did not preserve sealed key", result, err)
+		}
+		receipt, err := client.QuerySubmission(f.ctx, key)
+		if err != nil || receipt.SubmissionKey != key || receipt.Admission != api.SubmissionNotAccepted {
+			t.Fatal(receipt, err)
+		}
+	}
+	checkRejected()
+	// Current host operations do not take the gate or reset the Agent.
+	prompt, err := testACPSubmit(client, f.ctx, rt, api.ACPAction{Action: "prompt", Text: "work during upgrade preflight", ExpectedConversationID: opened.ConversationID})
+	must(t, err)
+	prompt, err = client.WaitAgentOperation(f.ctx, rt, api.AgentOperationWait{Ref: prompt.Ref, TimeoutMS: 5000})
+	must(t, err)
+	if prompt.State != "completed" {
+		t.Fatal(prompt)
+	}
+	guard.Close()
+	checkRejected() // Even after the gate opens, this original intent stays sealed.
+	assertRefusedBeforeService := func(code string) {
+		t.Helper()
+		f.manager.mu.Lock()
+		count := len(f.manager.actions)
+		pid := f.manager.process.cmd.Process.Pid
+		f.manager.mu.Unlock()
+		output, err := f.command("upgrade").CombinedOutput()
+		if err == nil || !strings.Contains(string(output), code) || !strings.Contains(string(output), rt.ID) {
+			t.Fatal("upgrade did not identify incompatible original Runtime", string(output), err)
+		}
+		f.manager.mu.Lock()
+		unchanged := len(f.manager.actions) == count && f.manager.process.cmd.Process.Pid == pid
+		f.manager.mu.Unlock()
+		if !unchanged {
+			t.Fatal("preflight failure invoked the service manager")
+		}
+		got, err := client.Get(f.ctx, rt)
+		if err != nil || got.ACPHost == nil || got.ACPHost.AgentPID != identity.AgentPID || got.ACPHost.HostPID != identity.HostPID {
+			t.Fatal("preflight failure changed original process", got, err)
+		}
+	}
+	db, err := sql.Open("sqlite", filepath.Join(f.cfg.SessionDir, "registry", "registry.sqlite"))
+	must(t, err)
+	defer db.Close()
+	var registration []byte
+	must(t, db.QueryRow(`SELECT registration FROM session_hosts WHERE instance=?`, identity.Instance).Scan(&registration))
+	var fields map[string]json.RawMessage
+	must(t, json.Unmarshal(registration, &fields))
+	fields["version"] = json.RawMessage(`999`)
+	_, err = db.Exec(`UPDATE session_hosts SET registration=? WHERE instance=?`, api.Payload(fields), identity.Instance)
+	must(t, err)
+	assertRefusedBeforeService("SESSION_PROTOCOL_UNSUPPORTED")
+	_, err = db.Exec(`UPDATE session_hosts SET registration=? WHERE instance=?`, registration, identity.Instance)
+	must(t, err)
+	must(t, os.Rename(pinned, pinned+".held"))
+	assertRefusedBeforeService("HOST_PROGRAM_UNAVAILABLE")
+	must(t, os.Rename(pinned+".held", pinned))
+	observer.Close()
+	// Both upgrade and rollback install the selected executable through the same
+	// guard. This fixture switches identical builds; version skew is a separate
+	// release acceptance case.
+	for range 2 {
+		client.Close()
+		output, err := f.command("upgrade").CombinedOutput()
+		if err != nil {
+			t.Fatal(string(output), err)
+		}
+		<-f.manager.starts
+		client = f.dial()
+		got, err := client.Get(f.ctx, rt)
+		if err != nil || got.ACPHost == nil || got.ACPHost.HostPID != identity.HostPID || got.ACPHost.AgentPID != identity.AgentPID || got.ACPHost.ProgramSHA256 != identity.ProgramSHA256 || got.ACPHost.ConnectorTerm <= identity.ConnectorTerm {
+			t.Fatal("service replacement lost original host", got, err)
+		}
+		retained, err := client.WaitAgentOperation(f.ctx, rt, api.AgentOperationWait{Ref: prompt.Ref, TimeoutMS: 1000})
+		if err != nil || retained.State != "completed" || retained.Ref != prompt.Ref {
+			t.Fatal("switch lost original operation", retained, err)
+		}
+		checkRejected()
+	}
+	if _, err := os.Stat(oldRelease); !os.IsNotExist(err) {
+		t.Fatal("fixture did not remove original release", err)
+	}
+	processes, err := os.ReadFile(filepath.Join(work, "agent.log"))
+	must(t, err)
+	rpcs, err := os.ReadFile(filepath.Join(work, "rpc.log"))
+	must(t, err)
+	if strings.Count(string(processes), "\n") != 1 || string(rpcs) != "initialize\nsession/new\nsession/prompt\n" {
+		t.Fatal("switch or gate rejection replayed Agent work", string(processes), string(rpcs))
+	}
+	guard, report = fabricd.PrepareUpgrade(f.ctx, f.cfg.SessionDir)
+	if guard == nil {
+		t.Fatal(report)
+	}
+	defer guard.Close()
+	must(t, testStopRuntime(client, f.ctx, rt))
+	must(t, testForgetRuntime(client, f.ctx, rt))
+	if _, err := os.Lstat(pinned); !os.IsNotExist(err) {
+		t.Fatal("forget left pinned program", err)
+	}
+	t.Logf("two isolated service switches retained host=%d Agent=%d program=%s; no native service manager invoked", identity.HostPID, identity.AgentPID, identity.ProgramSHA256)
 }
 
 func (f *installerFixture) command(action string) *exec.Cmd {
