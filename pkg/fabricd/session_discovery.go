@@ -16,7 +16,9 @@ import (
 func (d *Engine) discoverSessions() error {
 	d.discoveryScanMu.Lock()
 	defer d.discoveryScanMu.Unlock()
-	return d.scanSessionRegistrations(d.ctx)
+	ctx, cancel := context.WithTimeout(d.ctx, time.Second)
+	defer cancel()
+	return d.scanSessionRegistrations(ctx)
 }
 
 func (d *Engine) refreshSessionRegistrations(ctx context.Context) {
@@ -60,7 +62,7 @@ func (d *Engine) scanSessionRegistrations(ctx context.Context) error {
 		code := ""
 		if json.Unmarshal(host.Registration, &reg) != nil || reg.Installation != installationID(d.stateDir) || reg.Target != host.Target || reg.Instance != host.Instance {
 			code = "REGISTRATION_INVALID"
-		} else if _, err := sessionSocket(reg); err != nil {
+		} else if _, err := sessionSocketPath(reg); err != nil {
 			code = "REGISTRATION_INVALID"
 			if reg.Version != sessionProtocol {
 				code = "SESSION_PROTOCOL_UNSUPPORTED"
@@ -75,6 +77,7 @@ func (d *Engine) scanSessionRegistrations(ctx context.Context) error {
 		reg.Runtime = host.Runtime
 		registrations = append(registrations, reg)
 	}
+	issues = append(issues, d.sessionArtifactIssues(ctx, hosts)...)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, reg := range registrations {

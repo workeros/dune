@@ -86,7 +86,7 @@ func (s *Service) List(ctx context.Context, scope agents.Scope, query runner.Que
 		page.Items = append(page.Items, result.items...)
 		page.Complete = page.Complete && result.complete
 		for _, issue := range result.issues {
-			page.Issues = append(page.Issues, agents.DiscoveryIssue{RunnerID: result.availability.Runner.ID, Runtime: issue.Runtime, Code: issue.Code})
+			page.Issues = append(page.Issues, agents.DiscoveryIssue{RunnerID: result.availability.Runner.ID, Runtime: issue.Runtime, Code: issue.Code, ArtifactRef: issue.ArtifactRef})
 		}
 		if result.issue != "" {
 			page.Issues = append(page.Issues, agents.DiscoveryIssue{RunnerID: result.availability.Runner.ID, Code: result.issue})

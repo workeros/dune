@@ -1,6 +1,8 @@
 package tmux
 
 import (
+	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +10,45 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 )
+
+type HostPane struct {
+	ID, Instance, Reference string
+}
+
+// HostPanes is a bounded read of this installation's separate ACP server. Pane
+// markers are discovery hints only; neither they nor PIDs grant execution rights.
+func (s *Server) HostPanes(ctx context.Context) ([]HostPane, error) {
+	if _, err := os.Lstat(s.Socket); os.IsNotExist(err) {
+		return nil, nil
+	}
+	out := &output{limit: 64 * 1024}
+	if err := s.runOutputContext(ctx, out, "list-sessions", "-F", "#{session_name}\t#{DUNE_ACP_INSTANCE}"); err != nil {
+		if strings.Contains(err.Error(), "no sessions") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("ACP pane discovery unavailable")
+	}
+	var result []HostPane
+	for _, row := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+		if row == "" {
+			continue
+		}
+		if len(result) == 256 {
+			return result, fmt.Errorf("ACP pane discovery limit exceeded")
+		}
+		digest := sha256.Sum256([]byte(row))
+		pane := HostPane{Reference: fmt.Sprintf("pane:%x", digest[:16])}
+		fields := strings.Split(row, "\t")
+		if len(fields) == 2 && strings.HasPrefix(fields[0], "acp-") && wire.ValidID(strings.TrimPrefix(fields[0], "acp-")) {
+			pane.ID = strings.TrimPrefix(fields[0], "acp-")
+			if wire.ValidID(fields[1]) {
+				pane.Instance = fields[1]
+			}
+		}
+		result = append(result, pane)
+	}
+	return result, nil
+}
 
 // CreateHost starts a protocol owner in this server's separate namespace.
 // Only the executable and private bootstrap directory enter the pane command;

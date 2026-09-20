@@ -587,7 +587,7 @@ func (d *Engine) lookup(m *pb.Message) (*runtime, error) {
 			}
 		}
 		for _, issue := range d.discoveryIssues {
-			if issue.Runtime == nil && issue.Code == "REGISTRY_UNAVAILABLE" {
+			if issue.Runtime == nil {
 				return nil, &api.Error{Code: "SESSION_UNAVAILABLE", Detail: "original Runtime registration cannot currently be checked"}
 			}
 		}

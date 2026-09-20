@@ -11,6 +11,7 @@ type RuntimeList struct {
 // Runtime is present only when an exact original identity could be verified.
 // Code never embeds registration contents, paths, credentials or process output.
 type RuntimeDiscoveryIssue struct {
-	Runtime *Runtime `json:"runtime,omitempty"`
-	Code    string   `json:"code"`
+	Runtime     *Runtime `json:"runtime,omitempty"`
+	Code        string   `json:"code"`
+	ArtifactRef string   `json:"artifact_ref,omitempty"`
 }

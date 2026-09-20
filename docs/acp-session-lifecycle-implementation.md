@@ -815,3 +815,40 @@ issue text only; the preceding 13 browser tests establish the interaction behavi
 
 Artifact classification, dependency pinning and upgrade/rollback preflight,
 platform/consumer acceptance and the final L01–L55 audit remain in scope.
+
+## Slice 20 — bounded artifact diagnostics without adoption
+
+Discovery now distinguishes missing/invalid local registration files, invalid
+instance markers/directories, temporary atomic-write files, missing/replaced
+registered sockets, unregistered Runtime artifacts and unregistered/mismatched
+tmux panes. Durable registration and verified live IPC still identify healthy
+hosts even when a local cache file is damaged. Unregistered artifacts carry an
+opaque reference, never an inferred executable Runtime identity. AgentDirectory
+preserves those references; no filename, command line or artifact content is
+exported. Known cleanup quarantine is excluded while the independent index marks
+that Runtime retiring.
+
+Scans use private-file validation and pinned directory handles, never follow a
+replacement directory into cleanup, and perform no adoption/deletion. The scan
+deadline also bounds tmux listing. Work is limited to 256 root entries, 32 entries
+per registered Runtime, 256 pane descriptions/64 KiB output and 128 artifact
+issues plus an explicit truncation issue. Unassociated shared-user IPC sockets
+are not attributed to an installation by guesswork.
+
+TestDiscoveryClassifiesPrivateArtifactsWithoutAdoptionOrCleanup removes and
+corrupts a live host's local registration, leaves a temporary file, substitutes a
+directory symlink to an unrelated sentinel, and creates an unregistered tmux pane.
+Public list exposes each issue while exact ACPState still reaches the original
+host. Restoring metadata clears the issues. No artifact or sentinel is removed;
+Agent logs remain one process/initialize without session RPCs. Explicit final
+stop/forget succeeds after restoring the original directory. A separate 140-file
+fixture proves the issue cap, opaque references and zero deletion. The endpoint
+recovery process test now verifies IPC_SOCKET_REPLACED alongside timeout and
+corrupt-registration issues, with eight healthy hosts callable in 158.4 ms.
+
+The tmux/registry/agentservice/host/fabricd race suites pass (96.7 seconds for
+fabricd, excluding the previously validated expensive L53/L54 saturation cases).
+Affected vet and whitespace checks pass. No Web behavior or actual platform
+service-manager test changed in this slice. The full goal remains active:
+dependency/version pinning, upgrade/rollback preflight, platform evidence,
+remaining public consumer/SandDance recovery and the full L01–L55 audit remain.

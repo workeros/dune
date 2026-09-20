@@ -22,6 +22,7 @@ type HostRecord struct {
 	Runtime         api.Runtime
 	Registration    json.RawMessage
 	Resources       CleanupResources
+	Retiring        bool
 }
 
 // RegisterHost can activate an identity once. In particular, starting another
@@ -141,7 +142,7 @@ func (r *Registry) Hosts(ctx context.Context) (HostDiscovery, error) {
 	// yet. The launch link is fixed with admission, before starting any process.
 	rows, err := r.db.QueryContext(ctx, `SELECT r.target,COALESCE(h.instance,''),COALESCE(h.boot_id,''),COALESCE(h.pid,0),
 		COALESCE(h.group_id,0),COALESCE(h.group_generation,0),COALESCE(h.phase,''),h.runtime,h.registration,h.resources,
-		k.runtime,COALESCE(k.stage,'')
+		k.runtime,COALESCE(k.stage,''),r.sealed
 		FROM runtime_reservations r LEFT JOIN session_hosts h ON r.target=h.target
 		LEFT JOIN submission_keys k ON k.key=r.launch_key WHERE r.live=1 ORDER BY r.target LIMIT ?`, MaxRuntimeRecords)
 	if err != nil {
@@ -151,7 +152,9 @@ func (r *Registry) Hosts(ctx context.Context) (HostDiscovery, error) {
 	for rows.Next() {
 		var launchRuntime []byte
 		var stage string
-		host, err := scanHost(rows, &launchRuntime, &stage)
+		var sealed int
+		host, err := scanHost(rows, &launchRuntime, &stage, &sealed)
+		host.Retiring = sealed != 0
 		if host.Instance == "" && len(launchRuntime) != 0 {
 			var pending api.Runtime
 			if json.Unmarshal(launchRuntime, &pending) == nil && matchingRuntime(host.Target, pending) {

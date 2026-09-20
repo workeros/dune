@@ -65,6 +65,19 @@ func privateFile(path string, limit int, value any) error {
 		return err
 	}
 	defer f.Close()
+	return decodePrivateFile(f, limit, value)
+}
+
+func privateRootFile(root *os.Root, name string, limit int, value any) error {
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return decodePrivateFile(f, limit, value)
+}
+
+func decodePrivateFile(f *os.File, limit int, value any) error {
 	st, err := f.Stat()
 	if err != nil {
 		return err

@@ -137,6 +137,10 @@ func (s *Server) run(args ...string) (string, error) {
 func (s *Server) runOutput(out io.Writer, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	return s.runOutputContext(ctx, out, args...)
+}
+
+func (s *Server) runOutputContext(ctx context.Context, out io.Writer, args ...string) error {
 	cmd := exec.CommandContext(ctx, s.Binary, s.args(args...)...)
 	cmd.Env = clientEnv()
 	var stderr bytes.Buffer

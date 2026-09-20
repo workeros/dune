@@ -43,4 +43,29 @@ Launches retain their own connection until initial publication. Discovery cannot
 replace that connection or another known host identity. Cleanup completion and
 scan publication are serialized, so a scan started before forget cannot reinsert
 the retired Runtime. Classification of orphan filesystem/tmux artifacts remains
-in the next slice; this is not the full lifecycle requirement's delivery claim.
+read-only as described below; this is not the full lifecycle requirement's
+delivery claim.
+
+Discovery also classifies artifacts inside this installation's ACP namespace:
+
+| Code | Meaning and cleanup boundary |
+| --- | --- |
+| `REGISTRATION_FILE_MISSING` / `REGISTRATION_FILE_INVALID` | The independently registered host remains a candidate; the local cache file is missing, unsafe or inconsistent. A verified live IPC connection can still serve it. |
+| `INSTANCE_MARKER_INVALID` / `RUNTIME_DIRECTORY_INVALID` | The directory/marker no longer matches its registered identity. Do not infer ownership from its current pathname. |
+| `RUNTIME_DIRECTORY_MISSING` | The independently registered target is retained; its original directory is absent. |
+| `IPC_SOCKET_MISSING` / `IPC_SOCKET_REPLACED` | The expected endpoint pathname is missing or differs from the registered inode/type/owner. Existing verified IPC may still work. |
+| `REGISTRATION_TEMPORARY_FILE` | An atomic-write temporary file exists. Discovery cannot tell whether it is abandoned and never deletes it. |
+| `UNREGISTERED_RUNTIME_ARTIFACT` / `UNREGISTERED_HOST_PANE` | A local artifact lacks verified registration. It grants no Runtime identity or cleanup authority. |
+| `HOST_PANE_IDENTITY_MISMATCH` | A pane name matches a recorded target but its instance marker differs or is missing. It must not be adopted or removed as that target. |
+| `TMUX_DISCOVERY_UNAVAILABLE` / `ARTIFACT_SCAN_INCOMPLETE` | The bounded scan could not obtain all evidence. Healthy Runtime observations remain in the response. |
+
+Unregistered artifacts carry an opaque `artifact_ref` for stable correlation;
+filenames, pane command lines and artifact contents are not exported. Each scan
+reads at most 256 root entries, 32 entries per registered Runtime directory and
+256 pane descriptions, with 64 KiB of tmux output. Artifact issues are capped at
+128 plus one explicit truncation issue. Registration files are capped at 64 KiB.
+All metadata reads occur through verified private files/pinned directory handles.
+No scan deletes, renames, adopts or starts an artifact. Explicit forget uses only
+the independent original cleanup plan; its known quarantine is excluded while
+retirement is in progress. Sockets in the shared per-user IPC directory without
+an association to this installation are not assigned or removed by guesswork.

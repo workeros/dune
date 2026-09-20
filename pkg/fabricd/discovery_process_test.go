@@ -98,24 +98,28 @@ func TestDiscoveryRecoversEightHostsBesideUnresponsiveEndpointAndCorruptRegistra
 	// An overlapping startup probe may briefly report a healthy target as
 	// recovering. Read-only backoff converges without creating another process.
 	deadline := time.Now().Add(8 * time.Second)
-	for len(page.Issues) != 2 && time.Now().Before(deadline) {
+	for len(page.Issues) != 3 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
 		page, err = h.client.List(h.ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if page.Complete || len(page.Items) != 9 || len(page.Issues) != 2 {
+	if page.Complete || len(page.Items) != 9 || len(page.Issues) != 3 {
 		t.Fatal(page)
 	}
 	issues := map[string]string{}
+	replacedSocket := false
 	for _, issue := range page.Issues {
 		if issue.Runtime == nil {
 			t.Fatal(issue)
 		}
 		issues[issue.Runtime.ID] = issue.Code
+		if issue.Runtime.ID == runtimes[8].ID && issue.Code == "IPC_SOCKET_REPLACED" {
+			replacedSocket = true
+		}
 	}
-	if issues[runtimes[8].ID] != "SESSION_UNAVAILABLE" || issues[runtimes[9].ID] != "REGISTRATION_INVALID" {
+	if !replacedSocket || issues[runtimes[8].ID] != "SESSION_UNAVAILABLE" || issues[runtimes[9].ID] != "REGISTRATION_INVALID" {
 		t.Fatal(issues)
 	}
 	for _, item := range page.Items {

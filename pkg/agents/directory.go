@@ -24,9 +24,10 @@ type RunnerAvailability struct {
 }
 
 type DiscoveryIssue struct {
-	RunnerID string       `json:"runner_id"`
-	Code     string       `json:"code"`
-	Runtime  *api.Runtime `json:"runtime,omitempty"`
+	RunnerID    string       `json:"runner_id"`
+	Code        string       `json:"code"`
+	Runtime     *api.Runtime `json:"runtime,omitempty"`
+	ArtifactRef string       `json:"artifact_ref,omitempty"`
 }
 
 // Pagination advances across Runners. An unavailable Runner is reported rather
