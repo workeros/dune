@@ -12,6 +12,8 @@ test("four mixed Agents split across projects and Runners, retain connections an
   await page.getByRole("button", { name: "打开 A-PTY · Runner one", exact: true }).click();
   await expect(page.locator(".agent-pane")).toHaveCount(4);
   const pane = page.locator(".agent-pane").filter({ has: page.locator(".pane-title strong", { hasText: "A-PTY" }) });
+  await pane.getByRole("button", { name: "只读 · 获取输入权", exact: true }).click();
+  await expect(pane.getByRole("button", { name: "释放输入权", exact: true })).toBeVisible();
   const terminal = pane.locator(".xterm-helper-textarea");
   await terminal.focus(); await page.keyboard.type("echo one");
   await expect.poll(() => state.inputs.filter((input) => input.message.type === "input").length).toBeGreaterThan(0);

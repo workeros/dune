@@ -29,8 +29,18 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
     const path = new URL(socket.url()).pathname;
     state.connections.push(path);
     if (path.includes("-acp/")) socket.send(JSON.stringify({ type: "acp_state", payload: state.acpStates[path.split("/").at(-2)!] ?? workbenchACPState(path.split("/").at(-2)!) }));
-    else socket.send(JSON.stringify({ type: "data", data: `ready ${path}\r\n` }));
-    socket.onMessage((message) => state.inputs.push({ path, message: JSON.parse(message.toString()) }));
+    else {
+      socket.send(JSON.stringify({ type: "control", payload: { writable: false, available: true }, control_epoch: 0 }));
+      socket.send(JSON.stringify({ type: "data", data: `ready ${path}\r\n` }));
+    }
+    socket.onMessage((message) => {
+      const value = JSON.parse(message.toString());
+      state.inputs.push({ path, message: value });
+      if (value.type === "control") {
+        const writable = value.action !== "release";
+        socket.send(JSON.stringify({ type: "control", payload: { writable, available: !writable }, control_epoch: writable ? 1 : 0 }));
+      }
+    });
   });
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname, method = request.method();
