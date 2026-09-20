@@ -33,6 +33,8 @@ func (c *Client) Submit(parent context.Context, request api.SubmissionRequest) (
 	switch request.Operation {
 	case "acp.action":
 		operation = "submission.acp"
+	case "acp.raw.write", "acp.raw.take":
+		operation = "submission.raw"
 	case "runtime.stop", "runtime.forget":
 		operation = request.Operation
 	}

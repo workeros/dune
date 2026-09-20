@@ -123,7 +123,7 @@ func (r *Registry) initialize(ctx context.Context) error {
 		key TEXT PRIMARY KEY, digest TEXT NOT NULL, receiver TEXT NOT NULL,
 		token TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('claimed','accepted','not_accepted')),
 		operation_ref TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
-		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB, worktree BLOB, cleanup BLOB);
+		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB, worktree BLOB, cleanup BLOB, raw_input BLOB);
 		CREATE TABLE IF NOT EXISTS runtime_reservations (
 			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0);
 		CREATE TABLE IF NOT EXISTS control_reservations (
@@ -249,7 +249,16 @@ func (r *Registry) Accept(ctx context.Context, claim Claim, operationRef string)
 	if len(operationRef) > 8192 {
 		return api.SubmissionReceipt{}, &api.Error{Code: "INVALID_ARGUMENT", Detail: "operation reference exceeds registry budget"}
 	}
-	return r.resolve(ctx, claim, "accepted", operationRef, "")
+	return r.resolve(ctx, claim, "accepted", operationRef, "", nil)
+}
+
+// AcceptRaw stores input identity/order with the admission decision. Complete
+// message bytes remain owned by the original host, never in discovery storage.
+func (r *Registry) AcceptRaw(ctx context.Context, claim Claim, operationRef string, input api.RawACPInputReceipt) (api.SubmissionReceipt, error) {
+	if api.ValidateSubmissionID(operationRef) != nil || api.ValidateSubmissionID(input.StreamID) != nil || input.InputEpoch == 0 || input.Length < 0 || input.Length > api.RawACPMaxMessageBytes || (input.Sequence == 0) != (input.Length == 0) {
+		return api.SubmissionReceipt{SubmissionKey: claim.key, Admission: api.SubmissionUnknown}, &api.Error{Code: "INVALID_ARGUMENT", Detail: "valid raw input identity and order required"}
+	}
+	return r.resolve(ctx, claim, "accepted", operationRef, "", &input)
 }
 
 // Reject permanently closes a claimed key. Capacity eviction and transport
@@ -258,10 +267,10 @@ func (r *Registry) Reject(ctx context.Context, claim Claim, code string) (api.Su
 	if api.ValidateSubmissionID(code) != nil {
 		return api.SubmissionReceipt{}, &api.Error{Code: "INVALID_ARGUMENT", Detail: "bounded rejection code required"}
 	}
-	return r.resolve(ctx, claim, "not_accepted", "", code)
+	return r.resolve(ctx, claim, "not_accepted", "", code, nil)
 }
 
-func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef, code string) (api.SubmissionReceipt, error) {
+func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef, code string, input *api.RawACPInputReceipt) (api.SubmissionReceipt, error) {
 	result := api.SubmissionReceipt{SubmissionKey: claim.key, Admission: api.SubmissionUnknown}
 	encoded, err := encodeKey(claim.key)
 	if err != nil || !claim.Acquired() {
@@ -279,8 +288,12 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 	if record.token != claim.token {
 		return result, conflict()
 	}
+	var rawInput []byte
+	if input != nil {
+		rawInput = api.Payload(input)
+	}
 	if record.state != "claimed" {
-		if record.state != state || record.operationRef != operationRef || record.errorCode != code {
+		if record.state != state || record.operationRef != operationRef || record.errorCode != code || string(record.rawInput) != string(rawInput) {
 			return result, conflict()
 		}
 		return record.receipt(claim.key), nil
@@ -290,14 +303,14 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 			return result, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE submission_keys SET state=?,operation_ref=?,error_code=? WHERE key=?`, state, operationRef, code, encoded)
+	_, err = tx.ExecContext(ctx, `UPDATE submission_keys SET state=?,operation_ref=?,error_code=?,raw_input=? WHERE key=?`, state, operationRef, code, rawInput, encoded)
 	if err != nil {
 		return result, err
 	}
 	if err = tx.Commit(); err != nil {
 		return result, err
 	}
-	return api.SubmissionReceipt{SubmissionKey: claim.key, Admission: api.SubmissionAdmission(state), OperationRef: operationRef, ErrorCode: code}, nil
+	return api.SubmissionReceipt{SubmissionKey: claim.key, Admission: api.SubmissionAdmission(state), OperationRef: operationRef, ErrorCode: code, RawInput: input}, nil
 }
 
 type record struct {
@@ -305,6 +318,7 @@ type record struct {
 	digest, receiver, token, state, operationRef, errorCode, stage, controlResource string
 	runtime                                                                         []byte
 	cleanup                                                                         []byte
+	rawInput                                                                        []byte
 }
 
 func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
@@ -322,6 +336,9 @@ func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
 	if len(r.cleanup) != 0 {
 		_ = json.Unmarshal(r.cleanup, &receipt.Cleanup)
 	}
+	if len(r.rawInput) != 0 {
+		_ = json.Unmarshal(r.rawInput, &receipt.RawInput)
+	}
 	return receipt
 }
 
@@ -331,8 +348,8 @@ type queryRow interface {
 
 func readRecord(ctx context.Context, db queryRow, key string) (record, error) {
 	var result record
-	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime,worktree,cleanup FROM submission_keys WHERE key=?`, key).Scan(
-		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime, &result.worktree, &result.cleanup)
+	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime,worktree,cleanup,raw_input FROM submission_keys WHERE key=?`, key).Scan(
+		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime, &result.worktree, &result.cleanup, &result.rawInput)
 	return result, err
 }
 

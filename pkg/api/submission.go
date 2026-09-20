@@ -95,6 +95,7 @@ type SubmissionReceipt struct {
 	Stage        string              `json:"stage,omitempty"`
 	ErrorCode    string              `json:"error_code,omitempty"`
 	Cleanup      *CleanupProgress    `json:"cleanup,omitempty"`
+	RawInput     *RawACPInputReceipt `json:"raw_input,omitempty"`
 }
 
 // CleanupProgress contains only durably confirmed steps of the original forget.
