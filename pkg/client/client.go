@@ -269,33 +269,6 @@ func (c *Client) ProfileStatus(ctx context.Context, executionID string) (api.Pro
 	return out, err
 }
 
-func (c *Client) Start(ctx context.Context, p api.Profile) (api.Runtime, *Stream, error) {
-	var r api.Runtime
-	if p.Kind != "agent" {
-		return r, nil, fmt.Errorf("profile.start requires kind: agent")
-	}
-	s, _, e := c.open(ctx, "profile.start", wire.ID(), p, nil)
-	if e != nil {
-		return r, nil, e
-	}
-	for {
-		m, e := s.Recv()
-		if e != nil {
-			s.Close()
-			return r, nil, e
-		}
-		if m.Kind == "progress" {
-			continue
-		}
-		if m.Kind != "result" {
-			s.Close()
-			return r, nil, fmt.Errorf("expected Runtime result")
-		}
-		e = wire.Decode(m, &r)
-		s.terminal = false
-		return r, s, e
-	}
-}
 func (c *Client) List(ctx context.Context) ([]api.Runtime, error) {
 	var r []api.Runtime
 	e := c.Call(ctx, "runtime.list", struct{}{}, &r)

@@ -30,7 +30,7 @@ func TestRealAgentPTY(t *testing.T) {
 	if name == "claude" {
 		argv = []string{agent, "-p", prompt, "--allowedTools", "Write,Bash,Read", "--max-turns", "8"}
 	}
-	rt, s, e := h.client.Start(h.ctx, profile(work, "pty", argv...))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(work, "pty", argv...))
 	must(t, e)
 	defer s.Close()
 	defer h.client.Stop(h.ctx, rt)
@@ -69,7 +69,7 @@ func TestRealAgentACP(t *testing.T) {
 	must(t, e)
 	work := filepath.Join(h.dir, "acp-task")
 	must(t, os.Mkdir(work, 0700))
-	rt, s, e := h.client.Start(h.ctx, profile(work, "acp", agent, "--acp"))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(work, "acp", agent, "--acp"))
 	must(t, e)
 	defer s.Close()
 	defer h.client.Stop(h.ctx, rt)

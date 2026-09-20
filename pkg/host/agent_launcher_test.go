@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/profiles"
@@ -63,7 +64,7 @@ func TestAgentLauncherUsesFixedProjectProfileAndEffectiveEnvironment(t *testing.
 		overrides["DEFAULT_VALUE"] = "saved-environment"
 		return overrides, nil
 	}
-	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Project: &agents.ProjectSelection{ID: project.ID, Revision: project.Revision}, DirectoryID: "original"})
+	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Project: &agents.ProjectSelection{ID: project.ID, Revision: project.Revision}, DirectoryID: "original"})
 	if err != nil || result.Runtime == nil {
 		t.Fatal(result, err)
 	}
@@ -107,7 +108,7 @@ func TestAgentLauncherCreatesWorktreeWithoutCopyingDirtySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := agents.StartRequest{Binding: f.binding, Custom: &profile, Project: &agents.ProjectSelection{ID: project.ID, Revision: project.Revision}, DirectoryID: "source", Worktree: &agents.WorktreeLocation{Path: destination, Branch: "feat/helper"}}
+	request := agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile, Project: &agents.ProjectSelection{ID: project.ID, Revision: project.Revision}, DirectoryID: "source", Worktree: &agents.WorktreeLocation{Path: destination, Branch: "feat/helper"}}
 	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), request)
 	if err != nil || result.Runtime == nil || result.Worktree == nil {
 		t.Fatal(result, err)
@@ -126,8 +127,8 @@ func TestAgentLauncherCreatesWorktreeWithoutCopyingDirtySource(t *testing.T) {
 	if result.Runtime.WorkingDirectory != canonical || result.Runtime.ProjectID != project.ID || result.Runtime.DirectoryID != "" {
 		t.Fatal("worktree and launch location differ", result)
 	}
-	// Retrying the same start cannot reuse an existing checkout/branch.
-	if duplicate, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), request); err == nil || duplicate.Runtime != nil {
+	// An explicit duplicate returns original admission evidence without another launch.
+	if duplicate, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), request); err == nil || duplicate.Runtime == nil || duplicate.Runtime.ID != result.Runtime.ID || duplicate.SubmissionKey != result.SubmissionKey {
 		t.Fatal("duplicate worktree created another Agent", duplicate, err)
 	}
 	items, err := f.app.AgentDirectory().List(t.Context(), f.agentScope(), runner.Query{})
@@ -144,7 +145,7 @@ func TestAgentLauncherRejectsScopeAndStaleInputsBeforeMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := agents.StartRequest{Binding: f.binding, Custom: &profile, Worktree: &agents.WorktreeLocation{Path: filepath.Join(f.workspace, "should-not-exist"), Branch: "feat/no-start"}}
+	request := agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile, Worktree: &agents.WorktreeLocation{Path: filepath.Join(f.workspace, "should-not-exist"), Branch: "feat/no-start"}}
 	wrongScope := f.agentScope()
 	wrongScope.OwnerID = "another-tenant"
 	if _, err := f.app.AgentLauncher().Start(t.Context(), wrongScope, request); !errors.Is(err, metadata.ErrNotFound) {
@@ -181,7 +182,7 @@ func TestAgentLauncherKeepsPreparedWorktreeOnStartFailure(t *testing.T) {
 	runLaunchGit(t, f.workspace, "init", "-q")
 	runLaunchGit(t, f.workspace, "commit", "--allow-empty", "-qm", "initial")
 	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: f.workspace, Start: api.Command{Argv: []string{"/does-not-exist/agent", "--acp"}}}
-	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile, Worktree: &agents.WorktreeLocation{Path: filepath.Join(t.TempDir(), "prepared"), Branch: "feat/prepared"}})
+	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile, Worktree: &agents.WorktreeLocation{Path: filepath.Join(t.TempDir(), "prepared"), Branch: "feat/prepared"}})
 	if err == nil || result.Runtime != nil || result.Worktree == nil {
 		t.Fatal(result, err)
 	}

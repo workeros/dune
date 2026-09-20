@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 )
@@ -76,7 +77,7 @@ func testRealNativeAgent(t *testing.T) {
 	defer host.Close()
 	f.app.agentMCPURL = host.URL + "/api/v1/agent-mcp"
 	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: f.workspace, Start: api.Command{Argv: []string{program}}, Env: map[string]string{"CODEX_HOME": os.Getenv("DUNE_NATIVE_CODEX_HOME")}}
-	started, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+	started, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 	if err != nil {
 		t.Fatal(err)
 	}

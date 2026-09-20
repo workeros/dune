@@ -60,6 +60,21 @@ func (c *connection) openChecked(ctx context.Context, m *pb.Message, flow *gatew
 	if err != nil {
 		return nil, err
 	}
+	leases := map[Request]*lease{r: newLease(d)}
+	additional, err := launchWorktreeRequest(c.grant.Policy.Scope, m)
+	if err != nil {
+		return nil, err
+	}
+	if additional != nil {
+		decision, err := c.grant.checkAction(ctx, *additional)
+		if err != nil {
+			return nil, err
+		}
+		leases[*additional] = newLease(decision)
+		if decision.ValidUntil.Before(d.ValidUntil) {
+			d.ValidUntil = decision.ValidUntil
+		}
+	}
 	if route, remote := flow.PeerRoute(); remote {
 		if c.grant.Policy.Delegate == nil {
 			return nil, ErrDenied
@@ -84,7 +99,7 @@ func (c *connection) openChecked(ctx context.Context, m *pb.Message, flow *gatew
 		return nil, err
 	}
 	life, cancel := context.WithCancel(flow.Context())
-	s := &checkedStream{grant: c.grant, base: r, flow: flow, ctx: life, cancel: cancel, leases: map[Request]*lease{r: newLease(d)}, changed: make(chan struct{}, 1)}
+	s := &checkedStream{grant: c.grant, base: r, flow: flow, ctx: life, cancel: cancel, leases: leases, changed: make(chan struct{}, 1)}
 	go s.watch()
 	return s, nil
 }

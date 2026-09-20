@@ -43,7 +43,7 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	must(t, err)
 	defer gate.Close()
 	p.Env = map[string]string{"DUNE_MOCK_HISTORY": "1", "DUNE_MOCK_LOAD_GATE": gate.Addr().String()}
-	rt, initial, err := h.client.Start(h.ctx, p)
+	rt, initial, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	initial.Close()
 	defer h.client.Stop(h.ctx, rt)
@@ -70,7 +70,7 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	// history to a non-consuming diagnostic observer.
 	normalProfile := profile(t.TempDir(), "acp", mock)
 	normalProfile.ManagedACP = true
-	normal, normalStream, err := h.client.Start(h.ctx, normalProfile)
+	normal, normalStream, err := testStartProfile(h.client, h.ctx, normalProfile)
 	must(t, err)
 	normalStream.Close()
 	waitManagedACPReady(t, h, normal)
@@ -135,7 +135,7 @@ func TestManagedACPOfflinePermissions(t *testing.T) {
 	}
 	p := profile(h.dir, "acp", mock)
 	p.ManagedACP = true
-	rt, stream, err := h.client.Start(h.ctx, p)
+	rt, stream, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	stream.Close()
 	type state struct {

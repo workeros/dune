@@ -75,7 +75,7 @@ func TestInputLeaseSurvivesProcessPause(t *testing.T) {
 	}
 	client := dial()
 	defer func() { client.Close() }()
-	runtime, stream, err := client.Start(ctx, profile(dir, "pty", "/bin/sh"))
+	runtime, stream, err := testStartProfile(client, ctx, profile(dir, "pty", "/bin/sh"))
 	must(t, err)
 	defer func() { stream.Close() }()
 	_, err = stream.Input([]byte("printf LEASE_INITIAL_OK\\n\n"))

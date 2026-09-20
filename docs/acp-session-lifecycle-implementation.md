@@ -151,3 +151,35 @@ reject 100 invalid control targets without consuming valid reservations, preserv
 cross-operation key conflicts, and reopen cleanup evidence before completion.
 Public control/launch dispatch is not yet migrated, so this is evidence for the
 registry contract, not a passed L51–L55 network/process acceptance claim.
+
+Slice 5 launch tracer bullet: `Client.Start` now requires `api.StartRequest` with
+an explicit caller-owned key and returns `api.StartResult`. No implicit-ID
+startup overload remains. Launcher, HTTP/MCP requests, Web, IM AgentConnection
+and repository test callers now supply the ID before calling. The Web retains
+its latest launch identity in sessionStorage before the network send; a complete
+pending-submission UI remains part of the consumer slice.
+
+A single independent registry transaction admits the frozen launch, reserves
+its Runtime identity and stop/forget capacity, and precedes optional worktree
+creation, setup and Agent launch. Worktree creation stays separately authorized
+at the Gateway. Confirmed worktree and stage facts survive connector restart;
+Agent setup errors retain their live bounded diagnostic payload. The independent
+host can publish its own started checkpoint when the original response is lost.
+Duplicate launches return ALREADY_SUBMITTED plus the original receipt, without
+repeating worktree/setup or Launcher initialization.
+
+`go test -race ./pkg/access ./pkg/host ./pkg/fabricd ./pkg/client
+./internal/sessionregistry -count=1 -timeout=180s` passes. Targeted contracts
+passed again after removing obsolete Agent branches from Profile prepare.
+`TestLaunchAdmissionSurvivesMissingFirstResponse` passes for caller cancellation
+before startup completion and SIGKILL during setup: the first branch retains one
+Agent across connector replacement; the second retains accepted/setup without
+replaying setup or fabricating Agent startup. The test waits for Agent readiness
+before reading the mock process marker (process spawn confirmation precedes mock
+main execution). Profile/PTY, prefixed Web launch and managed ACP regressions pass.
+`go test ./duneagent -count=1 -timeout=90s` in im passes; full IM integration is
+still outstanding. `make web-check web-build` passes with bundle-size warnings.
+
+Remaining integration work includes all Runtime actions/control reservations,
+independent cleanup recovery, raw ACP, full discovery/loss classification, pinned
+runtime dependencies, platform manager/upgrade acceptance and SandDance consumers.

@@ -42,7 +42,7 @@ func TestPTYOperationsShareBrowserInputAndExpireOnFabricdRestart(t *testing.T) {
 	record := filepath.Join(h.dir, "terminal-input")
 	p := profile(h.dir, "pty", agent, "-test.run=^TestPTYOperationRecorderChild$")
 	p.Env = map[string]string{"DUNE_TEST_PTY_INPUT_CAPTURE": record}
-	runtime, browser, err := h.client.Start(h.ctx, p)
+	runtime, browser, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	defer browser.Close()
 	receive(t, browser, "data", "PTY_RECORDER_READY")
@@ -102,7 +102,7 @@ func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 	}
 	profile := profile(h.dir, "acp", mock)
 	profile.ManagedACP = true
-	runtime, stream, err := h.client.Start(h.ctx, profile)
+	runtime, stream, err := testStartProfile(h.client, h.ctx, profile)
 	must(t, err)
 	stream.Close()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {

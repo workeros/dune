@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
@@ -143,7 +144,7 @@ func TestAgentMessengerPTYDeliveryAndSnapshotRemainDistinct(t *testing.T) {
 	}
 	record := filepath.Join(f.workspace, "input")
 	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: f.workspace, Start: api.Command{Argv: []string{path, "-test.run=^TestMessengerPTYRecorder$"}}, Env: map[string]string{"DUNE_MESSENGER_PTY_RECORD": record, "PATH": "/usr/bin:/bin"}}
-	if _, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile}); err != nil {
+	if _, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile}); err != nil {
 		t.Fatal(err)
 	}
 	messenger := f.app.AgentMessenger()

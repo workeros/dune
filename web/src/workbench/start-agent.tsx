@@ -45,6 +45,7 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
   };
   const start = async (terminal: boolean) => {
     if (!runner?.binding || !valid || busy) return;
+    const submissionID = crypto.randomUUID();
     setBusy(true); setError("");
     const accept = (result: LaunchResult | undefined) => {
       if (result?.worktree) { setCwd(result.worktree.path); setDirectoryID(""); setLocation("current"); }
@@ -52,6 +53,7 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
     };
     try {
       const body: LaunchRequest = {
+        submission_id: submissionID,
         working_directory: cwd, project: project ? { id: project.id, revision: project.revision } : undefined,
         directory_id: directoryID || undefined,
         worktree: location === "worktree" ? { path: worktreePath, branch, ref: ref || undefined } : undefined,
@@ -63,11 +65,13 @@ export function StartAgent({ runners, selected, onSelect, profiles, project, onS
         if (!selection) throw new Error("请选择 Agent 配置。");
         body.profile = selection;
       }
+      // Save identity before the first send so refresh cannot erase an unknown launch.
+      sessionStorage.setItem("dune.lastLaunch", JSON.stringify({ submission_id: submissionID, binding: runner.binding }));
       accept(await post<LaunchResult>(runnerPath(runner.binding, "sessions"), body));
     } catch (cause) {
       const partial = cause instanceof APIError ? cause.result as LaunchResult | undefined : undefined;
       accept(partial);
-      setError(`${partial?.worktree ? `已创建 worktree：${partial.worktree.path}。` : ""}${partial?.runtime ? "Agent 已启动，请继续使用已打开的会话。" : ""}${errorText(cause)}`);
+      setError(`${partial?.worktree ? `已创建 worktree：${partial.worktree.path}。` : ""}${partial?.runtime ? "Agent 已启动，请继续使用已打开的会话。" : ""}${errorText(cause)} 提交标识：${submissionID}`);
     } finally { setBusy(false); }
   };
   const locationReady = location === "current" || !!worktreePath && !!branch;

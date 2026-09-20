@@ -193,7 +193,7 @@ func TestExecProfilePTY(t *testing.T) {
 	p := profile(h.dir, "pty", "/bin/sh")
 	p.Env = map[string]string{"DUNE_TEST": "value"}
 	p.Setup.Steps = []api.Command{{Run: "printf ready > prepared", Shell: "/bin/sh"}}
-	rt, s, e := h.client.Start(h.ctx, p)
+	rt, s, e := testStartProfile(h.client, h.ctx, p)
 	must(t, e)
 	defer s.Close()
 	b, e := os.ReadFile(filepath.Join(h.dir, "prepared"))
@@ -223,7 +223,7 @@ func TestExecProfilePTY(t *testing.T) {
 		t.Fatal(list)
 	}
 	p.Setup.Steps = []api.Command{{Argv: []string{"/bin/sh", "-c", "exit 2"}}, {Argv: []string{"touch", "never"}}}
-	_, _, e = h.client.Start(h.ctx, p)
+	_, _, e = testStartProfile(h.client, h.ctx, p)
 	if e == nil {
 		t.Fatal("setup failure expected")
 	}
@@ -243,7 +243,7 @@ for line in sys.stdin:
 `
 	path := filepath.Join(h.dir, "acp.py")
 	must(t, os.WriteFile(path, []byte(script), 0600))
-	rt, s, e := h.client.Start(h.ctx, profile(h.dir, "acp", "python3", "-u", path))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "acp", "python3", "-u", path))
 	must(t, e)
 	defer s.Close()
 	defer h.client.Stop(h.ctx, rt)
@@ -444,7 +444,7 @@ func TestAuthDedup(t *testing.T) {
 func TestRestart(t *testing.T) {
 	h := start(t)
 	pidfile := filepath.Join(h.dir, "agent.pid")
-	rt, s, e := h.client.Start(h.ctx, profile(h.dir, "pty", "/bin/sh", "-c", "echo $$ > "+pidfile+"; while :; do sleep 1; done"))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sh", "-c", "echo $$ > "+pidfile+"; while :; do sleep 1; done"))
 	must(t, e)
 	defer s.Close()
 	for i := 0; i < 50; i++ {

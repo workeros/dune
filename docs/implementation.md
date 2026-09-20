@@ -42,7 +42,7 @@ peer 使用独立 `peer` 角色和原 Yamux/protobuf。应用须提供有认证�
 
 `dune-mvp/2` 与旧版本不混用：Gateway、fabricd、Web 宿主和 Go SDK 必须协调升级；旧 hello 在业务准入前拒绝，不能回退到没有输入租约的模式。Web 后端自带 SDK 随应用一起更新，自定义 Go 宿主需同步依赖。此次升级不修改 SQL 或机器凭据；保留原配置与数据目录，暂停接入并替换相关二进制后重新连接。升级或回退均会断开活动订阅，不重放输入或结果未知的请求。重启 fabricd 保留 tmux PTY，但其托管 ACP 进程按既有生命周期结束。若回退，应协调恢复所有组件至原协议版本，不能只回退单个 Gateway。
 
-业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.prepare 依次发送 accepted、逐步 setup progress、Profile result 后结束；SDK 将 accepted、步骤开始、步骤完成、失败和整体成功作为类型化 `ProfileProgress` 交给调用方。profile.start 依次发送 accepted、setup progress、Runtime result，随后成为交互 stream。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
+业务流返回 `accepted` 后才执行已受理操作；`result` 或 `exit` 才是明确完成。参数校验可能在 admission 后失败，错误码会明确返回。profile.prepare 依次发送 accepted、逐步 setup progress、Profile result 后结束；SDK 将 accepted、步骤开始、步骤完成、失败和整体成功作为类型化 `ProfileProgress` 交给调用方。profile.start 要求完整调用方提交键，返回独立接纳回执的阶段 progress 和 StartResult，随后成为交互 stream；见[提交合同](acp-submissions.md)。attach/ports.connect 发送 accepted 后进入交互。输入带独立 request_id，`written` 表示 OS 接受写入或控制操作；并不表示 Agent 完成任务。
 
 Yamux 0.1.2 没有单独的 CloseWrite API。Ports 在应用协议发送 `eof`，daemon 调用 TCP CloseWrite，两方向都完成后返回 result。Yamux Close 用于取消/结束 stream。其他业务的 EOF 若未见 result/exit，SDK 返回 STREAM_INTERRUPTED；已提交 unary 调用丢失结果时为 RESULT_UNKNOWN，不自动重试。断开已受理的 Exec/Git 不回滚，也不保证立即取消；其超时仍有效。交互订阅断开不会停止 Agent。
 

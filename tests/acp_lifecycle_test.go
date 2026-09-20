@@ -27,7 +27,7 @@ func TestManagedACPOriginalProcessAcrossConnectorRestart(t *testing.T) {
 	p.ManagedACP = true
 	rpcLog, processLog := filepath.Join(h.dir, "rpc.log"), filepath.Join(h.dir, "process.log")
 	p.Env = map[string]string{"DUNE_MOCK_HISTORY": "1", "DUNE_MOCK_RPC_LOG": rpcLog, "DUNE_MOCK_PROCESS_LOG": processLog, "DUNE_MOCK_PROMPT_GATE": gate.Addr().String()}
-	runtime, stream, err := h.client.Start(h.ctx, p)
+	runtime, stream, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	stream.Close()
 	defer func() { _ = h.client.Stop(h.ctx, runtime) }()

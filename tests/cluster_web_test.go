@@ -25,6 +25,7 @@ import (
 	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/identity"
@@ -203,7 +204,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	runnerBase := "api/v1/runners/" + enrollment.Runner.ID
 	var caller agents.LaunchResult
 	callerProfile := profile(dir, "pty", "/bin/sh", "-c", "sleep 120")
-	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{Custom: &callerProfile}, &caller)
+	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{SubmissionID: wire.ID(), Custom: &callerProfile}, &caller)
 	store, err := metadata.Open(ctx, database)
 	must(t, err)
 	defer store.Close()
@@ -234,7 +235,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	journal := filepath.Join(dir, "acp-rpc.log")
 	agentProfile.Env = map[string]string{"DUNE_MOCK_RPC_LOG": journal}
 	var target agents.LaunchResult
-	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{Custom: &agentProfile}, &target)
+	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{SubmissionID: wire.ID(), Custom: &agentProfile}, &target)
 	var first, second agents.Operation
 	request(sites[0], "POST", "api/v1/agents/prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "permission for cluster A"}, &first)
 	callMCP("agents_prompt", agents.PromptRequest{ExpectedConversationID: target.Runtime.ConversationID, AgentRef: target.AgentRef, Text: "CLUSTER_SECOND_OPERATION"}, &second)

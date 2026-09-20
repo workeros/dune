@@ -49,7 +49,7 @@ type AgentState struct {
 // the Gateway, Dune access policy and fabricd's Runtime identity checks.
 // Close must be called to release host draining and network resources.
 type AgentConnection interface {
-	Start(context.Context, api.Profile) (api.Runtime, error)
+	Start(context.Context, string, api.Profile) (api.Runtime, error)
 	Get(context.Context, api.Runtime) (api.Runtime, error)
 	Observe(context.Context, api.Runtime) (AgentSubscription, error)
 	State(context.Context, api.Runtime) (AgentState, error)
@@ -103,10 +103,11 @@ func (e *agentExecutor) Open(ctx context.Context, scope AgentScope) (AgentConnec
 			return nil, &api.Error{Code: "UNSUPPORTED", Detail: required + " is not supported by the current fabricd binding"}
 		}
 	}
-	return &agentConnection{sdk: sdk, closeClient: closeClient, finish: finish}, nil
+	return &agentConnection{target: api.SubmissionTarget{OwnerID: scope.OwnerID, RunnerID: resource.Runner.Binding.RunnerID, FabricID: resource.Runner.Binding.FabricID, MachineID: resource.Runner.Binding.MachineID, BindingRevision: resource.Runner.Binding.Revision}, sdk: sdk, closeClient: closeClient, finish: finish}, nil
 }
 
 type agentConnection struct {
+	target      api.SubmissionTarget
 	sdk         *client.Client
 	closeClient func()
 	finish      func()
@@ -121,18 +122,27 @@ func (c *agentConnection) Close() error {
 	return nil
 }
 
-func (c *agentConnection) Start(ctx context.Context, profile api.Profile) (api.Runtime, error) {
+func (c *agentConnection) Start(ctx context.Context, submissionID string, profile api.Profile) (out api.Runtime, err error) {
+	key := api.SubmissionKey{SubmissionID: submissionID, Target: c.target}
+	defer func() {
+		if err != nil {
+			err = &api.SubmissionError{Key: key, Cause: err}
+		}
+	}()
 	if profile.Kind != "agent" || profile.Adapter != "acp" || !profile.ManagedACP {
 		return api.Runtime{}, errors.New("IM Agent requires a managed ACP Profile")
 	}
 	if err := profile.Validate(); err != nil {
 		return api.Runtime{}, err
 	}
-	runtime, stream, err := c.sdk.Start(ctx, profile)
+	result, stream, err := c.sdk.Start(ctx, api.StartRequest{SubmissionKey: key, Profile: profile})
 	if stream != nil {
 		_ = stream.Close()
 	}
-	return runtime, err
+	if result.Stage == "started" && result.Runtime != nil {
+		return *result.Runtime, err
+	}
+	return api.Runtime{}, err
 }
 
 func (c *agentConnection) Get(ctx context.Context, runtime api.Runtime) (api.Runtime, error) {

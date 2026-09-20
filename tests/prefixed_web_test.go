@@ -23,6 +23,7 @@ import (
 	"github.com/aiomni/dune/internal/testcert"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/webapp"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
@@ -281,7 +282,7 @@ func testPrefixedWorkbench(t *testing.T, mode workbenchCase) {
 	}
 	terminalProfile := profile(dir, "pty", "/bin/sh")
 	var started agents.LaunchResult
-	do("POST", executionRoute("sessions"), agents.StartRequest{Custom: &terminalProfile}, &started)
+	do("POST", executionRoute("sessions"), agents.StartRequest{SubmissionID: wire.ID(), Custom: &terminalProfile}, &started)
 	if started.Runtime == nil {
 		t.Fatal("Agent startup did not return its Runtime and saved launch")
 	}

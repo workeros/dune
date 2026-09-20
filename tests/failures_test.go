@@ -82,11 +82,11 @@ func TestProfileValidationAndOutput(t *testing.T) {
 	h := start(t)
 	bad := profile(h.dir, "pty", "/bin/true")
 	bad.Start.Run = "echo x"
-	if _, _, e := h.client.Start(h.ctx, bad); e == nil {
+	if _, _, e := testStartProfile(h.client, h.ctx, bad); e == nil {
 		t.Fatal("argv/run conflict")
 	}
 	bad = profile(h.dir, "pty", "/not/exist")
-	if _, _, e := h.client.Start(h.ctx, bad); e == nil {
+	if _, _, e := testStartProfile(h.client, h.ctx, bad); e == nil {
 		t.Fatal("missing executable")
 	}
 	r := h.exec("/usr/bin/printf", "%s", "$HOME")
@@ -98,7 +98,7 @@ func TestProfileValidationAndOutput(t *testing.T) {
 		t.Fatal("unbounded or truncated incorrectly", len(r.Stdout))
 	}
 	p := profile(h.dir, "pty", "/bin/sh", "-c", "printf OLD; sleep 1; printf NEW; sleep 1")
-	rt, s, e := h.client.Start(h.ctx, p)
+	rt, s, e := testStartProfile(h.client, h.ctx, p)
 	must(t, e)
 	receive(t, s, "data", "OLD")
 	s.Close()
@@ -249,7 +249,7 @@ func TestSlowConsumerIsolation(t *testing.T) {
 	h := start(t)
 	ctx, cancel := context.WithTimeout(h.ctx, 15*time.Second)
 	defer cancel()
-	rt, s, e := h.client.Start(ctx, profile(h.dir, "pty", "/bin/sh", "-c", "seq 1 100000; echo OUTPUT_FINISHED; touch output-finished; sleep 120"))
+	rt, s, e := testStartProfile(h.client, ctx, profile(h.dir, "pty", "/bin/sh", "-c", "seq 1 100000; echo OUTPUT_FINISHED; touch output-finished; sleep 120"))
 	must(t, e)
 	defer h.client.Stop(h.ctx, rt)
 	// Do not read the attached viewer while the native server consumes output.
@@ -301,7 +301,7 @@ func TestMixedLoad(t *testing.T) {
 		} else {
 			p = profile(h.dir, adapter, "/bin/cat")
 		}
-		rt, s, e := h.client.Start(h.ctx, p)
+		rt, s, e := testStartProfile(h.client, h.ctx, p)
 		must(t, e)
 		streams = append(streams, s)
 		runtimes = append(runtimes, rt)
@@ -399,7 +399,7 @@ func TestMockACP(t *testing.T) {
 	if b, e := build.CombinedOutput(); e != nil {
 		t.Fatalf("mock build: %v %s", e, b)
 	}
-	rt, s, e := h.client.Start(h.ctx, profile(h.dir, "acp", mock))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "acp", mock))
 	must(t, e)
 	defer s.Close()
 	defer h.client.Stop(h.ctx, rt)
@@ -459,7 +459,7 @@ func TestPendingStreamLimit(t *testing.T) {
 
 func TestSignalAndInvalidInput(t *testing.T) {
 	h := start(t)
-	rt, s, e := h.client.Start(h.ctx, profile(h.dir, "pty", "/bin/sleep", "30"))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sleep", "30"))
 	must(t, e)
 	defer s.Close()
 	must(t, s.Signal("TERM"))
@@ -467,7 +467,7 @@ func TestSignalAndInvalidInput(t *testing.T) {
 	if _, e := h.client.Get(h.ctx, rt); e == nil {
 		t.Fatal("destroyed session is still listed")
 	}
-	rt, s, e = h.client.Start(h.ctx, profile(h.dir, "acp", "/bin/cat"))
+	rt, s, e = testStartProfile(h.client, h.ctx, profile(h.dir, "acp", "/bin/cat"))
 	must(t, e)
 	defer s.Close()
 	defer h.client.Stop(h.ctx, rt)

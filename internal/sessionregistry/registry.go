@@ -123,7 +123,7 @@ func (r *Registry) initialize(ctx context.Context) error {
 		key TEXT PRIMARY KEY, digest TEXT NOT NULL, receiver TEXT NOT NULL,
 		token TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('claimed','accepted','not_accepted')),
 		operation_ref TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
-		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB);
+		control_resource TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT '', runtime BLOB, worktree BLOB);
 		CREATE TABLE IF NOT EXISTS runtime_reservations (
 			target TEXT PRIMARY KEY, live INTEGER NOT NULL DEFAULT 1, sealed INTEGER NOT NULL DEFAULT 0);
 		CREATE TABLE IF NOT EXISTS control_reservations (
@@ -286,6 +286,7 @@ func (r *Registry) resolve(ctx context.Context, claim Claim, state, operationRef
 }
 
 type record struct {
+	worktree                                                                        []byte
 	digest, receiver, token, state, operationRef, errorCode, stage, controlResource string
 	runtime                                                                         []byte
 }
@@ -299,6 +300,9 @@ func (r record) receipt(key api.SubmissionKey) api.SubmissionReceipt {
 	if len(r.runtime) != 0 {
 		_ = json.Unmarshal(r.runtime, &receipt.Runtime)
 	}
+	if len(r.worktree) != 0 {
+		_ = json.Unmarshal(r.worktree, &receipt.Worktree)
+	}
 	return receipt
 }
 
@@ -308,8 +312,8 @@ type queryRow interface {
 
 func readRecord(ctx context.Context, db queryRow, key string) (record, error) {
 	var result record
-	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime FROM submission_keys WHERE key=?`, key).Scan(
-		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime)
+	err := db.QueryRowContext(ctx, `SELECT digest,receiver,token,state,operation_ref,error_code,stage,control_resource,runtime,worktree FROM submission_keys WHERE key=?`, key).Scan(
+		&result.digest, &result.receiver, &result.token, &result.state, &result.operationRef, &result.errorCode, &result.stage, &result.controlResource, &result.runtime, &result.worktree)
 	return result, err
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/profiles"
@@ -104,7 +105,7 @@ func TestAgentStartHTTPPinsScopeAndPreservesPartialResult(t *testing.T) {
 		f.server.ServeHTTP(out, r)
 		return out
 	}
-	request := agents.StartRequest{Profile: &profiles.Selection{ID: "chosen", Revision: 3}, Worktree: &agents.WorktreeLocation{Path: "/new-tree", Branch: "feat/helper"}}
+	request := agents.StartRequest{SubmissionID: wire.ID(), Profile: &profiles.Selection{ID: "chosen", Revision: 3}, Worktree: &agents.WorktreeLocation{Path: "/new-tree", Branch: "feat/helper"}}
 	out := send(0, request)
 	if out.Code != http.StatusServiceUnavailable || !bytes.Contains(out.Body.Bytes(), []byte("RESULT_UNKNOWN")) || !bytes.Contains(out.Body.Bytes(), []byte("/new-tree")) || calls != 1 {
 		t.Fatal("partial result lost or replayed", out.Code, out.Body.String(), calls)

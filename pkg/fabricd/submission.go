@@ -35,6 +35,10 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 		s.Fail("STALE_RUNTIME", err)
 		return
 	}
+	if runtime.target != (api.SubmissionTarget{}) && runtime.target != key.Target {
+		s.Fail("STALE_BINDING", errors.New("submission differs from the original Runtime binding"))
+		return
+	}
 	if runtime.acp == nil || d.registry == nil {
 		s.Fail("UNSUPPORTED", errors.New("managed ACP admission is unavailable"))
 		return

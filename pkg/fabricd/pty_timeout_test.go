@@ -95,7 +95,7 @@ func TestPTYTimeoutWhileFabricdClosedRetainsHistoryAndReason(t *testing.T) {
 	c, ctx := timeoutClient(t, engine)
 	cwd := t.TempDir()
 	pidFile := filepath.Join(cwd, "pid")
-	r, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: cwd,
+	r, stream, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: cwd,
 		Start: api.Command{TimeoutSeconds: 1, Argv: []string{"/bin/sh", "-c", `trap '' TERM; echo $$ > "$1"; i=0; while [ "$i" -lt 100 ]; do echo "history-$i"; i=$((i+1)); done; printf 'RETAINED_HISTORY\n'; exec sleep 30`, "test", pidFile}}})
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestPTYExplicitStopDestroysHistoryAndTimeoutRecord(t *testing.T) {
 	c, ctx := timeoutClient(t, engine)
 	cwd := t.TempDir()
 	pidFile := filepath.Join(cwd, "pid")
-	r, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: cwd,
+	r, stream, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: cwd,
 		Start: api.Command{TimeoutSeconds: 60, Argv: []string{"/bin/sh", "-c", `trap '' TERM HUP; echo $$ > "$1"; exec sleep 30`, "test", pidFile}}})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestPTYWithoutTimeoutRunsWithoutHelper(t *testing.T) {
 	c, ctx := timeoutClient(t, engine)
 	cwd := t.TempDir()
 	pidFile := filepath.Join(cwd, "pid")
-	r, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: cwd,
+	r, stream, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: cwd,
 		Start: api.Command{Argv: []string{"/bin/sh", "-c", `echo $$ > "$1"; exec sleep 30`, "test", pidFile}}})
 	if err != nil {
 		t.Fatal(err)

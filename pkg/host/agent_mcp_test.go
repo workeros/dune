@@ -118,7 +118,7 @@ func TestAgentMCPToolsUseAuthenticatedScopeAndFabricdAcrossHTTPHandlers(t *testi
 	if len(page.Items) != 1 || page.Items[0].Ref != started.AgentRef {
 		t.Fatal("Agent discovery did not share launch reference", page)
 	}
-	launched := callMCP[agents.LaunchResult](t, client, "agents_start", map[string]any{"binding": f.binding, "profile": map[string]any{"id": first.Items[0].ID, "revision": first.Items[0].Revision}, "working_directory": f.workspace})
+	launched := callMCP[agents.LaunchResult](t, client, "agents_start", map[string]any{"submission_id": "mcp-launch", "binding": f.binding, "profile": map[string]any{"id": first.Items[0].ID, "revision": first.Items[0].Revision}, "working_directory": f.workspace})
 	if launched.Runtime == nil || launched.AgentRef == "" || launched.Operation == nil || launched.Operation.State != "completed" {
 		t.Fatal("MCP start did not prepare a native session", launched)
 	}

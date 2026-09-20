@@ -85,7 +85,7 @@ func TestPTYNativeSessionSurvivesFabricdAndTracksOfflineSwitch(t *testing.T) {
 	}
 	first, second := uuid.NewString(), uuid.NewString()
 	writeEvent(first, dir)
-	runtime, stream, err := connection.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: dir, Start: api.Command{Argv: []string{agent}}, Env: map[string]string{"DUNE_TEST_NATIVE_CLI": "1", "DUNE_TEST_NATIVE_EVENT": eventPath}})
+	runtime, stream, err := testStartProfile(connection, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: dir, Start: api.Command{Argv: []string{agent}}, Env: map[string]string{"DUNE_TEST_NATIVE_CLI": "1", "DUNE_TEST_NATIVE_EVENT": eventPath}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -90,6 +90,7 @@ type SubmissionReceipt struct {
 	SubmissionKey
 	Admission    SubmissionAdmission `json:"admission"`
 	OperationRef string              `json:"operation_ref,omitempty"`
+	Worktree     *Worktree           `json:"worktree,omitempty"`
 	Runtime      *Runtime            `json:"runtime,omitempty"`
 	Stage        string              `json:"stage,omitempty"`
 	ErrorCode    string              `json:"error_code,omitempty"`

@@ -33,14 +33,22 @@ type Service struct {
 func invalid(detail string) error { return &api.Error{Code: "INVALID_ARGUMENT", Detail: detail} }
 
 // Start resolves the fixed Profile/project revisions before any mutation. The
-// optional worktree is created once, then a single profile.start is sent over
-// SDK/Gateway. Errors never trigger a replay.
+// optional worktree and Profile are frozen into one admitted profile.start
+// over SDK/Gateway. Errors never trigger a replay.
 func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.StartRequest) (result agents.LaunchResult, err error) {
+	key := api.SubmissionKey{SubmissionID: request.SubmissionID, Target: api.SubmissionTarget{OwnerID: scope.OwnerID, RunnerID: request.Binding.RunnerID, FabricID: request.Binding.FabricID, MachineID: request.Binding.MachineID, BindingRevision: request.Binding.Revision}}
+	result.SubmissionKey = key
 	defer func() {
+		if err != nil {
+			err = &api.SubmissionError{Key: key, Cause: err}
+		}
 		if result.Runtime != nil {
 			result.AgentRef = agentRef(targetFor(request.Binding, *result.Runtime), result.Runtime.NativeSession)
 		}
 	}()
+	if err := key.Validate(); err != nil {
+		return result, invalid(err.Error())
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	resource, _, err := s.Access.Resource(ctx, scope.Principal, request.Binding.RunnerID, false, "profile.start")
@@ -77,32 +85,28 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 	if profile.RequireAgentMCP && !slices.Contains(connection.Binding.Capabilities, "agent.mcp.configure") {
 		return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support Agent MCP configuration"}
 	}
+	launch := api.StartRequest{SubmissionKey: key, Profile: profile}
 	if request.Worktree != nil {
-		if !slices.Contains(connection.Binding.Capabilities, "worktree.create") {
-			return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner does not support worktree creation"}
-		}
 		location := request.Worktree
-		created, err := connection.CreateWorktree(ctx, api.WorktreeCreate{Directory: profile.WorkingDirectory, Path: location.Path, Branch: location.Branch, Ref: location.Ref})
-		if err != nil {
-			return result, err
-		}
-		result.Worktree = &created
-		profile.WorkingDirectory = created.Path
-		// The project still owns this session, but a new worktree is not the
-		// source directory. Do not rewrite the shared project behind the user.
-		profile.DirectoryID = ""
+		launch.Worktree = &api.WorktreeCreate{Directory: profile.WorkingDirectory, Path: location.Path, Branch: location.Branch, Ref: location.Ref}
 	}
-	runtime, stream, startErr := connection.Start(ctx, profile)
+	started, stream, startErr := connection.Start(ctx, launch)
 	if stream != nil {
 		_ = stream.Close()
 	}
-	if startErr != nil {
-		if startOutcome(startErr) == "unknown" {
-			return result, &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent startup result is unknown; inspect current Runtimes before another start; the request was not replayed"}
-		}
-		return result, &api.Error{Code: "START_FAILED", Detail: "Runner rejected Agent startup; inspect the configured command and Runner prerequisites"}
+	result.Submission = &started.SubmissionReceipt
+	result.Failure = started.Failure
+	result.Worktree = started.Worktree
+	if started.Stage == "started" && started.Runtime != nil {
+		result.Runtime = started.Runtime
 	}
-	result.Runtime = &runtime
+	if startErr != nil {
+		return result, startErr
+	}
+	if result.Runtime == nil {
+		return result, &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent startup is not confirmed; query the original launch key"}
+	}
+	runtime := *result.Runtime
 	if runtime.Adapter == "acp" {
 		return s.initializeACP(ctx, scope, connection, request.Binding, result)
 	}

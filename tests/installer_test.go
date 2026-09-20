@@ -285,7 +285,7 @@ func TestInstallerReceiptGatesCleanupAndPTYTimeoutSurvivesUpgrade(t *testing.T) 
 	client := f.dial()
 	p := profile(filepath.Dir(f.path), "pty", "/bin/sh", "-c", `trap '' TERM; i=0; while [ "$i" -lt 80 ]; do echo "UPGRADE_HISTORY_$i"; i=$((i+1)); done; echo $$ > target-pid; exec sleep 60`)
 	p.Start.TimeoutSeconds = 8
-	rt, stream, err := client.Start(f.ctx, p)
+	rt, stream, err := testStartProfile(client, f.ctx, p)
 	must(t, err)
 	stream.Close()
 	client.Close()

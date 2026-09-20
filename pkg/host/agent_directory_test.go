@@ -26,7 +26,7 @@ func directoryACP(t *testing.T, f executorFixture) (agents.LaunchResult, *client
 func directoryACPWithEnvironment(t *testing.T, f executorFixture, environment map[string]string) (agents.LaunchResult, *client.Client) {
 	profile := directoryACPProfile(t, f)
 	maps.Copy(profile.Env, environment)
-	return startDirectoryACP(t, f, agents.StartRequest{Binding: f.binding, Custom: &profile})
+	return startDirectoryACP(t, f, agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 }
 
 func directoryACPProfile(t *testing.T, f executorFixture) api.Profile {
@@ -144,7 +144,7 @@ func TestAgentDirectoryReadsCurrentNativeSessionsThroughGateway(t *testing.T) {
 func TestAgentDirectoryKeepsHealthyRunnersWhenAnotherRunnerIsOffline(t *testing.T) {
 	f := openExecutorFixture(t)
 	profile := launchShell(f.workspace, "true")
-	if _, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile}); err != nil {
+	if _, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile}); err != nil {
 		t.Fatal(err)
 	}
 	logical := runner.Runner{ID: "zz-offline", Name: "Offline", Kind: "managed"}

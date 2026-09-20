@@ -24,7 +24,7 @@ func TestAgentExecutorUsesAuthorizedRunnerScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.Start(context.Background(), api.Profile{Version: 1, Kind: "agent", Adapter: "pty"}); err == nil {
+	if _, err := connection.Start(context.Background(), "test-launch", api.Profile{Version: 1, Kind: "agent", Adapter: "pty"}); err == nil {
 		t.Fatal("non-managed ACP Agent started through IM executor")
 	}
 	if _, err := connection.Submit(context.Background(), api.Runtime{}, AgentAction{Action: "permission"}); err == nil {
@@ -147,7 +147,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := connection.Start(ctx, loaded.Profile)
+	runtime, err := connection.Start(ctx, "test-launch", loaded.Profile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestAgentExecutorRunsManagedACPThroughGateway(t *testing.T) {
 	if err := connection.Stop(ctx, runtime); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := connection.Start(ctx, profile)
+	replacement, err := connection.Start(ctx, "replacement-launch", profile)
 	if err != nil {
 		t.Fatal(err)
 	}

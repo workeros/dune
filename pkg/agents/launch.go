@@ -24,6 +24,7 @@ type ProjectSelection struct {
 }
 
 type StartRequest struct {
+	SubmissionID     string              `json:"submission_id"`
 	Binding          runner.Binding      `json:"binding"`
 	Project          *ProjectSelection   `json:"project,omitempty"`
 	DirectoryID      string              `json:"directory_id,omitempty"`
@@ -42,10 +43,13 @@ type WorktreeLocation struct {
 // A partial result is meaningful even with an error: a confirmed worktree or
 // Runtime must not be silently discarded and recreated by the caller.
 type LaunchResult struct {
-	AgentRef  string        `json:"agent_ref,omitempty"`
-	Operation *Operation    `json:"operation,omitempty"`
-	Runtime   *api.Runtime  `json:"runtime,omitempty"`
-	Worktree  *api.Worktree `json:"worktree,omitempty"`
+	api.SubmissionKey
+	Failure    *api.ProfileFailure    `json:"failure,omitempty"`
+	Submission *api.SubmissionReceipt `json:"submission,omitempty"`
+	AgentRef   string                 `json:"agent_ref,omitempty"`
+	Operation  *Operation             `json:"operation,omitempty"`
+	Runtime    *api.Runtime           `json:"runtime,omitempty"`
+	Worktree   *api.Worktree          `json:"worktree,omitempty"`
 }
 
 type Launcher interface {

@@ -48,7 +48,7 @@ type fakeConnection struct {
 	stops        int
 }
 
-func (f *fakeConnection) Start(_ context.Context, profile api.Profile) (api.Runtime, error) {
+func (f *fakeConnection) Start(_ context.Context, submissionID string, profile api.Profile) (api.Runtime, error) {
 	f.profile = profile
 	f.starts++
 	return f.runtime, nil

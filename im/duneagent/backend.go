@@ -5,6 +5,7 @@ package duneagent
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -108,7 +109,11 @@ func (b Backend) startRuntime(ctx context.Context, connection host.AgentConnecti
 	if err != nil {
 		return api.Runtime{}, err
 	}
-	runtime, err := connection.Start(ctx, profile)
+	// This stable caller-owned ID is determined before the launch is sent and
+	// remains reproducible if the initial response is lost.
+	digest := sha256.Sum256(append(api.Payload(session.Key), []byte(fmt.Sprint("/launch/", session.Revision))...))
+	submissionID := fmt.Sprintf("launch-%x", digest)
+	runtime, err := connection.Start(ctx, submissionID, profile)
 	if err != nil {
 		return api.Runtime{}, fmt.Errorf("start Dune ACP Runtime (outcome may be unknown): %w", err)
 	}

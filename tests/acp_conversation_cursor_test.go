@@ -25,7 +25,7 @@ func TestACPConversationIndependentCursorsAcrossConnections(t *testing.T) {
 	p.ManagedACP = true
 	journal := filepath.Join(h.dir, "rpc.log")
 	p.Env = map[string]string{"DUNE_MOCK_RPC_LOG": journal}
-	runtime, initial, err := h.client.Start(h.ctx, p)
+	runtime, initial, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	initial.Close()
 	waitManagedACPReady(t, h, runtime)

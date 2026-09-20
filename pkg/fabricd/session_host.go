@@ -35,7 +35,7 @@ type sessionControl struct {
 }
 
 func sameSession(a, b sessionRegistration) bool {
-	return a.Version == b.Version && a.Installation == b.Installation && a.Machine == b.Machine && a.Instance == b.Instance && a.Runtime.ID == b.Runtime.ID && a.Runtime.Incarnation == b.Runtime.Incarnation && a.Runtime.Generation == b.Runtime.Generation
+	return a.Target == b.Target && a.Version == b.Version && a.Installation == b.Installation && a.Machine == b.Machine && a.Instance == b.Instance && a.Runtime.ID == b.Runtime.ID && a.Runtime.Incarnation == b.Runtime.Incarnation && a.Runtime.Generation == b.Runtime.Generation
 }
 
 // runSessionHost is the only owner of the existing Runtime/controller. Its
@@ -80,7 +80,7 @@ func runSessionHost(directory string) error {
 	if err != nil {
 		return err
 	}
-	r := &runtime{id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+	r := &runtime{target: reg.Target, id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
 	argv, _ := boot.Profile.Start.Args()
 	r.acpStart = func() (*process.Process, error) { return process.Start(argv, r.cwd, boot.Environment) }
 	r.p, err = r.acpStart()
@@ -102,6 +102,8 @@ func runSessionHost(directory string) error {
 	if err := savePrivateFile(filepath.Join(directory, "registration.json"), reg); err != nil {
 		return err
 	}
+	// Losing a progress acknowledgement cannot destroy an already started Agent.
+	_, _ = d.registry.Progress(ctx, boot.Launch.SubmissionKey, boot.Launch.OperationRef, "started", "", &reg.Runtime)
 	go func() {
 		<-r.done
 		terminal := reg

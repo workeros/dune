@@ -2,17 +2,17 @@
 
 `host.App.AgentLauncher()` 提供共享的 `agents.Launcher`，供 Dune、SandDance 工作台及 MCP 使用。调用者从认证上下文提供 `agents.Scope`。仅选择已有就绪 Runner，不创建云环境。
 
-`StartRequest` 指定完整 Runner binding、固定 Profile 修订或自定义 Profile、可选的项目修订和目录、cwd，以及可选的新 worktree 路径 / 分支 / ref。未选 Profile 时使用所选项目的默认修订；项目、配置、权限或绑定错误在修改工作树前拒绝。
+`StartRequest` 必填调用方在首次发送前保存的 `submission_id`，并指定完整 Runner binding、固定 Profile 修订或自定义 Profile、可选的项目修订和目录、cwd，以及可选的新 worktree 路径 / 分支 / ref。未选 Profile 时使用所选项目的默认修订；项目、配置、权限或绑定错误在修改工作树前拒绝。
 
 启动顺序：
 
 1. 校验访问与完整 Runner binding，解析项目、目录和固定 Profile 修订。
 2. 合并宿主 `AgentEnvironment` 默认值，验证最终配置。
-3. 如选 worktree，经 SDK / Gateway 创建一次工作树，不复制未提交内容，不覆盖路径或分支。
-4. 经同一连接发送一次 `profile.start`，保存返回值中的 Runtime；不写数据库恢复档案。
+3. 经 SDK / Gateway 发送带完整提交键、冻结 Profile 及可选 worktree 参数的 `profile.start`。独立索引先接纳并预留 Runtime 身份和控制配额。
+4. 接纳后依次创建可选 worktree、执行 setup、启动 Agent；各阶段关联原提交键。worktree 不复制未提交内容，不覆盖路径或分支。
 5. 对受支持的 PTY 签发并注入 MCP 凭据。managed ACP 最多等待初始化 15 秒，再签发 MCP 凭据、配置 fabricd、提交初始 new 并最多等待该操作 30 秒。
 
-`LaunchResult` 包含已确认的 Runtime、`agent_ref`、worktree 和 ACP 初始操作。失败也保留部分结果：工作树已创建时可由用户选该目录再次启动；Runtime 已启动而 MCP 配置或 new 失败时直接打开原 Runtime。pending 可按操作引用等待；未知结果不自动重发，需先发现当前 Runtime / 查询原操作。
+`LaunchResult` 包含原提交键、持久阶段回执、已确认的 Runtime、`agent_ref`、worktree 和 ACP 初始操作。失败也保留部分结果：工作树已创建时可由用户选该目录再次启动；Runtime 已启动而 MCP 配置或 new 失败时直接打开原 Runtime。pending 可按操作引用等待；未知结果不自动重发，应先用原完整键查询 `QuerySubmission`，再读取已确认的 Runtime / 原操作。见[提交合同](acp-submissions.md)。
 
 项目 ID、目录 ID 作为非敏感标签随当前 Runtime 返回，由 fabricd 保留。标签不授予访问权；宿主覆盖 Profile 中的标签，仅采用已验证的项目选择。worktree 保留项目 ID，清空源目录 ID，不修改共享项目目录配置。重连存活 tmux Runtime 时标签仍在；不保存启动快照供进程退出后恢复。
 
@@ -22,6 +22,7 @@
 
 ```json
 {
+  "submission_id": "caller-saved-launch-id",
   "project": {"id": "project-id", "revision": 2},
   "profile": {"id": "profile-id", "revision": 3},
   "working_directory": "/workspace/source",

@@ -236,7 +236,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil || !owned.Published || owned.Binding.Incarnation != original.Binding.Incarnation {
 		t.Fatal("confirmed binding not published in PostgreSQL", owned, err)
 	}
-	runtime, terminal, err := original.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+	runtime, terminal, err := testStartProfile(original, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

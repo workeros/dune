@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/agentintegration"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
@@ -31,7 +32,7 @@ func TestPTYNativeHookFlowsIntoCurrentRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: f.workspace, Start: api.Command{Argv: []string{agent}}, Env: map[string]string{"DUNE_TEST_NATIVE_EVENT": string(event(id, f.workspace))}}
-	launched, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+	launched, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 	if err != nil {
 		t.Fatal(err)
 	}

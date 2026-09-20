@@ -152,3 +152,32 @@ func terminalStage(stage string) bool {
 		return false
 	}
 }
+
+func (r *Registry) RecordWorktree(ctx context.Context, key api.SubmissionKey, ref string, worktree api.Worktree) (api.SubmissionReceipt, error) {
+	result := api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}
+	encoded, err := encodeKey(key)
+	body := api.Payload(worktree)
+	if err != nil || len(body) > 16*1024 {
+		return result, fmt.Errorf("bounded worktree result required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	record, err := readRecord(ctx, tx, encoded)
+	if err != nil {
+		return result, err
+	}
+	if record.state != "accepted" || record.stage != "worktree" || record.operationRef != ref || len(record.worktree) != 0 {
+		return result, conflict()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE submission_keys SET worktree=? WHERE key=?`, body, encoded); err != nil {
+		return result, err
+	}
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	record.worktree = body
+	return record.receipt(key), nil
+}

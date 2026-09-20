@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aiomni/dune/internal/metadata"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -88,7 +89,7 @@ func TestAgentNativeSessionStartupFailurePreservesRuntimeAndOperation(t *testing
 				flag, code = "DUNE_HOST_FAKE_ACP_DROP_NEW", "RESULT_UNKNOWN"
 			}
 			profile.Env[flag] = "1"
-			result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+			result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 			if errorCode(err) != code || result.Runtime == nil || result.Operation == nil || result.Operation.State != outcome || result.Runtime.NativeSession != nil {
 				t.Fatal("startup lost a partial result", result, err)
 			}

@@ -36,7 +36,7 @@ func TestRealACPConversationLoad(t *testing.T) {
 	h := start(t)
 	p := profile(work, "acp", argv...)
 	p.ManagedACP = true
-	runtime, stream, err := h.client.Start(h.ctx, p)
+	runtime, stream, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	stream.Close()
 	defer h.client.Stop(h.ctx, runtime)

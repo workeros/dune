@@ -19,18 +19,20 @@ const sessionProtocol = 1
 // Registration is discovery evidence, never execution authority. A matching
 // live IPC handshake is required before the connector calls this Runtime.
 type sessionRegistration struct {
-	Version      int         `json:"version"`
-	Installation string      `json:"installation"`
-	Machine      string      `json:"machine"`
-	Instance     string      `json:"instance"`
-	Runtime      api.Runtime `json:"runtime"`
+	Target       api.SubmissionTarget `json:"target"`
+	Version      int                  `json:"version"`
+	Installation string               `json:"installation"`
+	Machine      string               `json:"machine"`
+	Instance     string               `json:"instance"`
+	Runtime      api.Runtime          `json:"runtime"`
 }
 
 type sessionBootstrap struct {
-	Registration sessionRegistration `json:"registration"`
-	StateDir     string              `json:"state_dir"`
-	Profile      api.Profile         `json:"profile"`
-	Environment  []string            `json:"environment"`
+	Launch       api.SubmissionReceipt `json:"launch"`
+	Registration sessionRegistration   `json:"registration"`
+	StateDir     string                `json:"state_dir"`
+	Profile      api.Profile           `json:"profile"`
+	Environment  []string              `json:"environment"`
 }
 
 func installationID(stateDir string) string {
@@ -38,7 +40,7 @@ func installationID(stateDir string) string {
 }
 
 func sessionSocket(reg sessionRegistration) (string, error) {
-	if !wire.ValidID(reg.Instance) || !wire.ValidID(reg.Runtime.ID) || !wire.ValidID(reg.Runtime.Incarnation) || reg.Runtime.Generation != 1 || reg.Version != sessionProtocol || len(reg.Installation) != 64 || reg.Machine == "" {
+	if reg.Target.Validate() != nil || reg.Target.RuntimeID != reg.Runtime.ID || reg.Target.RuntimeIncarnation != reg.Runtime.Incarnation || reg.Target.RuntimeGeneration != reg.Runtime.Generation || reg.Target.MachineID != reg.Machine || !wire.ValidID(reg.Instance) || !wire.ValidID(reg.Runtime.ID) || !wire.ValidID(reg.Runtime.Incarnation) || reg.Runtime.Generation != 1 || reg.Version != sessionProtocol || len(reg.Installation) != 64 || reg.Machine == "" {
 		return "", fmt.Errorf("invalid ACP host registration")
 	}
 	root := filepath.Join("/tmp", fmt.Sprintf("dune-acp-%d", os.Getuid()))

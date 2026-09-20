@@ -27,7 +27,7 @@ func TestScrollbackProtocolAndAuthorization(t *testing.T) {
 	if !slices.Contains(c.Binding.Capabilities, "runtime.scrollback") {
 		t.Fatal("scrollback capability missing")
 	}
-	runtime, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"/bin/sh", "-c", "seq 1 80; printf SCROLLBACK_END; exit 7"}}})
+	runtime, stream, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "pty", WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"/bin/sh", "-c", "seq 1 80; printf SCROLLBACK_END; exit 7"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

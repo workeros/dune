@@ -191,14 +191,15 @@ func (p *sessionProxy) forward(s *executionStream, request *pb.Message, skipAcce
 	}
 }
 
-func (d *Engine) launchSession(p api.Profile, machine string, r *runtime) error {
+func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch api.SubmissionReceipt) error {
 	directory := filepath.Join(d.stateDir, "acp", "runtimes", r.id)
 	if err := tmux.PrivateDir(directory); err != nil {
 		return err
 	}
-	r.inc = wire.ID()
-	reg := sessionRegistration{Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: r.info()}
-	boot := sessionBootstrap{Registration: reg, StateDir: d.stateDir, Profile: p, Environment: environment(p.Env)}
+	target := launch.Target
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = r.id, r.inc, 1
+	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: r.info()}
+	boot := sessionBootstrap{Launch: launch, Registration: reg, StateDir: d.stateDir, Profile: p, Environment: environment(p.Env)}
 	if err := savePrivateFile(filepath.Join(directory, "bootstrap.json"), boot); err != nil {
 		return err
 	}

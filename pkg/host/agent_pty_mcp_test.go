@@ -17,6 +17,7 @@ import (
 
 	"github.com/aiomni/dune/internal/agentintegration"
 	"github.com/aiomni/dune/internal/mcpbridge"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
@@ -98,7 +99,7 @@ func TestPTYMCPInjectionAuthenticatesAndRejectsExitedCaller(t *testing.T) {
 			f.app.agentMCPURL = host.URL + "/api/v1/agent-mcp"
 			profile := nativeFixtureProfile(t, f, agent)
 			profile.Env["DUNE_HOST_NATIVE_MCP_RESULT"] = filepath.Join(f.workspace, "mcp-calls")
-			started, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+			started, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 			if err != nil || started.Runtime == nil {
 				t.Fatal("native MCP launch failed", err)
 			}
@@ -139,7 +140,7 @@ func TestPTYMCPConfigurationFailureKeepsOneDiscoverableRuntime(t *testing.T) {
 	f := openExecutorFixture(t)
 	f.app.agentMCPURL = "https://host.test/mcp?invalid=query"
 	profile := nativeFixtureProfile(t, f, "claude")
-	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+	result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 	if errorCode(err) != "MCP_CONFIGURATION_FAILED" || result.Runtime == nil || result.AgentRef == "" {
 		t.Fatal("native configuration failure lost Runtime", err)
 	}

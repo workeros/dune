@@ -108,7 +108,7 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 	defer func() { client.Close() }()
 	inc := client.Binding.Incarnation
 	gen := client.Binding.Generation
-	rt, stream, err := client.Start(ctx, profile(dir, "pty", "/bin/sh", "-c", `printf '%s\n' "$$" >> starts; while IFS= read -r line; do case "$line" in history) sleep 0.2; i=0; while [ "$i" -lt 80 ]; do printf 'offline-%03d\n' "$i"; i=$((i+1)); done;; *) printf 'reply:%s:%s\n' "$$" "$line";; esac; done`))
+	rt, stream, err := testStartProfile(client, ctx, profile(dir, "pty", "/bin/sh", "-c", `printf '%s\n' "$$" >> starts; while IFS= read -r line; do case "$line" in history) sleep 0.2; i=0; while [ "$i" -lt 80 ]; do printf 'offline-%03d\n' "$i"; i=$((i+1)); done;; *) printf 'reply:%s:%s\n' "$$" "$line";; esac; done`))
 	must(t, err)
 	_, err = stream.Input([]byte("before\n"))
 	must(t, err)

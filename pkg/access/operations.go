@@ -51,14 +51,31 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		if err == nil {
 			err = config.Validate()
 		}
-	case "profile.prepare", "profile.start":
+	case "profile.start":
+		var start api.StartRequest
+		if decode(&start) != nil || start.SubmissionKey.Validate() != nil || start.Target.RuntimeID != "" || !matchesSubmissionScope(scope, start.Target, m) {
+			return r, ErrDenied
+		}
+		p := start.Profile
+		err = p.Validate()
+		if p.Kind != "agent" {
+			return r, ErrDenied
+		}
+		r.Resource = Resource{Directory: p.WorkingDirectory, Adapter: p.Adapter, ManagedACP: p.ManagedACP}
+		if start.Worktree != nil {
+			if start.Worktree.Directory != p.WorkingDirectory {
+				return r, ErrDenied
+			}
+			r.Resource.Destination = start.Worktree.Path
+		}
+	case "profile.prepare":
 		var p api.Profile
 		err = decode(&p)
 		if err == nil {
 			err = p.Validate()
 		}
-		if err == nil && ((m.Operation == "profile.prepare" && p.Kind != "environment") || (m.Operation == "profile.start" && p.Kind != "agent")) {
-			err = fmt.Errorf("Profile kind does not match operation")
+		if p.Kind != "environment" {
+			return r, ErrDenied
 		}
 		r.Resource = Resource{Directory: p.WorkingDirectory, Adapter: p.Adapter, ManagedACP: p.ManagedACP}
 	case "profile.status":
@@ -249,11 +266,40 @@ func continuation(base Request, runtime RuntimeIdentity, m *pb.Message) (Request
 
 func runtimeResult(base Request, m *pb.Message) (RuntimeIdentity, error) {
 	var runtime api.Runtime
-	if json.Unmarshal(m.Payload, &runtime) != nil || runtime.ID == "" || runtime.Incarnation == "" || runtime.Generation == 0 || !oneOf(runtime.Adapter, "pty", "acp") {
+	var decodeError error
+	if base.Operation == "profile.start" {
+		var result api.StartResult
+		decodeError = json.Unmarshal(m.Payload, &result)
+		if result.Runtime == nil || result.Stage != "started" || result.Admission != api.SubmissionAccepted {
+			return RuntimeIdentity{}, ErrDenied
+		}
+		runtime = *result.Runtime
+	} else {
+		decodeError = json.Unmarshal(m.Payload, &runtime)
+	}
+	if decodeError != nil || runtime.ID == "" || runtime.Incarnation == "" || runtime.Generation == 0 || !oneOf(runtime.Adapter, "pty", "acp") {
 		return RuntimeIdentity{}, fmt.Errorf("invalid runtime response")
 	}
 	if base.Operation == "runtime.attach" && (runtime.ID != base.Runtime.ID || runtime.Incarnation != base.Runtime.Incarnation || runtime.Generation != base.Runtime.Generation) {
 		return RuntimeIdentity{}, ErrDenied
 	}
 	return RuntimeIdentity{ID: runtime.ID, Incarnation: runtime.Incarnation, Generation: runtime.Generation, Adapter: runtime.Adapter}, nil
+}
+
+// A launch that creates a worktree also needs the original worktree policy.
+// The payload is frozen and signed across peer forwarding with both decisions
+// re-evaluated at the owning Gateway.
+func launchWorktreeRequest(scope Scope, message *pb.Message) (*Request, error) {
+	if message.Operation != "profile.start" {
+		return nil, nil
+	}
+	var launch api.StartRequest
+	if json.Unmarshal(message.Payload, &launch) != nil {
+		return nil, ErrDenied
+	}
+	if launch.Worktree == nil {
+		return nil, nil
+	}
+	request, err := Describe(scope, &pb.Message{Kind: "request", RequestId: message.RequestId, Operation: "worktree.create", Target: message.Target, Payload: api.Payload(launch.Worktree)})
+	return &request, err
 }

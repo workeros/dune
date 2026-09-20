@@ -25,7 +25,7 @@ func TestACPConversationReadWithoutSubscription(t *testing.T) {
 	p.ManagedACP = true
 	rpcLog := filepath.Join(h.dir, "rpc.log")
 	p.Env = map[string]string{"DUNE_MOCK_HISTORY": "1", "DUNE_MOCK_RPC_LOG": rpcLog}
-	runtime, initial, err := h.client.Start(h.ctx, p)
+	runtime, initial, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	initial.Close()
 	defer h.client.Stop(h.ctx, runtime)

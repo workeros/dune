@@ -36,7 +36,7 @@ for line in sys.stdin:
  else: continue
  print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':result}),flush=True)
 `
-	runtime, initial, err := client.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "acp", ManagedACP: true, WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"python3", "-u", "-c", script}}})
+	runtime, initial, err := testStartProfile(client, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "acp", ManagedACP: true, WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"python3", "-u", "-c", script}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ for line in sys.stdin:
 	if err != nil || len(list) != 0 {
 		t.Fatal("forgotten Runtime remained discoverable", list, err)
 	}
-	raw, stream, err := client.Start(ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"/bin/cat"}}})
+	raw, stream, err := testStartProfile(client, ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"/bin/cat"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,7 +27,7 @@ func terminalControlEvent(t *testing.T, stream *sdk.Stream, writable, available 
 
 func TestTerminalViewersTakeControlWithoutDisconnecting(t *testing.T) {
 	h := start(t)
-	runtime, first, err := h.client.Start(h.ctx, profile(h.dir, "pty", "/bin/sh"))
+	runtime, first, err := testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sh"))
 	must(t, err)
 	defer first.Close()
 	defer h.client.Stop(h.ctx, runtime)

@@ -326,7 +326,7 @@ func TestAgentProfileSetupFailureIncludesDiagnostics(t *testing.T) {
 	}), nil)
 	p := api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/true"}}}
 	p.Setup.Steps = []api.Command{{Name: "download", Argv: []string{"/bin/sh", "-c", "printf dependency-download-failed >&2; exit 9"}}}
-	_, stream, err := c.Start(ctx, p)
+	_, stream, err := testStartProfile(c, ctx, p)
 	if stream != nil {
 		stream.Close()
 	}
@@ -334,11 +334,11 @@ func TestAgentProfileSetupFailureIncludesDiagnostics(t *testing.T) {
 	if !errors.As(err, &protocolError) || protocolError.Code != "SETUP_FAILED" || len(protocolError.Payload) == 0 {
 		t.Fatal("Agent setup failure lost structured diagnostics", err)
 	}
-	var progress api.ProfileProgress
+	var progress api.StartResult
 	if err := json.Unmarshal(protocolError.Payload, &progress); err != nil {
 		t.Fatal(err)
 	}
-	if progress.Stage != "failed" || progress.Step != 0 || progress.StepName != "download" || progress.StepResult != nil || progress.Failure == nil || progress.Failure.StepResult == nil || progress.Failure.StepResult.Stderr != "dependency-download-failed" {
+	if progress.Stage != "failed" || progress.Admission != api.SubmissionAccepted || progress.SubmissionKey.Validate() != nil || progress.Failure == nil || progress.Failure.Step != 0 || progress.Failure.StepName != "download" || progress.Failure.StepResult == nil || progress.Failure.StepResult.Stderr != "dependency-download-failed" {
 		t.Fatalf("Agent setup diagnostics incomplete: %+v", progress)
 	}
 	runtimes, err := c.List(ctx)
@@ -408,7 +408,7 @@ func TestPolicyExecutionAndReadOnlyStreams(t *testing.T) {
 	if err := c.Call(ctx, "upload", api.Upload{Action: "cancel", ID: upload.ID}, nil); err != nil {
 		t.Fatal(err)
 	}
-	r, s, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}, Env: map[string]string{"PRIVATE_ENV": "private-env-value"}})
+	r, s, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}, Env: map[string]string{"PRIVATE_ENV": "private-env-value"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestPolicyIdleRenewalFailureClosesStream(t *testing.T) {
 		}
 		return allow(r, 400*time.Millisecond), nil
 	}), nil)
-	_, s, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+	_, s, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,7 @@ func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 			d.Allowed = r.Suboperation != "resize"
 			return d, nil
 		}), func() bool { validityChecks.Add(1); return true })
-		r, s, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+		r, s, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -660,7 +660,7 @@ func TestInputActionLeaseAndLateRefresh(t *testing.T) {
 			}
 			return allow(r, 500*time.Millisecond), nil
 		}), nil)
-		_, s, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+		_, s, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -696,7 +696,7 @@ func TestStreamLeaseCapsHostTTLAndRechecksNewRequests(t *testing.T) {
 		d.Allowed = !revoked.Load()
 		return d, nil
 	}), nil)
-	_, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh", "-c", "while :; do printf x; sleep 0.02; done"}}})
+	_, stream, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh", "-c", "while :; do printf x; sleep 0.02; done"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +726,7 @@ func TestStreamCredentialExpiryCannotBeRenewed(t *testing.T) {
 		d.ValidUntil = expires
 		return d, nil
 	}), nil)
-	_, stream, err := c.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+	_, stream, err := testStartProfile(c, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

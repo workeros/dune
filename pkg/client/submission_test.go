@@ -27,3 +27,22 @@ func TestQuerySubmissionLocalErrorsKeepOriginalKey(t *testing.T) {
 		t.Fatal("unsupported query lost structured cause or original key", err)
 	}
 }
+
+func TestStartRequiresCallerKeyAndPreservesLocalCancellation(t *testing.T) {
+	key := api.SubmissionKey{SubmissionID: "saved-before-send", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1}}
+	client := &Client{Binding: api.Binding{Target: "machine", Capabilities: []string{"profile.start"}}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	request := api.StartRequest{SubmissionKey: key, Profile: api.Profile{Kind: "agent"}}
+	result, stream, err := client.Start(ctx, request)
+	var failure *api.SubmissionError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) || failure.Key != key || result.SubmissionKey != key || result.Admission != api.SubmissionUnknown || stream != nil {
+		t.Fatal("cancelled launch lost original identity or invented acceptance", result, err)
+	}
+	request.SubmissionID = ""
+	_, _, err = client.Start(t.Context(), request)
+	var invalid *api.Error
+	if !errors.As(err, &invalid) || invalid.Code != "INVALID_ARGUMENT" || !errors.As(err, &failure) || failure.Key.SubmissionID != "" {
+		t.Fatal("Start generated a replacement ID", err)
+	}
+}

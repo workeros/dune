@@ -1,0 +1,73 @@
+# ACP 提交与启动回执
+
+调用方在首次发送前生成并保存 `submission_id`。ID 为 1–128 个 ASCII
+字母、数字、`-` 或 `_`；SDK 不生成、不补齐、不替换业务 ID。网络 Request ID
+独立存在。完整键包含 Owner、Runner ID、Fabric ID、Machine ID 和 binding revision。
+启动键不包含 Runtime；运行期键另外包含原 Runtime ID、incarnation 和 generation。
+
+## 启动
+
+```go
+// owner 和 binding 来自已经授权且固定的环境选择；submissionID 在调用前保存。
+key := api.SubmissionKey{
+    SubmissionID: submissionID,
+    Target: api.SubmissionTarget{
+        OwnerID: owner, RunnerID: binding.RunnerID,
+        FabricID: binding.FabricID, MachineID: binding.MachineID,
+        BindingRevision: binding.Revision,
+    },
+}
+result, stream, err := connection.Start(ctx, api.StartRequest{
+    SubmissionKey: key,
+    Profile: profile,
+})
+if stream != nil {
+    defer stream.Close() // 只关闭观察连接，不停止已接纳的会话。
+}
+if err != nil {
+    // result 仍携带原键；errors.As 可取得 *api.SubmissionError。
+    // 保留原键，重新连接后 QuerySubmission；不得自动再次 Start。
+    return err
+}
+runtime := *result.Runtime // Start 成功要求 admission=accepted、stage=started。
+_ = runtime
+```
+
+`api.StartRequest.Worktree` 可指定源目录、目标路径、分支和 ref。worktree 创建、
+Profile setup 和 Agent 启动都在独立索引接纳之后执行；worktree 仍单独经过现有权限
+检查。初始 Runtime 身份及 stop/forget 配额在接纳事务内预留。
+
+`api.StartResult` 包含原提交键、admission、operation_ref、stage、关联 Runtime 和已确认
+worktree。setup 失败的当前返回还带有界 `failure` 诊断；独立索引保留阶段及错误码，
+不持久保存 setup 输出、完整环境、提示词或凭据。Launcher/MCP/HTTP 的
+`agents.StartRequest.submission_id` 同样必填，错误 `LaunchResult` 保留键和部分结果。
+
+`stage` 是最近一次持久确认的检查点：`accepted`、`worktree`、`setup`、
+`host_starting`、`started` 或 `failed`。`accepted` 中的 Runtime 是预留身份，
+不证明进程已启动。setup 中杀死连接器后，`stage=setup` 不证明 setup 仍运行或完成；
+重连不会重做它。独立宿主实际启动后可自行登记 `started`，不依赖原响应连接。
+
+## 查询和重复提交
+
+```go
+receipt, err := connection.QuerySubmission(ctx, key)
+```
+
+查询使用当前认证和原完整键，不要求活动 Runtime 存在。它不创建任务、不消耗提交
+额度，也不产生拒绝墓碑或恢复执行副作用。
+
+| admission | 含义 |
+| --- | --- |
+| `unknown` | 尚无足够接纳证据；无记录也可能是原请求尚未到达 |
+| `accepted` | 原提交已接纳；operation_ref 只标识原操作，不代表业务成功 |
+| `not_accepted` | 已持久封闭该键，后到副本也不能执行 |
+| `expired` | 结果无法再确认，不恢复重放许可 |
+
+相同 Runtime 键用于所有操作类型；更改正文或操作会返回 `SUBMISSION_CONFLICT`。
+精确重复 ACP 提交返回原 operation_ref。重复启动返回 `ALREADY_SUBMITTED` 和原回执，
+防止 Launcher 再次执行后续 MCP 配置或初始 new。旧请求不能通过改用新 ID 自动恢复；
+新 ID 代表新的用户意图。
+
+当前最小接纳证据不会按 TTL 删除。普通表满后拒绝新普通提交，已有键仍可查询；
+控制预留独立计费。实际运行期控制接入、原始 ACP 续接及完整验收进度见
+[实施记录](acp-session-lifecycle-implementation.md)。

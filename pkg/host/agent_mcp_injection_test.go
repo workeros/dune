@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/mcpbridge"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
@@ -151,7 +152,7 @@ func TestAgentMCPInjectionFailureRetainsRuntimeWithoutRepeatingNativeStart(t *te
 				profile.Env["DUNE_HOST_FAKE_ACP_MCP_HTTP"] = "1"
 				code, newCount = "SESSION_FAILED", 1
 			}
-			result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{Binding: f.binding, Custom: &profile})
+			result, err := f.app.AgentLauncher().Start(t.Context(), f.agentScope(), agents.StartRequest{SubmissionID: wire.ID(), Binding: f.binding, Custom: &profile})
 			if errorCode(err) != code || result.Runtime == nil || result.AgentRef == "" {
 				t.Fatal("MCP failure lost confirmed Runtime", err)
 			}

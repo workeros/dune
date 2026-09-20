@@ -71,12 +71,12 @@ func TestReplacementConnectionRejectsOldStreamInput(t *testing.T) {
 	}
 	original := connect()
 	dir := t.TempDir()
-	terminal, pty, err := original.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+	terminal, pty, err := testStartProfile(original, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pty.Close()
-	agent, acp, err := original.Start(ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: "acp", Start: api.Command{Argv: []string{"/bin/cat"}}})
+	agent, acp, err := testStartProfile(original, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: "acp", Start: api.Command{Argv: []string{"/bin/cat"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

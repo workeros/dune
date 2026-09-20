@@ -60,6 +60,7 @@ type runtime struct {
 	done                   chan struct{}
 	acp                    *acpController
 	host                   *sessionProxy
+	target                 api.SubmissionTarget
 	activity               api.AgentActivity
 	nativeSession          *api.NativeSession
 	ptyActivityMu          sync.Mutex
@@ -562,24 +563,13 @@ func environment(extra map[string]string) []string {
 	return out
 }
 func (d *Engine) prepare(s *executionStream, m *pb.Message) {
-	d.profile(s, m, "environment")
-}
-
-func (d *Engine) start(s *executionStream, m *pb.Message) {
-	d.profile(s, m, "agent")
-}
-
-func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 	select {
 	case d.starts <- struct{}{}:
-
+		defer func() { <-d.starts }()
 	default:
 		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("profile concurrency limit"))
 		return
 	}
-	var release sync.Once
-	releaseSlot := func() { release.Do(func() { <-d.starts }) }
-	defer releaseSlot()
 	var p api.Profile
 	if e := wire.Decode(m, &p); e != nil {
 		s.Fail("INVALID_ARGUMENT", e)
@@ -589,26 +579,19 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 		s.Fail("INVALID_ARGUMENT", e)
 		return
 	}
-	if p.Kind != kind {
-		s.Fail("INVALID_ARGUMENT", fmt.Errorf("%s requires kind: %s", m.Operation, kind))
+	if p.Kind != "environment" {
+		s.Fail("INVALID_ARGUMENT", fmt.Errorf("profile.prepare requires kind: environment"))
 		return
 	}
 	hash := requestHash(m)
 	d.mu.Lock()
-	if kind == "environment" {
-		if attempt := d.attempts[m.RequestId]; attempt != nil {
-			d.mu.Unlock()
-			if attempt.hash != hash {
-				s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("execution ID has different Profile"))
-				return
-			}
-			s.Fail("RESULT_UNKNOWN", fmt.Errorf("Profile execution already admitted; query profile.status"))
+	if attempt := d.attempts[m.RequestId]; attempt != nil {
+		d.mu.Unlock()
+		if attempt.hash != hash {
+			s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("execution ID has different Profile"))
 			return
 		}
-	}
-	if kind == "agent" && len(d.runtimes)+len(d.starts) > 64 {
-		d.mu.Unlock()
-		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("Runtime limit"))
+		s.Fail("RESULT_UNKNOWN", fmt.Errorf("Profile execution already admitted; query profile.status"))
 		return
 	}
 	if cached := d.cache[m.RequestId]; cached != nil {
@@ -617,69 +600,44 @@ func (d *Engine) profile(s *executionStream, m *pb.Message, kind string) {
 			s.Fail("IDEMPOTENCY_CONFLICT", fmt.Errorf("request ID has different Profile"))
 			return
 		}
-		detail := "profile request already admitted; result unavailable"
-		if kind == "agent" {
-			detail += "; query Runtime list"
-		}
-		s.Fail("RESULT_UNKNOWN", fmt.Errorf("%s", detail))
+		s.Fail("RESULT_UNKNOWN", fmt.Errorf("profile request already admitted; result unavailable"))
 		return
 	}
-	if !d.cacheRoomLocked() {
+	if !d.cacheRoomLocked() || !d.attemptRoomLocked() {
 		d.mu.Unlock()
-		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("request cache full"))
-		return
-	}
-	if kind == "environment" && !d.attemptRoomLocked() {
-		d.mu.Unlock()
-		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("Profile attempt capacity, retry with a new execution ID after a completed attempt expires"))
+		s.Fail("RESOURCE_EXHAUSTED", fmt.Errorf("Profile attempt capacity reached"))
 		return
 	}
 	d.cache[m.RequestId] = &cached{hash: hash, at: time.Now()}
-	if kind == "environment" {
-		progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "accepted", Step: -1}
-		d.attempts[m.RequestId] = &profileAttempt{hash: hash, status: api.ProfileStatus{ExecutionID: m.RequestId, Kind: p.Kind, State: "running", Progress: progress}, at: time.Now()}
-	}
+	progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "accepted", Step: -1}
+	d.attempts[m.RequestId] = &profileAttempt{hash: hash, status: api.ProfileStatus{ExecutionID: m.RequestId, Kind: p.Kind, State: "running", Progress: progress}, at: time.Now()}
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
 		d.cache[m.RequestId].result = &pb.Message{Kind: "error", Code: "RESULT_UNKNOWN", Detail: "profile already executed; no stream replay"}
 		d.mu.Unlock()
 	}()
-	if err := s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId}); err != nil && kind != "environment" {
-		return
-	}
+	_ = s.Send(&pb.Message{Kind: "accepted", RequestId: m.RequestId})
 	for i, step := range p.Setup.Steps {
-		if kind == "environment" {
-			progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "setup_running", Step: i, StepName: step.Name, StepsCompleted: i}
-			d.updateProfileAttempt(m.RequestId, "running", progress, nil, nil)
-			_ = s.Send(&pb.Message{Kind: "progress", RequestId: m.RequestId, Payload: api.Payload(progress)})
-		}
+		progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "setup_running", Step: i, StepName: step.Name, StepsCompleted: i}
+		d.updateProfileAttempt(m.RequestId, "running", progress, nil, nil)
+		_ = s.Send(&pb.Message{Kind: "progress", RequestId: m.RequestId, Payload: api.Payload(progress)})
 		res, e := d.exec(api.Exec{Command: step, WorkingDirectory: p.WorkingDirectory, Env: p.Env})
 		if e != nil || res.ExitCode != 0 || res.TimedOut {
 			progress, failure := profileSetupFailure(m.RequestId, p.Kind, i, step.Name, res, e)
-			if kind == "environment" {
-				d.updateProfileAttempt(m.RequestId, "failed", progress, nil, failure)
-			}
+			d.updateProfileAttempt(m.RequestId, "failed", progress, nil, failure)
 			_ = s.Send(profileFailureMessage(m.RequestId, progress, failure))
 			return
 		}
-		if kind == "environment" {
-			stepResult := res
-			progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "setup_completed", Step: i, StepName: step.Name, StepsCompleted: i + 1, StepResult: &stepResult}
-			d.updateProfileAttempt(m.RequestId, "running", progress, nil, nil)
-			_ = s.Send(&pb.Message{Kind: "progress", RequestId: m.RequestId, Payload: api.Payload(progress)})
-		} else if s.Send(&pb.Message{Kind: "progress", Payload: api.Payload(map[string]any{"step": i, "name": step.Name, "result": res})}) != nil {
-			return
-		}
+		stepResult := res
+		progress = api.ProfileProgress{ExecutionID: m.RequestId, Stage: "setup_completed", Step: i, StepName: step.Name, StepsCompleted: i + 1, StepResult: &stepResult}
+		d.updateProfileAttempt(m.RequestId, "running", progress, nil, nil)
+		_ = s.Send(&pb.Message{Kind: "progress", RequestId: m.RequestId, Payload: api.Payload(progress)})
 	}
-	if kind == "environment" {
-		result := &api.ProfileResult{Kind: p.Kind, Stage: "succeeded", StepsCompleted: len(p.Setup.Steps)}
-		progress := api.ProfileProgress{ExecutionID: m.RequestId, Stage: "succeeded", Step: -1, StepsCompleted: result.StepsCompleted}
-		d.updateProfileAttempt(m.RequestId, "succeeded", progress, result, nil)
-		_ = s.Send(&pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(result)})
-		return
-	}
-	d.startAgent(s, p, releaseSlot, m.Target)
+	result := &api.ProfileResult{Kind: p.Kind, Stage: "succeeded", StepsCompleted: len(p.Setup.Steps)}
+	progress = api.ProfileProgress{ExecutionID: m.RequestId, Stage: "succeeded", Step: -1, StepsCompleted: result.StepsCompleted}
+	d.updateProfileAttempt(m.RequestId, "succeeded", progress, result, nil)
+	_ = s.Send(&pb.Message{Kind: "result", RequestId: m.RequestId, Payload: api.Payload(result)})
 }
 
 func profileSetupFailure(executionID, kind string, step int, stepName string, result api.ExecResult, cause error) (api.ProfileProgress, *api.ProfileFailure) {
@@ -759,91 +717,42 @@ func (d *Engine) updateProfileAttempt(executionID, state string, progress api.Pr
 	attempt.at = time.Now()
 }
 
-func (d *Engine) startAgent(s *executionStream, p api.Profile, releaseSlot func(), machine string) {
-	r := &runtime{id: wire.ID(), inc: d.inc, adapter: p.Adapter, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+func (d *Engine) createAgent(p api.Profile, machine string, r *runtime, launch api.SubmissionReceipt) error {
 	argv, _ := p.Start.Args()
-	r.title = filepath.Base(argv[0])
-	r.cwd = p.WorkingDirectory
-	r.projectID, r.directoryID = p.ProjectID, p.DirectoryID
 	if p.Adapter == "pty" {
-		r.inc = wire.ID()
 		session, err := d.tmux.Create(r.info(), argv, environment(p.Env), tmux.CreateOptions{HistoryLines: p.HistoryLines, Timeout: time.Duration(p.Start.TimeoutSeconds) * time.Second, NativeAgent: agentintegration.Agent(p.Start.Argv), RequireMCP: p.RequireAgentMCP})
 		if err != nil {
-			s.Fail("START_FAILED", err)
-			return
+			return err
 		}
 		r.tmux = session
 		state, err := session.TimeoutState()
 		if err != nil {
 			_ = session.Destroy()
-			s.Fail("START_FAILED", err)
-			return
+			return err
 		}
 		r.readTimeoutState(state)
-		sub, _ := r.subscribe(true, false)
-		d.mu.Lock()
-		d.runtimes[r.id] = r
-		releaseSlot()
-		d.mu.Unlock()
-		_, epoch := r.control.state(sub)
-		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info()), ControlEpoch: epoch}) != nil {
-			r.unsubscribe(sub)
-			return
-		}
-		d.interact(s, r, sub)
-		return
+		return nil
 	}
 	if p.ManagedACP {
-		if err := d.launchSession(p, machine, r); err != nil {
-			s.Fail("RESULT_UNKNOWN", err)
-			return
-		}
-		d.mu.Lock()
-		d.runtimes[r.id] = r
-		releaseSlot()
-		d.mu.Unlock()
-		if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info())}) != nil {
-			return
-		}
-		r.host.mu.Lock()
-		request := r.host.request("runtime.attach", api.Attach{Observe: true})
-		r.host.mu.Unlock()
-		r.host.forward(s, request, true)
-		return
+		return d.launchSession(p, machine, r, launch)
 	}
-	processEnvironment := environment(p.Env)
-	proc, e := process.Start(argv, p.WorkingDirectory, processEnvironment)
-	if e != nil {
-		s.Fail("START_FAILED", e)
-		return
+	argv, _ = p.Start.Args()
+	proc, err := process.Start(argv, p.WorkingDirectory, environment(p.Env))
+	if err != nil {
+		return err
 	}
 	r.p = proc
-	sub, _ := r.subscribe(true, false)
-	d.mu.Lock()
-	d.runtimes[r.id] = r
-	releaseSlot()
-	d.mu.Unlock()
 	r.runProcess(proc)
-	if r.acp != nil {
-		go r.acp.initialize()
-	}
 	if p.Start.TimeoutSeconds > 0 {
 		go func() {
 			select {
 			case <-r.done:
 			case <-time.After(time.Duration(p.Start.TimeoutSeconds) * time.Second):
-				r.stop()
+				_ = r.stop()
 			}
 		}()
 	}
-	if s.Send(&pb.Message{Kind: "result", Payload: api.Payload(r.info())}) != nil {
-		r.mu.Lock()
-		delete(r.subs, sub)
-		sub.once.Do(func() { close(sub.failed) })
-		r.mu.Unlock()
-		return
-	}
-	d.interact(s, r, sub)
+	return nil
 }
 func (d *Engine) attach(s *executionStream, m *pb.Message) {
 	r, e := d.lookup(m)
