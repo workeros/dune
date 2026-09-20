@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -245,6 +246,16 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 
 func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T) {
 	f := newInstallerFixture(t)
+	stamp := func(version string) {
+		t.Helper()
+		build := exec.Command("go", "build", "-race", "-ldflags", "-X github.com/aiomni/dune/internal/buildinfo.Version="+version, "-o", filepath.Join(f.source, "dune"), "../cmd/dune")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatal(string(output), err)
+		}
+	}
+	stamp("fixture-old")
+	oldProgram, err := os.ReadFile(filepath.Join(f.source, "dune"))
+	must(t, err)
 	oldRelease := f.repair()
 	client := f.dial()
 	defer func() { client.Close() }()
@@ -253,9 +264,12 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 		t.Fatal(string(output), err)
 	}
 	work := t.TempDir()
+	barrier, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	defer barrier.Close()
 	p := profile(work, "acp", mock)
 	p.ManagedACP = true
-	p.Env = map[string]string{"DUNE_MOCK_PROCESS_LOG": filepath.Join(work, "agent.log"), "DUNE_MOCK_RPC_LOG": filepath.Join(work, "rpc.log")}
+	p.Env = map[string]string{"DUNE_MOCK_PROCESS_LOG": filepath.Join(work, "agent.log"), "DUNE_MOCK_RPC_LOG": filepath.Join(work, "rpc.log"), "DUNE_MOCK_PROMPT_GATE": barrier.Addr().String()}
 	rt, observer, err := testStartProfile(client, f.ctx, p)
 	must(t, err)
 	defer observer.Close()
@@ -273,6 +287,23 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 		t.Fatal("missing host diagnostics")
 	}
 	identity := *before.ACPHost
+	if identity.Build == nil || identity.Build.Version != "fixture-old" {
+		t.Fatal("host lacks its actual embedded build", identity)
+	}
+	var machine api.MachineInfo
+	must(t, client.Call(f.ctx, "machine.info", struct{}{}, &machine))
+	if machine.Connector == nil || machine.Connector.Build.Version != "fixture-old" || machine.Connector.StartedAt.IsZero() {
+		t.Fatal(machine)
+	}
+	var tmuxPID int
+	for _, server := range machine.Tmux {
+		if server.Namespace == "acp" && server.ServerState == "running" && server.ServerVersion == "3.7c" {
+			tmuxPID = server.ServerPID
+		}
+	}
+	if tmuxPID <= 1 {
+		t.Fatal("actual ACP tmux version missing", machine.Tmux)
+	}
 	pinned := filepath.Join(f.cfg.SessionDir, "acp", "runtimes", rt.ID, "program")
 	// The initial observer remains attached: only launch publication holds the
 	// shared gate, not this long-lived stream.
@@ -347,10 +378,25 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 	assertRefusedBeforeService("HOST_PROGRAM_UNAVAILABLE")
 	must(t, os.Rename(pinned+".held", pinned))
 	observer.Close()
-	// Both upgrade and rollback install the selected executable through the same
-	// guard. This fixture switches identical builds; version skew is a separate
-	// release acceptance case.
-	for range 2 {
+	inflight, err := testACPSubmit(client, f.ctx, rt, api.ACPAction{Action: "prompt", Text: "barrier across upgrade and rollback", ExpectedConversationID: opened.ConversationID})
+	must(t, err)
+	must(t, barrier.(*net.TCPListener).SetDeadline(time.Now().Add(5*time.Second)))
+	paused, err := barrier.Accept()
+	must(t, err)
+	defer paused.Close()
+	var reached [1]byte
+	_, err = io.ReadFull(paused, reached[:])
+	must(t, err)
+	// Distinct embedded build stamps and executable digests exercise mixed host
+	// versions. Both are compiled from this source; historical release binaries
+	// and different tmux versions still require their own acceptance run.
+	var newer api.Runtime
+	for _, version := range []string{"fixture-new", "fixture-old"} {
+		if version == "fixture-new" {
+			stamp(version)
+		} else {
+			must(t, os.WriteFile(filepath.Join(f.source, "dune"), oldProgram, 0700))
+		}
 		client.Close()
 		output, err := f.command("upgrade").CombinedOutput()
 		if err != nil {
@@ -358,8 +404,17 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 		}
 		<-f.manager.starts
 		client = f.dial()
+		must(t, client.Call(f.ctx, "machine.info", struct{}{}, &machine))
+		if machine.Connector == nil || machine.Connector.Build.Version != version {
+			t.Fatal("connector reports another build", version, machine)
+		}
+		for _, server := range machine.Tmux {
+			if server.Namespace == "acp" && (server.ServerState != "running" || server.ServerPID != tmuxPID || server.ServerVersion != "3.7c") {
+				t.Fatal("upgrade invented a new tmux server version", server)
+			}
+		}
 		got, err := client.Get(f.ctx, rt)
-		if err != nil || got.ACPHost == nil || got.ACPHost.HostPID != identity.HostPID || got.ACPHost.AgentPID != identity.AgentPID || got.ACPHost.ProgramSHA256 != identity.ProgramSHA256 || got.ACPHost.ConnectorTerm <= identity.ConnectorTerm {
+		if err != nil || got.ACPHost == nil || got.ACPHost.Build == nil || got.ACPHost.Build.Version != "fixture-old" || got.ACPHost.HostPID != identity.HostPID || got.ACPHost.AgentPID != identity.AgentPID || got.ACPHost.ProgramSHA256 != identity.ProgramSHA256 || got.ACPHost.ConnectorTerm <= identity.ConnectorTerm {
 			t.Fatal("service replacement lost original host", got, err)
 		}
 		retained, err := client.WaitAgentOperation(f.ctx, rt, api.AgentOperationWait{Ref: prompt.Ref, TimeoutMS: 1000})
@@ -367,6 +422,45 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 			t.Fatal("switch lost original operation", retained, err)
 		}
 		checkRejected()
+		pending, err := client.WaitAgentOperation(f.ctx, rt, api.AgentOperationWait{Ref: inflight.Ref, TimeoutMS: 10})
+		if err != nil || pending.State != "running" || pending.Ref != inflight.Ref {
+			t.Fatal("switch lost admitted in-flight prompt", pending, err)
+		}
+		if version == "fixture-new" {
+			profile := profile(t.TempDir(), "acp", mock)
+			profile.ManagedACP = true
+			var stream *sdk.Stream
+			newer, stream, err = testStartProfile(client, f.ctx, profile)
+			must(t, err)
+			stream.Close()
+		}
+		newer, err = client.Get(f.ctx, newer)
+		if err != nil || newer.ACPHost == nil || newer.ACPHost.Build == nil || newer.ACPHost.Build.Version != "fixture-new" || newer.ACPHost.ProgramSHA256 == identity.ProgramSHA256 {
+			t.Fatal("new host did not retain its own build across rollback", newer, err)
+		}
+	}
+	_, err = paused.Write([]byte{1})
+	must(t, err)
+	completed, err := client.WaitAgentOperation(f.ctx, rt, api.AgentOperationWait{Ref: inflight.Ref, TimeoutMS: 5000})
+	if err != nil || completed.State != "completed" || completed.Ref != inflight.Ref {
+		t.Fatal("original in-flight prompt did not complete", completed, err)
+	}
+	state, err := client.ACPState(f.ctx, rt)
+	if err != nil || state.Conversation == nil || state.Conversation.ID != opened.ConversationID {
+		t.Fatal("switch changed original conversation", state, err)
+	}
+	versionCommand := exec.CommandContext(f.ctx, filepath.Join(f.source, "dune"), "--config", f.path, "version", "--runner")
+	versionCommand.Env = f.env
+	versionJSON, err := versionCommand.Output()
+	must(t, err)
+	var versions struct {
+		Executable api.BuildInfo   `json:"executable"`
+		Machine    api.MachineInfo `json:"machine"`
+		Runtimes   api.RuntimeList `json:"runtimes"`
+	}
+	must(t, json.Unmarshal(versionJSON, &versions))
+	if versions.Executable.Version != "fixture-old" || versions.Machine.Connector == nil || versions.Machine.Connector.PID != machine.Connector.PID || len(versions.Runtimes.Items) != 2 || strings.Contains(string(versionJSON), f.cfg.Token) {
+		t.Fatal("CLI diagnostics did not follow the original public boundary", versions)
 	}
 	if _, err := os.Stat(oldRelease); !os.IsNotExist(err) {
 		t.Fatal("fixture did not remove original release", err)
@@ -375,7 +469,7 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 	must(t, err)
 	rpcs, err := os.ReadFile(filepath.Join(work, "rpc.log"))
 	must(t, err)
-	if strings.Count(string(processes), "\n") != 1 || string(rpcs) != "initialize\nsession/new\nsession/prompt\n" {
+	if strings.Count(string(processes), "\n") != 1 || string(rpcs) != "initialize\nsession/new\nsession/prompt\nsession/prompt\n" {
 		t.Fatal("switch or gate rejection replayed Agent work", string(processes), string(rpcs))
 	}
 	guard, report = fabricd.PrepareUpgrade(f.ctx, f.cfg.SessionDir)
@@ -385,6 +479,8 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 	defer guard.Close()
 	must(t, testStopRuntime(client, f.ctx, rt))
 	must(t, testForgetRuntime(client, f.ctx, rt))
+	must(t, testStopRuntime(client, f.ctx, newer))
+	must(t, testForgetRuntime(client, f.ctx, newer))
 	if _, err := os.Lstat(pinned); !os.IsNotExist(err) {
 		t.Fatal("forget left pinned program", err)
 	}

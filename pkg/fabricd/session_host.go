@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aiomni/dune/internal/buildinfo"
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
@@ -98,7 +99,8 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	}
 	r := &runtime{target: reg.Target, id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
 	hostStarted := time.Now().UTC()
-	r.hostInfo = &api.ACPHostInfo{Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted}
+	build := buildinfo.Current()
+	r.hostInfo = &api.ACPHostInfo{Build: &build, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted}
 	bootID, err := process.BootID()
 	if err != nil {
 		return err

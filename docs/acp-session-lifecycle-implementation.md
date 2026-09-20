@@ -944,3 +944,46 @@ fixtures are excluded). All three installer process regressions pass in 29.6
 seconds, including PTY deadline/history continuity and incorrect startup receipts.
 Affected-package vet and whitespace checks pass. Native service managers and
 external Agent/platform acceptance remain deferred by the user.
+
+## Slice 23 — actual process versions and mixed-build switch evidence
+
+machine.info now returns the current connector's embedded build, PID, start time
+and supported host protocol range. ACPHostInfo carries the original host's own
+embedded build alongside its retained program digest. upgrade-check identifies
+the proposed executable's build. dune version works without config; version
+--runner reads the original public SDK/Gateway machine-info and Runtime-list
+paths. It never treats disk current as a running process's identity.
+
+tmux version diagnostics independently report the client executable and existing
+server's version/PID, with absent/unavailable/checking states and observation
+times. One coalesced probe pair per Engine every five seconds bounds subprocess
+work; each has a two-second deadline and neither holds the Runtime state mutex.
+The no-server test proves no socket/config is created or changed. A wrapper that
+reports a different client version still returns the same original server facts.
+This wrapper proves separation of observations, not tmux-version compatibility.
+
+The installer process test now builds two binaries with different embedded build
+stamps and digests from the same source. It upgrades old to new, starts a new host
+using the new program, and rolls the connector back to the old build. Both hosts
+retain their own build identities. A mock Agent barrier holds an original prompt
+across both switches; it completes with the original operation and conversation
+after release. The old Agent records one process/initialize/new and exactly the
+two explicitly submitted prompts. The actual original tmux server PID and 3.7c
+version survive both switches. CLI diagnostics return both hosts and the current
+connector without credentials or Agent control RPCs. All resources are explicitly
+stopped/forgotten. This is local evidence for two differently stamped builds of
+the implementation, not historical-release or native service-manager acceptance.
+
+The final process case passes in 15.3 seconds. Its first version had an invalid
+fixture assertion that prompt results carry a conversation_id (only open results
+provide that field); the final case checks original operation_ref and reads the
+actual model identity through ACPState. No product behavior was changed for that
+fixture correction. The independent IM module's full race suite also passes:
+channel, duneagent, feishu and sqlite (25.3 seconds for feishu). Broader affected
+checks are recorded after completion below.
+
+The buildinfo/tmux/fabricd race run passes (124.5 seconds for fabricd; previously
+validated expensive L53/L54 fixtures excluded), as do affected-package vet and
+whitespace checks. The source-deletion/explicit-open regression remains in that
+fabricd run. Native service managers and external Agent/platform execution remain
+deferred; no Web source changed in this slice.

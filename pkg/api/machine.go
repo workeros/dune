@@ -7,6 +7,8 @@ type MachineInfo struct {
 	UserID             string                   `json:"user_id"`
 	OS                 string                   `json:"os"`
 	Arch               string                   `json:"arch"`
+	Connector          *ConnectorInfo           `json:"connector,omitempty"`
+	Tmux               []TmuxVersion            `json:"tmux,omitempty"`
 	ACPConversations   *ACPConversationUsage    `json:"acp_conversations,omitempty"`
 	StreamCapacity     map[string]CapacityUsage `json:"stream_capacity,omitempty"`
 	SubmissionCapacity *SubmissionCapacity      `json:"submission_capacity,omitempty"`

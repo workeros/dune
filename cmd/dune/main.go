@@ -41,8 +41,11 @@ func run() error {
 	if len(args) == 0 {
 		return fmt.Errorf("a Web or connector command is required; use dune help")
 	}
-	if args[0] == "help" || args[0] == "version" {
-		fmt.Println("Dune\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN --runner-id ID\n  dune --config FILE repair|upgrade [--root DIR]\n  dune --config FILE service install|restart|stop|status [--name dune]")
+	if args[0] == "version" {
+		return runVersion(*configPath, args[1:])
+	}
+	if args[0] == "help" {
+		fmt.Println("Dune\n  dune version [--runner] (JSON; --runner uses --config FILE)\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN --runner-id ID\n  dune --config FILE repair|upgrade [--root DIR]\n  dune --config FILE upgrade-check (read-only target executable preflight)\n  dune --config FILE service install|restart|stop|status [--name dune]")
 		return nil
 	}
 	if args[0] == "init" {

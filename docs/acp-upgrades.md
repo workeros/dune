@@ -9,7 +9,7 @@ Run the **proposed executable** against the existing machine configuration:
 The command prints `api.UpgradeReport` JSON. Exit 0 and `allowed: true` mean the
 observed hosts use the target's supported IPC contract and their retained helper
 programs are verifiable. The current supported range is exactly protocol **1**.
-The report includes original Runtime identities, host instances, protocol and
+The report identifies the target's embedded build and includes original Runtime identities, host instances, protocol and
 program digests. It does not include bootstrap environments or credentials.
 
 This is a preview, not a reservation. It reads the independent SQLite registry
@@ -77,3 +77,26 @@ substitutes. They prove guard placement, program checks, sealed launch refusal,
 and process continuity across installation switches. They do not prove native
 systemd/LaunchAgent cleanup semantics, real-Agent behavior, or different-version
 tmux client/server interoperability; those require the separate acceptance run.
+
+## Actual running versions
+
+`dune version` prints the executing command's embedded version, Git revision and
+modified flag, Go/OS/architecture and supported protocol range as JSON. It needs
+no machine configuration and makes no network connection. Release builds may
+set `internal/buildinfo.Version` using Go's `-ldflags -X`; the VCS identity comes
+from the compiled program, never a later checkout or the `current` symlink.
+
+`dune --config /path/to/config.yaml version --runner` additionally uses the public
+SDK/Gateway path to read `machine.info` and `runtime.list`. It reports the actual
+connector PID, initialization time and embedded build; each original host's
+embedded build, retained digest and process identities; and separate tmux client
+and server versions. Cached server observations include their check time. Missing
+or unavailable servers have explicit states, not an inferred installed version.
+Concurrent machine-info queries share one pair of version probes at most every
+five seconds, with independent two-second deadlines.
+
+The tmux client uses `-V` only for its own version. Server version/PID come from
+`#{version}`/`#{pid}` over the existing private socket, with `-N` prohibiting a
+new server. No host attach, new/load, prompt or permission action is part of these
+diagnostic reads. Version reporting does not claim cross-version IPC support
+beyond the declared host range or the separately tested tmux distribution.

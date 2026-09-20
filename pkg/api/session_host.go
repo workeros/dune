@@ -5,6 +5,7 @@ import "time"
 // ACPHostInfo is diagnostic evidence from the original host. PID values never
 // grant execution authority. Before host registration only Protocol is known.
 type ACPHostInfo struct {
+	Build          *BuildInfo `json:"build,omitempty"`
 	Protocol       int        `json:"protocol"`
 	Instance       string     `json:"instance,omitempty"`
 	ProgramSHA256  string     `json:"program_sha256,omitempty"`

@@ -65,6 +65,10 @@ type Engine struct {
 	closeOnce         sync.Once
 	active            sync.WaitGroup
 	lock              *os.File
+	startedAt         time.Time
+	versionsMu        sync.Mutex
+	versions          []api.TmuxVersion
+	versionsAt        time.Time
 	cleanups          map[api.SubmissionKey]*cleanupExecution
 	cleanupBarrier    func(api.SubmissionKey, string) error
 }
@@ -72,6 +76,7 @@ type Engine struct {
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
+	engine.startedAt = time.Now().UTC()
 	engine.submissionReads = make(chan struct{}, 8)
 	engine.stateReads = make(chan struct{}, 16)
 	engine.discoveryReads = make(chan struct{}, 8)
@@ -373,6 +378,8 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		home, err := os.UserHomeDir()
 		e = err
 		info := api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics(), StreamCapacity: d.streams.Snapshot()}
+		connector := d.connectorInfo()
+		info.Connector, info.Tmux = &connector, d.tmuxVersions(s.ctx)
 		if e == nil && d.registry != nil {
 			var capacity api.SubmissionCapacity
 			capacity, e = d.registry.Capacity(s.ctx)

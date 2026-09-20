@@ -6,6 +6,7 @@ import "time"
 // executable. A preview is not permission to switch later: the installer must
 // acquire the launch gate and repeat the check before stopping fabricd.
 type UpgradeReport struct {
+	TargetBuild BuildInfo               `json:"target_build"`
 	CheckedAt   time.Time               `json:"checked_at"`
 	Allowed     bool                    `json:"allowed"`
 	ProtocolMin int                     `json:"protocol_min"`

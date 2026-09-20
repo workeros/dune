@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aiomni/dune/internal/buildinfo"
 	"github.com/aiomni/dune/internal/launchgate"
 	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
@@ -16,7 +17,7 @@ import (
 )
 
 func upgradeReport() api.UpgradeReport {
-	return api.UpgradeReport{CheckedAt: time.Now().UTC(), ProtocolMin: sessionProtocol, ProtocolMax: sessionProtocol, Hosts: []api.UpgradeHost{}, Issues: []api.RuntimeDiscoveryIssue{}}
+	return api.UpgradeReport{TargetBuild: buildinfo.Current(), CheckedAt: time.Now().UTC(), ProtocolMin: sessionProtocol, ProtocolMax: sessionProtocol, Hosts: []api.UpgradeHost{}, Issues: []api.RuntimeDiscoveryIssue{}}
 }
 
 func upgradeIdentity(runtime api.Runtime) api.Runtime {
