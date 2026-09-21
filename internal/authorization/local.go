@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -37,13 +37,7 @@ type Service struct {
 	peerSeen  map[string]time.Time
 }
 
-func NewLocal(ctx context.Context, sessions Sessions, bindings Repository) *Service {
-	return New(ctx, sessions, bindings, nil)
-}
-func New(ctx context.Context, sessions Sessions, bindings Repository, checker access.Checker) *Service {
-	return NewObserved(ctx, sessions, bindings, checker, nil)
-}
-func NewObserved(ctx context.Context, sessions Sessions, bindings Repository, checker access.Checker, observer access.CheckObserver) *Service {
+func New(ctx context.Context, sessions Sessions, bindings Repository, checker access.Checker, observer access.CheckObserver) *Service {
 	ownerOnly := checker == nil
 	if checker == nil {
 		checker = access.Owner{}

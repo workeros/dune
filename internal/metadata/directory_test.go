@@ -92,12 +92,12 @@ func TestRouteLimitCapacity(t *testing.T) {
 func TestPostgresConnectionDirectory(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx := context.Background()
-	first, err := Open(ctx, config)
+	first, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	second, err := Open(ctx, config)
+	second, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 func TestPostgresDirectoryRechecksExpiredLeaseAfterLock(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx := context.Background()
-	s, err := Open(ctx, config)
+	s, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestPostgresDirectoryRechecksExpiredLeaseAfterLock(t *testing.T) {
 func TestPostgresDirectoryCommitLoss(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx := context.Background()
-	s, err := Open(ctx, config)
+	s, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

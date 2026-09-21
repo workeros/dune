@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 )
 

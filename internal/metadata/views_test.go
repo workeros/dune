@@ -18,7 +18,7 @@ func TestPersonalViews(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			s, err := Open(t.Context(), config)
+			s, err := Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestPersonalViews(t *testing.T) {
 			}
 			peer := s
 			if backend == "postgres" {
-				peer, err = Open(t.Context(), config)
+				peer, err = Open(t.Context(), config, OpenOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -88,7 +88,7 @@ func TestPersonalViews(t *testing.T) {
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			s, err = Open(t.Context(), config)
+			s, err = Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

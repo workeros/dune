@@ -14,7 +14,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
-	"github.com/aiomni/dune/pkg/sdk"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/hashicorp/yamux"
@@ -23,7 +23,7 @@ import (
 // A transparent test relay pauses an actual request before Gateway admission,
 // or its actual fabricd result before SDK delivery. Neither side fabricates a
 // model, rewrites a target, nor changes the ACP subprocess's scheduling.
-func conversationRelay(t *testing.T, h *harness, beforeRequest, beforeResult func(*pb.Message)) *sdk.Client {
+func conversationRelay(t *testing.T, h *harness, beforeRequest, beforeResult func(*pb.Message)) *duneclient.Client {
 	t.Helper()
 	tls, err := h.c.TLS()
 	must(t, err)
@@ -86,7 +86,7 @@ func conversationRelay(t *testing.T, h *harness, beforeRequest, beforeResult fun
 			}()
 		}
 	}()
-	client, err := sdk.Connect(h.ctx, right, h.c.Target)
+	client, err := duneclient.Connect(h.ctx, right, h.c.Target)
 	must(t, err)
 	t.Cleanup(func() { client.Close() })
 	return client

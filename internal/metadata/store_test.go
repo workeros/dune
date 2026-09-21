@@ -13,6 +13,7 @@ import (
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/jackc/pgx/v5"
 )
@@ -57,7 +58,7 @@ func TestBusinessTransactions(t *testing.T) {
 				config, _, _ = postgresConfig(t)
 			}
 			ctx := context.Background()
-			s, err := Open(ctx, config)
+			s, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,11 +71,11 @@ func TestBusinessTransactions(t *testing.T) {
 			if _, _, err := local.Register(ctx, "OWNER@example.test", "a-strong-test-password"); !errors.Is(err, ErrConflict) {
 				t.Fatal("duplicate registration", err)
 			}
-			failed := identity.Account{User: identity.User{ID: wire.ID(), Email: "failed@example.test"}, Salt: "salt", PasswordHash: "hash"}
+			failed := identity.Account{User: publicidentity.User{ID: wire.ID(), Email: "failed@example.test"}, Salt: "salt", PasswordHash: "hash"}
 			if err := s.RegisterAccount(ctx, failed, tokenHash(cookie), time.Now().Add(time.Hour).Unix()); !errors.Is(err, ErrConflict) {
 				t.Fatal("cross-object conflict", err)
 			}
-			if _, err := s.ReadAccount(ctx, failed.Email); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := s.ReadAccount(ctx, failed.Email); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("failed registration left an account")
 			}
 			_, token, _, err := s.IssueEnrollment(ctx, user.ID, "machine")
@@ -83,7 +84,7 @@ func TestBusinessTransactions(t *testing.T) {
 			}
 			other := s
 			if backend == "postgres" {
-				other, err = Open(ctx, config)
+				other, err = Open(ctx, config, OpenOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -106,7 +107,7 @@ func TestBusinessTransactions(t *testing.T) {
 						resultMu.Lock()
 						machine, credential = m, c
 						resultMu.Unlock()
-					} else if !errors.Is(err, identity.ErrUnauthorized) {
+					} else if !errors.Is(err, publicidentity.ErrUnauthorized) {
 						t.Error(err)
 					}
 				})
@@ -123,10 +124,10 @@ func TestBusinessTransactions(t *testing.T) {
 			if id, err := other.MachineCredential(ctx, credential); err != nil || id != machine.ID {
 				t.Fatal("machine identity missing", err)
 			}
-			if _, err := s.MachineCredential(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := s.MachineCredential(ctx, cookie); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("browser session authenticated fabricd")
 			}
-			if _, err := local.Authenticate(ctx, credential); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := local.Authenticate(ctx, credential); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("machine credential authenticated a user")
 			}
 			wins.Store(0)
@@ -139,7 +140,7 @@ func TestBusinessTransactions(t *testing.T) {
 					err := store.CreateSession(ctx, user.ID, tokenHash(wire.ID()), time.Now().Add(time.Hour).Unix(), 2)
 					if err == nil {
 						wins.Add(1)
-					} else if !errors.Is(err, identity.ErrSessionLimit) {
+					} else if !errors.Is(err, publicidentity.ErrSessionLimit) {
 						t.Error(err)
 					}
 				})
@@ -151,7 +152,7 @@ func TestBusinessTransactions(t *testing.T) {
 			if err := s.Revoke(ctx, user.ID, machine.ID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.MachineCredential(ctx, credential); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := s.MachineCredential(ctx, credential); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("credential survived persistent revocation")
 			}
 		})
@@ -162,12 +163,12 @@ func TestSQLiteExclusivitySchemaAndConstraints(t *testing.T) {
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "metadata")
 	config := storage.Config{SQLiteDir: dir}
-	s, err := Open(ctx, config)
+	s, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if second, err := Open(ctx, config); err == nil {
+	if second, err := Open(ctx, config, OpenOptions{}); err == nil {
 		second.Close()
 		t.Fatal("multiple SQLite instances accepted")
 	}
@@ -177,7 +178,7 @@ func TestSQLiteExclusivitySchemaAndConstraints(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if reopened, err := Open(ctx, config); err != nil {
+	if reopened, err := Open(ctx, config, OpenOptions{}); err != nil {
 		t.Fatal(err)
 	} else if err := reopened.Close(); err != nil {
 		t.Fatal(err)
@@ -199,7 +200,7 @@ func TestSQLiteExclusivitySchemaAndConstraints(t *testing.T) {
 func TestSQLiteRejectsUnsafeData(t *testing.T) {
 	ctx := context.Background()
 	for _, config := range []storage.Config{{}, {SQLiteDir: "relative"}, {SQLiteDir: "/"}, {SQLiteDir: t.TempDir(), Postgres: &storage.Postgres{URL: "postgres://localhost/postgres"}}} {
-		if store, err := Open(ctx, config); err == nil {
+		if store, err := Open(ctx, config, OpenOptions{}); err == nil {
 			store.Close()
 			t.Fatal("invalid database combination accepted")
 		}
@@ -217,7 +218,7 @@ func TestSQLiteRejectsUnsafeData(t *testing.T) {
 		if err := link(outside, file); err != nil {
 			t.Fatal(err)
 		}
-		if store, err := Open(ctx, storage.Config{SQLiteDir: dir}); err == nil {
+		if store, err := Open(ctx, storage.Config{SQLiteDir: dir}, OpenOptions{}); err == nil {
 			store.Close()
 			t.Fatal("linked SQLite file accepted")
 		}

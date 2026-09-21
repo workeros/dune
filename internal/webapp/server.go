@@ -24,12 +24,12 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/deployment"
 	"github.com/aiomni/dune/pkg/gateway"
 	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/managed"
 	"github.com/aiomni/dune/pkg/runner"
-	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
@@ -254,7 +254,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 
-func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, bool) {
+func (s *Server) user(w http.ResponseWriter, r *http.Request) (publicidentity.User, string, bool) {
 	token := ""
 	if value := strings.TrimSpace(r.Header.Get("X-Jwt-Token")); value != "" {
 		token = value
@@ -266,21 +266,18 @@ func (s *Server) user(w http.ResponseWriter, r *http.Request) (User, string, boo
 	if token != "" {
 		if authenticated, err := s.identity.Authenticate(r.Context(), token); err == nil && authenticated.Valid() && r.Context().Err() == nil {
 			return authenticated.User, token, true
-		} else if err != nil && !errors.Is(err, identity.ErrUnauthorized) {
+		} else if err != nil && !errors.Is(err, publicidentity.ErrUnauthorized) {
 			writeError(w, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "identity service unavailable")
-			return User{}, "", false
+			return publicidentity.User{}, "", false
 		}
 	}
 	writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "please sign in")
-	return User{}, "", false
+	return publicidentity.User{}, "", false
 }
 
 func (s *Server) authAllowed(w http.ResponseWriter, r *http.Request, email string) bool {
 	account := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email)))))
 	return s.authAllowedKeys(w, []string{"login:source:" + s.clientIP(r), "login:account:" + account}, 20)
-}
-func (s *Server) authAllowedFor(w http.ResponseWriter, r *http.Request, group string, limit int) bool {
-	return s.authAllowedKeys(w, []string{group + ":" + s.clientIP(r)}, limit)
 }
 func (s *Server) authAllowedKeys(w http.ResponseWriter, keys []string, limit int) bool {
 	now := time.Now()
@@ -345,7 +342,7 @@ func (s *Server) auth(w http.ResponseWriter, r *http.Request, register bool) {
 		return
 	}
 	defer func() { <-s.hashSlots }()
-	var user User
+	var user publicidentity.User
 	var token string
 	var err error
 	if register {
@@ -494,7 +491,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"machine": machine, "credential": credential, "gateway": s.urls.GatewayURL})
 }
 
-func (s *Server) executionClient(w http.ResponseWriter, r *http.Request) (*sdk.Client, bool) {
+func (s *Server) executionClient(w http.ResponseWriter, r *http.Request) (*duneclient.Client, bool) {
 	_, cookie, ok := s.user(w, r)
 	if !ok {
 		return nil, false
@@ -514,7 +511,7 @@ func (s *Server) executionClient(w http.ResponseWriter, r *http.Request) (*sdk.C
 		writeError(w, 503, "OFFLINE", err.Error())
 		return nil, false
 	}
-	client, err := sdk.Connect(r.Context(), conn, binding.MachineID)
+	client, err := duneclient.Connect(r.Context(), conn, binding.MachineID)
 	if err != nil {
 		writeError(w, 503, "OFFLINE", err.Error())
 		return nil, false
@@ -630,7 +627,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "RUNTIME_PURPOSE_MISMATCH", "Runtime adapter does not match the ticket purpose")
 		return
 	}
-	var stream *sdk.Stream
+	var stream *duneclient.Stream
 	if runtime.Adapter == "pty" {
 		stream, err = client.Attach(r.Context(), runtime, false)
 	} else if r.URL.Query().Get("acp_events") == "conversation" {

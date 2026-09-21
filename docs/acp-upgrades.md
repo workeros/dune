@@ -6,6 +6,10 @@ Run the **proposed executable** against the existing machine configuration:
 /path/to/proposed/dune --config /path/to/config.yaml upgrade-check
 ```
 
+Machine configuration ignores fields the executable does not use, including
+removed settings such as `log_level`. Connection, identity and path fields still
+need valid values. Loading and preflight do not rewrite the configuration.
+
 The command prints `api.UpgradeReport` JSON. Exit 0 and `allowed: true` mean the
 observed hosts use the target's supported IPC contract and their retained helper
 programs are verifiable. The current supported range is exactly protocol **1**.
@@ -48,7 +52,6 @@ Common refusal codes:
 | `RUNTIME_DIRECTORY_INVALID`, `INSTANCE_MARKER_INVALID` | Original resource identity cannot be established. No adoption or cleanup is attempted. |
 | `LAUNCH_IN_PROGRESS` | A launch or another switch holds the gate. Retry the upgrade after it completes; do not replay the launch. |
 | `UPGRADE_CHECK_DEADLINE` | The bounded check could not complete. No service switch was attempted. |
-| `LEGACY_CONNECTOR_REQUIRES_EXPLICIT_TRANSITION` | An active connector has no independent registry and may still own ACP in memory. |
 
 Rollback uses the same procedure: execute the selected older distribution's
 `upgrade-check` and `upgrade`. A supported rollback reconnects existing hosts;
@@ -63,14 +66,12 @@ cleans them through the original resource plan. A retiring Runtime already has
 admission sealed and its Agent confirmed ended, so preflight permits its program
 to be absent while cleanup continues.
 
-The first move from in-process ACP is an explicit transition boundary. The new
-connector cannot preserve or reconstruct an old connector's controller memory.
-If the independent registry is missing while `fabricd.lock` is held, preflight
-refuses before stopping the old connector. Use the old public Runtime inventory
-to identify affected sessions, finish or explicitly stop them, and stop that
-connector before installation. Preflight cannot invent Runtime identities absent
-from the old process's disk evidence. There is no compatibility adapter or
-automatic termination for that first transition.
+Only the current independent-host architecture is supported. Launches must have
+preparation records before the host executes. Dune does not reconstruct missing
+records from earlier in-process ACP implementations. An absent registry is a
+fresh installation only when both the registry directory and ACP runtime
+artifacts are absent; otherwise
+preflight reports `REGISTRY_UNAVAILABLE`.
 
 Local tests use real fabricd/host/Agent processes with isolated service-command
 substitutes. They prove guard placement, program checks, sealed launch refusal,

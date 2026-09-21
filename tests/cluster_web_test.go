@@ -205,7 +205,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	var caller agents.LaunchResult
 	callerProfile := profile(dir, "pty", "/bin/sh", "-c", "sleep 120")
 	request(sites[0], "POST", runnerBase+"/sessions"+query, agents.StartRequest{SubmissionID: wire.ID(), Custom: &callerProfile}, &caller)
-	store, err := metadata.Open(ctx, database)
+	store, err := metadata.Open(ctx, database, metadata.OpenOptions{})
 	must(t, err)
 	defer store.Close()
 	// Fixture provisioning only: subsequent MCP authentication and every target

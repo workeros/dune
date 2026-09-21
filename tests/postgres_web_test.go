@@ -60,7 +60,7 @@ func TestPostgresClusterWorkbench(t *testing.T) {
 func TestPostgresHostClusterConfiguration(t *testing.T) {
 	database := postgresWorkbenchConfig(t)
 	ctx := context.Background()
-	store, err := metadata.Open(ctx, database)
+	store, err := metadata.Open(ctx, database, metadata.OpenOptions{})
 	must(t, err)
 	defer store.Close()
 	_, err = store.ConnectionDirectory(ctx)

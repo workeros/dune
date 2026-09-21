@@ -3,6 +3,7 @@
 2026-09-21。在 `main` 上从 `366ed68` 实现，保留该基线的 Gateway limits 修复。
 固定源码为本报告所在提交；构建版本和 SHA-256 记录在交付目录的 manifest 中。
 本报告覆盖 Dune 的隔离验收，不代表线上 Runner 已升级。
+下文命令是该次验收记录，其中 `UnregisteredFailedStartup` 覆盖的旧版恢复路径及测试已在后续原型清理中删除；当前验证见 [清理记录](prototype-cleanup.md)。
 
 ## 修复
 
@@ -10,7 +11,7 @@
 - 执行文件与 `program` 以打开文件的身份匹配。Linux 使用 `/proc/self/exe` 锚定实际执行 inode；macOS 使用执行路径打开文件。祖先目录符号链接不影响匹配。最终文件 no-follow、SHA-256、大小、所有者、0700 权限和单链接检查仍有效。
 - tmux 启动之前在原登记库保存最小资源与实例证据。宿主单次进入、成功登记和 Agent group 登记与确定失败使用同一事务边界。启动诊断只含固定阶段、错误码和确认超时标记，见 [诊断合同](acp-diagnostics.md#startup-evidence)。
 - 已接纳回执始终保持 accepted。托管 ACP 在 initialize 成功后记录 started；原始 ACP 只启动独立 stdio owner。十秒确认期限不变，超时不封死晚到宿主、不重放请求。
-- 已确认失败可按原 Runtime stop/forget，保留原启动回执并释放容量。旧版尚未登记的失败启动也有显式生命周期入口；需原 bootstrap/实例/保留程序、已退出窗格、内核进程缺席及事务内无宿主证明。证据不足仍未知。
+- 已确认失败可按原 Runtime stop/forget，保留原启动回执并释放容量。当前实现要求执行前准备记录；没有准备记录的旧版启动不提供补建或恢复入口。
 - 没有改写 state_dir、installation ID、socket 或 Runtime 身份算法，没有迁移现有 SQLite schema。现存原键继续有效。
 
 ## 环境与命令

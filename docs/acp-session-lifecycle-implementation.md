@@ -912,8 +912,9 @@ registry before service replacement. SQLite mode=ro/query_only prevents schema
 or admission mutation. Existing registrations must use the supported protocol
 (currently exactly 1); retained helper digests are verified through pinned private
 directory handles. Already-sealed cleanup may have removed its helper. Missing
-registry plus a live connector lock explicitly refuses the initial legacy
-transition. No force option stops or recreates sessions.
+registry with ACP artifacts is unverified evidence and refuses replacement.
+Only the current independent-host architecture is supported; there is no initial
+legacy transition path. No force option stops or recreates sessions.
 
 New launches hold a shared file gate from before key claim through publication;
 attached observer streams release it. Target service install holds the exclusive

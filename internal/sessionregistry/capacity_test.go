@@ -15,7 +15,7 @@ func TestCapacityCountsIndependentReservationsAndRetainedEvidenceWithoutWrites(t
 	}
 	defer func() { r.Close() }()
 	key := testKey()
-	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
+	if err := reserveTestRuntime(t.Context(), r, key.Target); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []string{"claimed", "accepted", "rejected"} {

@@ -3,6 +3,7 @@ package webapp
 import (
 	"context"
 	"encoding/json"
+	"github.com/aiomni/dune/internal/metadata"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -59,7 +60,7 @@ func TestEnrollmentUnknownDoesNotReplayOrClobber(t *testing.T) {
 				if err := os.WriteFile(path, []byte("another installer owns this"), 0600); err != nil {
 					t.Error(err)
 				}
-				json.NewEncoder(w).Encode(map[string]any{"machine": Machine{ID: "machine", RunnerID: "stable-runner"}, "credential": strings.Repeat("c", 64), "gateway": "ws://localhost:7443/api/v1/ws/tunnel"})
+				json.NewEncoder(w).Encode(map[string]any{"machine": metadata.Machine{ID: "machine", RunnerID: "stable-runner"}, "credential": strings.Repeat("c", 64), "gateway": "ws://localhost:7443/api/v1/ws/tunnel"})
 			}))
 			defer server.Close()
 			err := EnrollMachine(context.Background(), path, server.URL, strings.Repeat("t", 64), "", "stable-runner")

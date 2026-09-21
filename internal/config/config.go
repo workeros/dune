@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,7 +29,6 @@ type Config struct {
 	Target      string `yaml:"target"`
 	Certificate string `yaml:"certificate"`
 	Key         string `yaml:"key"`
-	LogLevel    string `yaml:"log_level"`
 	// SessionDir stores machine configuration and identifies the private tmux server.
 	SessionDir string `yaml:"session_dir,omitempty"`
 }
@@ -45,9 +43,9 @@ func Load(path string) (Config, error) {
 	if e != nil {
 		return c, e
 	}
-	d := yaml.NewDecoder(strings.NewReader(string(b)))
-	d.KnownFields(true)
-	if e = d.Decode(&c); e != nil {
+	// Only fields used by this executable participate in validation. Removed or
+	// newly introduced settings must not prevent a connector upgrade.
+	if e = yaml.Unmarshal(b, &c); e != nil {
 		return c, e
 	}
 	if c.SessionDir == "" {
@@ -59,7 +57,6 @@ func Load(path string) (Config, error) {
 	}
 	return c, c.Validate()
 }
-func gatewayURL(address string) (*url.URL, error) { return deployment.Gateway(address) }
 func listenAddress(address string) error {
 	host, port, e := net.SplitHostPort(address)
 	if e != nil || net.ParseIP(host) == nil {
@@ -72,7 +69,7 @@ func listenAddress(address string) error {
 	return nil
 }
 func (c Config) Validate() error {
-	_, e := gatewayURL(c.Gateway)
+	_, e := deployment.Gateway(c.Gateway)
 	if e != nil {
 		return e
 	}
@@ -124,8 +121,7 @@ func (c Config) TLS() (*tls.Config, error) {
 	}
 	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
 }
-func Init(path, listen string) error { return InitWithGateway(path, listen, "") }
-func InitWithGateway(path, listen, gateway string) error {
+func Init(path, listen, gateway string) error {
 	if e := listenAddress(listen); e != nil {
 		return e
 	}
@@ -136,7 +132,7 @@ func InitWithGateway(path, listen, gateway string) error {
 		}
 		gateway = "ws://" + listen + "/api/v1/ws/tunnel"
 	}
-	endpoint, e := gatewayURL(gateway)
+	endpoint, e := deployment.Gateway(gateway)
 	if e != nil {
 		return e
 	}
@@ -154,7 +150,7 @@ func InitWithGateway(path, listen, gateway string) error {
 		return e
 	}
 	if endpoint.Scheme == "ws" {
-		return writeConfig(path, Config{Gateway: gateway, Listen: listen, Token: wire.ID() + wire.ID(), Target: "local", LogLevel: "info"})
+		return writeConfig(path, Config{Gateway: gateway, Listen: listen, Token: wire.ID() + wire.ID(), Target: "local"})
 	}
 	key, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if e != nil {
@@ -181,7 +177,7 @@ func InitWithGateway(path, listen, gateway string) error {
 	id := wire.ID()
 	cp := filepath.Join(dir, "tls-"+id+".crt")
 	kp := filepath.Join(dir, "tls-"+id+".key")
-	c := Config{Gateway: gateway, Listen: listen, Token: wire.ID() + wire.ID(), Target: "local", Certificate: cp, Key: kp, LogLevel: "info"}
+	c := Config{Gateway: gateway, Listen: listen, Token: wire.ID() + wire.ID(), Target: "local", Certificate: cp, Key: kp}
 	if e = c.Validate(); e != nil {
 		return e
 	}

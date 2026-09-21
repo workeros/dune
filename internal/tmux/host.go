@@ -122,30 +122,3 @@ func (s *Server) hostSession(id, instance string) (string, error) {
 	}
 	return "", nil
 }
-
-// ExitedHostProcess observes the exact marked pane. It is not failure proof by
-// itself; callers must also prove kernel absence and fence host registration.
-func (s *Server) ExitedHostProcess(id, instance string) (int, error) {
-	if !wire.ValidID(id) || !wire.ValidID(instance) {
-		return 0, fmt.Errorf("invalid ACP host identity")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	session, err := s.hostSession(id, instance)
-	if err != nil || session == "" {
-		return 0, fmt.Errorf("original ACP pane is not observable")
-	}
-	out, err := s.run("list-panes", "-t", session, "-F", "#{pane_pid}\t#{pane_dead}")
-	if err != nil {
-		return 0, err
-	}
-	fields := strings.Split(strings.TrimSpace(out), "\t")
-	if len(fields) != 2 || fields[1] != "1" {
-		return 0, fmt.Errorf("original ACP pane exit is unconfirmed")
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || pid <= 1 {
-		return 0, fmt.Errorf("original ACP pane process is unavailable")
-	}
-	return pid, nil
-}

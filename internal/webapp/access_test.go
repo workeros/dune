@@ -3,12 +3,14 @@ package webapp
 import (
 	"context"
 	"errors"
+	"github.com/aiomni/dune/internal/metadata"
 	"path/filepath"
 	"testing"
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/gateway"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -21,11 +23,11 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 	}
 	defer store.Close()
 	local := identity.NewLocal(store, true)
-	access := authorization.NewLocal(ctx, local, store)
+	access := authorization.New(ctx, local, store, nil, nil)
 	type connection struct {
-		user               User
+		user               publicidentity.User
 		cookie, credential string
-		machine            Machine
+		machine            metadata.Machine
 		grant              *authorization.ClientGrant
 	}
 	connections := make([]connection, 2)
@@ -64,10 +66,10 @@ func TestConnectionIdentityIsolationAndTicketConsumption(t *testing.T) {
 		if err != nil || binding.Role != gateway.RoleDaemon || binding.Target != c.machine.ID {
 			t.Fatal("machine identity bound to the wrong role/target")
 		}
-		if _, _, err := access.Authorize(c.cookie); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, _, err := access.Authorize(c.cookie); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("browser cookie accepted as tunnel credential")
 		}
-		if _, err := access.ClientRunner(ctx, c.credential, runner.Binding{RunnerID: c.machine.RunnerID, MachineID: c.machine.ID, FabricID: "attached", Revision: 1}); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := access.ClientRunner(ctx, c.credential, runner.Binding{RunnerID: c.machine.RunnerID, MachineID: c.machine.ID, FabricID: "attached", Revision: 1}); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("machine credential accepted as user")
 		}
 	}

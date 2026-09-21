@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/aiomni/dune/pkg/api"
-	"github.com/aiomni/dune/pkg/sdk"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
-func terminalControlEvent(t *testing.T, stream *sdk.Stream, writable, available bool) uint64 {
+func terminalControlEvent(t *testing.T, stream *duneclient.Stream, writable, available bool) uint64 {
 	t.Helper()
 	for {
 		message, err := stream.Recv()

@@ -9,7 +9,7 @@ import (
 func TestPostgresOnlineConnections(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx := context.Background()
-	store, err := Open(ctx, config)
+	store, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

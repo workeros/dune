@@ -47,18 +47,6 @@ func controlResource(target api.SubmissionTarget, kind, id string) (string, erro
 // model/stream reservations for 16 hosts cap the machine budget at 128 MiB,
 // including while no connector is running. Sealed identity evidence remains
 // bounded separately and is never recycled into a new executable identity.
-func (r *Registry) ReserveRuntime(ctx context.Context, target api.SubmissionTarget) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := reserveRuntime(ctx, tx, target); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 func reserveRuntime(ctx context.Context, tx *sql.Tx, target api.SubmissionTarget) error {
 	if target.Validate() != nil || target.RuntimeID == "" {
 		return fmt.Errorf("complete Runtime target required for resource reservation")

@@ -22,6 +22,7 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/gateway"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
@@ -58,12 +59,12 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	config := ownershipPostgresConfig(t, ctx)
-	first, err := metadata.Open(ctx, config)
+	first, err := metadata.Open(ctx, config, metadata.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	second, err := metadata.Open(ctx, config)
+	second, err := metadata.Open(ctx, config, metadata.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +119,11 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	var wg sync.WaitGroup
 	var peerDials atomic.Int32
 	ownerChecker := &peerOwnerChecker{}
-	auth1, err := authorization.New(ctx, identity.NewLocal(first, true), first, ownerChecker).WithPeers(g1.BootID())
+	auth1, err := authorization.New(ctx, identity.NewLocal(first, true), first, ownerChecker, nil).WithPeers(g1.BootID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth2, err := authorization.New(ctx, identity.NewLocal(second, true), second, ownerChecker).WithPeers(g2.BootID())
+	auth2, err := authorization.New(ctx, identity.NewLocal(second, true), second, ownerChecker, nil).WithPeers(g2.BootID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +141,7 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	entrySessions := &peerEntrySessions{Sessions: entryIdentity, stale: &entryRepository.stale, authenticated: authenticated}
-	entryAuth, err := authorization.NewLocal(ctx, entrySessions, entryRepository).WithPeers(entry.BootID())
+	entryAuth, err := authorization.New(ctx, entrySessions, entryRepository, nil, nil).WithPeers(entry.BootID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,10 +379,10 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 type peerEntrySessions struct {
 	authorization.Sessions
 	stale         *atomic.Bool
-	authenticated identity.Authentication
+	authenticated publicidentity.Authentication
 }
 
-func (s *peerEntrySessions) Authenticate(ctx context.Context, token string) (identity.Authentication, error) {
+func (s *peerEntrySessions) Authenticate(ctx context.Context, token string) (publicidentity.Authentication, error) {
 	if s.stale.Load() {
 		return s.authenticated, nil
 	}

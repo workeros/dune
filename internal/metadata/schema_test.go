@@ -18,7 +18,7 @@ func TestSchemaInitializationIsAtomic(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			s, err := Open(ctx, config)
+			s, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +86,7 @@ func TestOpenRejectsIncompatibleDuneSchema(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			s, err := Open(ctx, config)
+			s, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestOpenRejectsIncompatibleDuneSchema(t *testing.T) {
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := Open(ctx, config)
+			reopened, err := Open(ctx, config, OpenOptions{})
 			if reopened != nil {
 				reopened.Close()
 			}
@@ -130,7 +130,7 @@ func TestExternalIdentityOmitsLocalTables(t *testing.T) {
 }
 
 func TestSQLiteRejectsSharedClusterServices(t *testing.T) {
-	s, err := Open(context.Background(), storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")})
+	s, err := Open(context.Background(), storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

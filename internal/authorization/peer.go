@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/gateway"
+	"github.com/aiomni/dune/pkg/identity"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"google.golang.org/protobuf/proto"
 )

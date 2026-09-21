@@ -10,7 +10,7 @@ cleanup progress even after a host or its Runtime directory is gone.
 
 `dune --config FILE version --runner` reads the version/Runtime diagnostics
 through the public SDK/Gateway path. See [upgrade checks](acp-upgrades.md) for
-target-vs-running version semantics and the initial legacy transition boundary.
+target-vs-running version semantics and the current host requirements.
 
 Each installation stores connector lifecycle events at
 `<session_dir>/connector-events.jsonl`. Each original host stores its events at

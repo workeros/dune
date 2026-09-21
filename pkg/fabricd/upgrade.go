@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/aiomni/dune/internal/buildinfo"
@@ -49,20 +48,18 @@ func CheckUpgrade(ctx context.Context, stateDir string) api.UpgradeReport {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	registry, err := sessionregistry.OpenReadOnly(ctx, filepath.Join(stateDir, "registry"))
+	registryDirectory := filepath.Join(stateDir, "registry")
+	registry, err := sessionregistry.OpenReadOnly(ctx, registryDirectory)
 	if err != nil {
-		code := "REGISTRY_UNAVAILABLE"
 		if os.IsNotExist(err) {
-			// Before this architecture an active connector could own an ACP
-			// process in memory. Missing registry is never proof of no sessions.
-			if legacyConnectorMayBeActive(stateDir) {
-				code = "LEGACY_CONNECTOR_REQUIRES_EXPLICIT_TRANSITION"
-			} else if _, artifactErr := os.Lstat(filepath.Join(stateDir, "acp")); os.IsNotExist(artifactErr) {
+			_, registryErr := os.Lstat(registryDirectory)
+			_, artifactErr := os.Lstat(filepath.Join(stateDir, "acp"))
+			if os.IsNotExist(registryErr) && os.IsNotExist(artifactErr) {
 				report.Allowed = true
 				return report
 			}
 		}
-		add(nil, code)
+		add(nil, "REGISTRY_UNAVAILABLE")
 		return report
 	}
 	defer registry.Close()
@@ -144,22 +141,6 @@ func checkUpgradeProgram(ctx context.Context, stateDir string, host sessionregis
 		return "HOST_PROGRAM_UNAVAILABLE"
 	}
 	return ""
-}
-
-func legacyConnectorMayBeActive(directory string) bool {
-	f, err := os.OpenFile(filepath.Join(directory, "fabricd.lock"), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if os.IsNotExist(err) {
-		return false
-	}
-	if err != nil {
-		return true
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return true
-	}
-	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
 }
 
 // PrepareUpgrade holds the exclusive launch gate until the caller finishes

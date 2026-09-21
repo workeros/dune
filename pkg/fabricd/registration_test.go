@@ -19,7 +19,7 @@ import (
 func TestPostgresConnectorRegistration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	store, err := metadata.Open(ctx, ownershipPostgresConfig(t, ctx))
+	store, err := metadata.Open(ctx, ownershipPostgresConfig(t, ctx), metadata.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

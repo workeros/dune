@@ -45,9 +45,6 @@ func (d *Engine) submitForget(s *executionStream, message *pb.Message, machine s
 	acquired := false
 	if err == nil && !found {
 		_, hostErr := d.registry.Host(s.ctx, key.Target)
-		if errors.Is(hostErr, sql.ErrNoRows) && d.confirmUnregisteredStartup(key.Target) {
-			_, hostErr = d.registry.Host(s.ctx, key.Target)
-		}
 		if hostErr == nil {
 			acquired, receipt, err = d.registry.AcceptForget(s.ctx, key, wire.ID(), d.verifyHostCleanup)
 		} else if errors.Is(hostErr, sql.ErrNoRows) {

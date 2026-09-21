@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 )
 

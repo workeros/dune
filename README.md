@@ -63,9 +63,9 @@ Dune 服务端维护以下逻辑数据，Runner 不保存 Profile 配置库：
 
 | 部署 | 表 |
 | --- | --- |
-| 本地 SQLite | `dune_users`、`dune_sessions`、`dune_runners`、`dune_enrollments`、`dune_profiles`、`dune_profile_revisions` |
-| 本地登录 PostgreSQL | 上述六张 + `dune_routes` |
-| SandDance 企业 PostgreSQL | `dune_runners`、`dune_enrollments`、`dune_routes`、`dune_profiles`、`dune_profile_revisions` |
+| 本地 SQLite | `dune_users`、`dune_sessions`、`dune_runners`、`dune_enrollments`、`dune_profiles`、`dune_profile_revisions`、`dune_projects`、`dune_views`、`dune_agent_credentials` |
+| 本地登录 PostgreSQL | 上述九张 + `dune_routes` |
+| SandDance 企业 PostgreSQL | `dune_runners`、`dune_enrollments`、`dune_routes`、`dune_profiles`、`dune_profile_revisions`、`dune_projects`、`dune_views`、`dune_agent_credentials` |
 
 `pkg/profiles` 提供宿主可复用的完整 Profile 存储、不可变修订和并发修改检查。
 个人 Web 通过服务端管理配置；SandDance 保留空间权限与执行编排，复用同一实现。
@@ -77,6 +77,10 @@ connector 自动重连，tmux 进程仍在；结果未知的写入和 Agent 请�
 
 Dune 不实现数据库备份、恢复、历史回滚或恢复协调，也不维护兼容旧 schema 的
 迁移。只在空 schema 中原子创建当前结构。
+
+机器 YAML 忽略当前程序不使用的字段（包括已删除的 `log_level`），只校验接入地址、身份、监听地址及会话/证书路径等核心字段。加载配置不会改写原文件。
+SDK 的 WebSocket 拨号入口是 `pkg/sdk.Dial`，连接、流和端口类型以及
+自定义连接入口统一使用 `pkg/client`。本次清理范围见 [原型清理记录](docs/prototype-cleanup.md)。
 
 `pkg/identity.Service` 是公开浏览器会话接口：本地默认实现使用密码与上述两张
 身份表；企业宿主验证自己的 opaque cookie，并直接返回企业用户唯一标识。

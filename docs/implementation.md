@@ -50,7 +50,7 @@ Web PTY 订阅按同一队列转发消息和读取结束，保证 `exit` 及后�
 
 ## 机器配置和 Profile
 
-配置字段：`gateway`、`listen`、`token`、`target`、`log_level`；仅显式 WSS 配置使用 `certificate` 和 `key`。SDK 客户端无需 `listen` 或私钥。log_level 目前保存设置，日志使用 Go 标准 logger，只有运行信息/错误；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。为兼容原有配置，显式选择 wss 时仍验证证书，init 会把连接地址加入证书 SAN。
+配置字段：`gateway`、`listen`、`token`、`target`、`session_dir`；显式 WSS 配置使用 `certificate` 和 `key`。SDK 客户端无需 `listen` 或私钥。日志使用 Go 标准 logger，不提供日志级别配置；不记录 token 或输入内容。默认配置路径见 README。默认 ws 不配置 TLS，HTTP Upgrade 请求必须通过 Bearer token 鉴权。listen 可使用通配 IP，gateway 必须为具体 IP/DNS 地址。WSS 验证证书，init 会把连接地址加入证书 SAN。
 
 Profile 要求 `version: 1`、`kind: environment|agent` 和绝对 `working_directory`。environment Profile 通过 `profile.prepare` 只执行 setup，不得包含 start、adapter、managed_acp 或终端历史设置，成功返回 `kind=environment`、`stage=succeeded` 和完成步骤数，不创建 Runtime。agent Profile 通过 `profile.start` 执行 setup 后启动 Agent，要求 `adapter: pty|acp` 和 start。两类 Profile 的 `env` 都合并当前 OS 环境，`setup.steps` 至多 64 步。Command 必须且只能提供 argv 或 run：argv 不展开 shell；run 必须同时给绝对 shell 路径（例如 `/bin/sh`）。`timeout_seconds` 范围 0..86400；setup/Exec 的 0 默认 300s，start 的 0 表示 Runtime 无时间限制。步骤顺序执行，失败返回步骤编号、名称、退出状态与有界输出，之后步骤不执行。没有自动回滚。
 

@@ -14,6 +14,7 @@ import (
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/access"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 )
@@ -51,7 +52,7 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			s, err := Open(ctx, config)
+			s, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,7 +85,7 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 				allowed := r.OwnerID == user.ID && r.Binding.RunnerID != catalogID(129)
 				return discoveryDecision(r, allowed), nil
 			})
-			service := authorization.New(ctx, local, s, checker)
+			service := authorization.New(ctx, local, s, checker, nil)
 			first, err := service.Discover(ctx, user, runner.Query{Limit: 2}, false)
 			if err != nil || len(first.Items) != 0 || calls != 128 || first.NextCursor == "" {
 				t.Fatal("bounded first scan", first, calls, err)
@@ -95,20 +96,20 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 				if err := s.Close(); err != nil {
 					t.Fatal(err)
 				}
-				s, err = Open(ctx, config)
+				s, err = Open(ctx, config, OpenOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
 				other = s
 			} else {
-				other, err = Open(ctx, config)
+				other, err = Open(ctx, config, OpenOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer other.Close()
 			}
 			local = identity.NewLocal(other, true)
-			service = authorization.New(ctx, local, other, checker)
+			service = authorization.New(ctx, local, other, checker, nil)
 			second, err := service.Discover(ctx, user, runner.Query{Cursor: cursor, Limit: 2}, false)
 			if err != nil || len(second.Items) != 2 || second.Items[0].Runner.ID != catalogID(128) || second.Items[1].Runner.ID != catalogID(130) || second.NextCursor == "" {
 				t.Fatal("filtered page lost allowed rows", second, err)
@@ -123,7 +124,7 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 			if repeated, err := other.SaveCursor(ctx, "any", "scope", "value", catalogID(127)); err != nil || repeated != cursor {
 				t.Fatal("stateless cursor changed across replicas", repeated, err)
 			}
-			ownerService := authorization.NewLocal(ctx, local, other)
+			ownerService := authorization.New(ctx, local, other, nil, nil)
 			owned, err := ownerService.Discover(ctx, user, runner.Query{}, true)
 			if err != nil || len(owned.Items) != 4 {
 				t.Fatal("default owner discovery", owned, err)
@@ -137,7 +138,7 @@ func TestAuthorizedDiscoveryUsesStatelessCursors(t *testing.T) {
 
 func TestAuthorizedWritesRecheckSessionAndBinding(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(ctx, storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")})
+	s, err := Open(ctx, storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,17 +176,17 @@ func TestAuthorizedWritesRecheckSessionAndBinding(t *testing.T) {
 	if err := s.SetUserEnabled(ctx, user.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.IssueEnrollmentForSession(ctx, user, "stale", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
+	if _, _, _, err := s.IssueEnrollmentForSession(ctx, user, "stale", tokenHash(cookie)); !errors.Is(err, publicidentity.ErrUnauthorized) {
 		t.Fatal("stale session enrolled", err)
 	}
-	if err := s.RevokeAuthorized(ctx, user, tokenHash(cookie), selected); !errors.Is(err, identity.ErrUnauthorized) {
+	if err := s.RevokeAuthorized(ctx, user, tokenHash(cookie), selected); !errors.Is(err, publicidentity.ErrUnauthorized) {
 		t.Fatal("stale session revoked", err)
 	}
 }
 
 func TestEnrollmentPolicyIsRechecked(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(ctx, storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")})
+	s, err := Open(ctx, storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +199,7 @@ func TestEnrollmentPolicyIsRechecked(t *testing.T) {
 	allowed := true
 	service := authorization.New(ctx, local, s, discoveryCheck(func(_ context.Context, r access.Request) (access.Decision, error) {
 		return discoveryDecision(r, allowed), nil
-	}))
+	}), nil)
 	_, token, _, err := service.IssueEnrollment(ctx, cookie, "policy-controlled")
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +215,7 @@ func TestEnrollmentPolicyIsRechecked(t *testing.T) {
 	if _, _, err := s.Enroll(ctx, token, "linux", "amd64"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.EnrollmentDecision(ctx, token); !errors.Is(err, identity.ErrUnauthorized) {
+	if _, err := service.EnrollmentDecision(ctx, token); !errors.Is(err, publicidentity.ErrUnauthorized) {
 		t.Fatal("consumed enrollment authorized again", err)
 	}
 }

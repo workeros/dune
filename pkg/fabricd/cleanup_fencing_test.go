@@ -48,9 +48,7 @@ func TestCleanupKeepsInstallationLockUntilOldFilesystemActionDrains(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.registry.ReserveRuntime(t.Context(), key.Target); err != nil {
-		t.Fatal(err)
-	}
+	admitTestRuntime(t, engine.registry, key.Target)
 	_, receipt, err := engine.registry.AcceptLocalForget(t.Context(), key, "original-cleanup", func() (sessionregistry.LocalCleanup, error) {
 		return sessionregistry.LocalCleanup{Runtime: runtime, Directories: []sessionregistry.FileIdentity{identity}}, nil
 	})

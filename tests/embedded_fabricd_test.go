@@ -15,6 +15,7 @@ import (
 
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/api"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
@@ -72,7 +73,7 @@ func TestExternalFabricdHost(t *testing.T) {
 			t.Log(string(output))
 		}
 	}()
-	var client *sdk.Client
+	var client *duneclient.Client
 	for client == nil {
 		client, err = sdk.Dial(ctx, sdk.Options{Gateway: endpoint, Token: "client-token", Target: "machine"})
 		if err == nil {

@@ -24,15 +24,13 @@ func TestStopDispatchBypassesFullOrdinaryEvidenceAndTransportCache(t *testing.T)
 		t.Fatal(err)
 	}
 	var err error
-	d.registry, err = sessionregistry.Open(t.Context(), dir, sessionregistry.Options{MaxKeys: 1})
+	d.registry, err = sessionregistry.Open(t.Context(), dir, sessionregistry.Options{MaxKeys: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
 	key := api.SubmissionKey{SubmissionID: "ordinary", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}}
-	if err := d.registry.ReserveRuntime(t.Context(), key.Target); err != nil {
-		t.Fatal(err)
-	}
+	admitTestRuntime(t, d.registry, key.Target)
 	if _, _, err := d.registry.ClaimKey(t.Context(), key, sessionregistry.Digest("prompt", nil), "host"); err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +99,7 @@ func stopTestProcess(t *testing.T) *process.Process {
 
 func TestStopAccountsForConcurrentReplacementWithoutWaitingForACPInput(t *testing.T) {
 	registry, key := submissionFixture(t)
-	if err := registry.ReserveRuntime(t.Context(), key.Target); err != nil {
-		t.Fatal(err)
-	}
+	admitTestRuntime(t, registry, key.Target)
 	r := &runtime{id: key.Target.RuntimeID, inc: key.Target.RuntimeIncarnation, adapter: "acp", p: stopTestProcess(t), done: make(chan struct{}), subs: map[*subscription]bool{}}
 	r.acp = newACPController(r)
 	r.acp.reconnecting = true

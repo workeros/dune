@@ -16,6 +16,7 @@ import (
 
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -99,7 +100,7 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 	if !g.Online("a") || !g.Online("b") || g.Online("unknown") {
 		t.Fatal("incorrect online routes")
 	}
-	dial := func(target string) *sdk.Client {
+	dial := func(target string) *duneclient.Client {
 		t.Helper()
 		c, err := sdk.Dial(ctx, sdk.Options{Gateway: endpoint, Token: "browser-" + target, Target: target})
 		if err != nil {
@@ -110,7 +111,7 @@ func TestHostedRoutesAndCredentialRoles(t *testing.T) {
 	ca, cb := dial("a"), dial("b")
 	defer ca.Close()
 	defer cb.Close()
-	check := func(c *sdk.Client, target string) {
+	check := func(c *duneclient.Client, target string) {
 		t.Helper()
 		var out struct {
 			Machine string `json:"machine"`

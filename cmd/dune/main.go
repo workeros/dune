@@ -81,7 +81,7 @@ func run() (runErr error) {
 		if initFlags.NArg() == 1 {
 			*listen = initFlags.Arg(0)
 		}
-		return config.InitWithGateway(*configPath, *listen, *endpoint)
+		return config.Init(*configPath, *listen, *endpoint)
 	}
 	if args[0] == "enroll" {
 		enrollFlags := flag.NewFlagSet("enroll", flag.ContinueOnError)
@@ -99,7 +99,7 @@ func run() (runErr error) {
 	defer cancel()
 	machineConfig, err := config.Load(*configPath)
 	if err != nil {
-		return fmt.Errorf("%w; initialize with dune init", err)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 	switch args[0] {
 	case "upgrade-check":

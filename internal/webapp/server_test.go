@@ -141,7 +141,7 @@ func TestHTTPOwnershipAndRevocation(t *testing.T) {
 	}
 	for _, pair := range []struct {
 		token      string
-		own, other Machine
+		own, other metadata.Machine
 	}{{at, ma, mb}, {bt, mb, ma}} {
 		req := httptest.NewRequest("GET", "/api/v1/runners", nil)
 		req.AddCookie(&http.Cookie{Name: cookieName, Value: pair.token})
@@ -237,9 +237,9 @@ func TestFileChangedUsesConflictStatus(t *testing.T) {
 }
 
 func newTestServer(ctx context.Context, options Options, store *metadata.Store, local *identity.Local) (*Server, error) {
-	return NewServer(ctx, options, store, local, authorization.NewLocal(ctx, local, store), gateway.New())
+	return NewServer(ctx, options, store, local, authorization.New(ctx, local, store, nil, nil), gateway.New())
 }
 
 func OpenStore(dir string) (*metadata.Store, error) {
-	return metadata.Open(context.Background(), storage.Config{SQLiteDir: dir})
+	return metadata.Open(context.Background(), storage.Config{SQLiteDir: dir}, metadata.OpenOptions{})
 }

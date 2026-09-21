@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
@@ -62,4 +63,19 @@ func mockACPBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// admitTestRuntime allocates lifecycle capacity through current launch admission.
+func admitTestRuntime(t *testing.T, registry *sessionregistry.Registry, target api.SubmissionTarget) {
+	t.Helper()
+	runtime := api.Runtime{ID: target.RuntimeID, Incarnation: target.RuntimeIncarnation, Generation: target.RuntimeGeneration, State: "starting"}
+	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = "", "", 0
+	key := api.SubmissionKey{SubmissionID: "launch-" + runtime.ID, Target: target}
+	claim, _, err := registry.ClaimKey(t.Context(), key, sessionregistry.Digest("profile.start", nil), "registry:launch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.AcceptLaunch(t.Context(), claim, "launch-"+runtime.Incarnation, runtime); err != nil {
+		t.Fatal(err)
+	}
 }

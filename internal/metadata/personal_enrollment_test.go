@@ -9,6 +9,7 @@ import (
 
 	"github.com/aiomni/dune/internal/authorization"
 	"github.com/aiomni/dune/internal/identity"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 )
@@ -21,7 +22,7 @@ func TestPersonalEnrollmentIdentityCancellationAndExpiry(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			store, err := Open(ctx, config)
+			store, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -31,7 +32,7 @@ func TestPersonalEnrollmentIdentityCancellationAndExpiry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service := authorization.NewLocal(ctx, local, store)
+			service := authorization.New(ctx, local, store, nil, nil)
 			logical, token, _, err := service.IssueEnrollment(ctx, cookie, "pending")
 			if err != nil || logical.ID == "" || logical.Binding != nil {
 				t.Fatal(logical, err)
@@ -50,7 +51,7 @@ func TestPersonalEnrollmentIdentityCancellationAndExpiry(t *testing.T) {
 			if err := service.CancelEnrollment(ctx, cookie, logical.ID); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := store.Enroll(ctx, token, "linux", "amd64"); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, err := store.Enroll(ctx, token, "linux", "amd64"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("cancelled token was accepted", err)
 			}
 			logical, token, _, err = service.IssueEnrollment(ctx, cookie, "enrolled")
@@ -84,7 +85,7 @@ func TestPersonalEnrollmentIdentityCancellationAndExpiry(t *testing.T) {
 			if err := local.Logout(ctx, cookie); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.CancelEnrollmentForSession(ctx, user, replacement.ID, tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
+			if err := store.CancelEnrollmentForSession(ctx, user, replacement.ID, tokenHash(cookie)); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("revoked session cancelled a pending command during commit", err)
 			}
 			if _, err := store.AttachedRunner(ctx, user.ID, replacement.ID); err != nil {

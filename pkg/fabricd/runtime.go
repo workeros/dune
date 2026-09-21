@@ -38,7 +38,6 @@ type subscription struct {
 	queueMu          sync.Mutex
 	queuedMessages   int
 	queuedBytes      int
-	space            chan struct{}
 	conversationOnly bool
 	changed          chan struct{}
 	pendingChange    *api.ACPConversationChanged
@@ -57,7 +56,6 @@ type runtime struct {
 	stopErr                error
 	subs                   map[*subscription]bool
 	exit                   *int
-	failure                string
 	stopReason             string
 	startedAt              *time.Time
 	deadlineAt             *time.Time
@@ -504,8 +502,6 @@ func (r *runtime) failACPReadFrom(connection *process.Process, err error) {
 	r.emit(&pb.Message{Kind: "error", Code: "INVALID_ACP", Detail: err.Error()})
 	r.stop()
 }
-
-func (r *runtime) acceptACPLine(b []byte) bool { return r.acceptACPLineFrom(b, nil) }
 
 func (r *runtime) acceptACPLineFrom(b []byte, connection *process.Process) bool {
 	if r.acp != nil {

@@ -3,7 +3,6 @@ package fabricd
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/aiomni/dune/internal/launchgate"
@@ -12,7 +11,25 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
-func TestUpgradePreflightIncludesLateOriginalLaunchAndLegacyBoundary(t *testing.T) {
+func TestUpgradePreflightRejectsIncompleteState(t *testing.T) {
+	for _, artifact := range []string{"registry", "acp"} {
+		t.Run(artifact, func(t *testing.T) {
+			state := t.TempDir()
+			if err := os.Chmod(state, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(state, artifact), 0700); err != nil {
+				t.Fatal(err)
+			}
+			report := CheckUpgrade(t.Context(), state)
+			if report.Allowed || len(report.Issues) != 1 || report.Issues[0].Code != "REGISTRY_UNAVAILABLE" {
+				t.Fatal("incomplete state was treated as a fresh installation", report)
+			}
+		})
+	}
+}
+
+func TestUpgradePreflightIncludesLateOriginalLaunch(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
 	if report := CheckUpgrade(t.Context(), state); !report.Allowed {
 		t.Fatal(report)
@@ -23,19 +40,6 @@ func TestUpgradePreflightIncludesLateOriginalLaunchAndLegacyBoundary(t *testing.
 	if err := os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := os.OpenFile(filepath.Join(state, "fabricd.lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer legacy.Close()
-	if err := syscall.Flock(int(legacy.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		t.Fatal(err)
-	}
-	report := CheckUpgrade(t.Context(), state)
-	if report.Allowed || len(report.Issues) != 1 || report.Issues[0].Code != "LEGACY_CONNECTOR_REQUIRES_EXPLICIT_TRANSITION" {
-		t.Fatal(report)
-	}
-	legacy.Close()
 	registry, err := sessionregistry.Open(t.Context(), filepath.Join(state, "registry"), sessionregistry.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +55,7 @@ func TestUpgradePreflightIncludesLateOriginalLaunchAndLegacyBoundary(t *testing.
 		if _, err := registry.AcceptLaunch(t.Context(), claim, wire.ID(), pending); err != nil {
 			t.Fatal(err)
 		}
-		report = CheckUpgrade(t.Context(), state)
+		report := CheckUpgrade(t.Context(), state)
 		if protocol == sessionProtocol {
 			if !report.Allowed || len(report.Hosts) != 1 || report.Hosts[0].Phase != "HOST_REGISTRATION_PENDING" {
 				t.Fatal(report)

@@ -1,7 +1,6 @@
 package fabricd
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net"
@@ -24,19 +23,6 @@ func registrationHostTestHelper(args []string) (int, bool) {
 		return 0, false
 	}
 	switch boot.Profile.Env["DUNE_HOST_STARTUP_TEST_FAULT"] {
-	case "unregistered_exit":
-		// Model the previous released host's missing preparation record in a
-		// disposable test registry. Product code never deletes registry evidence.
-		db, err := sql.Open("sqlite", filepath.Join(boot.StateDir, "registry", "registry.sqlite"))
-		if err != nil {
-			return 1, true
-		}
-		_, err = db.Exec(`DELETE FROM session_hosts WHERE instance=?`, boot.Registration.Instance)
-		db.Close()
-		if err != nil {
-			return 2, true
-		}
-		return 1, true
 	case "exit_before_entry":
 		return 1, true
 	case "corrupt_bootstrap":

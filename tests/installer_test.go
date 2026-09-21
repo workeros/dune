@@ -28,6 +28,7 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/sdk"
 )
@@ -222,7 +223,7 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 	must(t, err)
 	address := listener.Addr().String()
 	listener.Close()
-	must(t, config.Init(fixture.path, address))
+	must(t, config.Init(fixture.path, address, ""))
 	fixture.cfg, err = config.Load(fixture.path)
 	must(t, err)
 	gateway := launchHostTestProcess(t, log, "--config", fixture.path, "gateway")
@@ -437,7 +438,7 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 		if version == "fixture-new" {
 			profile := profile(t.TempDir(), "acp", mock)
 			profile.ManagedACP = true
-			var stream *sdk.Stream
+			var stream *duneclient.Stream
 			newer, stream, err = testStartProfile(client, f.ctx, profile)
 			must(t, err)
 			stream.Close()
@@ -513,7 +514,7 @@ func (f *installerFixture) repair() string {
 	return current
 }
 
-func (f *installerFixture) dial() *sdk.Client {
+func (f *installerFixture) dial() *duneclient.Client {
 	f.t.Helper()
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
 		client, err := sdk.Dial(f.ctx, sdk.Options{Gateway: f.cfg.Gateway, Token: f.cfg.Token, Target: f.cfg.Target})

@@ -15,6 +15,7 @@ import (
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/gateway"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/workbench"
 )
@@ -22,7 +23,7 @@ import (
 type workbenchFixture struct {
 	server        *Server
 	store         *metadata.Store
-	users         []identity.User
+	users         []publicidentity.User
 	tokens        []string
 	owner, prefix string
 }
@@ -45,14 +46,14 @@ func newWorkbenchFixture(t *testing.T, tenant bool) *workbenchFixture {
 		f.tokens = append(f.tokens, token)
 	}
 	f.owner = f.users[0].ID
-	authorizer := authorization.NewLocal(t.Context(), local, store)
+	authorizer := authorization.New(t.Context(), local, store, nil, nil)
 	if tenant {
 		f.owner, f.prefix = "tenant-a", "/api/v1/tenants/tenant-a"
 		checker := unbindPolicyFunc(func(_ context.Context, request access.Request) (access.Decision, error) {
 			allowed := request.OwnerID == f.owner && request.PrincipalID != f.users[2].ID
 			return access.Decision{Allowed: allowed, Reason: "TENANT_MEMBERSHIP", ID: request.RequestID, ValidUntil: time.Now().Add(access.MaxLease)}, nil
 		})
-		authorizer = authorization.New(t.Context(), local, store, checker)
+		authorizer = authorization.New(t.Context(), local, store, checker, nil)
 	}
 	f.server, err = NewServer(t.Context(), Options{PublicURL: "http://dune.test/", DialGateway: noGateway, TenantScoped: tenant}, store, local, authorizer, gateway.New())
 	if err != nil {

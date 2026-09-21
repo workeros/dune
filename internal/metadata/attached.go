@@ -12,9 +12,9 @@ import (
 	"unicode"
 
 	"github.com/aiomni/dune/internal/authorization"
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 )
 
@@ -205,32 +205,6 @@ func (s *Store) Enroll(ctx context.Context, token, osName, arch string) (Machine
 	return machine, credential, nil
 }
 
-func (s *Store) Machines(ctx context.Context, userID string) ([]Machine, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT machine_id,id,name,os,arch,created_at FROM dune_runners WHERE owner_id=$1 AND enabled=TRUE AND machine_id IS NOT NULL ORDER BY created_at,machine_id`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Machine{}
-	for rows.Next() {
-		var machine Machine
-		if err := rows.Scan(&machine.ID, &machine.RunnerID, &machine.Name, &machine.OS, &machine.Arch, &machine.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, machine)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) Owns(ctx context.Context, userID, machineID string) (bool, error) {
-	var found int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM dune_runners WHERE machine_id=$1 AND owner_id=$2 AND enabled=TRUE`, machineID, userID).Scan(&found)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 func (s *Store) MachineCredential(ctx context.Context, token string) (string, error) {
 	if len(token) != 64 {
 		return "", identity.ErrUnauthorized
@@ -410,11 +384,6 @@ func (s *Store) EnrollmentIdentity(ctx context.Context, token string) (identity.
 		err = identity.ErrUnauthorized
 	}
 	return user, ownerID, kind, err
-}
-
-func (s *Store) EnrollmentUser(ctx context.Context, token string) (identity.User, error) {
-	user, _, _, err := s.EnrollmentIdentity(ctx, token)
-	return user, err
 }
 
 func (s *Store) RevokeAuthorized(ctx context.Context, user identity.User, sessionHash string, expected authorization.Resource) error {

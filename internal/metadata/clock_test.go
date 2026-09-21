@@ -59,12 +59,12 @@ func TestPostgresDirectoryDatabaseClockDisturbance(t *testing.T) {
 	config, clock := postgresClockConfig(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	first, err := Open(ctx, config)
+	first, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	second, err := Open(ctx, config)
+	second, err := Open(ctx, config, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

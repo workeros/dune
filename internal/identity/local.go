@@ -18,23 +18,11 @@ import (
 	public "github.com/aiomni/dune/pkg/identity"
 )
 
-var (
-	ErrInvalidArgument      = public.ErrInvalidArgument
-	ErrUnauthorized         = public.ErrUnauthorized
-	ErrRegistrationDisabled = public.ErrRegistrationDisabled
-	ErrSessionLimit         = public.ErrSessionLimit
-	ErrLoginLimit           = public.ErrLoginLimit
-)
-
 const SessionLifetime = 7 * 24 * time.Hour
 const maxSessions = 32
 
-type User = public.User
-type Authentication = public.Authentication
-type Service = public.Service
-
 type Account struct {
-	User
+	public.User
 	Salt         string `json:"salt"`
 	PasswordHash string `json:"password_hash"`
 }
@@ -45,7 +33,7 @@ type Repository interface {
 	RegisterAccount(context.Context, Account, string, int64) error
 	ReadAccount(context.Context, string) (Account, error)
 	CreateSession(context.Context, string, string, int64, int) error
-	ReadSession(context.Context, string, int64) (Authentication, error)
+	ReadSession(context.Context, string, int64) (public.Authentication, error)
 	DeleteSession(context.Context, string) error
 }
 
@@ -81,51 +69,51 @@ func normalizedEmail(email string) (string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	address, err := mail.ParseAddress(email)
 	if err != nil || address.Address != email || len(email) > 254 {
-		return "", fmt.Errorf("%w: valid email address required", ErrInvalidArgument)
+		return "", fmt.Errorf("%w: valid email address required", public.ErrInvalidArgument)
 	}
 	return email, nil
 }
 
-func (l *Local) Register(ctx context.Context, email, password string) (User, string, error) {
+func (l *Local) Register(ctx context.Context, email, password string) (public.User, string, error) {
 	if !l.registration {
-		return User{}, "", ErrRegistrationDisabled
+		return public.User{}, "", public.ErrRegistrationDisabled
 	}
 	if err := ctx.Err(); err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	email, err := normalizedEmail(email)
 	if err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	if len(password) < 12 || len(password) > 256 {
-		return User{}, "", fmt.Errorf("%w: password must be 12..256 bytes", ErrInvalidArgument)
+		return public.User{}, "", fmt.Errorf("%w: password must be 12..256 bytes", public.ErrInvalidArgument)
 	}
-	account := Account{User: User{ID: wire.ID(), Email: email}, Salt: wire.ID()}
+	account := Account{User: public.User{ID: wire.ID(), Email: email}, Salt: wire.ID()}
 	account.PasswordHash, err = passwordHash(password, account.Salt)
 	if err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	token := wire.ID() + wire.ID()
 	if err := l.store.RegisterAccount(ctx, account, digest(token), time.Now().Add(SessionLifetime).Unix()); err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	return account.User, token, nil
 }
 
-func (l *Local) Login(ctx context.Context, email, password string) (User, string, error) {
+func (l *Local) Login(ctx context.Context, email, password string) (public.User, string, error) {
 	if err := ctx.Err(); err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	if len(password) > 256 {
-		return User{}, "", ErrUnauthorized
+		return public.User{}, "", public.ErrUnauthorized
 	}
 	email, err := normalizedEmail(email)
 	if err != nil {
-		return User{}, "", ErrUnauthorized
+		return public.User{}, "", public.ErrUnauthorized
 	}
 	account, err := l.store.ReadAccount(ctx, email)
-	if err != nil && !errors.Is(err, ErrUnauthorized) {
-		return User{}, "", err
+	if err != nil && !errors.Is(err, public.ErrUnauthorized) {
+		return public.User{}, "", err
 	}
 	salt := account.Salt
 	if salt == "" {
@@ -133,28 +121,28 @@ func (l *Local) Login(ctx context.Context, email, password string) (User, string
 	}
 	hash, err := passwordHash(password, salt)
 	if err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	if account.ID == "" || subtle.ConstantTimeCompare([]byte(hash), []byte(account.PasswordHash)) != 1 {
-		return User{}, "", ErrUnauthorized
+		return public.User{}, "", public.ErrUnauthorized
 	}
 	token := wire.ID() + wire.ID()
 	if err := l.store.CreateSession(ctx, account.ID, digest(token), time.Now().Add(SessionLifetime).Unix(), maxSessions); err != nil {
-		return User{}, "", err
+		return public.User{}, "", err
 	}
 	return account.User, token, nil
 }
 
-func (l *Local) Authenticate(ctx context.Context, token string) (Authentication, error) {
+func (l *Local) Authenticate(ctx context.Context, token string) (public.Authentication, error) {
 	if len(token) != 64 {
-		return Authentication{}, ErrUnauthorized
+		return public.Authentication{}, public.ErrUnauthorized
 	}
 	authenticated, err := l.store.ReadSession(ctx, digest(token), time.Now().Unix())
 	if err == nil && ctx.Err() != nil {
-		return Authentication{}, ctx.Err()
+		return public.Authentication{}, ctx.Err()
 	}
 	if err == nil && (authenticated.User.Namespace != "" || !authenticated.Valid()) {
-		return Authentication{}, ErrUnauthorized
+		return public.Authentication{}, public.ErrUnauthorized
 	}
 	return authenticated, err
 }

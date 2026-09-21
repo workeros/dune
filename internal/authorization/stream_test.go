@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/identity"
 )
 
 type streamSessions struct {
@@ -47,7 +47,7 @@ func streamCheckFixture() (*Service, *streamSessions, *streamRepository, Connect
 	checker := streamHostChecker(func(_ context.Context, r access.Request) (access.Decision, error) {
 		return access.Decision{Allowed: true, ID: r.RequestID, Reason: "HOST_ALLOW", ValidUntil: time.Now().Add(time.Minute)}, nil
 	})
-	service := New(context.Background(), sessions, repository, checker)
+	service := New(context.Background(), sessions, repository, checker, nil)
 	record := ConnectionAccess{Session: "cookie", PrincipalID: user.ID, PrincipalKind: user.Kind, Namespace: user.Namespace, Subject: user.Subject, Target: "machine", RunnerID: "runner", FabricID: "attached", BindingRevision: 1, OwnerID: "tenant"}
 	return service, sessions, repository, record
 }

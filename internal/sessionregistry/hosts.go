@@ -3,9 +3,7 @@ package sessionregistry
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/aiomni/dune/pkg/api"
@@ -44,14 +42,13 @@ func (r *Registry) RegisterHost(ctx context.Context, host HostRecord) error {
 	}
 
 	existing, err := scanHost(tx.QueryRowContext(ctx, `SELECT `+hostColumns+` FROM session_hosts h WHERE target=?`, encodeTarget(host.Target)))
-	if err == nil {
-		if existing.Phase != "validating" || existing.Instance != host.Instance || existing.PID != host.PID || existing.BootID != host.BootID || !bytes.Equal(existing.Registration, host.Registration) || existing.Resources.Directory != host.Resources.Directory || existing.Resources.Socket.Path != host.Resources.Socket.Path {
-			return conflict()
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE session_hosts SET runtime=?,resources=?,phase='active' WHERE target=?`, api.Payload(host.Runtime), api.Payload(host.Resources), encodeTarget(host.Target))
-	} else if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, `INSERT INTO session_hosts(target,instance,boot_id,pid,runtime,registration,resources) VALUES(?,?,?,?,?,?,?)`, encodeTarget(host.Target), host.Instance, host.BootID, host.PID, api.Payload(host.Runtime), host.Registration, api.Payload(host.Resources))
+	if err != nil {
+		return err
 	}
+	if existing.Phase != "validating" || existing.Instance != host.Instance || existing.PID != host.PID || existing.BootID != host.BootID || !bytes.Equal(existing.Registration, host.Registration) || existing.Resources.Directory != host.Resources.Directory || existing.Resources.Socket.Path != host.Resources.Socket.Path {
+		return conflict()
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE session_hosts SET runtime=?,resources=?,phase='active' WHERE target=?`, api.Payload(host.Runtime), api.Payload(host.Resources), encodeTarget(host.Target))
 	if err != nil {
 		return err
 	}

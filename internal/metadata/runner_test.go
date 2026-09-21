@@ -20,7 +20,7 @@ func TestRunnerBindingSnapshot(t *testing.T) {
 			if backend == "postgres" {
 				cfg, _, _ = postgresConfig(t)
 			}
-			s, err := Open(ctx, cfg)
+			s, err := Open(ctx, cfg, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

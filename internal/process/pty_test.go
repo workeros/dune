@@ -184,9 +184,8 @@ func TestPTYTimeoutTERMThenKILL(t *testing.T) {
 			if state.StopReason != "timed_out" || *state.ExitCode != tc.exit {
 				t.Fatalf("timeout termination: %+v; output: %s", state, h.output.text())
 			}
-			if !strings.Contains(h.output.text(), "TERM_") {
-				t.Fatal("TERM was not delivered before KILL", h.output.text())
-			}
+			// The state file and PTY reader complete independently.
+			waitPTYTest(t, func() bool { return strings.Contains(h.output.text(), "TERM_") })
 		})
 	}
 }

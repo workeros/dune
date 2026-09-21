@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 )
 
@@ -21,7 +22,7 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 				config, _, _ = postgresConfig(t)
 			}
 			ctx := context.Background()
-			s, err := Open(ctx, config)
+			s, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -38,7 +39,7 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, email := range []string{user.Email, "missing@example.test"} {
-				if _, _, err := local.Login(ctx, email, "wrong-password"); !errors.Is(err, identity.ErrUnauthorized) {
+				if _, _, err := local.Login(ctx, email, "wrong-password"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 					t.Fatal("incorrect password or nonexistent user authenticated", err)
 				}
 			}
@@ -69,7 +70,7 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, _, err := local.Login(ctx, user.Email, password); !errors.Is(err, identity.ErrSessionLimit) {
+			if _, _, err := local.Login(ctx, user.Email, password); !errors.Is(err, publicidentity.ErrSessionLimit) {
 				t.Fatalf("local session limit: %v", err)
 			}
 			if err := local.Logout(ctx, cookie); err != nil {
@@ -88,10 +89,10 @@ func TestLocalIdentityPolicyOnSQL(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, _, err := s.Enroll(ctx, enrollment, "linux", "amd64"); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, err := s.Enroll(ctx, enrollment, "linux", "amd64"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("expired enrollment accepted", err)
 			}
-			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("expired session accepted", err)
 			}
 			if _, _, err := local.Login(ctx, user.Email, password); err != nil {

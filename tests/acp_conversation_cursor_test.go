@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/aiomni/dune/pkg/api"
-	"github.com/aiomni/dune/pkg/sdk"
+	duneclient "github.com/aiomni/dune/pkg/client"
 )
 
 func TestACPConversationIndependentCursorsAcrossConnections(t *testing.T) {
@@ -65,7 +65,7 @@ func TestACPConversationIndependentCursorsAcrossConnections(t *testing.T) {
 	results := make(chan response, 6)
 	var group sync.WaitGroup
 	start := make(chan struct{})
-	for _, client := range []*sdk.Client{first, second, first, second, first, second} {
+	for _, client := range []*duneclient.Client{first, second, first, second, first, second} {
 		group.Go(func() {
 			<-start
 			page, err := client.ReadACPConversation(h.ctx, runtime, api.ACPConversationRead{Cursor: latest.NextCursor, Limit: &two})

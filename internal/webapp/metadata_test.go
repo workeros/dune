@@ -12,6 +12,7 @@ import (
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/metadata"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 )
 
 func TestMetadataFailureResponses(t *testing.T) {
@@ -24,7 +25,7 @@ func TestMetadataFailureResponses(t *testing.T) {
 		{errors.New("private driver details"), 503, "METADATA_UNAVAILABLE"},
 		{metadata.ErrConflict, 409, "CONFLICT"},
 		{metadata.ErrNotFound, 404, "NOT_FOUND"},
-		{identity.ErrUnauthorized, 401, "UNAUTHORIZED"},
+		{publicidentity.ErrUnauthorized, 401, "UNAUTHORIZED"},
 	} {
 		r := httptest.NewRecorder()
 		writeMetadataError(r, tc.err)

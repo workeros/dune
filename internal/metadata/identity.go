@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/aiomni/dune/internal/identity"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 )
 
 var _ identity.Repository = (*Store)(nil)
 
 func (s *Store) lockUser(ctx context.Context, tx *sql.Tx, id string) error {
 	if !s.localIdentity {
-		return identity.ErrUnauthorized
+		return publicidentity.ErrUnauthorized
 	}
 	query := `SELECT id FROM dune_users WHERE id=$1 AND enabled=TRUE`
 	if s.postgres {
@@ -22,14 +23,14 @@ func (s *Store) lockUser(ctx context.Context, tx *sql.Tx, id string) error {
 	var found string
 	err := tx.QueryRowContext(ctx, query, id).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
-		return identity.ErrUnauthorized
+		return publicidentity.ErrUnauthorized
 	}
 	return err
 }
 
 func (s *Store) RegisterAccount(ctx context.Context, account identity.Account, hash string, expires int64) error {
 	if !s.localIdentity {
-		return identity.ErrRegistrationDisabled
+		return publicidentity.ErrRegistrationDisabled
 	}
 	return s.transaction(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO dune_users(id,email,salt,password_hash) VALUES($1,$2,$3,$4)`, account.ID, account.Email, account.Salt, account.PasswordHash); err != nil {
@@ -43,11 +44,11 @@ func (s *Store) RegisterAccount(ctx context.Context, account identity.Account, h
 func (s *Store) ReadAccount(ctx context.Context, email string) (identity.Account, error) {
 	var account identity.Account
 	if !s.localIdentity {
-		return account, identity.ErrUnauthorized
+		return account, publicidentity.ErrUnauthorized
 	}
 	err := s.db.QueryRowContext(ctx, `SELECT id,email,salt,password_hash FROM dune_users WHERE email=$1 AND enabled=TRUE`, email).Scan(&account.ID, &account.Email, &account.Salt, &account.PasswordHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = identity.ErrUnauthorized
+		err = publicidentity.ErrUnauthorized
 	}
 	return account, err
 }
@@ -66,22 +67,22 @@ func (s *Store) CreateSession(ctx context.Context, id, hash string, expires int6
 			return err
 		}
 		if count >= limit {
-			return identity.ErrSessionLimit
+			return publicidentity.ErrSessionLimit
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO dune_sessions(hash,user_id,expires_at,auth_version) SELECT $1,id,$3,auth_version FROM dune_users WHERE id=$2 AND enabled=TRUE`, hash, id, expires)
 		return err
 	})
 }
 
-func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (identity.Authentication, error) {
-	var authenticated identity.Authentication
+func (s *Store) ReadSession(ctx context.Context, hash string, now int64) (publicidentity.Authentication, error) {
+	var authenticated publicidentity.Authentication
 	var expires int64
 	if !s.localIdentity {
-		return authenticated, identity.ErrUnauthorized
+		return authenticated, publicidentity.ErrUnauthorized
 	}
 	err := s.db.QueryRowContext(ctx, `SELECT u.id,u.email,s.expires_at FROM dune_sessions s JOIN dune_users u ON u.id=s.user_id WHERE s.hash=$1 AND s.expires_at>$2 AND u.enabled=TRUE AND s.auth_version=u.auth_version`, hash, now).Scan(&authenticated.User.ID, &authenticated.User.Email, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = identity.ErrUnauthorized
+		err = publicidentity.ErrUnauthorized
 	}
 	authenticated.ExpiresAt = time.Unix(expires, 0)
 	return authenticated, err
@@ -145,7 +146,7 @@ func (s *Store) checkLocalSession(ctx context.Context, tx *sql.Tx, userID, hash 
 	var found string
 	err := tx.QueryRowContext(ctx, query, hash, userID, time.Now().Unix()).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
-		return identity.ErrUnauthorized
+		return publicidentity.ErrUnauthorized
 	}
 	return err
 }

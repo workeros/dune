@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/aiomni/dune/internal/metadata"
 	"io"
 	"net/http"
 	"os"
@@ -73,10 +74,10 @@ func EnrollMachine(ctx context.Context, path, site, token, certificate, runnerID
 	}
 	defer response.Body.Close()
 	var result struct {
-		Machine    Machine `json:"machine"`
-		Credential string  `json:"credential"`
-		Gateway    string  `json:"gateway"`
-		Error      string  `json:"error"`
+		Machine    metadata.Machine `json:"machine"`
+		Credential string           `json:"credential"`
+		Gateway    string           `json:"gateway"`
+		Error      string           `json:"error"`
 	}
 	if err = json.NewDecoder(io.LimitReader(response.Body, 256*1024)).Decode(&result); err != nil {
 		return unknown(fmt.Errorf("invalid binding response: %w", err))

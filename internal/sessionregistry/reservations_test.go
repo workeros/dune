@@ -10,13 +10,23 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
+func reserveTestRuntime(ctx context.Context, r *Registry, target api.SubmissionTarget) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := reserveRuntime(ctx, tx, target); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func TestStopAdmissionIsAtomicAndUsesOnlyItsOwnReservation(t *testing.T) {
 	dir := privateDirectory(t)
-	r := openRegistry(t, dir, 1)
+	r := openRegistry(t, dir, 2)
 	key := testKey()
-	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
-		t.Fatal(err)
-	}
+	registerCleanupHost(t, r, key.Target)
 	if _, _, err := r.ClaimKey(t.Context(), key, Digest("prompt", nil), "host"); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +63,6 @@ func TestStopAdmissionIsAtomicAndUsesOnlyItsOwnReservation(t *testing.T) {
 	_, _, err := r.AcceptStop(t.Context(), key, Digest("runtime.stop", nil), "host", "another-ref")
 	requireCode(t, err, "CONTROL_UNAVAILABLE")
 	key.SubmissionID = "forget"
-	registerCleanupHost(t, r, key.Target)
 	if acquired, _, err := r.AcceptForget(t.Context(), key, "cleanup", verifyExited); err != nil || !acquired {
 		t.Fatal("stop consumed the independent cleanup reservation", err)
 	}
@@ -66,7 +75,7 @@ func TestProtectedReservationsSurviveOrdinaryAndOtherControlExhaustion(t *testin
 	}
 	defer r.Close()
 	key := testKey()
-	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
+	if err := reserveTestRuntime(t.Context(), r, key.Target); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.ReserveControl(t.Context(), key.Target, ControlCancel, "operation"); err != nil {
@@ -115,7 +124,7 @@ func TestProtectedReservationsSurviveOrdinaryAndOtherControlExhaustion(t *testin
 func TestInvalidControlsCannotConsumeAnotherTargetsReservedAnswer(t *testing.T) {
 	r := openRegistry(t, privateDirectory(t), 1)
 	key := testKey()
-	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
+	if err := reserveTestRuntime(t.Context(), r, key.Target); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.ReserveControl(t.Context(), key.Target, ControlPermission, "valid"); err != nil {
@@ -190,7 +199,7 @@ func TestLaunchAndForgetEvidenceOutliveRuntimeResources(t *testing.T) {
 		}
 		job.Confirmed++
 	}
-	if err := r.ReserveRuntime(t.Context(), key.Target); err == nil {
+	if err := reserveTestRuntime(t.Context(), r, key.Target); err == nil {
 		t.Fatal("forgotten Runtime identity was reused")
 	}
 	if _, err := r.Progress(t.Context(), key, "cleanup-original", "cleaning", "", nil); err == nil {

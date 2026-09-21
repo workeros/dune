@@ -3,7 +3,7 @@ package authorization
 import (
 	"context"
 
-	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/pkg/identity"
 
 	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/runner"

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
 import folderIcon from "@iconify-icons/ri/folder-open-line";
-import refreshIcon from "@iconify-icons/ri/refresh-line";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
 import { call, errorText, type Page, type Binding } from "../lib/api";

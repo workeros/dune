@@ -85,53 +85,6 @@ func TestFailedACPStartupRetainsOriginalReceiptAndCanBeRetired(t *testing.T) {
 	}
 }
 
-func TestUnregisteredFailedStartupIsRetiredOnlyByExplicitLifecycle(t *testing.T) {
-	for _, operation := range []string{"stop", "forget"} {
-		t.Run(operation, func(t *testing.T) {
-			h := newCleanupProcessHarness(t)
-			h.start("")
-			key := cleanupTestKey(api.Runtime{}, "earlier-launch")
-			key.Target.RuntimeID, key.Target.RuntimeIncarnation, key.Target.RuntimeGeneration = "", "", 0
-			request := api.StartRequest{SubmissionKey: key, Profile: api.Profile{Version: 1, Kind: "agent", Adapter: "acp", WorkingDirectory: t.TempDir(), Start: api.Command{Argv: []string{"/bin/cat"}}, Env: map[string]string{"DUNE_HOST_STARTUP_TEST_FAULT": "unregistered_exit"}}}
-			_, stream, err := h.client.Start(h.ctx, request)
-			if stream != nil {
-				stream.Close()
-			}
-			if err == nil || !strings.Contains(err.Error(), "RESULT_UNKNOWN") {
-				t.Fatal(err)
-			}
-			before, err := h.client.QuerySubmission(h.ctx, key)
-			if err != nil || before.Stage != "host_starting" || before.Admission != api.SubmissionAccepted || before.Runtime == nil {
-				t.Fatal(before, err)
-			}
-			h.kill()
-			h.start("")
-			for range 3 {
-				current, err := h.client.QuerySubmission(h.ctx, key)
-				if err != nil || !reflect.DeepEqual(before, current) {
-					t.Fatal("query changed unproven original", current, err)
-				}
-			}
-			if operation == "stop" {
-				if err := testStopRuntime(h.client, h.ctx, *before.Runtime); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err := testForgetRuntime(h.client, h.ctx, *before.Runtime); err != nil {
-				t.Fatal(err)
-			}
-			assertStartupCapacity(t, h, 0)
-			after, err := h.client.QuerySubmission(h.ctx, key)
-			if err != nil || after.Admission != api.SubmissionAccepted || after.Stage != "failed" || after.ErrorCode != "HOST_EXITED_BEFORE_ENTRY" || after.OperationRef != before.OperationRef || after.SubmissionKey != key || after.Runtime.ID != before.Runtime.ID || after.Runtime.Incarnation != before.Runtime.Incarnation {
-				t.Fatal(after, err)
-			}
-			if _, err := os.Stat(filepath.Join(h.state, "acp", "runtimes", before.Runtime.ID)); !os.IsNotExist(err) {
-				t.Fatal("original directory not removed", err)
-			}
-		})
-	}
-}
-
 func assertStartupCapacity(t *testing.T, h *cleanupProcessHarness, want int) {
 	t.Helper()
 	var info api.MachineInfo

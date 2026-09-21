@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/access"
+	"github.com/aiomni/dune/pkg/identity"
 )
 
 func earliest(first time.Time, rest ...time.Time) time.Time {

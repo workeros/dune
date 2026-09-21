@@ -15,6 +15,7 @@ import (
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/sdk"
 	"gopkg.in/yaml.v3"
 )
@@ -28,7 +29,7 @@ func TestInputLeaseSurvivesProcessPause(t *testing.T) {
 	address := listener.Addr().String()
 	listener.Close()
 	path := filepath.Join(dir, "config.yaml")
-	must(t, config.Init(path, address))
+	must(t, config.Init(path, address, ""))
 	cfg, err := config.Load(path)
 	must(t, err)
 	cfg.SessionDir = filepath.Join(dir, "sessions")
@@ -60,7 +61,7 @@ func TestInputLeaseSurvivesProcessPause(t *testing.T) {
 		must(t, err)
 		must(t, server.Close())
 	})
-	dial := func() *sdk.Client {
+	dial := func() *duneclient.Client {
 		t.Helper()
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {

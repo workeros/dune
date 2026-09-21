@@ -32,6 +32,11 @@ func TestStartupFailureNeedsProofAndFencesLateRegistration(t *testing.T) {
 	if err := r.PrepareHost(t.Context(), host); err != nil {
 		t.Fatal(err)
 	}
+	unentered := host
+	unentered.PID, unentered.Resources.Socket.Inode = 1234, 2
+	if err := r.RegisterHost(t.Context(), unentered); err == nil {
+		t.Fatal("prepared host registered without entering validation")
+	}
 	if err := r.StartupProgress(t.Context(), target, host.Instance, "host_pending", true); err != nil {
 		t.Fatal(err)
 	}

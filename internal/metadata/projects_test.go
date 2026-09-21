@@ -18,7 +18,7 @@ func TestProjectsPersistAndCompareRevision(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			store, err := Open(t.Context(), config)
+			store, err := Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -46,7 +46,7 @@ func TestProjectsPersistAndCompareRevision(t *testing.T) {
 
 			peer := store
 			if backend == "postgres" {
-				peer, err = Open(t.Context(), config)
+				peer, err = Open(t.Context(), config, OpenOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -75,7 +75,7 @@ func TestProjectsPersistAndCompareRevision(t *testing.T) {
 			if err := store.Close(); err != nil {
 				t.Fatal(err)
 			}
-			store, err = Open(t.Context(), config)
+			store, err = Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

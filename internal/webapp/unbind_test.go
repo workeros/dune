@@ -49,7 +49,7 @@ func TestUserUnbindRoutesShareAuthoritativePolicy(t *testing.T) {
 		}
 		return access.Decision{Allowed: allowed, ID: request.RequestID, Reason: "HOST_POLICY", ValidUntil: time.Now().Add(access.MaxLease)}, nil
 	})
-	server, err := NewServer(ctx, Options{PublicURL: "http://dune.test/", TenantScoped: true, DialGateway: noGateway}, store, local, authorization.New(ctx, local, store, checker), gateway.New())
+	server, err := NewServer(ctx, Options{PublicURL: "http://dune.test/", TenantScoped: true, DialGateway: noGateway}, store, local, authorization.New(ctx, local, store, checker, nil), gateway.New())
 	if err != nil {
 		t.Fatal(err)
 	}

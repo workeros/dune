@@ -44,22 +44,14 @@ type OpenOptions struct {
 	ExternalIdentity bool
 }
 
-func Open(ctx context.Context, config storage.Config, options ...OpenOptions) (*Store, error) {
-	if len(options) > 1 {
-		return nil, fmt.Errorf("at most one metadata option set is allowed")
-	}
-	local := len(options) == 0 || !options[0].ExternalIdentity
-	return open(ctx, config, local)
-}
-
-func open(ctx context.Context, config storage.Config, localIdentity bool) (*Store, error) {
+func Open(ctx context.Context, config storage.Config, options OpenOptions) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if (config.SQLiteDir == "") == (config.Postgres == nil) {
 		return nil, fmt.Errorf("choose exactly one SQLite or PostgreSQL backend")
 	}
-	s := &Store{postgres: config.Postgres != nil, localIdentity: localIdentity}
+	s := &Store{postgres: config.Postgres != nil, localIdentity: !options.ExternalIdentity}
 	var err error
 	if s.postgres {
 		options := config.Postgres

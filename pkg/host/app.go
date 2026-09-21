@@ -170,7 +170,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	if options.Observer != nil {
 		core.SetObserver(observer.emit)
 	}
-	authorizer := authorization.NewObserved(ctx, service, store, options.AccessChecker, accessObservation(observer))
+	authorizer := authorization.New(ctx, service, store, options.AccessChecker, accessObservation(observer))
 	var online func(context.Context, []string) (map[string]bool, error)
 	var peerHandler http.Handler
 	if transport != nil {

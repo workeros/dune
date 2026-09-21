@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
-	"github.com/aiomni/dune/pkg/sdk"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/transport/ws"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
@@ -270,7 +270,7 @@ func TestSlowConsumerIsolation(t *testing.T) {
 }
 func TestMixedLoad(t *testing.T) {
 	h := start(t)
-	var streams []*sdk.Stream
+	var streams []*duneclient.Stream
 	var runtimes []api.Runtime
 	var rawClients []*rawACPTestClient
 	for _, adapter := range []string{"pty", "pty", "acp", "acp"} {

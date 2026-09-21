@@ -57,7 +57,7 @@ func TestPersistentPathResolvesParentAliases(t *testing.T) {
 func TestInstallationRejectsAliasedReleaseDirectory(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.yaml")
-	if err := config.Init(configPath, "127.0.0.1:7443"); err != nil {
+	if err := config.Init(configPath, "127.0.0.1:7443", ""); err != nil {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()

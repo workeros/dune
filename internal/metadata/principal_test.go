@@ -10,6 +10,7 @@ import (
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/internal/wire"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 )
 
@@ -21,7 +22,7 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			s, err := Open(ctx, config)
+			s, err := Open(ctx, config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,7 +68,7 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			}
 			other := s
 			if backend == "postgres" {
-				other, err = Open(ctx, config)
+				other, err = Open(ctx, config, OpenOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -77,7 +78,7 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			for range 8 {
 				wg.Go(func() {
 					err := other.CreateSession(ctx, user.ID, tokenHash(wire.ID()), time.Now().Add(time.Hour).Unix(), 32)
-					if err != nil && !errors.Is(err, identity.ErrUnauthorized) {
+					if err != nil && !errors.Is(err, publicidentity.ErrUnauthorized) {
 						t.Error(err)
 					}
 				})
@@ -93,13 +94,13 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			if err := s.db.QueryRow(`SELECT COUNT(*) FROM dune_sessions WHERE user_id=$1`, user.ID).Scan(&count); err != nil || count != 0 {
 				t.Fatal("concurrent login survived suspension", err)
 			}
-			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("suspended cookie accepted", err)
 			}
-			if _, _, err := local.Login(ctx, user.Email, "suspend-test-password"); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, err := local.Login(ctx, user.Email, "suspend-test-password"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("suspended password accepted", err)
 			}
-			if _, _, _, err := s.IssueEnrollmentForSession(ctx, user, "new machine", tokenHash(cookie)); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, _, err := s.IssueEnrollmentForSession(ctx, user, "new machine", tokenHash(cookie)); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("suspended user created enrollment", err)
 			}
 			if id, err := other.MachineCredential(ctx, credential); err != nil || id != machine.ID {
@@ -116,17 +117,17 @@ func TestLocalUserSuspensionTransactions(t *testing.T) {
 			if err := s.db.QueryRow(`SELECT auth_version FROM dune_users WHERE id=$1`, user.ID).Scan(&version); err != nil || version != 3 {
 				t.Fatal("state changes did not advance version exactly once", err)
 			}
-			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("re-enabling revived old cookie", err)
 			}
-			if _, _, err := s.Enroll(ctx, pending, "linux", "amd64"); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, _, err := s.Enroll(ctx, pending, "linux", "amd64"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("re-enabling revived an old installation token", err)
 			}
 			// Even a retained old session row cannot cross a principal version.
 			if _, err := s.db.Exec(`INSERT INTO dune_sessions(hash,user_id,expires_at,auth_version) VALUES($1,$2,$3,1)`, tokenHash(cookie), user.ID, time.Now().Add(time.Hour).Unix()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := local.Authenticate(ctx, cookie); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("stale session version accepted", err)
 			}
 			if _, _, err := local.Login(ctx, user.Email, "suspend-test-password"); err != nil {

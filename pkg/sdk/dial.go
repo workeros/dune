@@ -1,9 +1,12 @@
+// Package sdk dials Dune Gateways over authenticated WebSocket connections.
+// Execution types and the transport-independent Connect entry point live in pkg/client.
 package sdk
 
 import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/transport/ws"
 	"net/url"
 )
@@ -13,7 +16,7 @@ type Options struct {
 	TLSConfig              *tls.Config
 }
 
-func Dial(ctx context.Context, o Options) (*Client, error) {
+func Dial(ctx context.Context, o Options) (*client.Client, error) {
 	u, e := url.Parse(o.Gateway)
 	if e != nil || u == nil || (u.Scheme != "ws" && u.Scheme != "wss") {
 		return nil, fmt.Errorf("Gateway must use ws:// or wss://")
@@ -25,5 +28,5 @@ func Dial(ctx context.Context, o Options) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	return Connect(ctx, conn, o.Target)
+	return client.Connect(ctx, conn, o.Target)
 }

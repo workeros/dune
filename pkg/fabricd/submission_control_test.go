@@ -18,15 +18,13 @@ func reservedController(t *testing.T) (*acpController, <-chan queuedRPC, *sessio
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	registry, err := sessionregistry.Open(t.Context(), dir, sessionregistry.Options{MaxKeys: 1, MaxControls: 1})
+	registry, err := sessionregistry.Open(t.Context(), dir, sessionregistry.Options{MaxKeys: 2, MaxControls: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { registry.Close() })
 	key := api.SubmissionKey{SubmissionID: "prompt", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}}
-	if err := registry.ReserveRuntime(t.Context(), key.Target); err != nil {
-		t.Fatal(err)
-	}
+	admitTestRuntime(t, registry, key.Target)
 	a, requests := queueFixture(t)
 	a.reserveControl = func(kind, id string) error {
 		return registry.ReserveControl(context.Background(), key.Target, kind, id)

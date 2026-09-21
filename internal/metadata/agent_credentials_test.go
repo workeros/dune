@@ -10,6 +10,7 @@ import (
 
 	"github.com/aiomni/dune/internal/identity"
 	"github.com/aiomni/dune/pkg/agents"
+	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/workbench"
@@ -23,7 +24,7 @@ func credentialStores(t *testing.T, run func(*testing.T, *Store, storage.Config)
 			if backend == "postgres" {
 				config, _, _ = postgresConfig(t)
 			}
-			store, err := Open(t.Context(), config)
+			store, err := Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -35,13 +36,13 @@ func credentialStores(t *testing.T, run func(*testing.T, *Store, storage.Config)
 
 func credentialFixture(t *testing.T, store *Store) (agents.Scope, workbench.AgentTarget) {
 	t.Helper()
-	user := identity.User{ID: "credential-owner", Email: "credential@test.dev"}
+	user := publicidentity.User{ID: "credential-owner", Email: "credential@test.dev"}
 	if store.localIdentity {
 		if err := store.RegisterAccount(t.Context(), identity.Account{User: user, Salt: "unused", PasswordHash: "unused"}, "unused", time.Now().Add(time.Hour).Unix()); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		user = identity.User{ID: "email:agent@test.dev", Namespace: "sanddance", Kind: "email", Subject: "agent@test.dev"}
+		user = publicidentity.User{ID: "email:agent@test.dev", Namespace: "sanddance", Kind: "email", Subject: "agent@test.dev"}
 	}
 	scope := agents.Scope{Principal: user, OwnerID: "tenant"}
 	_, enrollment, _, err := store.IssueEnrollment(t.Context(), scope.OwnerID, "runner")
@@ -70,7 +71,7 @@ func TestAgentCredentialBindsRuntimeAndRotatesAcrossDatabaseConnections(t *testi
 		}
 		peer := store
 		if store.postgres {
-			peer, err = Open(t.Context(), config)
+			peer, err = Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,14 +81,14 @@ func TestAgentCredentialBindsRuntimeAndRotatesAcrossDatabaseConnections(t *testi
 		if err != nil || read.Scope.OwnerID != scope.OwnerID || read.Scope.Principal.ID != scope.Principal.ID || read.Target != target {
 			t.Fatal("credential lost scope or exact target", err)
 		}
-		if _, err := peer.ReadAgentCredential(t.Context(), token, "another-identity"); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := peer.ReadAgentCredential(t.Context(), token, "another-identity"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("crossed identity namespace", err)
 		}
 		replacement, err := peer.IssueAgentCredential(t.Context(), scope, target, expires)
 		if err != nil || replacement == token {
 			t.Fatal("rotation", err)
 		}
-		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("rotated token remained valid", err)
 		}
 		other := target
@@ -109,7 +110,7 @@ func TestAgentCredentialBindsRuntimeAndRotatesAcrossDatabaseConnections(t *testi
 		if err := store.RevokeAgentCredential(t.Context(), scope.OwnerID, target); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := peer.ReadAgentCredential(t.Context(), replacement, ""); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := peer.ReadAgentCredential(t.Context(), replacement, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("revoked token accepted", err)
 		}
 		if _, err := peer.ReadAgentCredential(t.Context(), next, ""); err != nil {
@@ -133,32 +134,32 @@ func TestAgentCredentialRejectsExpiredRevokedAndMalformedBindings(t *testing.T) 
 		if _, err := store.db.Exec(`UPDATE dune_agent_credentials SET expires_at=1`); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("expired credential accepted", err)
 		}
 		token = issue()
 		if err := store.SetUserEnabled(t.Context(), scope.Principal.ID, false); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("disabled caller accepted", err)
 		}
 		if err := store.SetUserEnabled(t.Context(), scope.Principal.ID, true); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("re-enabled caller revived old credential", err)
 		}
 		token = issue()
 		for _, invalid := range []string{"", "cookie", token + "x", strings.Repeat("x", 100000)} {
-			if _, err := store.ReadAgentCredential(t.Context(), invalid, ""); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := store.ReadAgentCredential(t.Context(), invalid, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("invalid token accepted", err)
 			}
 		}
 		if _, err := store.db.Exec(`UPDATE dune_agent_credentials SET target_key='wrong'`); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, identity.ErrUnauthorized) {
+		if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 			t.Fatal("corrupt target accepted", err)
 		}
 		bad := target
@@ -189,7 +190,7 @@ func TestAgentCredentialSurvivesDatabaseReopen(t *testing.T) {
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}
-		reopened, err := Open(t.Context(), config)
+		reopened, err := Open(t.Context(), config, OpenOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -207,7 +208,7 @@ func TestAgentCredentialConcurrentRotationLeavesOneToken(t *testing.T) {
 		peer := store
 		if store.postgres {
 			var err error
-			peer, err = Open(t.Context(), config)
+			peer, err = Open(t.Context(), config, OpenOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +235,7 @@ func TestAgentCredentialConcurrentRotationLeavesOneToken(t *testing.T) {
 			}
 			if _, err := store.ReadAgentCredential(t.Context(), result.token, ""); err == nil {
 				valid++
-			} else if !errors.Is(err, identity.ErrUnauthorized) {
+			} else if !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal(err)
 			}
 		}
@@ -265,7 +266,7 @@ func TestAgentCredentialPreservesEnterpriseIdentityWithoutLocalAccounts(t *testi
 			if err != nil || read.Scope != scope || read.Target != target {
 				t.Fatal("enterprise credential changed", err)
 			}
-			if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, identity.ErrUnauthorized) {
+			if _, err := store.ReadAgentCredential(t.Context(), token, ""); !errors.Is(err, publicidentity.ErrUnauthorized) {
 				t.Fatal("enterprise credential accepted as personal", err)
 			}
 		})

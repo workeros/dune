@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/aiomni/dune/internal/identity"
 	publicidentity "github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/storage"
 )
@@ -35,7 +34,7 @@ func TestTenantAttachedEnrollmentPreallocatesOwnedRunner(t *testing.T) {
 	if err != nil || ready.OwnerID != "tenant-1" || ready.Runner.Binding == nil || ready.Runner.Binding.MachineID != machine.ID {
 		t.Fatal("ready tenant Runner", ready, err)
 	}
-	if _, _, err := store.Enroll(ctx, token, "linux", "arm64"); !errors.Is(err, identity.ErrUnauthorized) {
+	if _, _, err := store.Enroll(ctx, token, "linux", "arm64"); !errors.Is(err, publicidentity.ErrUnauthorized) {
 		t.Fatal("tenant enrollment was reusable", err)
 	}
 }

@@ -4,7 +4,6 @@ package agentservice
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 	"time"
@@ -116,17 +115,6 @@ func (s *Service) Start(ctx context.Context, scope agents.Scope, request agents.
 		}
 	}
 	return result, nil
-}
-
-func startOutcome(err error) string {
-	var failure *api.Error
-	if errors.As(err, &failure) {
-		switch failure.Code {
-		case "INVALID_ARGUMENT", "UNSUPPORTED", "RESOURCE_EXHAUSTED", "START_FAILED", "PROFILE_SETUP_FAILED", "ACCESS_DENIED":
-			return "failed"
-		}
-	}
-	return "unknown"
 }
 
 func (s *Service) resolveLaunch(ctx context.Context, owner string, request agents.StartRequest) (api.Profile, error) {

@@ -2,7 +2,6 @@ package fabricd
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
 
@@ -36,9 +35,6 @@ func (d *Engine) submitStop(s *executionStream, message *pb.Message, machine str
 	digest, receiver := sessionregistry.Digest("runtime.stop", nil), "runtime:"+key.Target.RuntimeIncarnation
 	receipt, found, err := d.registry.Lookup(s.ctx, key, digest, receiver)
 	if err == nil && !found {
-		if _, hostErr := d.registry.Host(s.ctx, key.Target); errors.Is(hostErr, sql.ErrNoRows) {
-			d.confirmUnregisteredStartup(key.Target)
-		}
 		var r *runtime
 		r, err = d.lookup(message)
 		if err == nil && r.target != (api.SubmissionTarget{}) && r.target != key.Target {

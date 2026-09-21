@@ -7,6 +7,7 @@ import (
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/api"
+	duneclient "github.com/aiomni/dune/pkg/client"
 	"github.com/aiomni/dune/pkg/sdk"
 	"github.com/fasthttp/websocket"
 	"io"
@@ -52,7 +53,7 @@ type harness struct {
 	t         *testing.T
 	dir, path string
 	c         config.Config
-	client    *sdk.Client
+	client    *duneclient.Client
 	ctx       context.Context
 	cancel    context.CancelFunc
 	cmds      map[string]*exec.Cmd
@@ -67,7 +68,7 @@ func start(t *testing.T) *harness {
 	addr := ln.Addr().String()
 	ln.Close()
 	path := filepath.Join(dir, "config.yaml")
-	must(t, config.Init(path, addr))
+	must(t, config.Init(path, addr, ""))
 	c, e := config.Load(path)
 	must(t, e)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -169,7 +170,7 @@ func (h *harness) exec(args ...string) api.ExecResult {
 func profile(dir, adapter string, args ...string) api.Profile {
 	return api.Profile{Version: 1, Kind: "agent", WorkingDirectory: dir, Adapter: adapter, Start: api.Command{Argv: args}}
 }
-func receive(t *testing.T, s *sdk.Stream, kind, contains string) {
+func receive(t *testing.T, s *duneclient.Stream, kind, contains string) {
 	t.Helper()
 	for i := 0; i < 50; i++ {
 		m, e := s.Recv()

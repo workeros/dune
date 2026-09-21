@@ -20,15 +20,13 @@ func testResources(target api.SubmissionTarget, instance string) CleanupResource
 
 func registerCleanupHost(t *testing.T, r *Registry, target api.SubmissionTarget) HostRecord {
 	t.Helper()
-	if err := r.ReserveRuntime(t.Context(), target); err != nil {
+	if err := reserveTestRuntime(t.Context(), r, target); err != nil {
 		t.Fatal(err)
 	}
 	host := HostRecord{Target: target, Instance: "host", BootID: "boot", PID: 1234,
 		Runtime:      api.Runtime{ID: target.RuntimeID, Incarnation: target.RuntimeIncarnation, Generation: target.RuntimeGeneration, State: "exited"},
 		Registration: []byte(`{}`), Resources: testResources(target, "host")}
-	if err := r.RegisterHost(t.Context(), host); err != nil {
-		t.Fatal(err)
-	}
+	registerTestHost(t, r, host)
 	if err := r.RecordHostRuntime(t.Context(), target, host.Instance, host.Runtime); err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +43,8 @@ func verifyExited(host HostRecord) error {
 
 func TestForgetAtomicAdmissionSurvivesSaturationCancellationAndDuplicates(t *testing.T) {
 	dir := privateDirectory(t)
-	r := openRegistry(t, dir, 1)
-	other := openRegistry(t, dir, 1)
+	r := openRegistry(t, dir, 2)
+	other := openRegistry(t, dir, 2)
 	key := testKey()
 	registerCleanupHost(t, r, key.Target)
 	if _, _, err := r.ClaimKey(t.Context(), key, Digest("prompt", nil), "host"); err != nil {
@@ -88,7 +86,7 @@ func TestForgetAtomicAdmissionSurvivesSaturationCancellationAndDuplicates(t *tes
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r = openRegistry(t, dir, 1)
+	r = openRegistry(t, dir, 2)
 	jobs, err := r.PendingCleanups(t.Context())
 	if err != nil || len(jobs) != 1 || jobs[0].Key != key || jobs[0].Confirmed != 0 || jobs[0].Term != 0 {
 		t.Fatal("read changed cleanup or lost its fixed plan", jobs, err)
@@ -103,15 +101,13 @@ func TestForgetVerificationAndSealSerializeAgainstGroupRegistration(t *testing.T
 	r := openRegistry(t, dir, 2)
 	other := openRegistry(t, dir, 2)
 	key := testKey()
-	if err := r.ReserveRuntime(t.Context(), key.Target); err != nil {
+	if err := reserveTestRuntime(t.Context(), r, key.Target); err != nil {
 		t.Fatal(err)
 	}
 	host := HostRecord{Target: key.Target, Instance: "host", BootID: "boot", PID: 1234,
 		Runtime:      api.Runtime{ID: key.Target.RuntimeID, Incarnation: key.Target.RuntimeIncarnation, Generation: key.Target.RuntimeGeneration, State: "running"},
 		Registration: []byte(`{}`), Resources: testResources(key.Target, "host")}
-	if err := r.RegisterHost(t.Context(), host); err != nil {
-		t.Fatal(err)
-	}
+	registerTestHost(t, r, host)
 	if _, err := r.RecordGroup(t.Context(), key.Target, host.Instance, 0, 5678); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +156,7 @@ func TestForgetVerificationAndSealSerializeAgainstGroupRegistration(t *testing.T
 func TestForgetCrossReceiverConflictPrecedesLiveOrLostProof(t *testing.T) {
 	for _, decision := range []string{"claimed", "accepted", "not_accepted"} {
 		t.Run(decision, func(t *testing.T) {
-			r := openRegistry(t, privateDirectory(t), 1)
+			r := openRegistry(t, privateDirectory(t), 2)
 			key := testKey()
 			registerCleanupHost(t, r, key.Target)
 			claim, _, err := r.ClaimKey(t.Context(), key, Digest("prompt", nil), "original-host")
@@ -197,7 +193,7 @@ func TestForgetCrossReceiverConflictPrecedesLiveOrLostProof(t *testing.T) {
 
 func TestCleanupCheckpointsFenceOldExecutorsAndPreserveReceiptAfterCompletion(t *testing.T) {
 	dir := privateDirectory(t)
-	r := openRegistry(t, dir, 1)
+	r := openRegistry(t, dir, 2)
 	key := testKey()
 	registerCleanupHost(t, r, key.Target)
 	if _, _, err := r.AcceptForget(t.Context(), key, "original", verifyExited); err != nil {
@@ -215,7 +211,7 @@ func TestCleanupCheckpointsFenceOldExecutorsAndPreserveReceiptAfterCompletion(t 
 		if err := r.Close(); err != nil {
 			t.Fatal(err)
 		}
-		r = openRegistry(t, dir, 1)
+		r = openRegistry(t, dir, 2)
 		before, err := r.Get(t.Context(), key)
 		if err != nil || len(before.Cleanup.Confirmed) != i || before.Stage != "cleaning" {
 			t.Fatal(before, err)
@@ -240,7 +236,7 @@ func TestCleanupCheckpointsFenceOldExecutorsAndPreserveReceiptAfterCompletion(t 
 	if err := r.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r = openRegistry(t, dir, 1)
+	r = openRegistry(t, dir, 2)
 	receipt, err := r.Get(t.Context(), key)
 	if err != nil || receipt.Stage != "completed" || len(receipt.Cleanup.Remaining) != 0 {
 		t.Fatal(receipt, err)
@@ -255,7 +251,7 @@ func TestCleanupCheckpointsFenceOldExecutorsAndPreserveReceiptAfterCompletion(t 
 	}); err != nil || acquired || !reflect.DeepEqual(receipt, duplicate) {
 		t.Fatal(duplicate, err)
 	}
-	if err := r.ReserveRuntime(t.Context(), key.Target); err == nil {
+	if err := reserveTestRuntime(t.Context(), r, key.Target); err == nil {
 		t.Fatal("completed identity could execute again")
 	}
 	var live, sealed int
