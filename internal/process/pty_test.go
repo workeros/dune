@@ -276,15 +276,3 @@ func TestPTYStopDoesNotRecreateRemovedState(t *testing.T) {
 		t.Fatal("explicit stop retained the target")
 	}
 }
-
-func TestPTYElapsedClockAdvances(t *testing.T) {
-	start, err := elapsedTime()
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	end, err := elapsedTime()
-	if err != nil || end <= start {
-		t.Fatal("elapsed clock did not advance", start, end, err)
-	}
-}

@@ -292,10 +292,7 @@ func TestForgetResumesOnlyOriginalCleanupAfterProcessCrashes(t *testing.T) {
 
 func TestForgetConfirmedLostHostNeedsNoStopOrReplacement(t *testing.T) {
 	h := newCleanupProcessHarness(t)
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if out, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal("mock build", string(out), err)
-	}
+	mock := mockACPBinary(t)
 	h.start("")
 	runtime, registry := h.launch(mock)
 	waitTimeoutTest(t, func() bool { state, err := h.client.ACPState(h.ctx, runtime); return err == nil && state.Ready })

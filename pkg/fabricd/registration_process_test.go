@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,10 +42,7 @@ func registrationHostTestHelper(args []string) (int, bool) {
 }
 
 func TestLateOriginalHostRegistrationRecoversWithoutAnotherLaunch(t *testing.T) {
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if out, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal(string(out), err)
-	}
+	mock := mockACPBinary(t)
 	h := newCleanupProcessHarness(t)
 	h.start("")
 	gate, err := net.Listen("tcp", "127.0.0.1:0")

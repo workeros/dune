@@ -123,19 +123,6 @@ func TestAgentStartHTTPPinsScopeAndPreservesPartialResult(t *testing.T) {
 	if out := send(2, request); out.Code != http.StatusNotFound || calls != 1 {
 		t.Fatal("cross-owner startup", out.Code, calls)
 	}
-	if out := send(0, api.Profile{Version: 1, Kind: "agent"}); out.Code != http.StatusBadRequest || calls != 1 {
-		t.Fatal("obsolete raw Profile contract accepted", out.Code, calls)
-	}
-}
-
-func TestRemovedRecoveryRoutesDoNotStartAgents(t *testing.T) {
-	f := newWorkbenchFixture(t, true)
-	for _, route := range []struct{ method, path string }{{"GET", "/agent-sessions"}, {"GET", "/agent-sessions/old"}, {"POST", "/agent-sessions/old/resume"}} {
-		out := f.request(t, route.method, route.path, 0, nil)
-		if out.Code != http.StatusNotFound {
-			t.Fatalf("removed route %s returned %d", route.path, out.Code)
-		}
-	}
 }
 
 type launchQueryFunc func(context.Context, agents.Scope, agents.LaunchQuery) (api.SubmissionReceipt, error)

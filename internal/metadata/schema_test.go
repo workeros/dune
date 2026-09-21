@@ -29,8 +29,9 @@ func TestSchemaInitializationIsAtomic(t *testing.T) {
 						return err
 					}
 				}
-				for i := len(localTables) - 1; i >= 0; i-- {
-					if _, err := tx.ExecContext(ctx, "DROP TABLE "+localTables[i].name); err != nil {
+				// Drop children before parents so both backends enforce foreign keys.
+				for _, table := range []string{"dune_views", "dune_projects", "dune_profile_revisions", "dune_profiles", "dune_enrollments", "dune_runners", "dune_sessions", "dune_users", "dune_agent_credentials"} {
+					if _, err := tx.ExecContext(ctx, "DROP TABLE "+table); err != nil {
 						return err
 					}
 				}
@@ -107,14 +108,24 @@ func TestOpenRejectsIncompatibleDuneSchema(t *testing.T) {
 }
 
 func TestExternalIdentityOmitsLocalTables(t *testing.T) {
-	s, err := Open(context.Background(), storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}, OpenOptions{ExternalIdentity: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&total); err != nil || total != len(localTables)-2 {
-		t.Fatal("enterprise SQLite schema must omit only local identity tables", total, err)
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			config := storage.Config{SQLiteDir: filepath.Join(t.TempDir(), "metadata")}
+			query := `SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN ('dune_users','dune_sessions')`
+			if backend == "postgres" {
+				config, _, _ = postgresConfig(t)
+				query = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('dune_users','dune_sessions')`
+			}
+			s, err := Open(t.Context(), config, OpenOptions{ExternalIdentity: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			var localIdentityTables int
+			if err := s.db.QueryRowContext(t.Context(), query).Scan(&localIdentityTables); err != nil || localIdentityTables != 0 {
+				t.Fatal("external identity created local account/session storage", localIdentityTables, err)
+			}
+		})
 	}
 }
 

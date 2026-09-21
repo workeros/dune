@@ -3,7 +3,6 @@ package fabricd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,10 +13,7 @@ import (
 )
 
 func TestEachOrdinaryCapacityPreservesOriginalControlsAcrossConnectorCrash(t *testing.T) {
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if out, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal(string(out), err)
-	}
+	mock := mockACPBinary(t)
 	for _, dimension := range []string{"queue", "results", "evidence", "machine"} {
 		t.Run(dimension, func(t *testing.T) {
 			h := newCleanupProcessHarness(t)

@@ -3,7 +3,6 @@ package tests
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -15,10 +14,7 @@ import (
 
 func TestManagedSubmissionAdmissionThroughGateway(t *testing.T) {
 	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	if output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatalf("mock build: %s %v", output, err)
-	}
+	mock := mockACPBinary(t)
 	p := profile(h.dir, "acp", mock)
 	p.ManagedACP = true
 	rpcLog := filepath.Join(h.dir, "rpc.log")

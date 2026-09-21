@@ -20,10 +20,7 @@ import (
 
 func TestHostLossUsesIndependentEvidenceAndDoesNotReplay(t *testing.T) {
 	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	if output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatalf("mock build: %s %v", output, err)
-	}
+	mock := mockACPBinary(t)
 	gate, err := net.Listen("tcp", "127.0.0.1:0")
 	must(t, err)
 	defer gate.Close()

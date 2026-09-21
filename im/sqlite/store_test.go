@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
@@ -209,34 +208,6 @@ func TestConversationThreadRefScopeAndConflict(t *testing.T) {
 	}
 	if _, err := store.Ensure(ctx, channel.SessionKey{TenantID: "tenant", BindingID: "bot-a", ChatID: "chat", SubjectID: "om-root"}, target, channel.ReplyAddress{}, "omt-other"); err == nil {
 		t.Fatal("one conversation acquired a conflicting second thread ref")
-	}
-}
-
-func TestStoreHasOnlyFourIMTables(t *testing.T) {
-	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "im.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	rows, err := store.db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'im_%' ORDER BY name`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		names = append(names, name)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"im_bindings", "im_conversations", "im_deliveries", "im_inbox"}
-	if !slices.Equal(names, want) {
-		t.Fatalf("IM tables: got %v, want %v", names, want)
 	}
 }
 

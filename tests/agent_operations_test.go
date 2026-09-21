@@ -94,11 +94,7 @@ func TestPTYOperationsShareBrowserInputAndExpireOnFabricdRestart(t *testing.T) {
 
 func TestAgentOperationsShareFabricdQueueAcrossConnections(t *testing.T) {
 	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
-	if err != nil {
-		t.Fatalf("mock build: %s %v", output, err)
-	}
+	mock := mockACPBinary(t)
 	profile := profile(h.dir, "acp", mock)
 	profile.ManagedACP = true
 	runtime, stream, err := testStartProfile(h.client, h.ctx, profile)

@@ -226,11 +226,7 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 		must(t, err)
 		must(t, json.Unmarshal(data, out))
 	}
-	mock := filepath.Join(dir, "mock-acp")
-	output, err := exec.CommandContext(ctx, "go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
-	if err != nil {
-		t.Fatalf("mock ACP build failed: %v %s", err, output)
-	}
+	mock := mockACPBinary(t)
 	agentProfile := profile(dir, "acp", mock)
 	journal := filepath.Join(dir, "acp-rpc.log")
 	agentProfile.Env = map[string]string{"DUNE_MOCK_RPC_LOG": journal}

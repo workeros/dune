@@ -2,7 +2,6 @@ package fabricd
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,10 +20,7 @@ func TestOriginalHostRetainsProgramAcrossReleaseDeletionAndExplicitOpen(t *testi
 	if _, err := retainedprogram.Copy(os.Args[0], oldProgram); err != nil {
 		t.Fatal(err)
 	}
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if out, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal(string(out), err)
-	}
+	mock := mockACPBinary(t)
 	h := newCleanupProcessHarness(t)
 	h.program = oldProgram
 	h.start("")

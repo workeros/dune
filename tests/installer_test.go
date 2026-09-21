@@ -265,10 +265,7 @@ func TestInstallerACPPreflightGateAndOriginalSessionAcrossSwitches(t *testing.T)
 	oldRelease := f.repair()
 	client := f.dial()
 	defer func() { client.Close() }()
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal(string(output), err)
-	}
+	mock := mockACPBinary(t)
 	work := t.TempDir()
 	barrier, err := net.Listen("tcp", "127.0.0.1:0")
 	must(t, err)

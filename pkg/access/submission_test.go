@@ -97,34 +97,22 @@ func TestManagedActionsRequireIdentifiedEnvelope(t *testing.T) {
 	}
 }
 
-func TestStopRequiresOriginalIdentifiedRuntimeScope(t *testing.T) {
-	message := &pb.Message{Kind: "request", Target: "machine", RequestId: "transport-id", Operation: "runtime.stop", Payload: api.Payload(struct{}{})}
-	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
-		t.Fatal("unidentified stop was authorized", err)
-	}
-	message = testACPEnvelope(message)
-	message.Operation = "runtime.stop"
-	if description, err := Describe(testScope(), message); err != nil || description.Operation != "runtime.stop" {
-		t.Fatal("identified stop lost its authorization vocabulary", description, err)
-	}
-	message.RuntimeIncarnation = "replacement-host"
-	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
-		t.Fatal("stop crossed original Runtime identity", err)
-	}
-}
-
-func TestForgetRequiresOriginalIdentifiedRuntimeScope(t *testing.T) {
-	message := &pb.Message{Kind: "request", Target: "machine", RequestId: "transport-id", Operation: "runtime.forget", Payload: api.Payload(struct{}{})}
-	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
-		t.Fatal("unidentified stop was authorized", err)
-	}
-	message = testACPEnvelope(message)
-	message.Operation = "runtime.forget"
-	if description, err := Describe(testScope(), message); err != nil || description.Operation != "runtime.forget" {
-		t.Fatal("identified stop lost its authorization vocabulary", description, err)
-	}
-	message.RuntimeIncarnation = "replacement-host"
-	if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
-		t.Fatal("stop crossed original Runtime identity", err)
+func TestRuntimeMutationsRequireOriginalIdentifiedScope(t *testing.T) {
+	for _, operation := range []string{"runtime.stop", "runtime.forget"} {
+		t.Run(operation, func(t *testing.T) {
+			message := &pb.Message{Kind: "request", Target: "machine", RequestId: "transport-id", Operation: operation, Payload: api.Payload(struct{}{})}
+			if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+				t.Fatal("unidentified mutation was authorized", err)
+			}
+			message = testACPEnvelope(message)
+			message.Operation = operation
+			if description, err := Describe(testScope(), message); err != nil || description.Operation != operation {
+				t.Fatal("identified mutation lost its authorization vocabulary", description, err)
+			}
+			message.RuntimeIncarnation = "replacement-host"
+			if _, err := Describe(testScope(), message); !errors.Is(err, ErrDenied) {
+				t.Fatal("mutation crossed original Runtime identity", err)
+			}
+		})
 	}
 }

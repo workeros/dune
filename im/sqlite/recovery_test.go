@@ -11,14 +11,23 @@ import (
 	"github.com/aiomni/dune/im/channel"
 )
 
-func TestReconcileConfirmedDeliveryCompletesUnknownTurnWithoutReplay(t *testing.T) {
-	ctx := context.Background()
-	store, err := Open(ctx, filepath.Join(t.TempDir(), "im.db"))
+type submittedTurn struct {
+	store   *Store
+	message channel.InboundMessage
+	key     channel.SessionKey
+	lease   channel.ConversationLease
+	item    channel.WorkItem
+}
+
+func newSubmittedTurn(t *testing.T, path string) submittedTurn {
+	t.Helper()
+	ctx := t.Context()
+	store, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	message := channel.InboundMessage{BindingID: "bot", EventID: "event-1", MessageID: "message-1", ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
+	t.Cleanup(func() { store.Close() })
+	message := channel.InboundMessage{BindingID: "bot", EventID: "event", MessageID: "message", ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
 	if err := store.Insert(ctx, message); err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +49,13 @@ func TestReconcileConfirmedDeliveryCompletesUnknownTurnWithoutReplay(t *testing.
 	if err := store.BeginSubmission(ctx, item); err != nil {
 		t.Fatal(err)
 	}
+	return submittedTurn{store: store, message: message, key: key, lease: lease, item: item}
+}
+
+func TestReconcileConfirmedDeliveryCompletesUnknownTurnWithoutReplay(t *testing.T) {
+	ctx := t.Context()
+	turn := newSubmittedTurn(t, filepath.Join(t.TempDir(), "im.db"))
+	store, message, key, lease, item := turn.store, turn.message, turn.key, turn.lease, turn.item
 	manager := channel.DeliveryManager{Store: store}
 	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: channel.TurnDeliveryID("bot", message.EventID), Session: key, Mode: "final_text", ProviderStateVersion: 1, AgentTurnCompleted: true})
 	if err != nil {
@@ -90,35 +106,9 @@ func TestReconcileConfirmedDeliveryCompletesUnknownTurnWithoutReplay(t *testing.
 }
 
 func TestReconcileRejectedDeliveryRecordsKnownFailureWithoutReplay(t *testing.T) {
-	ctx := context.Background()
-	store, err := Open(ctx, filepath.Join(t.TempDir(), "im.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	message := channel.InboundMessage{BindingID: "bot", EventID: "event-rejected", MessageID: "message-rejected",
-		ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
-	if err := store.Insert(ctx, message); err != nil {
-		t.Fatal(err)
-	}
-	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
-		t.Fatal(err)
-	}
-	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("acquire: %t %v", acquired, err)
-	}
-	if err := store.BeginTurn(ctx, lease, message.EventID); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.Claim(ctx, time.Minute)
-	if err != nil || !found {
-		t.Fatalf("claim: %t %v", found, err)
-	}
-	if err := store.BeginSubmission(ctx, item); err != nil {
-		t.Fatal(err)
-	}
+	ctx := t.Context()
+	turn := newSubmittedTurn(t, filepath.Join(t.TempDir(), "im.db"))
+	store, message, key, lease, item := turn.store, turn.message, turn.key, turn.lease, turn.item
 	manager := channel.DeliveryManager{Store: store}
 	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: channel.TurnDeliveryID("bot", message.EventID), Session: key,
 		Mode: "final_text", ProviderStateVersion: 1, AgentTurnCompleted: true})
@@ -159,34 +149,9 @@ func TestReconcileRejectedDeliveryRecordsKnownFailureWithoutReplay(t *testing.T)
 }
 
 func TestReconcileCompletedInboxRequiresExpiredWorkerLease(t *testing.T) {
-	ctx := context.Background()
-	store, err := Open(ctx, filepath.Join(t.TempDir(), "im.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	message := channel.InboundMessage{BindingID: "bot", EventID: "event-2", MessageID: "message-2", ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
-	if err := store.Insert(ctx, message); err != nil {
-		t.Fatal(err)
-	}
-	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
-		t.Fatal(err)
-	}
-	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("acquire: %t %v", acquired, err)
-	}
-	if err := store.BeginTurn(ctx, lease, message.EventID); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.Claim(ctx, time.Minute)
-	if err != nil || !found {
-		t.Fatalf("claim: %t %v", found, err)
-	}
-	if err := store.BeginSubmission(ctx, item); err != nil {
-		t.Fatal(err)
-	}
+	ctx := t.Context()
+	turn := newSubmittedTurn(t, filepath.Join(t.TempDir(), "im.db"))
+	store, message, key, lease, item := turn.store, turn.message, turn.key, turn.lease, turn.item
 	manager := channel.DeliveryManager{Store: store}
 	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: channel.TurnDeliveryID("bot", message.EventID), Session: key, Mode: "final_text", ProviderStateVersion: 1, AgentTurnCompleted: true})
 	if err != nil {
@@ -223,34 +188,10 @@ func TestReconcileCompletedInboxRequiresExpiredWorkerLease(t *testing.T) {
 }
 
 func TestReconcileSubmittingInboxAfterReopen(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "im.db")
-	store, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	message := channel.InboundMessage{BindingID: "bot", EventID: "event-crash", MessageID: "message-crash", ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
-	if err := store.Insert(ctx, message); err != nil {
-		t.Fatal(err)
-	}
-	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
-		t.Fatal(err)
-	}
-	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("acquire: %t %v", acquired, err)
-	}
-	if err := store.BeginTurn(ctx, lease, message.EventID); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.Claim(ctx, time.Minute)
-	if err != nil || !found {
-		t.Fatalf("claim: %t %v", found, err)
-	}
-	if err := store.BeginSubmission(ctx, item); err != nil {
-		t.Fatal(err)
-	}
+	turn := newSubmittedTurn(t, path)
+	store, message, key := turn.store, turn.message, turn.key
 	manager := channel.DeliveryManager{Store: store}
 	delivery, created, err := manager.Reserve(ctx, channel.Delivery{ID: channel.TurnDeliveryID("bot", message.EventID), Session: key, Mode: "final_text", ProviderStateVersion: 1, AgentTurnCompleted: true})
 	if err != nil || !created {
@@ -349,34 +290,9 @@ func TestSubmittingWorkNeverReplaysAcrossProcessRestart(t *testing.T) {
 }
 
 func TestClosedFailureNoticeDoesNotProveAgentTurnCompleted(t *testing.T) {
-	ctx := context.Background()
-	store, err := Open(ctx, filepath.Join(t.TempDir(), "im.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	message := channel.InboundMessage{BindingID: "bot", EventID: "event-failed", MessageID: "message-failed", ChatID: "chat", ChatKind: channel.ChatDirect, SenderID: "user", Text: "question"}
-	if err := store.Insert(ctx, message); err != nil {
-		t.Fatal(err)
-	}
-	key := channel.SessionKey{TenantID: "tenant", BindingID: "bot", ChatID: "chat", SubjectID: "user"}
-	if _, err := store.Ensure(ctx, key, channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, channel.ReplyAddress{}, ""); err != nil {
-		t.Fatal(err)
-	}
-	lease, acquired, err := store.Acquire(ctx, key, time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("acquire: %t %v", acquired, err)
-	}
-	if err := store.BeginTurn(ctx, lease, message.EventID); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.Claim(ctx, time.Minute)
-	if err != nil || !found {
-		t.Fatalf("claim: %t %v", found, err)
-	}
-	if err := store.BeginSubmission(ctx, item); err != nil {
-		t.Fatal(err)
-	}
+	ctx := t.Context()
+	turn := newSubmittedTurn(t, filepath.Join(t.TempDir(), "im.db"))
+	store, message, key, lease, item := turn.store, turn.message, turn.key, turn.lease, turn.item
 	manager := channel.DeliveryManager{Store: store}
 	delivery, _, err := manager.Reserve(ctx, channel.Delivery{ID: channel.TurnDeliveryID("bot", message.EventID), Session: key, Mode: "streaming_card", ProviderStateVersion: 2})
 	if err != nil {

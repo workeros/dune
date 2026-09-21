@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,11 +17,7 @@ import (
 
 func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
-	if err != nil {
-		t.Fatalf("mock build: %s %v", output, err)
-	}
+	mock := mockACPBinary(t)
 	const updateCount = 160
 	largeValue := strings.Repeat("x", 80*1024)
 	history := make([]map[string]any, 0, updateCount)
@@ -128,11 +123,7 @@ func TestManagedACPHistoryReplayIgnoresSlowDiagnostics(t *testing.T) {
 
 func TestManagedACPOfflinePermissions(t *testing.T) {
 	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
-	if err != nil {
-		t.Fatalf("mock build: %s %v", output, err)
-	}
+	mock := mockACPBinary(t)
 	p := profile(h.dir, "acp", mock)
 	p.ManagedACP = true
 	rt, stream, err := testStartProfile(h.client, h.ctx, p)

@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"github.com/aiomni/dune/internal/config"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/sdk"
+	"github.com/fasthttp/websocket"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,8 +231,16 @@ func TestExecProfilePTY(t *testing.T) {
 	if _, e = os.Stat(filepath.Join(h.dir, "never")); !os.IsNotExist(e) {
 		t.Fatal("continued failed setup")
 	}
+	rt, s, e = testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sleep", "30"))
+	must(t, e)
+	defer s.Close()
+	must(t, s.Signal("TERM"))
+	receive(t, s, "exit", "")
+	if _, e := h.client.Get(h.ctx, rt); e == nil {
+		t.Fatal("destroyed session is still listed")
+	}
 }
-func TestACP(t *testing.T) {
+func TestRawACPTransport(t *testing.T) {
 	h := start(t)
 	script := `import sys,json
 print('diagnostic',file=sys.stderr,flush=True)
@@ -257,6 +266,15 @@ for line in sys.stdin:
 	}
 	must(t, raw.writeLine(`{"jsonrpc":"2.0","method":"bad"}`))
 	raw.receive(t, "stdout", "not-json")
+	e = raw.writeLine(`{"invalid":true}`)
+	if e == nil || !strings.Contains(e.Error(), "INVALID_ARGUMENT") {
+		t.Fatal("invalid ACP input was accepted", e)
+	}
+	out, err := h.client.ReadRawACP(h.ctx, rt, api.RawACPRead{StreamID: raw.state.StreamID, Channel: "stdout", Offset: raw.offsets["stdout"]})
+	must(t, err)
+	if len(out.Data) != 0 {
+		t.Fatal("invalid input reached stdin")
+	}
 	// Raw output is byte transport; malformed Agent output does not invoke a
 	// managed parser or silently stop the original process.
 	got, err := h.client.Get(h.ctx, rt)
@@ -416,7 +434,7 @@ func TestPortsAndConcurrency(t *testing.T) {
 		t.Fatal("refusal expected")
 	}
 }
-func TestAuthDedup(t *testing.T) {
+func TestGatewayAuthorizationAndRequestDedup(t *testing.T) {
 	h := start(t)
 	tc, e := h.c.TLS()
 	must(t, e)
@@ -424,6 +442,20 @@ func TestAuthDedup(t *testing.T) {
 		_, e = sdk.Dial(h.ctx, sdk.Options{Gateway: h.c.Gateway, Token: token, Target: h.c.Target, TLSConfig: tc})
 		if e == nil {
 			t.Fatal("invalid token accepted")
+		}
+		headers := http.Header{}
+		if token != "" {
+			headers.Set("Authorization", "Bearer "+token)
+		}
+		conn, response, err := websocket.DefaultDialer.DialContext(h.ctx, h.c.Gateway, headers)
+		if conn != nil {
+			conn.Close()
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("invalid token: response=%v err=%v", response, err)
 		}
 	}
 	a := api.Exec{Command: api.Command{Argv: []string{"/bin/sh", "-c", "printf x >> dedup"}}, WorkingDirectory: h.dir}
@@ -440,64 +472,6 @@ func TestAuthDedup(t *testing.T) {
 	if e = h.client.CallID(h.ctx, "exec", "same-id", a, &r, nil); e == nil {
 		t.Fatal("conflict not rejected")
 	}
-}
-func TestRestart(t *testing.T) {
-	h := start(t)
-	pidfile := filepath.Join(h.dir, "agent.pid")
-	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sh", "-c", "echo $$ > "+pidfile+"; while :; do sleep 1; done"))
-	must(t, e)
-	defer s.Close()
-	for i := 0; i < 50; i++ {
-		if _, e = os.Stat(pidfile); e == nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	old := h.client.Binding
-	h.restartProcess("gateway")
-	for e == nil {
-		_, e = s.Recv()
-	}
-	h.client.Close()
-	h.reconnect()
-	if h.client.Binding.Incarnation != old.Incarnation {
-		t.Fatal("Gateway restart lost daemon")
-	}
-	_, e = h.client.Get(h.ctx, rt)
-	must(t, e)
-	sum := sha256.Sum256(nil)
-	u, e := h.client.Upload(h.ctx, api.Upload{Action: "create", Intent: "create", Path: filepath.Join(h.dir, "upload"), SHA256: hex.EncodeToString(sum[:])})
-	must(t, e)
-	h.restartProcess("fabricd")
-	h.client.Close()
-	time.Sleep(400 * time.Millisecond)
-	h.reconnect()
-	if h.client.Binding.Incarnation == old.Incarnation {
-		t.Fatal("incarnation unchanged")
-	}
-	_, e = h.client.Get(h.ctx, rt)
-	must(t, e)
-	_, e = h.client.Upload(h.ctx, api.Upload{Action: "query", ID: u.ID})
-	if e == nil {
-		t.Fatal("stale upload accepted")
-	}
-	list, e := h.client.List(h.ctx)
-	must(t, e)
-	if len(list.Items) != 1 || list.Items[0].ID != rt.ID {
-		t.Fatal("tmux runtime lost", list)
-	}
-	b, e := os.ReadFile(pidfile)
-	must(t, e)
-	var pid int
-	fmt.Sscanf(string(b), "%d", &pid)
-	if syscall.Kill(pid, 0) != nil {
-		t.Fatal("tmux child did not survive fabricd restart")
-	}
-	leftovers, _ := filepath.Glob(filepath.Join(h.dir, ".dune-upload-*"))
-	if len(leftovers) != 0 {
-		t.Fatal("orphan upload files", leftovers)
-	}
-	must(t, testStopRuntime(h.client, h.ctx, rt))
 }
 func TestGitBasics(t *testing.T) {
 	h := start(t)

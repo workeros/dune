@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,10 +17,7 @@ import (
 )
 
 func TestProtectedStreamsAfterConnectorCrashWithOrdinarySubscriptionsFull(t *testing.T) {
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if out, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal("mock build", string(out), err)
-	}
+	mock := mockACPBinary(t)
 	h := newCleanupProcessHarness(t)
 	h.start("")
 	work := t.TempDir()

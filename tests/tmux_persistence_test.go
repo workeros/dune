@@ -2,6 +2,8 @@ package tests
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -130,6 +132,9 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 				must(t, err)
 				receive(t, stream, "written", "")
 			}
+			digest := sha256.Sum256(nil)
+			upload, err := client.Upload(ctx, api.Upload{Action: "create", Intent: "create", Path: filepath.Join(dir, "upload-"+restart), SHA256: hex.EncodeToString(digest[:])})
+			must(t, err)
 			stream.Close()
 			client.Close()
 			if restart == "browser" {
@@ -157,6 +162,21 @@ func TestTmuxSurvivesFabricdAndGateway(t *testing.T) {
 			}
 			if restart == "gateway" && client.Binding.Generation <= gen {
 				t.Fatal("gateway lease did not advance")
+			}
+			_, err = client.Upload(ctx, api.Upload{Action: "query", ID: upload.ID})
+			if strings.HasPrefix(restart, "connector-") {
+				if err == nil {
+					t.Fatal("stale upload survived connector restart")
+				}
+				leftovers, err := filepath.Glob(filepath.Join(dir, ".dune-upload-*"))
+				must(t, err)
+				if len(leftovers) != 0 {
+					t.Fatal("orphan upload files", leftovers)
+				}
+			} else {
+				must(t, err)
+				_, err = client.Upload(ctx, api.Upload{Action: "cancel", ID: upload.ID})
+				must(t, err)
 			}
 			inc = client.Binding.Incarnation
 			gen = client.Binding.Generation

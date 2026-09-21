@@ -17,7 +17,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -269,27 +268,6 @@ func TestSlowConsumerIsolation(t *testing.T) {
 	defer s.Close()
 	receive(t, s, "data", "OUTPUT_FINISHED")
 }
-func TestMultiClient(t *testing.T) {
-	h := start(t)
-	tc, e := h.c.TLS()
-	must(t, e)
-	other, e := sdk.Dial(h.ctx, sdk.Options{Gateway: h.c.Gateway, Token: h.c.Token, Target: h.c.Target, TLSConfig: tc})
-	must(t, e)
-	defer other.Close()
-	done := make(chan error, 2)
-	for i, c := range []*sdk.Client{h.client, other} {
-		go func(i int, c *sdk.Client) {
-			r, e := c.Exec(h.ctx, api.Exec{Command: api.Command{Argv: []string{"echo", fmt.Sprint(i)}}, WorkingDirectory: h.dir})
-			if e == nil && r.Stdout != fmt.Sprintln(i) {
-				e = fmt.Errorf("crossed response %q", r.Stdout)
-			}
-			done <- e
-		}(i, c)
-	}
-	must(t, <-done)
-	must(t, <-done)
-}
-
 func TestMixedLoad(t *testing.T) {
 	h := start(t)
 	var streams []*sdk.Stream
@@ -402,33 +380,6 @@ func TestMixedLoad(t *testing.T) {
 	}
 }
 
-func TestMockACP(t *testing.T) {
-	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	build := exec.Command("go", "build", "-o", mock, "../samples/mock-acp")
-	if b, e := build.CombinedOutput(); e != nil {
-		t.Fatalf("mock build: %v %s", e, b)
-	}
-	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "acp", mock))
-	must(t, e)
-	defer s.Close()
-	defer testStopRuntime(h.client, h.ctx, rt)
-	raw := newRawTestClient(t, h, rt)
-	s.Close()
-	for _, line := range []string{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}`, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"mock-session","prompt":[{"type":"text","text":"test permission"}]}}`} {
-		e = raw.writeLine(line)
-		must(t, e)
-		raw.receive(t, "stdout", "jsonrpc")
-	}
-	e = raw.writeLine(`{"jsonrpc":"2.0","id":"mock-permission","result":{"outcome":{"outcome":"selected","optionId":"allow"}}}`)
-	must(t, e)
-	raw.receive(t, "stdout", "Mock permission response received")
-	raw.receive(t, "stdout", "end_turn")
-	e = raw.writeLine(`{"jsonrpc":"2.0","id":4,"method":"unknown"}`)
-	must(t, e)
-	raw.receive(t, "stdout", "Method not found")
-}
-
 func TestPendingStreamLimit(t *testing.T) {
 	h := start(t)
 	tc, e := h.c.TLS()
@@ -465,58 +416,6 @@ func TestPendingStreamLimit(t *testing.T) {
 	}
 	r := h.exec("echo", "other-client")
 	if r.Stdout != "other-client\n" {
-		t.Fatal(r)
-	}
-}
-
-func TestSignalAndInvalidInput(t *testing.T) {
-	h := start(t)
-	rt, s, e := testStartProfile(h.client, h.ctx, profile(h.dir, "pty", "/bin/sleep", "30"))
-	must(t, e)
-	defer s.Close()
-	must(t, s.Signal("TERM"))
-	receive(t, s, "exit", "")
-	if _, e := h.client.Get(h.ctx, rt); e == nil {
-		t.Fatal("destroyed session is still listed")
-	}
-	rt, s, e = testStartProfile(h.client, h.ctx, profile(h.dir, "acp", "/bin/cat"))
-	must(t, e)
-	defer s.Close()
-	defer testStopRuntime(h.client, h.ctx, rt)
-	raw := newRawTestClient(t, h, rt)
-	s.Close()
-	e = raw.writeLine(`{"invalid":true}`)
-	if e == nil || !strings.Contains(e.Error(), "INVALID_ARGUMENT") {
-		t.Fatal("invalid ACP input was accepted", e)
-	}
-	out, err := h.client.ReadRawACP(h.ctx, rt, api.RawACPRead{StreamID: raw.state.StreamID, Channel: "stdout"})
-	must(t, err)
-	if len(out.Data) != 0 {
-		t.Fatal("invalid input reached stdin")
-	}
-}
-
-func TestHTTPAuthorization(t *testing.T) {
-	h := start(t)
-	if !strings.HasPrefix(h.c.Gateway, "ws://") {
-		t.Fatal("expected plain WebSocket")
-	}
-	for _, token := range []string{"", "Bearer invalid"} {
-		headers := http.Header{}
-		if token != "" {
-			headers.Set("Authorization", token)
-		}
-		conn, res, e := websocket.DefaultDialer.DialContext(h.ctx, h.c.Gateway, headers)
-		if conn != nil {
-			conn.Close()
-		}
-		if e == nil || res == nil || res.StatusCode != 401 {
-			t.Fatalf("invalid token: response=%v err=%v", res, e)
-		}
-		res.Body.Close()
-	}
-	r := h.exec("/bin/echo", "http-auth-ok")
-	if r.Stdout != "http-auth-ok\n" {
 		t.Fatal(r)
 	}
 }

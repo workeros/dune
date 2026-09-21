@@ -12,6 +12,8 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
+var testBinaryDir string
+
 func TestMain(m *testing.M) {
 	if code, handled := registrationHostTestHelper(os.Args[1:]); handled {
 		os.Exit(code)
@@ -32,7 +34,14 @@ func TestMain(m *testing.M) {
 		binary, _ := filepath.Abs("../../bin/tmux")
 		_ = os.Setenv("DUNE_TMUX", binary)
 	}
-	os.Exit(m.Run())
+	var err error
+	testBinaryDir, err = os.MkdirTemp("", "dune-fabricd-test-bin-")
+	if err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	os.RemoveAll(testBinaryDir)
+	os.Exit(code)
 }
 
 func TestOpenOwnsStateDirectoryUntilClose(t *testing.T) {

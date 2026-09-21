@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -18,10 +17,7 @@ func TestLaunchAdmissionSurvivesMissingFirstResponse(t *testing.T) {
 	for _, interrupt := range []string{"caller-cancel", "connector-kill-during-setup"} {
 		t.Run(interrupt, func(t *testing.T) {
 			h := start(t)
-			mock := filepath.Join(h.dir, "mock-acp")
-			if output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput(); err != nil {
-				t.Fatalf("mock build: %s %v", output, err)
-			}
+			mock := mockACPBinary(t)
 			key := api.SubmissionKey{SubmissionID: "launch-saved-before-send", Target: api.SubmissionTarget{OwnerID: "standalone-owner", RunnerID: "standalone-runner", FabricID: "standalone-fabric", MachineID: h.c.Target, BindingRevision: 1}}
 			before, err := h.client.QuerySubmission(h.ctx, key)
 			must(t, err)

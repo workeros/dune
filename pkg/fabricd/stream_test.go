@@ -154,101 +154,70 @@ func TestReplacementConnectionRejectsOldStreamInput(t *testing.T) {
 	}
 }
 
-func TestCancelledConnectionRejectsBufferedMessage(t *testing.T) {
-	engine := newEngine(context.Background())
-	defer engine.Close()
-	left, right := net.Pipe()
-	sender, err := yamux.Client(left, wire.Config())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sender.Close()
-	receiver, err := yamux.Server(right, wire.Config())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer receiver.Close()
-	raw, err := sender.OpenStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sent := wire.Wrap(raw)
-	inbound, err := receiver.AcceptStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	input := wire.NewInputWindow()
-	id := wire.ID()
-	if err := input.Begin(id); err != nil {
-		t.Fatal(err)
-	}
-	if err := input.Confirm(id, wire.InputLeaseDuration); err != nil {
-		t.Fatal(err)
-	}
-	s := &executionStream{Stream: wire.Wrap(inbound), ctx: ctx, engine: engine, input: input}
-	// Yamux accepts bytes before the application reads them. Do not close the
-	// stream here: cancellation must reject buffered content at admission itself.
-	if err := sent.Send(&pb.Message{Kind: "input", RequestId: "buffered", InputLeaseId: id, Data: []byte("must not execute")}); err != nil {
-		t.Fatal(err)
-	}
-	cancel()
-	_ = s.SetDeadline(time.Now().Add(time.Second))
-	if message, err := s.Recv(); message != nil || err == nil {
-		t.Fatal("cancelled stream admitted buffered input", message, err)
-	}
-	_ = sent.SetReadDeadline(time.Now().Add(time.Second))
-	failure, err := sent.Recv()
-	if err != nil || failure.Code != "STALE_BINDING" {
-		t.Fatal("missing explicit stale connection response", failure, err)
-	}
-}
-
-func TestExpiredLeaseRejectsBufferedMessage(t *testing.T) {
-	engine := newEngine(context.Background())
-	defer engine.Close()
-	left, right := net.Pipe()
-	sender, err := yamux.Client(left, wire.Config())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sender.Close()
-	receiver, err := yamux.Server(right, wire.Config())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer receiver.Close()
-	raw, err := sender.OpenStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sent := wire.Wrap(raw)
-	inbound, err := receiver.AcceptStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := wire.NewInputWindow()
-	id := wire.ID()
-	if err := input.Begin(id); err != nil {
-		t.Fatal(err)
-	}
-	if err := input.Confirm(id, 30*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	s := &executionStream{Stream: wire.Wrap(inbound), ctx: context.Background(), engine: engine, input: input}
-	if err := sent.Send(&pb.Message{Kind: "input", InputLeaseId: id, Data: []byte("expired buffered input")}); err != nil {
-		t.Fatal(err)
-	}
-	// Keep the connection, engine and generation valid. Only the original grant
-	// expires; there is deliberately no Watch goroutine to mask admission bugs.
-	time.Sleep(40 * time.Millisecond)
-	if message, err := s.Recv(); message != nil || err == nil {
-		t.Fatal("expired lease admitted buffered message", message, err)
-	}
-	_ = sent.SetReadDeadline(time.Now().Add(time.Second))
-	failure, err := sent.Recv()
-	if err != nil || failure.Code != "STALE_BINDING" {
-		t.Fatal("missing stale input lease response", failure, err)
+func TestStreamRejectsBufferedInputAfterAuthorityChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		lease      time.Duration
+		invalidate func(context.CancelFunc)
+		epoch      uint64
+	}{
+		{name: "cancelled connection", epoch: 3, code: "STALE_BINDING", lease: wire.InputLeaseDuration, invalidate: func(cancel context.CancelFunc) { cancel() }},
+		{name: "expired lease", epoch: 3, code: "STALE_BINDING", lease: 30 * time.Millisecond, invalidate: func(context.CancelFunc) { time.Sleep(40 * time.Millisecond) }},
+		{name: "different ownership term", code: "ROUTE_STALE", lease: wire.InputLeaseDuration, epoch: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newEngine(t.Context())
+			defer engine.Close()
+			left, right := net.Pipe()
+			sender, err := yamux.Client(left, wire.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sender.Close()
+			receiver, err := yamux.Server(right, wire.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer receiver.Close()
+			raw, err := sender.OpenStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent := wire.Wrap(raw)
+			inbound, err := receiver.AcceptStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			input := wire.NewInputWindow()
+			id := wire.ID()
+			if err := input.Begin(id); err != nil {
+				t.Fatal(err)
+			}
+			if err := input.Confirm(id, tc.lease); err != nil {
+				t.Fatal(err)
+			}
+			stream := &executionStream{Stream: wire.Wrap(inbound), ctx: ctx, engine: engine, input: input, epoch: tc.epoch}
+			message := &pb.Message{Kind: "input", RequestId: "buffered", InputLeaseId: id, RouteEpoch: 3, Data: []byte("must not execute")}
+			// Buffer input before invalidating authority. No watcher or stream close
+			// may hide a missing check at application admission.
+			if err := sent.Send(message); err != nil {
+				t.Fatal(err)
+			}
+			if tc.invalidate != nil {
+				tc.invalidate(cancel)
+			}
+			_ = stream.SetDeadline(time.Now().Add(time.Second))
+			if accepted, err := stream.Recv(); accepted != nil || err == nil {
+				t.Fatal("stream admitted buffered input", accepted, err)
+			}
+			_ = sent.SetReadDeadline(time.Now().Add(time.Second))
+			failure, err := sent.Recv()
+			if err != nil || failure.Code != tc.code {
+				t.Fatal("missing explicit rejection", failure, err)
+			}
+		})
 	}
 }
 
@@ -314,52 +283,4 @@ func TestReverseConnectionRenewsInputLease(t *testing.T) {
 	if c.Binding.Incarnation != original.Incarnation || c.Binding.Generation != original.Generation {
 		t.Fatal("lease renewal replaced execution identity")
 	}
-}
-
-func TestInputGrantCannotCrossOwnershipTerm(t *testing.T) {
-	t.Run("epoch", func(t *testing.T) {
-		engine := newEngine(context.Background())
-		defer engine.Close()
-		left, right := net.Pipe()
-		sender, err := yamux.Client(left, wire.Config())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer sender.Close()
-		receiver, err := yamux.Server(right, wire.Config())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer receiver.Close()
-		raw, err := sender.OpenStream()
-		if err != nil {
-			t.Fatal(err)
-		}
-		sent := wire.Wrap(raw)
-		inbound, err := receiver.AcceptStream()
-		if err != nil {
-			t.Fatal(err)
-		}
-		input := wire.NewInputWindow()
-		id := wire.ID()
-		if err := input.Begin(id); err != nil {
-			t.Fatal(err)
-		}
-		if err := input.Confirm(id, wire.InputLeaseDuration); err != nil {
-			t.Fatal(err)
-		}
-		stream := &executionStream{Stream: wire.Wrap(inbound), ctx: context.Background(), engine: engine, input: input, epoch: 4}
-		message := &pb.Message{Kind: "input", InputLeaseId: id, RouteEpoch: 3, Data: []byte("must not cross term")}
-		if err := sent.Send(message); err != nil {
-			t.Fatal(err)
-		}
-		if accepted, err := stream.Recv(); accepted != nil || err == nil {
-			t.Fatal("valid grant admitted wrong ownership term", accepted, err)
-		}
-		_ = sent.SetReadDeadline(time.Now().Add(time.Second))
-		failure, err := sent.Recv()
-		if err != nil || failure.Code != "ROUTE_STALE" {
-			t.Fatal("missing route stale response", failure, err)
-		}
-	})
 }

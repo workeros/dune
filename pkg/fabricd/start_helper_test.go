@@ -3,6 +3,12 @@ package fabricd
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
@@ -34,4 +40,26 @@ func testForgetRuntime(connection *client.Client, ctx context.Context, runtime a
 		return fmt.Errorf("cleanup remains %s: %s", receipt.Stage, receipt.ErrorCode)
 	}
 	return err
+}
+
+// Only the immutable executable is shared; every test still owns its process,
+// working directory, logs and session state. TestMain removes the binary directory.
+var buildMockACP = sync.OnceValues(func() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	path := filepath.Join(testBinaryDir, "mock-acp")
+	output, err := exec.CommandContext(ctx, "go", "build", "-o", path, "../../samples/mock-acp").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("build mock ACP: %w\n%s", err, output)
+	}
+	return path, nil
+})
+
+func mockACPBinary(t *testing.T) string {
+	t.Helper()
+	path, err := buildMockACP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

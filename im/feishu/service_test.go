@@ -998,65 +998,23 @@ func TestActivateHealthyBindingRechecksRevisionAfterAgentValidation(t *testing.T
 	}
 }
 
-func TestStreamingCardRejectsNonACPBeforeBindingActivation(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: ReplyStreaming})
-	binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
-		Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret, _ := json.Marshal(Credentials{AppSecret: "app-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
-	agents := &capabilityBackend{caps: channel.AgentCapabilities{Adapter: "pty"}}
-	resolver := &testCredentialResolver{data: secret}
-	service, err := NewService(store, resolver, agents)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer service.Stop(ctx)
-	if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-		t.Fatalf("PTY streaming card bot was activated: %v", err)
-	}
-	agents.caps = channel.AgentCapabilities{Adapter: "acp", ReliableFinal: true}
-	if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-		t.Fatalf("ACP without assistant deltas was activated: %v", err)
-	}
-	agents.caps = channel.AgentCapabilities{Adapter: "acp", AssistantDeltas: true, ReliableFinal: true}
-	if err := service.Activate(ctx, binding); err != nil {
-		t.Fatal(err)
-	}
-	if service.bindings[binding.ID] == nil {
-		t.Fatal("valid ACP streaming bot did not activate")
-	}
-	healthy := service.bindings[binding.ID]
-	resolver.data = nil // an unchanged active Binding does not need secret resolution
-	if err := service.LoadTenant(ctx, "tenant-a"); err != nil || service.bindings[binding.ID] != healthy {
-		t.Fatalf("unchanged streaming bot was restarted or required credentials: %v", err)
-	}
-	agents.caps = channel.AgentCapabilities{Adapter: "pty"}
-	if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-		t.Fatalf("changed Agent Profile left an incompatible streaming bot active: %v", err)
-	}
-	if _, err := service.CallbackHandler("tenant-a", binding.ID); err == nil {
-		t.Fatal("incompatible streaming bot retained a callback receiver")
-	}
-}
-
-func TestFinalModesValidateReliableACPBeforeBindingActivation(t *testing.T) {
-	for _, mode := range []string{ReplyFinalText, ReplyFinalCard} {
-		t.Run(mode, func(t *testing.T) {
+func TestReplyModesValidateAgentCapabilitiesBeforeBindingActivation(t *testing.T) {
+	for _, tc := range []struct {
+		mode                string
+		insufficient, valid channel.AgentCapabilities
+	}{
+		{ReplyStreaming, channel.AgentCapabilities{Adapter: "acp", ReliableFinal: true}, channel.AgentCapabilities{Adapter: "acp", ReliableFinal: true, AssistantDeltas: true}},
+		{ReplyFinalText, channel.AgentCapabilities{Adapter: "acp"}, channel.AgentCapabilities{Adapter: "acp", ReliableFinal: true}},
+		{ReplyFinalCard, channel.AgentCapabilities{Adapter: "acp"}, channel.AgentCapabilities{Adapter: "acp", ReliableFinal: true}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
 			ctx := context.Background()
 			store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "im.db"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: mode})
+			config, _ := json.Marshal(Config{AppID: testAppID, ReceiveMode: ReceiveCallback, ReplyMode: tc.mode})
 			binding, err := store.Put(ctx, channel.BotBinding{ID: "bot-a", TenantID: "tenant-a", Provider: Kind, ConfigVersion: 1,
 				Config: config, CredentialRef: "secret", Target: channel.AgentTarget{RunnerID: "runner", ProfileID: "agent", ProfileRevision: 1}, Enabled: true})
 			if err != nil {
@@ -1064,25 +1022,37 @@ func TestFinalModesValidateReliableACPBeforeBindingActivation(t *testing.T) {
 			}
 			secret, _ := json.Marshal(Credentials{AppSecret: "app-secret", EncryptKey: testEncryptKey, VerificationToken: testToken})
 			agents := &capabilityBackend{caps: channel.AgentCapabilities{Adapter: "pty"}}
-			service, err := NewService(store, &testCredentialResolver{data: secret}, agents)
+			resolver := &testCredentialResolver{data: secret}
+			service, err := NewService(store, resolver, agents)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer service.Stop(ctx)
 			if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-				t.Fatalf("PTY final reply bot was activated: %v", err)
+				t.Fatalf("PTY reply bot was activated: %v", err)
 			}
-			agents.caps = channel.AgentCapabilities{Adapter: "acp"}
+			agents.caps = tc.insufficient
 			if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-				t.Fatalf("ACP without reliable final state was activated: %v", err)
+				t.Fatalf("ACP without required reply capabilities was activated: %v", err)
 			}
-			agents.caps = channel.AgentCapabilities{Adapter: "acp", ReliableFinal: true}
-			if err := service.Activate(ctx, binding); err != nil || service.bindings[binding.ID] == nil {
-				t.Fatalf("valid final reply bot without deltas did not activate: %v", err)
+			agents.caps = tc.valid
+			if err := service.Activate(ctx, binding); err != nil {
+				t.Fatal(err)
+			}
+			if service.bindings[binding.ID] == nil {
+				t.Fatal("valid ACP reply bot did not activate")
+			}
+			healthy := service.bindings[binding.ID]
+			resolver.data = nil // an unchanged active Binding does not need secret resolution
+			if err := service.LoadTenant(ctx, "tenant-a"); err != nil || service.bindings[binding.ID] != healthy {
+				t.Fatalf("unchanged bot was restarted or required credentials: %v", err)
 			}
 			agents.caps = channel.AgentCapabilities{Adapter: "pty"}
 			if err := service.Activate(ctx, binding); err == nil || service.bindings[binding.ID] != nil {
-				t.Fatalf("changed Agent Profile left incompatible final bot active: %v", err)
+				t.Fatalf("changed Agent Profile left an incompatible bot active: %v", err)
+			}
+			if _, err := service.CallbackHandler("tenant-a", binding.ID); err == nil {
+				t.Fatal("incompatible bot retained a callback receiver")
 			}
 		})
 	}

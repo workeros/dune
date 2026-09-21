@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -73,10 +72,7 @@ func startCapacityAgent(t *testing.T, h *cleanupProcessHarness, mock, gate strin
 }
 
 func TestCompletedControlEvidenceAndCompetingSubmissionsPreserveOtherTargets(t *testing.T) {
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if out, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal(string(out), err)
-	}
+	mock := mockACPBinary(t)
 	// Full production evidence pools require thousands of synchronous durable
 	// commits. Extend only this test lifetime, never product capacity or deadlines.
 	h := newCleanupProcessHarnessWithLifetime(t, 10*time.Minute)

@@ -573,83 +573,63 @@ func TestStreamUnknownSendNeverFallsBackToGroupTopLevel(t *testing.T) {
 	}
 }
 
-func TestStreamUnknownUpdateIsNotReplayed(t *testing.T) {
-	store := &memoryStreamStore{}
-	c := testStreamingChannel(t, store)
-	updates := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/open-apis/auth/v3/tenant_access_token/internal":
-			_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
-		case "/open-apis/cardkit/v1/cards":
-			_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-123"}}`)
-		case "/open-apis/im/v1/messages/om_input/reply":
-			_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_card"}}`)
-		case "/open-apis/cardkit/v1/cards/card-123/elements/answer/content":
-			updates++
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(w, `{"code":999,"msg":"unknown"}`)
-		default:
-			t.Errorf("unexpected request path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
-	stream, err := c.OpenStream(context.Background(), testGroupAddress(), testStreamMessage(""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Update(context.Background(), testStreamMessage("hello")); err == nil {
-		t.Fatal("failed update unexpectedly succeeded")
-	}
-	if state := store.state(); state.Phase != "unknown" || state.PendingText != "hello" || state.Sequence != 1 {
-		t.Fatalf("pending update was not preserved: %+v", state)
-	}
-	if err := stream.Update(context.Background(), testStreamMessage("hello world")); err == nil {
-		t.Fatal("unknown update was silently retried")
-	}
-	if updates != 1 {
-		t.Fatalf("unknown update was replayed %d times", updates)
-	}
-}
-
-func TestStreamFreezesWhenRemoteUpdateSucceedsButCommitFails(t *testing.T) {
-	store := &memoryStreamStore{failActiveAfter: 3} // after card creation, send, then update
-	c := testStreamingChannel(t, store)
-	updates := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/open-apis/auth/v3/tenant_access_token/internal":
-			_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
-		case "/open-apis/cardkit/v1/cards":
-			_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-123"}}`)
-		case "/open-apis/im/v1/messages/om_input/reply":
-			_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_card"}}`)
-		case "/open-apis/cardkit/v1/cards/card-123/elements/answer/content":
-			updates++
-			_, _ = io.WriteString(w, `{"code":0}`)
-		default:
-			t.Errorf("unexpected request path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
-	stream, err := c.OpenStream(context.Background(), testGroupAddress(), testStreamMessage(""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Update(context.Background(), testStreamMessage("hello")); err == nil {
-		t.Fatal("post-update durable write failure was not reported")
-	}
-	if state := store.state(); state.Phase != "pending" || state.PendingText != "hello" {
-		t.Fatalf("pending update should remain for reconciliation: %+v", state)
-	}
-	if err := stream.Complete(context.Background(), testStreamMessage("hello world")); err == nil {
-		t.Fatal("uncertain stream was allowed to complete")
-	}
-	if updates != 1 {
-		t.Fatalf("uncertain stream issued %d updates", updates)
+func TestStreamUncertainUpdateCannotReplayOrComplete(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase string
+		failCommit  bool
+	}{
+		{name: "remote update failed", phase: "unknown"},
+		{name: "remote succeeded but local commit failed", phase: "pending", failCommit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &memoryStreamStore{}
+			if tc.failCommit {
+				store.failActiveAfter = 3 // card creation, send, then update
+			}
+			c := testStreamingChannel(t, store)
+			updates := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/open-apis/auth/v3/tenant_access_token/internal":
+					_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
+				case "/open-apis/cardkit/v1/cards":
+					_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-123"}}`)
+				case "/open-apis/im/v1/messages/om_input/reply":
+					_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_card"}}`)
+				case "/open-apis/cardkit/v1/cards/card-123/elements/answer/content":
+					updates++
+					if tc.failCommit {
+						_, _ = io.WriteString(w, `{"code":0}`)
+					} else {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						_, _ = io.WriteString(w, `{"code":999,"msg":"unknown"}`)
+					}
+				default:
+					t.Errorf("unexpected request path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			c.client = lark.NewClient(testAppID, "test-secret", lark.WithOpenBaseUrl(server.URL), lark.WithOAuthBaseUrl(server.URL))
+			stream, err := c.OpenStream(t.Context(), testGroupAddress(), testStreamMessage(""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Update(t.Context(), testStreamMessage("hello")); err == nil {
+				t.Fatal("uncertain update unexpectedly succeeded")
+			}
+			if state := store.state(); state.Phase != tc.phase || state.PendingText != "hello" || state.Sequence != 1 {
+				t.Fatalf("pending update was not preserved: %+v", state)
+			}
+			if err := stream.Update(t.Context(), testStreamMessage("hello world")); err == nil {
+				t.Fatal("uncertain update was silently retried")
+			}
+			if err := stream.Complete(t.Context(), testStreamMessage("hello world")); err == nil {
+				t.Fatal("uncertain stream was allowed to complete")
+			}
+			if updates != 1 {
+				t.Fatalf("uncertain update was replayed %d times", updates)
+			}
+		})
 	}
 }

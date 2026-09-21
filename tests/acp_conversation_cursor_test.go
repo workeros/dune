@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,11 +15,7 @@ import (
 
 func TestACPConversationIndependentCursorsAcrossConnections(t *testing.T) {
 	h := start(t)
-	mock := filepath.Join(h.dir, "mock-acp")
-	output, err := exec.Command("go", "build", "-o", mock, "../samples/mock-acp").CombinedOutput()
-	if err != nil {
-		t.Fatalf("mock build: %s %v", output, err)
-	}
+	mock := mockACPBinary(t)
 	p := profile(h.dir, "acp", mock)
 	p.ManagedACP = true
 	journal := filepath.Join(h.dir, "rpc.log")

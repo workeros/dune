@@ -3,7 +3,6 @@ package fabricd
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,10 +11,7 @@ import (
 )
 
 func TestOriginalACPDeadlineExpiresWhileConnectorIsDead(t *testing.T) {
-	mock := filepath.Join(t.TempDir(), "mock-acp")
-	if output, err := exec.Command("go", "build", "-o", mock, "../../samples/mock-acp").CombinedOutput(); err != nil {
-		t.Fatal(string(output), err)
-	}
+	mock := mockACPBinary(t)
 	for _, managed := range []bool{false, true} {
 		mode := map[bool]string{false: "raw", true: "managed"}[managed]
 		t.Run(mode, func(t *testing.T) {
