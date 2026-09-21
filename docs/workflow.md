@@ -81,6 +81,7 @@ DUNE_TEST_POSTGRES='postgres://…' go test ./internal/metadata ./pkg/fabricd ./
 - 本地登录 schema 包含 users、sessions、runners、enrollments、routes、profiles、profile_revisions、projects、views、agent_credentials；
 - 企业 identity 模式包含 runners、enrollments、routes、profiles、profile_revisions、projects、views、agent_credentials；
 - route 并发竞争只有一个 owner，失租后以更高 epoch 接管；
+- 真实 fabricd 的完整 binding 可注册并执行请求，limits 最多 64 项且跨连接池读取不丢失；修改 binding 广告或连接目录校验时，执行 `TestPostgresConnectorRegistration` 与 `TestPostgresConnectionDirectory`，不能只依赖无目录的单机 Gateway 测试；
 - 旧 owner 的发布、续租和释放均被拒绝；
 - peer owner 重新验证 Session、Runner binding 与策略；
 - 入口或 owner 故障时不重放结果未知的请求，fabricd 重连后原 tmux 可 attach。

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -70,6 +72,23 @@ func directoryClaim(t *testing.T, store *Store) gateway.RouteClaim {
 	return gateway.RouteClaim{Target: machine.ID, OwnerBootID: wire.ID(), OwnerAddress: "https://instance-a.test/api/v1/ws/peer", Binding: api.Binding{Target: machine.ID, Version: api.Version, Incarnation: wire.ID(), Generation: 1, Capabilities: []string{"runtime.list"}}}
 }
 
+func TestRouteLimitCapacity(t *testing.T) {
+	for _, count := range []int{0, 33, 64, 65} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			claim := gateway.RouteClaim{
+				Target: "machine", OwnerBootID: wire.ID(), OwnerAddress: "https://owner.test/api/v1/ws/peer",
+				Binding: api.Binding{Target: "machine", Version: api.Version, Incarnation: wire.ID(), Generation: 1, Limits: make(map[string]int)},
+			}
+			for i := range count {
+				claim.Binding.Limits[fmt.Sprintf("limit_%d", i)] = i
+			}
+			if got := validRoute(claim); got != (count <= 64) {
+				t.Fatalf("validRoute with %d limits = %v, want %v", count, got, count <= 64)
+			}
+		})
+	}
+}
+
 func TestPostgresConnectionDirectory(t *testing.T) {
 	config, _, _ := postgresConfig(t)
 	ctx := context.Background()
@@ -92,6 +111,10 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	claim := directoryClaim(t, first)
+	claim.Binding.Limits = make(map[string]int)
+	for i := range 64 {
+		claim.Binding.Limits[fmt.Sprintf("limit_%d", i)] = i
+	}
 	if _, err := a.Resolve(ctx, claim.Target); !errors.Is(err, gateway.ErrRouteNotFound) {
 		t.Fatal("unconnected machine has a route", err)
 	}
@@ -141,6 +164,9 @@ func TestPostgresConnectionDirectory(t *testing.T) {
 	found, err := b.Resolve(ctx, claim.Target)
 	if err != nil || !found.Published || found.Epoch != 1 {
 		t.Fatal("confirmed route not visible across pools", found, err)
+	}
+	if !maps.Equal(found.Binding.Limits, claim.Binding.Limits) {
+		t.Fatal("published route did not retain all advertised limits", found.Binding.Limits)
 	}
 	if err := a.Release(ctx, owned.Route); err != nil {
 		t.Fatal(err)

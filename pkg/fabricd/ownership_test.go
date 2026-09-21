@@ -28,13 +28,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestPostgresOwnedReverseConnections(t *testing.T) {
+func ownershipPostgresConfig(t *testing.T, ctx context.Context) storage.Config {
+	t.Helper()
 	address := os.Getenv("DUNE_TEST_POSTGRES")
 	if address == "" {
 		t.Skip("DUNE_TEST_POSTGRES not configured")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
 	admin, err := pgx.Connect(ctx, address)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +51,13 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 		}
 		admin.Close(cleanup)
 	})
-	config := storage.Config{Postgres: &storage.Postgres{URL: address, BeforeConnect: func(_ context.Context, c *pgx.ConnConfig) error { c.RuntimeParams["search_path"] = schema; return nil }}}
+	return storage.Config{Postgres: &storage.Postgres{URL: address, BeforeConnect: func(_ context.Context, c *pgx.ConnConfig) error { c.RuntimeParams["search_path"] = schema; return nil }}}
+}
+
+func TestPostgresOwnedReverseConnections(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	config := ownershipPostgresConfig(t, ctx)
 	first, err := metadata.Open(ctx, config)
 	if err != nil {
 		t.Fatal(err)
@@ -236,10 +241,15 @@ func TestPostgresOwnedReverseConnections(t *testing.T) {
 	if err != nil || !owned.Published || owned.Binding.Incarnation != original.Binding.Incarnation {
 		t.Fatal("confirmed binding not published in PostgreSQL", owned, err)
 	}
-	runtime, terminal, err := testStartProfile(original, ctx, api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}})
+	key := api.SubmissionKey{SubmissionID: wire.ID(), Target: api.SubmissionTarget{OwnerID: user.ID, RunnerID: machine.RunnerID, FabricID: "attached", MachineID: machine.ID, BindingRevision: 1}}
+	started, terminal, err := original.Start(ctx, api.StartRequest{SubmissionKey: key, Profile: api.Profile{Version: 1, Kind: "agent", WorkingDirectory: t.TempDir(), Adapter: "pty", Start: api.Command{Argv: []string{"/bin/sh"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if started.Stage != "started" || started.Runtime == nil || terminal == nil {
+		t.Fatal("PTY did not start", started)
+	}
+	runtime := *started.Runtime
 	defer terminal.Close()
 	select {
 	case err := <-connectFabric(g2, competitor):

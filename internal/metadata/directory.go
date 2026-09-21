@@ -46,7 +46,7 @@ func validRoute(route gateway.RouteClaim) bool {
 		return false
 	}
 	binding := route.Binding
-	if binding.RouteEpoch != 0 || binding.Target != route.Target || binding.Version == "" || len(binding.Version) > 64 || strings.ContainsFunc(binding.Version, unicode.IsControl) || binding.Incarnation == "" || len(binding.Incarnation) > 128 || strings.ContainsFunc(binding.Incarnation, unicode.IsControl) || binding.Generation == 0 || len(binding.Capabilities) > 128 || len(binding.Limits) > 32 {
+	if binding.RouteEpoch != 0 || binding.Target != route.Target || binding.Version == "" || len(binding.Version) > 64 || strings.ContainsFunc(binding.Version, unicode.IsControl) || binding.Incarnation == "" || len(binding.Incarnation) > 128 || strings.ContainsFunc(binding.Incarnation, unicode.IsControl) || binding.Generation == 0 || len(binding.Capabilities) > 128 || len(binding.Limits) > 64 {
 		return false
 	}
 	for _, capability := range binding.Capabilities {
