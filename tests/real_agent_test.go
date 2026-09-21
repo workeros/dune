@@ -2,10 +2,13 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/api"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -65,11 +68,11 @@ func TestRealAgentACP(t *testing.T) {
 		t.Skip("set DUNE_REAL_AGENT=1 for installed Gemini ACP")
 	}
 	h := start(t)
-	agent, e := exec.LookPath("gemini")
-	must(t, e)
+	argv := realACPCommand(t)
+	agent := argv[0]
 	work := filepath.Join(h.dir, "acp-task")
 	must(t, os.Mkdir(work, 0700))
-	rt, s, e := testStartProfile(h.client, h.ctx, profile(work, "acp", agent, "--acp"))
+	rt, s, e := testStartProfile(h.client, h.ctx, profile(work, "acp", argv...))
 	must(t, e)
 	defer s.Close()
 	defer testStopRuntime(h.client, h.ctx, rt)
@@ -89,8 +92,85 @@ func TestRealAgentACP(t *testing.T) {
 			if len(reply.Result) == 0 {
 				t.Fatalf("initialize rejected: %s", line)
 			}
-			t.Logf("Real ACP initialize passed: %s --acp: %s", agent, line)
+			assertRealACPIsolation(t, h, rt)
+			t.Logf("Real ACP initialize passed: %s", agent)
+			must(t, testStopRuntime(h.client, h.ctx, rt))
+			must(t, testForgetRuntime(h.client, h.ctx, rt))
 			return
 		}
 	}
+}
+
+// Both entry points use the same actual stdio Agent and submit no model prompt.
+func realACPCommand(t *testing.T) []string {
+	t.Helper()
+	argv := []string{"gemini", "--acp"}
+	if configured := os.Getenv("DUNE_REAL_ACP_COMMAND"); configured != "" {
+		must(t, json.Unmarshal([]byte(configured), &argv))
+	}
+	if len(argv) == 0 {
+		t.Fatal("real ACP command is empty")
+	}
+	agent, err := exec.LookPath(argv[0])
+	must(t, err)
+	argv[0] = agent
+	return argv
+}
+
+func TestRealAgentManagedACP(t *testing.T) {
+	if os.Getenv("DUNE_REAL_AGENT") != "1" {
+		t.Skip("set DUNE_REAL_AGENT=1 for configured stdio ACP Agent")
+	}
+	h := start(t)
+	p := profile(h.dir, "acp", realACPCommand(t)...)
+	p.ManagedACP = true
+	runtime, stream, err := testStartProfile(h.client, h.ctx, p)
+	must(t, err)
+	stream.Close()
+	defer func() { _ = testStopRuntime(h.client, h.ctx, runtime) }()
+	state, err := h.client.ACPState(h.ctx, runtime)
+	must(t, err)
+	if !state.Ready {
+		t.Fatal("actual Agent initialization did not complete")
+	}
+	assertRealACPIsolation(t, h, runtime)
+	t.Logf("Real managed ACP initialize passed: %s", p.Start.Argv[0])
+	must(t, testStopRuntime(h.client, h.ctx, runtime))
+	must(t, testForgetRuntime(h.client, h.ctx, runtime))
+}
+
+func assertRealACPIsolation(t *testing.T, h *harness, original api.Runtime) {
+	t.Helper()
+	server, err := tmux.Open(filepath.Join(h.c.SessionDir, "acp"))
+	must(t, err)
+	output, err := exec.Command(os.Getenv("DUNE_TMUX"), "-S", server.Socket, "capture-pane", "-p", "-t", "acp-"+original.ID+":0.0").Output()
+	must(t, err)
+	if strings.TrimSpace(string(output)) != "" {
+		t.Fatal("ACP output entered tmux PTY")
+	}
+	current, err := h.client.Get(h.ctx, original)
+	must(t, err)
+	if current.ACPHost == nil {
+		t.Fatal("missing original host identity")
+	}
+	if runtime.GOOS != "linux" {
+		return
+	}
+	terminal, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/3", current.ACPHost.HostPID))
+	must(t, err)
+	if terminal != "/dev/tty" {
+		t.Fatal("host does not retain fd3 terminal", terminal)
+	}
+	for _, pid := range []int{current.ACPHost.AgentPID, current.ACPHost.GroupID} {
+		directory := fmt.Sprintf("/proc/%d/fd", pid)
+		files, err := os.ReadDir(directory)
+		must(t, err)
+		for _, file := range files {
+			path, _ := os.Readlink(filepath.Join(directory, file.Name()))
+			if path == "/dev/tty" || strings.HasPrefix(path, "/dev/pts/") {
+				t.Fatal("Agent/guardian inherited terminal descriptor")
+			}
+		}
+	}
+	t.Log("host owns fd3; Agent/guardian own no terminal; tmux pane is empty")
 }

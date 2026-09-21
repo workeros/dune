@@ -106,7 +106,7 @@ func TestDiscoveryClassifiesPrivateArtifactsWithoutAdoptionOrCleanup(t *testing.
 		t.Fatal(err)
 	}
 	orphan, instance := wire.ID(), wire.ID()
-	if err := manager.CreateHost(orphan, instance, "/usr/bin/true", t.TempDir()); err != nil {
+	if _, err := manager.CreateHost(orphan, instance, "/usr/bin/true", t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	check("UNREGISTERED_HOST_PANE")

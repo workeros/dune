@@ -26,7 +26,8 @@ type FileIdentity struct {
 }
 
 type CleanupResources struct {
-	Directory   FileIdentity `json:"directory"`
+	Directory FileIdentity `json:"directory"`
+	// Socket has no inode until the original host creates its endpoint.
 	Socket      FileIdentity `json:"socket"`
 	TmuxSession string       `json:"tmux_session"`
 	Instance    string       `json:"instance"`
@@ -37,7 +38,7 @@ func (r CleanupResources) Validate(target api.SubmissionTarget, instance string)
 		return fmt.Errorf("cleanup requires the original host resource instance")
 	}
 	for _, file := range []FileIdentity{r.Directory, r.Socket} {
-		if !filepath.IsAbs(file.Path) || filepath.Clean(file.Path) != file.Path || file.Path == "/" || len(file.Path) > 4096 || strings.ContainsRune(file.Path, 0) || file.Inode == 0 {
+		if !filepath.IsAbs(file.Path) || filepath.Clean(file.Path) != file.Path || file.Path == "/" || len(file.Path) > 4096 || strings.ContainsRune(file.Path, 0) || (file.Inode == 0 && file != r.Socket) {
 			return fmt.Errorf("cleanup requires bounded absolute resource identities")
 		}
 	}

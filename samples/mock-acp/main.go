@@ -103,6 +103,10 @@ func main() {
 		}
 		switch m.Method {
 		case "initialize":
+			if os.Getenv("DUNE_MOCK_INITIALIZE_FAILURE") == "1" {
+				send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32603, "message": "private-initialize-error-sentinel"}})
+				continue
+			}
 			caps := map[string]any{}
 			if historyEnabled {
 				caps["loadSession"] = true

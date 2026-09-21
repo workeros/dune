@@ -146,6 +146,14 @@ func (p *sessionProxy) information() api.Runtime {
 }
 
 func (p *sessionProxy) informationContext(parent context.Context) api.Runtime {
+	if p.registry != nil {
+		p.mu.Lock()
+		target, instance := p.registration.Target, p.registration.Instance
+		p.mu.Unlock()
+		if host, err := p.registry.Host(parent, target); err == nil && host.Instance == instance && host.Phase == "failed" {
+			return host.Runtime
+		}
+	}
 	// Coalesce concurrent probes before entering the connection mutex. Repeated
 	// reads of one bad endpoint cannot occupy every discovery worker in sequence.
 	if !p.observeMu.TryLock() {
@@ -298,13 +306,45 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 	if err := savePrivateFile(filepath.Join(directory, "instance.json"), reg.Instance); err != nil {
 		return err
 	}
+	socket, err := sessionSocketPath(reg)
+	if err != nil {
+		return err
+	}
+	resource, err := fileIdentity(directory, os.ModeDir)
+	if err != nil {
+		return err
+	}
+	bootID, err := process.BootID()
+	if err != nil {
+		return err
+	}
+	description.State = "starting"
+	description.ACPHost = &api.ACPHostInfo{Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: program.SHA256, ProgramBytes: program.Bytes, Startup: &api.ACPStartupDiagnostic{Phase: "host_pending"}}
+	prepared := sessionregistry.HostRecord{Target: target, Instance: reg.Instance, BootID: bootID, Runtime: description, Registration: api.Payload(reg), Resources: sessionregistry.CleanupResources{Directory: resource, Socket: sessionregistry.FileIdentity{Path: socket}, Instance: reg.Instance, TmuxSession: "acp-" + r.id}}
+	if err := d.registry.PrepareHost(d.ctx, prepared); err != nil {
+		return err
+	}
 	boot := sessionBootstrap{Launch: launch, Registration: reg, StateDir: d.stateDir, Profile: p, Environment: environment(p.Env)}
 	if err := savePrivateFile(filepath.Join(directory, "bootstrap.json"), boot); err != nil {
-		return err
+		// No tmux launch was attempted, and the gate seals any copied bootstrap.
+		failureErr := d.registry.FailHost(d.ctx, target, reg.Instance, "HOST_START_FAILED", func(host sessionregistry.HostRecord) error {
+			if host.Phase != "starting" || host.PID != 0 {
+				return fmt.Errorf("host already entered")
+			}
+			return nil
+		})
+		if failureErr != nil {
+			return &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP bootstrap failure could not be durably confirmed; query the original key"}
+		}
+		return &api.Error{Code: "HOST_START_FAILED", Detail: "ACP bootstrap publication failed"}
 	}
-	if err := d.acpTmux.CreateHost(r.id, reg.Instance, executable, directory); err != nil {
-		return err
+	pid, launchErr := d.acpTmux.CreateHost(r.id, reg.Instance, executable, directory)
+	if launchErr == nil {
+		_ = d.registry.ObserveHostPID(d.ctx, target, reg.Instance, pid)
 	}
+	// A tmux client error can lose an acknowledgement after process creation.
+	// Continue original-endpoint probes; never repeat new-session.
+
 	r.host = &sessionProxy{registration: reg, directory: directory, term: d.sessionTerm, connector: d.inc, registry: d.registry}
 	// No retry can launch another host. These bounded probes only establish the
 	// original endpoint after tmux's asynchronous child startup.
@@ -318,9 +358,16 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 		if err == nil {
 			return nil
 		}
-		if time.Now().After(deadline) || d.ctx.Err() != nil {
-			return &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP host launch was not confirmed; discover the original Runtime"}
+		if host, readErr := d.registry.Host(d.ctx, target); readErr == nil {
+			d.confirmAbsentStartup(host)
+			if receipt, readErr := d.registry.Get(d.ctx, launch.SubmissionKey); readErr == nil && receipt.Stage == "failed" {
+				return &api.Error{Code: receipt.ErrorCode, Detail: "original ACP startup failed; query the original submission key"}
+			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		if time.Now().After(deadline) || d.ctx.Err() != nil {
+			_ = d.registry.StartupProgress(d.ctx, target, reg.Instance, "host_pending", true)
+			return &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP host confirmation timed out; query the original submission key"}
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

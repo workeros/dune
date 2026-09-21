@@ -2,6 +2,7 @@ package fabricd
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -35,6 +36,9 @@ func (d *Engine) submitStop(s *executionStream, message *pb.Message, machine str
 	digest, receiver := sessionregistry.Digest("runtime.stop", nil), "runtime:"+key.Target.RuntimeIncarnation
 	receipt, found, err := d.registry.Lookup(s.ctx, key, digest, receiver)
 	if err == nil && !found {
+		if _, hostErr := d.registry.Host(s.ctx, key.Target); errors.Is(hostErr, sql.ErrNoRows) {
+			d.confirmUnregisteredStartup(key.Target)
+		}
 		var r *runtime
 		r, err = d.lookup(message)
 		if err == nil && r.target != (api.SubmissionTarget{}) && r.target != key.Target {
@@ -66,8 +70,18 @@ func (d *Engine) stopSubmission(ctx context.Context, r *runtime, key api.Submiss
 	d.recordLifecycle("stop_accepted", r, receipt.OperationRef, "", 0)
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
-	if err = d.stop(r); err == nil {
-		err = r.waitStop(finishCtx)
+	failedHost := false
+	if r.host != nil {
+		host, readErr := d.registry.Host(finishCtx, key.Target)
+		if readErr == nil && host.Phase == "failed" {
+			failedHost = true
+			err = d.cleanupStep(finishCtx, sessionregistry.CleanupJob{Key: key, Host: host}, "host")
+		}
+	}
+	if !failedHost {
+		if err = d.stop(r); err == nil {
+			err = r.waitStop(finishCtx)
+		}
 	}
 	stage, code := "stopped", ""
 	if err != nil {

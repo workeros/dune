@@ -45,6 +45,9 @@ func (d *Engine) submitForget(s *executionStream, message *pb.Message, machine s
 	acquired := false
 	if err == nil && !found {
 		_, hostErr := d.registry.Host(s.ctx, key.Target)
+		if errors.Is(hostErr, sql.ErrNoRows) && d.confirmUnregisteredStartup(key.Target) {
+			_, hostErr = d.registry.Host(s.ctx, key.Target)
+		}
 		if hostErr == nil {
 			acquired, receipt, err = d.registry.AcceptForget(s.ctx, key, wire.ID(), d.verifyHostCleanup)
 		} else if errors.Is(hostErr, sql.ErrNoRows) {
@@ -100,7 +103,7 @@ func (d *Engine) verifyHostCleanup(host sessionregistry.HostRecord) error {
 	if err := d.verifyHostResources(host); err != nil {
 		return err
 	}
-	if host.Phase == "exited" {
+	if host.Phase == "exited" || host.Phase == "failed" {
 		return nil
 	}
 	absent, err := process.Absent(host.BootID, host.PID, host.GroupID)
@@ -201,13 +204,19 @@ func (d *Engine) recoverCleanups() error {
 
 func (d *Engine) runCleanupRecovery() {
 	defer d.active.Done()
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(time.Second)
+	ticks := 0
 	defer ticker.Stop()
 	for {
 		select {
 		case <-d.ctx.Done():
 			return
 		case <-ticker.C:
+			d.recoverHostStartups()
+			ticks++
+			if ticks%30 != 0 {
+				continue
+			}
 			if err := d.recoverCleanups(); err != nil && d.ctx.Err() == nil {
 				d.recordLifecycle("cleanup_recovery_failed", nil, "", "REGISTRY_UNAVAILABLE", d.sessionTerm)
 			}
@@ -299,6 +308,9 @@ func (d *Engine) cleanupStep(ctx context.Context, job sessionregistry.CleanupJob
 		if err := d.acpTmux.DestroyHost(host.Target.RuntimeID, host.Instance); err != nil {
 			return err
 		}
+		if host.Phase == "failed" && host.PID == 0 {
+			return nil
+		}
 		for {
 			absent, err := process.Absent(host.BootID, host.PID, host.GroupID)
 			if err != nil || absent {
@@ -311,6 +323,12 @@ func (d *Engine) cleanupStep(ctx context.Context, job sessionregistry.CleanupJob
 			}
 		}
 	case "ipc":
+		if host.Resources.Socket.Inode == 0 {
+			if _, err := os.Lstat(host.Resources.Socket.Path); os.IsNotExist(err) {
+				return nil
+			}
+			return cleanupIdentityError()
+		}
 		return removeCleanupResource(ctx, host.Resources.Socket, host.Instance, os.ModeSocket, barrier)
 	case "runtime_directory":
 		return removeCleanupResource(ctx, host.Resources.Directory, host.Instance, os.ModeDir, barrier)

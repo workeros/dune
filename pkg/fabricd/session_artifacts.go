@@ -34,6 +34,9 @@ func (d *Engine) sessionArtifactIssues(ctx context.Context, discovery sessionreg
 	}
 	for _, host := range discovery.Hosts {
 		known[host.Runtime.ID], names[host.Runtime.ID] = host, true
+		if host.Phase == "starting" || host.Phase == "validating" || host.Phase == "failed" {
+			continue
+		}
 		if host.Retiring {
 			names[".forget-"+host.Instance] = true
 			continue

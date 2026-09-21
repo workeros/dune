@@ -107,6 +107,7 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 	}
 	go d.watchTmux()
 	go d.expire(d.ctx)
+	d.recoverHostStartups()
 	if err := d.recoverCleanups(); err != nil {
 		return nil, err
 	}

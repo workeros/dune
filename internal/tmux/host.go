@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/aiomni/dune/internal/wire"
@@ -53,15 +54,25 @@ func (s *Server) HostPanes(ctx context.Context) ([]HostPane, error) {
 // CreateHost starts a protocol owner in this server's separate namespace.
 // Only the executable and private bootstrap directory enter the pane command;
 // Agent argv, environment and protocol bytes never enter tmux metadata or PTYs.
-func (s *Server) CreateHost(id, instance, executable, directory string) error {
+func (s *Server) CreateHost(id, instance, executable, directory string) (int, error) {
 	if !wire.ValidID(id) || !wire.ValidID(instance) || !filepath.IsAbs(executable) || !filepath.IsAbs(directory) {
-		return fmt.Errorf("invalid ACP host launch identity")
+		return 0, fmt.Errorf("invalid ACP host launch identity")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	command := "exec /usr/bin/env -i " + quote(executable) + " _acp_host " + quote(directory) + " </dev/null >/dev/null 2>/dev/null"
-	_, err := s.run("new-session", "-d", "-s", "acp-"+id, "-e", "DUNE_ACP_INSTANCE="+instance, "-c", directory, command)
-	return err
+	// Keep the slave terminal open independently of stdio. Closing every slave
+	// descriptor makes Linux tmux close the pane and SIGHUP its foreground group
+	// before the host can start. Descriptor 3 carries no Agent protocol data.
+	command := "exec /usr/bin/env -i " + quote(executable) + " _acp_host " + quote(directory) + " 3</dev/tty </dev/null >/dev/null 2>/dev/null"
+	out, err := s.run("new-session", "-d", "-P", "-F", "#{pane_pid}", "-s", "acp-"+id, "-e", "DUNE_ACP_INSTANCE="+instance, "-c", directory, command)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil || pid <= 1 {
+		return 0, fmt.Errorf("ACP pane process identity unavailable")
+	}
+	return pid, nil
 }
 
 // DestroyHost checks the instance marker and addresses the server's immutable
@@ -110,4 +121,31 @@ func (s *Server) hostSession(id, instance string) (string, error) {
 		return fields[1], nil
 	}
 	return "", nil
+}
+
+// ExitedHostProcess observes the exact marked pane. It is not failure proof by
+// itself; callers must also prove kernel absence and fence host registration.
+func (s *Server) ExitedHostProcess(id, instance string) (int, error) {
+	if !wire.ValidID(id) || !wire.ValidID(instance) {
+		return 0, fmt.Errorf("invalid ACP host identity")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, err := s.hostSession(id, instance)
+	if err != nil || session == "" {
+		return 0, fmt.Errorf("original ACP pane is not observable")
+	}
+	out, err := s.run("list-panes", "-t", session, "-F", "#{pane_pid}\t#{pane_dead}")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Split(strings.TrimSpace(out), "\t")
+	if len(fields) != 2 || fields[1] != "1" {
+		return 0, fmt.Errorf("original ACP pane exit is unconfirmed")
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 1 {
+		return 0, fmt.Errorf("original ACP pane process is unavailable")
+	}
+	return pid, nil
 }

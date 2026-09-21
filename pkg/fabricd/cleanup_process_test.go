@@ -196,7 +196,7 @@ func cleanupTestKey(runtime api.Runtime, id string) api.SubmissionKey {
 func (h *cleanupProcessHarness) launch(argv ...string) (api.Runtime, *sessionregistry.Registry) {
 	h.t.Helper()
 	if len(argv) == 0 {
-		argv = []string{"/bin/sleep", "300"}
+		argv = []string{mockACPBinary(h.t)}
 	}
 	runtime, stream, err := testStartProfile(h.client, h.ctx, api.Profile{Version: 1, Kind: "agent", Adapter: "acp", ManagedACP: true, WorkingDirectory: h.t.TempDir(), Start: api.Command{Argv: argv}})
 	if err != nil {

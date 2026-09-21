@@ -39,7 +39,7 @@ func Current(destination string) (Identity, error) {
 // Copy uses a distinct inode: overwriting or deleting the release cannot alter
 // the retained program. Publication is exclusive and synced before execution.
 func Copy(source, destination string) (identity Identity, err error) {
-	input, err := os.OpenFile(source, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	input, err := os.OpenFile(source, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return identity, err
 	}
@@ -92,11 +92,38 @@ func Verify(path string, expected Identity) error {
 	if err := expected.Validate(); err != nil {
 		return err
 	}
-	program, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	program, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return err
 	}
 	defer program.Close()
+	return verify(context.Background(), program, expected)
+}
+
+// VerifyExecuting accepts different ancestor paths to the same retained inode,
+// while rejecting a separate copy even if its bytes happen to match.
+func VerifyExecuting(path string, expected Identity) error {
+	if err := expected.Validate(); err != nil {
+		return err
+	}
+	program, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	defer program.Close()
+	retained, err := program.Stat()
+	if err != nil {
+		return err
+	}
+	executing, err := executingFile()
+	if err != nil {
+		return err
+	}
+	defer executing.Close()
+	running, err := executing.Stat()
+	if err != nil || !os.SameFile(running, retained) {
+		return fmt.Errorf("executing program differs from retained file")
+	}
 	return verify(context.Background(), program, expected)
 }
 

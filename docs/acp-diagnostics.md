@@ -60,3 +60,46 @@ after confirming the connector is stopped, foreground `dune --config FILE fabric
 prints the full error to the invoking terminal. Logs redirected by an operator
 or external service-manager implementation have that operator's retention policy.
 No existing operator log files are automatically deleted or adopted.
+
+## Startup evidence
+
+An accepted `profile.start` receipt retains the caller's submission ID, complete
+launch target, operation reference and reserved Runtime identity. Its
+`runtime.acp_host.startup` contains a fixed phase, optional error code and
+`confirmation_timeout` observation. No raw exception, bootstrap, environment,
+prompt or ACP response is stored in this diagnostic.
+
+| Phase | Evidence |
+| --- | --- |
+| `host_pending` | Original resources prepared; host entry is not confirmed |
+| `host_validation` | The original process entered its one-use registration gate |
+| `agent_start` | Host validated; guardian/Agent startup is in progress |
+| `agent_initialization` | Managed Agent process started; initialize is outstanding |
+| `ready` | Raw stdio owner is available, or managed initialize succeeded |
+
+Managed startup reaches `stage=started` after initialize succeeds. Raw startup
+publishes the stdio owner; the caller still owns raw initialize/new/load/prompt.
+The connector's unchanged ten-second confirmation window can end before either
+host entry or managed initialize completes. It returns `RESULT_UNKNOWN`, keeps
+`stage=host_starting`, and sets `confirmation_timeout` when the registry can
+record that observation. The original host can still complete after this point.
+Query the original key; do not submit another launch/setup/initialize/prompt.
+
+Confirmed failures retain `admission=accepted` and use `stage=failed` with
+`HOST_EXITED_BEFORE_ENTRY`, `HOST_VALIDATION_FAILED`, `HOST_START_FAILED`,
+`AGENT_START_FAILED` or `AGENT_INITIALIZATION_FAILED`. A returning original host
+can publish failure only after its Agent group is absent. Connector recovery
+requires the independently recorded original PID/kernel boot and absence of
+both host and Agent group. The proof runs in the same transaction that fences
+host entry, registration and guardian group admission. A timeout, failed IPC
+probe, missing directory, or tmux observation alone cannot close startup.
+
+Use `runtime.stop` and `runtime.forget` with new lifecycle submission keys and the
+**original complete Runtime target**. A failed launch remains queryable after
+cleanup and its live Runtime capacity is released only when forget completes.
+For the earlier launches that predate preparation records, only an explicit
+stop/forget can collect the original private bootstrap, instance marker, retained
+program and exited marked pane. Kernel absence plus a transaction proving no
+host has registered is required before recording failure and using the ordinary
+fenced cleanup plan. Missing/conflicting evidence stays unknown. Reads never
+adopt or delete these artifacts, and no accepted launch is executed again.

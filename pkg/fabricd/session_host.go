@@ -2,6 +2,8 @@ package fabricd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +19,6 @@ import (
 	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/internal/retainedprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
-	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -48,9 +49,48 @@ func runSessionHost(directory string) error {
 	return runSessionHostWithRawWriter(directory, nil)
 }
 
-func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Writer) error {
-	if err := tmux.PrivateDir(directory); err != nil {
+func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Writer) (resultErr error) {
+	// fd3 was opened before stdio was detached. Only this host owns the terminal
+	// reference: close-on-exec excludes guardians/Agents and their private fd3/4.
+	syscall.CloseOnExec(3)
+	defer syscall.Close(3)
+	stateDir := filepath.Dir(filepath.Dir(filepath.Dir(directory)))
+	startup, err := sessionregistry.Open(context.Background(), filepath.Join(stateDir, "registry"), sessionregistry.Options{})
+	if err != nil {
 		return err
+	}
+	defer startup.Close()
+	bootID, err := process.BootID()
+	if err != nil {
+		return err
+	}
+	prepared, err := startup.EnterHost(context.Background(), directory, bootID, os.Getpid())
+	if err != nil {
+		return err
+	}
+	failureCode := "HOST_VALIDATION_FAILED"
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = startup.FailHost(ctx, prepared.Target, prepared.Instance, failureCode, func(host sessionregistry.HostRecord) error {
+			if host.PID != os.Getpid() || host.BootID != bootID {
+				return fmt.Errorf("original host ownership changed")
+			}
+			if host.GroupID != 0 && !errors.Is(syscall.Kill(-host.GroupID, 0), syscall.ESRCH) {
+				return fmt.Errorf("Agent group exit is unconfirmed")
+			}
+			return nil
+		})
+	}()
+	if err := startup.StartupProgress(context.Background(), prepared.Target, prepared.Instance, "host_validation", false); err != nil {
+		return err
+	}
+
+	if identity, err := fileIdentity(directory, os.ModeDir); err != nil || identity != prepared.Resources.Directory {
+		return fmt.Errorf("original Runtime directory identity changed")
 	}
 	var boot sessionBootstrap
 	path := filepath.Join(directory, "bootstrap.json")
@@ -61,17 +101,18 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 		return err
 	}
 	reg := boot.Registration
-	program := filepath.Join(directory, "program")
-	executable, err := os.Executable()
-	if err != nil || executable != program {
-		return fmt.Errorf("ACP host must execute its retained program")
+	var expected sessionRegistration
+	if json.Unmarshal(prepared.Registration, &expected) != nil || !sameSession(reg, expected) || boot.StateDir != stateDir {
+		return fmt.Errorf("bootstrap differs from original prepared host")
 	}
-	if err := retainedprogram.Verify(program, reg.Program); err != nil {
+	program := filepath.Join(directory, "program")
+	if err := retainedprogram.VerifyExecuting(program, reg.Program); err != nil {
 		return err
 	}
 	if filepath.Base(directory) != reg.Runtime.ID || reg.Installation != installationID(boot.StateDir) || boot.Profile.Adapter != "acp" {
 		return fmt.Errorf("ACP bootstrap identity does not match its installation")
 	}
+	failureCode = "HOST_START_FAILED"
 	socket, err := sessionSocket(reg)
 	if err != nil {
 		return err
@@ -107,13 +148,10 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	build := buildinfo.Current()
 	r.events = d.events
 	defer d.recordLifecycle("host_exit", r, "", "", 0)
-	r.hostInfo = &api.ACPHostInfo{Build: &build, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted}
-	bootID, err := process.BootID()
-	if err != nil {
-		return err
-	}
+	r.hostInfo = &api.ACPHostInfo{Build: &build, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted, Startup: &api.ACPStartupDiagnostic{Phase: "host_validation"}}
 	reserved := reg.Runtime
 	reserved.State = "starting"
+	reserved.ACPHost = r.hostInfo
 	resources, err := captureSessionResources(directory, socket, reg)
 	if err != nil {
 		return err
@@ -135,10 +173,23 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 			return err
 		})
 	}
+	failureCode = "AGENT_START_FAILED"
+	setStartupPhase := func(phase string) error {
+		r.mu.Lock()
+		r.hostInfo.Startup = &api.ACPStartupDiagnostic{Phase: phase}
+		r.mu.Unlock()
+		return startup.StartupProgress(ctx, reg.Target, reg.Instance, phase, false)
+	}
+	if err := setStartupPhase("agent_start"); err != nil {
+		return err
+	}
 	r.p, err = r.acpStart()
 	if err != nil {
 		return err
 	}
+	// Register local ownership immediately so every later error closes the
+	// guardian and waits for its complete process group before failure publication.
+	d.runtimes[r.id] = r
 	if boot.Profile.ManagedACP {
 		r.acp = newACPController(r)
 		r.acp.requireMCP = boot.Profile.RequireAgentMCP
@@ -170,9 +221,22 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	r.runProcess(r.p)
 	d.recordLifecycle("host_started", r, boot.Launch.OperationRef, "", 0)
 	if r.acp != nil {
-		go r.acp.initialize()
+		failureCode = "AGENT_INITIALIZATION_FAILED"
+		if err := setStartupPhase("agent_initialization"); err != nil {
+			return err
+		}
+		if err := r.acp.initializeConnection(); err != nil {
+			return err
+		}
+	}
+	failureCode = "HOST_START_FAILED"
+	if err := setStartupPhase("ready"); err != nil {
+		return err
 	}
 	reg.Runtime = r.info()
+	if err := d.registry.RecordHostRuntime(ctx, reg.Target, reg.Instance, reg.Runtime); err != nil {
+		return err
+	}
 	if err := savePrivateFile(filepath.Join(directory, "registration.json"), reg); err != nil {
 		return err
 	}

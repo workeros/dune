@@ -1,6 +1,7 @@
 package fabricd
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net"
@@ -19,7 +20,31 @@ func registrationHostTestHelper(args []string) (int, bool) {
 		return 0, false
 	}
 	var boot sessionBootstrap
-	if privateFile(filepath.Join(args[1], "bootstrap.json"), 8*1024*1024, &boot) != nil || boot.Profile.Env["DUNE_REGISTRATION_TEST_GATE"] == "" {
+	if privateFile(filepath.Join(args[1], "bootstrap.json"), 8*1024*1024, &boot) != nil {
+		return 0, false
+	}
+	switch boot.Profile.Env["DUNE_HOST_STARTUP_TEST_FAULT"] {
+	case "unregistered_exit":
+		// Model the previous released host's missing preparation record in a
+		// disposable test registry. Product code never deletes registry evidence.
+		db, err := sql.Open("sqlite", filepath.Join(boot.StateDir, "registry", "registry.sqlite"))
+		if err != nil {
+			return 1, true
+		}
+		_, err = db.Exec(`DELETE FROM session_hosts WHERE instance=?`, boot.Registration.Instance)
+		db.Close()
+		if err != nil {
+			return 2, true
+		}
+		return 1, true
+	case "exit_before_entry":
+		return 1, true
+	case "corrupt_bootstrap":
+		_ = os.WriteFile(filepath.Join(args[1], "bootstrap.json"), []byte("private corrupt bootstrap sentinel"), 0600)
+	case "invalid_permissions":
+		_ = os.Chmod(filepath.Join(args[1], "program"), 0755)
+	}
+	if boot.Profile.Env["DUNE_REGISTRATION_TEST_GATE"] == "" {
 		return 0, false
 	}
 	conn, err := net.DialTimeout("tcp", boot.Profile.Env["DUNE_REGISTRATION_TEST_GATE"], 3*time.Second)
@@ -77,10 +102,14 @@ func TestLateOriginalHostRegistrationRecoversWithoutAnotherLaunch(t *testing.T) 
 	if guard, report := PrepareUpgrade(h.ctx, h.state); guard != nil || report.Allowed || report.Issues[0].Code != "LAUNCH_IN_PROGRESS" {
 		t.Fatal("upgrade crossed in-flight original launch", report)
 	}
-	h.kill()
-	if err := <-startDone; err == nil {
-		t.Fatal("unregistered launch unexpectedly confirmed")
+	if err := <-startDone; err == nil || !strings.Contains(err.Error(), "RESULT_UNKNOWN") {
+		t.Fatal("unregistered launch unexpectedly confirmed", err)
 	}
+	pending, err := h.client.QuerySubmission(h.ctx, key)
+	if err != nil || pending.Stage != "host_starting" || pending.Runtime == nil || pending.Runtime.ACPHost.Startup == nil || !pending.Runtime.ACPHost.Startup.ConfirmationTimeout {
+		t.Fatal("timeout lost original diagnostic", pending, err)
+	}
+	h.kill()
 	guard, report := PrepareUpgrade(h.ctx, h.state)
 	if guard == nil || !report.Allowed || len(report.Hosts) != 1 || report.Hosts[0].Runtime.ID != original.ID || report.Hosts[0].Protocol != sessionProtocol {
 		t.Fatal("preflight missed the late original registration", report)

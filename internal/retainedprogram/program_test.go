@@ -72,3 +72,17 @@ func TestRetainedProgramRejectsOversizeAndSymlinkWithoutReplacingDestination(t *
 		t.Fatal("source changed", string(body), err)
 	}
 }
+
+func TestExecutingProgramRejectsAnIdenticalSeparateCopy(t *testing.T) {
+	copy := filepath.Join(t.TempDir(), "program")
+	identity, err := Current(copy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(copy, identity); err != nil {
+		t.Fatal("fixture copy was not valid", err)
+	}
+	if err := VerifyExecuting(copy, identity); err == nil {
+		t.Fatal("identical bytes on another inode were accepted as the running program")
+	}
+}

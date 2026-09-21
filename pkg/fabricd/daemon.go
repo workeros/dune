@@ -163,8 +163,18 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 				s.Fail("UNSUPPORTED", fmt.Errorf("operation is not available on an ACP host"))
 				return
 			}
-			r.host.forward(s, m, false)
-			return
+			failed := false
+			if m.Operation == "runtime.stop" || m.Operation == "runtime.get" {
+				r.host.mu.Lock()
+				original := r.host.registration
+				r.host.mu.Unlock()
+				host, err := d.registry.Host(s.ctx, original.Target)
+				failed = err == nil && host.Instance == original.Instance && host.Phase == "failed"
+			}
+			if !failed {
+				r.host.forward(s, m, false)
+				return
+			}
 		}
 	}
 	var e error

@@ -74,6 +74,12 @@ func (d *Engine) scanSessionRegistrations(ctx context.Context) error {
 			issues = append(issues, api.RuntimeDiscoveryIssue{Runtime: &runtime, Code: code})
 			continue
 		}
+		if host.Phase == "starting" || host.Phase == "validating" || (host.Phase == "active" && host.Runtime.ACPHost != nil && host.Runtime.ACPHost.Startup != nil && host.Runtime.ACPHost.Startup.Phase != "ready") {
+			pending := host.Runtime
+			pending.Availability = "unavailable"
+			issues = append(issues, api.RuntimeDiscoveryIssue{Runtime: &pending, Code: "HOST_REGISTRATION_PENDING"})
+			continue
+		}
 		reg.Runtime = host.Runtime
 		registrations = append(registrations, reg)
 	}
