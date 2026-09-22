@@ -21,4 +21,8 @@
 
 只读终端按 terminalId 保存原始字节，每段独立解码，output 快照替换全部保留内容。单终端保留 128 KiB 尾部；快照、截断及非法字节改变 generation，禁止跨缺口继续解码。终端退出与工具完成独立。`acp.conversation.get` 可用原 conversation_id + terminal_id 查找仍保留的输出，空结果不证明终端从未存在。SandDance 提供只读 xterm 详情，Dune 独立 Web 当前仅提供原始终端数据查看。
 
-跨仓库正式依赖接入和最终全包检查仍在后续切片。没有配置真实 Agent 的环境，协议 fixture 不计为真实 Agent 验收。
+SandDance 已通过可下载的 Dune/IM 模块接入本实现。专用 PostgreSQL、真实 Gateway/connector 与 stdio Agent fixture 验证了 Profile、配置、附件、插入/idle、审批、表单和终端读取；只有 Agent 为模拟进程。
+
+2026-09-22 验证：根 module 的 `go test ./... -count=1 -timeout=900s` 已执行，fabricd、host 和其余包通过。集群进程用例首次被测试连接串格式阻断；改用 PostgreSQL URL 后发现旧用例仍期待 connector 重启使 ACP 操作失效。更新为独立会话宿主契约后，`TestPostgresClusterWebProcesses` 通过，验证原操作结果、会话游标保留且控制 RPC 不重放。IM 全量测试、根/IM vet、Web 类型检查、14 项 Web 单元测试及生产构建通过；此前 v2/队列/配置和终端定向 race 通过。构建仍有现有资源体积告警。
+
+没有配置真实 Agent 的环境，协议 fixture 不计为厂商 Agent 验收。未部署服务或更新已有 Runner；使用本协议需要 Web、SandDance 宿主和 Runner 上的 Dune/fabricd 同步升级。v2 草案继续默认关闭。
