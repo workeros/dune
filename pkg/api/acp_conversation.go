@@ -40,8 +40,21 @@ type ACPState struct {
 }
 
 type ACPPermission struct {
-	ID     string          `json:"id"`
-	Params json.RawMessage `json:"params"`
+	ID             string          `json:"id"`
+	ConversationID string          `json:"conversation_id"`
+	TurnID         string          `json:"turn_id,omitempty"`
+	Params         json.RawMessage `json:"params"`
+}
+
+// ACPInteractionRecord is a read-only transcript fact. Executable requests
+// exist only in the live controller state and are consumed under its lock.
+type ACPInteractionRecord struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	State      string `json:"state"`
+	Title      string `json:"title"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Response   string `json:"response,omitempty"`
 }
 
 type ACPFailure struct {

@@ -243,3 +243,15 @@ guardian 先等待登记屏障，原进程组登记成功后才启动 Agent；�
 PID 只参与只读存在性检查，不用于发信号、重建或认领活宿主。旧 operation 查询报告
 `SESSION_LOST`，提交回执仍可按原键读取。工作台保留原面板并区分“暂不可用”和
 “已丢失”，不会自动启动替代会话。
+
+## 审批的实时状态与历史记录
+
+`ACPState.permissions` 只包含当前连接上尚未消耗的请求。每项携带宿主生成的
+`conversation_id` 和有证据时的 `turn_id`；客户端按当前会话代次关联，不能从历史
+JSON 重建可执行按钮。快照中的请求顺序稳定，响应仍使用原 `permission_id`。
+
+宿主同时写入 `activity.update_type=interaction` 的只读条目。数据为
+`ACPInteractionRecord`，按请求 ID 更新，记录 `pending`、`submitting`、`responded`、
+`cancelled`、`expired` 或 `unknown`。`responded` 仅证明响应已写入 Agent 连接，
+不证明工具已经执行。正常结束不抹去已回应的记录；停止或失效的未决请求不可再响应。
+历史条目仍受会话保留窗口限制，不是永久审计存储。

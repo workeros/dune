@@ -278,7 +278,7 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	}
 	a.active = nil
 	a.state.Busy, a.state.OperationRef = "", ""
-	a.clearPermissionsLocked()
+	a.clearPermissionsLocked("expired")
 	if state == "unknown" {
 		// An unconfirmed boundary cannot safely release the next queued prompt.
 		a.cancelPendingLocked("previous ACP outcome is unknown; request was not sent")
