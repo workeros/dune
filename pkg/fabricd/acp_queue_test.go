@@ -17,6 +17,8 @@ type queuedRPC struct {
 	ID     string          `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
+	Result json.RawMessage `json:"result"`
+	Error  json.RawMessage `json:"error"`
 }
 
 func queueFixture(t *testing.T) (*acpController, <-chan queuedRPC) {

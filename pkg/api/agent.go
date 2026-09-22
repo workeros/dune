@@ -6,15 +6,22 @@ import "encoding/json"
 // ExpectedConversationID; intermediaries must never fill or refresh it. Native
 // SessionID/Cwd are additional selectors. Admission and dispatch both validate.
 type ACPAction struct {
-	OperationRef           string `json:"operation_ref,omitempty"`
-	ExpectedConversationID string `json:"expected_conversation_id,omitempty"`
-	Action                 string `json:"action"`
-	Text                   string `json:"text,omitempty"`
-	SessionID              string `json:"session_id,omitempty"`
-	Cwd                    string `json:"cwd,omitempty"`
-	Cursor                 string `json:"cursor,omitempty"`
-	PermissionID           string `json:"permission_id,omitempty"`
-	OptionID               string `json:"option_id,omitempty"`
+	OperationRef           string                  `json:"operation_ref,omitempty"`
+	ExpectedConversationID string                  `json:"expected_conversation_id,omitempty"`
+	Action                 string                  `json:"action"`
+	Text                   string                  `json:"text,omitempty"`
+	SessionID              string                  `json:"session_id,omitempty"`
+	Cwd                    string                  `json:"cwd,omitempty"`
+	Cursor                 string                  `json:"cursor,omitempty"`
+	PermissionID           string                  `json:"permission_id,omitempty"`
+	OptionID               string                  `json:"option_id,omitempty"`
+	ElicitationID          string                  `json:"elicitation_id,omitempty"`
+	ElicitationResponse    *ACPElicitationResponse `json:"elicitation_response,omitempty"`
+}
+
+type ACPElicitationResponse struct {
+	Action  string          `json:"action"`
+	Content json.RawMessage `json:"content,omitempty"`
 }
 
 // NativeSession is a confirmed native conversation, observed from a matching

@@ -311,7 +311,7 @@ func launchWorktreeRequest(scope Scope, message *pb.Message) (*Request, error) {
 
 func describeACPAction(r Request, payload []byte) (Request, error) {
 	var action api.ACPAction
-	if json.Unmarshal(payload, &action) != nil || !oneOf(action.Action, "new", "load", "list", "prompt", "permission", "cancel") {
+	if json.Unmarshal(payload, &action) != nil || !oneOf(action.Action, "new", "load", "list", "prompt", "permission", "elicitation", "cancel") {
 		return r, ErrDenied
 	}
 	r.Suboperation = action.Action

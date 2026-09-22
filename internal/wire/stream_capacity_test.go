@@ -12,8 +12,8 @@ import (
 func TestRequestClassUsesDecodedBusinessActionAndExactTarget(t *testing.T) {
 	key := api.SubmissionKey{SubmissionID: "original", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}}
 	m := &pb.Message{Kind: "request", RequestId: "transport", Target: "machine", RuntimeId: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}
-	for action, want := range map[string]StreamClass{"permission": StreamPermission, "cancel": StreamCancel, "prompt": StreamOrdinary, "new": StreamOrdinary, "load": StreamOrdinary, "list": StreamOrdinary} {
-		request := api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(api.ACPAction{Action: action, OperationRef: "operation", PermissionID: "permission", OptionID: "allow"})}
+	for action, want := range map[string]StreamClass{"permission": StreamPermission, "elicitation": StreamElicitation, "cancel": StreamCancel, "prompt": StreamOrdinary, "new": StreamOrdinary, "load": StreamOrdinary, "list": StreamOrdinary} {
+		request := api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(api.ACPAction{Action: action, OperationRef: "operation", PermissionID: "permission", ElicitationID: "question", ElicitationResponse: &api.ACPElicitationResponse{Action: "decline"}, OptionID: "allow"})}
 		m.Operation, m.Payload = "submission.acp", api.Payload(request)
 		if got := RequestClass(m); got != want {
 			t.Fatal(action, got)

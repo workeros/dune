@@ -34,32 +34,34 @@ const (
 )
 
 type acpController struct {
-	inputMu         sync.Mutex
-	connection      *process.Process
-	openedOnce      bool
-	reconnecting    bool
-	renewConnection func() error
-	mu              sync.Mutex
-	controlMu       sync.Mutex
-	reserveControl  func(string, string) error
-	releaseControl  func(string, string)
-	controlling     bool
-	r               *runtime
-	state           api.ACPState
-	pending         map[string]chan acpReply
-	permissions     map[string]acpPermission
-	methods         map[string]string
-	done            chan struct{}
-	once            sync.Once
-	queue           []*acpQueuedAction
-	active          *acpQueuedAction
-	operations      *operationLog
-	conversation    *conversationSlot
-	nativeSequence  int64
-	requireMCP      bool
-	mcpHTTP         bool
-	mcpServers      []any
-	mcpSecret       atomic.Pointer[string]
+	inputMu          sync.Mutex
+	connection       *process.Process
+	openedOnce       bool
+	reconnecting     bool
+	renewConnection  func() error
+	mu               sync.Mutex
+	controlMu        sync.Mutex
+	reserveControl   func(string, string) error
+	releaseControl   func(string, string)
+	controlling      bool
+	r                *runtime
+	state            api.ACPState
+	pending          map[string]chan acpReply
+	questionActivity map[string]time.Time
+	permissions      map[string]acpPermission
+	elicitations     map[string]*acpElicitation
+	methods          map[string]string
+	done             chan struct{}
+	once             sync.Once
+	queue            []*acpQueuedAction
+	active           *acpQueuedAction
+	operations       *operationLog
+	conversation     *conversationSlot
+	nativeSequence   int64
+	requireMCP       bool
+	mcpHTTP          bool
+	mcpServers       []any
+	mcpSecret        atomic.Pointer[string]
 }
 
 func newACPController(r *runtime) *acpController {
@@ -69,7 +71,7 @@ func newACPController(r *runtime) *acpController {
 	}
 	a := &acpController{connection: r.p, r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc, func(change api.ACPConversationChanged) {
 		r.emit(&pb.Message{Kind: "acp_conversation_changed", Payload: api.Payload(change)})
-	}), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, done: make(chan struct{}), methods: map[string]string{}}
+	}), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, elicitations: map[string]*acpElicitation{}, done: make(chan struct{}), methods: map[string]string{}}
 	r.conversations.mu.Lock()
 	a.conversation.events = r.events
 	r.conversations.mu.Unlock()
@@ -78,13 +80,14 @@ func newACPController(r *runtime) *acpController {
 }
 func (a *acpController) snapshotLocked() api.ACPState {
 	s := a.state
-	s.Resources = &api.ACPResourceUsage{Queue: api.CapacityUsage{Used: len(a.queue), Limit: maxACPPending}, Permissions: api.CapacityUsage{Used: len(a.permissions), Limit: 16}, Operations: a.operations.usage()}
+	s.Resources = &api.ACPResourceUsage{Queue: api.CapacityUsage{Used: len(a.queue), Limit: maxACPPending}, Permissions: api.CapacityUsage{Used: len(a.permissions), Limit: 16}, Elicitations: api.CapacityUsage{Used: len(a.elicitations), Limit: 16}, Operations: a.operations.usage()}
 	s.Conversation = a.conversation.describe()
 	s.Permissions = make([]api.ACPPermission, 0, len(a.permissions))
 	for _, p := range a.permissions {
 		s.Permissions = append(s.Permissions, p.ACPPermission)
 	}
 	sort.Slice(s.Permissions, func(i, j int) bool { return s.Permissions[i].ID < s.Permissions[j].ID })
+	s.Elicitations = a.liveElicitationsLocked()
 	return s
 }
 func (a *acpController) snapshot() api.ACPState {
@@ -101,7 +104,7 @@ func (a *acpController) send(v any) error {
 	b := api.Payload(v)
 	// Publish before writing so a fast Agent response cannot appear before the
 	// request in the inspector. A subsequent write error is surfaced separately.
-	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": json.RawMessage(a.redactCredential(redactMCPConfiguration(b)))})})
+	a.r.emit(&pb.Message{Kind: "acp_stream", Payload: api.Payload(map[string]any{"direction": "input", "message": json.RawMessage(a.redactCredential(redactMCPConfiguration(redactElicitationResponse(b))))})})
 	a.r.mu.Lock()
 	p := a.r.p
 	a.r.mu.Unlock()
@@ -126,31 +129,44 @@ func (a *acpController) rpc(method string, params any, timeout time.Duration, op
 		operation.rpcID = id
 	}
 	a.mu.Unlock()
-	defer func() { a.mu.Lock(); delete(a.pending, id); delete(a.methods, id); a.mu.Unlock() }()
+	defer func() {
+		a.mu.Lock()
+		delete(a.pending, id)
+		delete(a.methods, id)
+		delete(a.questionActivity, id)
+		a.mu.Unlock()
+	}()
 	if err := a.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP write outcome unknown: " + err.Error()}
 	}
 	var expiry <-chan time.Time
+	var timer *time.Timer
 	if timeout > 0 {
-		t := time.NewTimer(timeout)
-		defer t.Stop()
-		expiry = t.C
+		timer = time.NewTimer(timeout)
+		defer timer.Stop()
+		expiry = timer.C
 	}
-	select {
-	case reply := <-ch:
-		return reply.Result, reply.Err
-	case <-a.done:
+	for {
 		select {
 		case reply := <-ch:
 			return reply.Result, reply.Err
-		default:
+		case <-a.done:
+			select {
+			case reply := <-ch:
+				return reply.Result, reply.Err
+			default:
+			}
+			return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP Agent exited before a matching RPC result"}
+		case <-expiry:
+			if remaining := a.elicitationWaitRemaining(id, timeout); remaining > 0 {
+				timer.Reset(remaining)
+				continue
+			}
+			// A timed-out lifecycle call has an unknown result. Do not admit another
+			// operation to the same process and accidentally use the wrong session.
+			a.r.stop()
+			return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP " + method + " timed out; process stopped, request was not replayed"}
 		}
-		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP Agent exited before a matching RPC result"}
-	case <-expiry:
-		// A timed-out lifecycle call has an unknown result. Do not admit another
-		// operation to the same process and accidentally use the wrong session.
-		a.r.stop()
-		return nil, &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP " + method + " timed out; process stopped, request was not replayed"}
 	}
 }
 func (a *acpController) closed() {
@@ -168,6 +184,7 @@ func (a *acpController) closedWithExitLocked(code *int) {
 	a.state.Ready = false
 	a.state.Busy = ""
 	a.clearPermissionsLocked("expired")
+	a.clearElicitationsLocked("expired")
 	if a.state.Error == "" {
 		a.state.Error = "ACP Agent exited"
 	}
@@ -218,8 +235,11 @@ func (a *acpController) receive(data []byte) {
 			a.active.responded = true
 			a.settleOperationLocked(a.active, reply.Result, reply.Err)
 		}
-		if ch != nil && a.methods[id] != "session/list" {
-			a.clearPermissionsLocked("expired")
+		if ch != nil {
+			a.expireRequestElicitationsLocked(id)
+			if a.methods[id] != "session/list" {
+				a.clearPermissionsLocked("expired")
+			}
 			a.publishLocked()
 		}
 		a.mu.Unlock()
@@ -231,7 +251,15 @@ func (a *acpController) receive(data []byte) {
 		}
 		return
 	}
+	if m.Method == "elicitation/complete" && len(m.ID) == 0 {
+		a.completeElicitation(m.Params)
+		return
+	}
 	if len(m.ID) == 0 {
+		return
+	}
+	if m.Method == "elicitation/create" {
+		a.receiveElicitation(m.ID, m.Params)
 		return
 	}
 	if m.Method == "session/request_permission" {
@@ -419,7 +447,7 @@ func (a *acpController) initialize() {
 	}
 }
 func (a *acpController) initializeConnection() error {
-	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
+	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{"elicitation": map[string]any{"form": map[string]any{}, "url": map[string]any{}}}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
 	var init struct {
 		Version      int             `json:"protocolVersion"`
 		Info         json.RawMessage `json:"agentInfo"`
@@ -462,7 +490,7 @@ func (a *acpController) initializeConnection() error {
 	return nil
 }
 func (a *acpController) action(req api.ACPAction) (any, error) {
-	if req.Action == "permission" || req.Action == "cancel" {
+	if req.Action == "permission" || req.Action == "elicitation" || req.Action == "cancel" {
 		a.controlMu.Lock()
 		defer a.controlMu.Unlock()
 		return a.control(req, nil)
@@ -481,6 +509,9 @@ func (a *acpController) control(req api.ACPAction, admit func() error) (any, err
 		a.mu.Unlock()
 		return nil, fmt.Errorf("ACP Agent exited")
 	default:
+	}
+	if req.Action == "elicitation" {
+		return a.respondElicitationLocked(req, admit)
 	}
 	if req.Action == "permission" {
 		p, ok := a.permissions[req.PermissionID]
@@ -544,12 +575,20 @@ func (a *acpController) control(req api.ACPAction, admit func() error) (any, err
 			}
 		}
 		id := a.state.SessionID
+		elicitations := a.pendingElicitationsLocked()
+		a.clearElicitationsLocked("cancelled")
 		permissions := a.permissions
 		a.clearPermissionsLocked("cancelled")
 		a.state.Busy = "cancelling"
 		a.controlling = true
 		a.publishLocked()
 		a.mu.Unlock()
+		for _, e := range elicitations {
+			if err := a.sendElicitationResponse(e.rpcID, api.ACPElicitationResponse{Action: "cancel"}); err != nil {
+				a.finishControl(err)
+				return nil, err
+			}
+		}
 		for _, p := range permissions {
 			if err := a.send(map[string]any{"jsonrpc": "2.0", "id": p.rpcID, "result": map[string]any{"outcome": map[string]string{"outcome": "cancelled"}}}); err != nil {
 				a.finishControl(err)

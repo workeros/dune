@@ -86,11 +86,11 @@ func TestGatewayReservesStreamsAcrossConnectionAndGlobalOrdinarySaturation(t *te
 	key := api.SubmissionKey{SubmissionID: "original", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", FabricID: "fabric", MachineID: "machine", BindingRevision: 1, RuntimeID: "runtime", RuntimeIncarnation: "host", RuntimeGeneration: 1}}
 	// Fill permission/cancel and long-poll execution slots as well. Stop and
 	// forget must remain independent of these classes, not just of ordinary work.
-	for _, action := range []string{"permission", "cancel", "wait"} {
+	for _, action := range []string{"permission", "elicitation", "cancel", "wait"} {
 		for i := range wire.MaxReservedStreams {
 			key.SubmissionID = fmt.Sprintf("%s-%d", action, i)
 			op := "submission.acp"
-			var payload any = api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(api.ACPAction{Action: action, PermissionID: "permission", OptionID: "allow", OperationRef: "operation"})}
+			var payload any = api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(api.ACPAction{Action: action, PermissionID: "permission", OptionID: "allow", ElicitationID: "question", ElicitationResponse: &api.ACPElicitationResponse{Action: "decline"}, OperationRef: "operation"})}
 			if action == "wait" {
 				op, payload = "agent.operation.wait", api.AgentOperationWait{Ref: "operation", TimeoutMS: 30000}
 			}

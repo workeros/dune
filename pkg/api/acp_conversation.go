@@ -32,6 +32,7 @@ type ACPState struct {
 	MCPTransport string            `json:"mcp_transport,omitempty"`
 	Agent        json.RawMessage   `json:"agent,omitempty"`
 	Permissions  []ACPPermission   `json:"permissions"`
+	Elicitations []ACPElicitation  `json:"elicitations"`
 	List         json.RawMessage   `json:"list,omitempty"`
 	Error        string            `json:"error,omitempty"`
 	StopReason   string            `json:"stop_reason,omitempty"`
@@ -44,6 +45,16 @@ type ACPPermission struct {
 	ConversationID string          `json:"conversation_id"`
 	TurnID         string          `json:"turn_id,omitempty"`
 	Params         json.RawMessage `json:"params"`
+}
+
+// Request-scoped questions can arrive during initialize, before a conversation
+// exists. ID belongs to this host/connection, not to an Agent-provided URL ID.
+type ACPElicitation struct {
+	ID             string          `json:"id"`
+	ConversationID string          `json:"conversation_id,omitempty"`
+	TurnID         string          `json:"turn_id,omitempty"`
+	Params         json.RawMessage `json:"params"`
+	FormError      string          `json:"form_error,omitempty"`
 }
 
 // ACPInteractionRecord is a read-only transcript fact. Executable requests

@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	ControlPermission = "permission"
-	ControlCancel     = "cancel"
-	ControlStop       = "stop"
-	ControlForget     = "forget"
+	ControlPermission  = "permission"
+	ControlElicitation = "elicitation"
+	ControlCancel      = "cancel"
+	ControlStop        = "stop"
+	ControlForget      = "forget"
 )
 
 func encodeTarget(target api.SubmissionTarget) string {
@@ -32,7 +33,7 @@ func controlResource(target api.SubmissionTarget, kind, id string) (string, erro
 		if id != "" {
 			return "", fmt.Errorf("Runtime controls do not take a secondary target")
 		}
-	case ControlCancel, ControlPermission:
+	case ControlCancel, ControlPermission, ControlElicitation:
 		if api.ValidateSubmissionID(id) != nil {
 			return "", fmt.Errorf("control requires a bounded operation or permission target")
 		}
@@ -126,7 +127,7 @@ func (r *Registry) ReserveControl(ctx context.Context, target api.SubmissionTarg
 // ClaimControl uses the SAME submission-key table as ordinary operations.
 // Missing/invalid targets consume nothing; their absence remains unknown.
 func (r *Registry) ClaimControl(ctx context.Context, key api.SubmissionKey, digest [32]byte, receiver, kind, id string) (Claim, api.SubmissionReceipt, error) {
-	if kind != ControlPermission && kind != ControlCancel {
+	if kind != ControlPermission && kind != ControlElicitation && kind != ControlCancel {
 		return Claim{}, api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, fmt.Errorf("stop and forget require atomic admission")
 	}
 	resource, err := controlResource(key.Target, kind, id)
@@ -154,7 +155,7 @@ func (r *Registry) AcceptStop(ctx context.Context, key api.SubmissionKey, digest
 // ReleaseControl is only for an irrevocably ended target. Consumed reservations
 // retain their admission and closure evidence; they can never fund another key.
 func (r *Registry) ReleaseControl(ctx context.Context, target api.SubmissionTarget, kind, id string) error {
-	if kind != ControlPermission && kind != ControlCancel {
+	if kind != ControlPermission && kind != ControlElicitation && kind != ControlCancel {
 		return fmt.Errorf("only ended operation/permission reservations may be released")
 	}
 	resource, err := controlResource(target, kind, id)

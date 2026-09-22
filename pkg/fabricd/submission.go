@@ -27,7 +27,7 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 		return
 	}
 	var action api.ACPAction
-	if request.Operation != "acp.action" || json.Unmarshal(request.Payload, &action) != nil || (action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" && action.Action != "permission" && action.Action != "cancel") {
+	if request.Operation != "acp.action" || json.Unmarshal(request.Payload, &action) != nil || (action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" && action.Action != "permission" && action.Action != "elicitation" && action.Action != "cancel") {
 		s.Fail("UNSUPPORTED", errors.New("submission.acp requires a managed ACP action"))
 		return
 	}
@@ -57,7 +57,7 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 }
 
 func (a *acpController) submit(ctx context.Context, registry *sessionregistry.Registry, key api.SubmissionKey, action api.ACPAction, receiver string) (api.SubmissionReceipt, error) {
-	if action.Action == "permission" || action.Action == "cancel" {
+	if action.Action == "permission" || action.Action == "elicitation" || action.Action == "cancel" {
 		return a.submitControl(ctx, registry, key, action, receiver)
 	}
 	// Digest the interpreted business parameters, excluding transport identity.
@@ -115,6 +115,9 @@ func (a *acpController) submitControl(ctx context.Context, registry *sessionregi
 		return receipt, submissionDecisionError(receipt)
 	}
 	id := action.PermissionID
+	if action.Action == "elicitation" {
+		id = action.ElicitationID
+	}
 	if action.Action == "cancel" {
 		id = action.OperationRef
 	}

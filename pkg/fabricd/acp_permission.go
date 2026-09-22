@@ -23,14 +23,18 @@ func (a *acpController) permissionRecordLocked(permission acpPermission, state, 
 		title = "Agent 操作"
 	}
 	record := api.ACPInteractionRecord{ID: permission.ID, Kind: "permission", State: state, Title: title, ToolCallID: params.ToolCall.ID, Response: response}
+	a.interactionRecordLocked(permission.ConversationID, permission.TurnID, record)
+}
+
+func (a *acpController) interactionRecordLocked(conversationID, turnID string, record api.ACPInteractionRecord) {
 	a.conversation.mutate(func(model *conversationModel) {
-		if model.description.ID != permission.ConversationID {
+		if model.description.ID != conversationID {
 			return
 		}
-		key := "interaction\x00" + permission.ID
+		key := "interaction\x00" + record.ID
 		entry := model.find(key)
 		if entry == nil {
-			entry = &api.ACPEntry{Type: "activity", TurnID: permission.TurnID, ContextIncomplete: state != "pending"}
+			entry = &api.ACPEntry{Type: "activity", TurnID: turnID, ContextIncomplete: record.State != "pending"}
 		}
 		entry.Activity = &api.ACPActivity{UpdateType: "interaction", Data: api.Payload(record)}
 		model.put(*entry, key)
