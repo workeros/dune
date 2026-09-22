@@ -110,12 +110,13 @@ type ACPConversation struct {
 }
 
 // ACPEntry is one current protocol object, not an ACP chunk or an executable
-// permission. Exactly one payload matches Type: message, tool, activity, turn.
+// permission. Exactly one payload matches Type: message, tool, terminal, activity, turn.
 type ACPEntry struct {
 	ID                string        `json:"entry_id"`
 	Order             uint64        `json:"order,string"`
 	Revision          uint64        `json:"entry_revision,string"`
 	Type              string        `json:"type"`
+	Terminal          *ACPTerminal  `json:"terminal,omitempty"`
 	TurnID            string        `json:"turn_id,omitempty"`
 	Message           *ACPMessage   `json:"message,omitempty"`
 	Tool              *ACPTool      `json:"tool,omitempty"`
@@ -146,8 +147,20 @@ type ACPMessage struct {
 	Tail []json.RawMessage `json:"tail,omitempty"`
 }
 
-// Fields preserve ACP's presence/null distinction and structured content. ID is
-// the native tool identifier, scoped by the entry's conversation and known turn.
+// ACPTerminal is retained display-only output from an Agent-owned terminal.
+// Generation changes whenever bytes cease to extend the previous snapshot.
+type ACPTerminal struct {
+	ID           string                     `json:"terminal_id"`
+	Fields       map[string]json.RawMessage `json:"fields"`
+	Output       []byte                     `json:"output"`
+	OutputKnown  bool                       `json:"output_known"`
+	Generation   uint64                     `json:"generation,string"`
+	OmittedBytes uint64                     `json:"omitted_bytes,string"`
+	OutputMeta   json.RawMessage            `json:"output_meta,omitempty"`
+}
+
+// Fields preserve ACP presence/null semantics and structured content. v2 tool
+// IDs are session-scoped; v1 retains a known turn to avoid ambiguous reuse.
 type ACPTool struct {
 	ID           string                     `json:"tool_call_id"`
 	Status       string                     `json:"status"`
@@ -219,6 +232,9 @@ type ACPConversationPage struct {
 }
 
 type ACPConversationGet struct {
+	// TerminalID selects one retained terminal instead of EntryIDs. An empty
+	// result means no retained output, not proof the terminal never existed.
+	TerminalID     string   `json:"terminal_id,omitempty"`
 	ConversationID string   `json:"conversation_id"`
 	EntryIDs       []string `json:"entry_ids"`
 }

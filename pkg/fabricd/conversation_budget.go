@@ -31,6 +31,11 @@ func boundedConversationEntry(entry api.ACPEntry) api.ACPEntry {
 		tool.Fields = boundConversationFields(tool.Fields, 192*1024)
 		entry.Tool = &tool
 		entry.Omissions = []api.ACPOmission{{Path: "tool.fields", Reason: "entry_budget"}}
+	case entry.Terminal != nil:
+		terminal := *entry.Terminal
+		terminal.Fields = boundConversationFields(terminal.Fields, 16*1024)
+		terminal.OutputMeta = omittedConversationValue(terminal.OutputMeta)
+		entry.Terminal = &terminal
 	case entry.Activity != nil:
 		entry.Activity = &api.ACPActivity{UpdateType: entry.Activity.UpdateType, Data: omittedConversationValue(entry.Activity.Data)}
 		entry.Omissions = []api.ACPOmission{{Path: "activity.data", Reason: "entry_budget"}}

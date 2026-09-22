@@ -100,6 +100,8 @@ func (s *conversationSlot) updateV2(update map[string]json.RawMessage, turnID st
 				}
 			}
 			m.put(*entry, key)
+		case "terminal_update", "terminal_output_chunk":
+			m.updateTerminal(update, turnID)
 		case "plan_update":
 			var plan map[string]json.RawMessage
 			if json.Unmarshal(update["plan"], &plan) != nil || !validNativeID(rawString(plan, "planId")) {
