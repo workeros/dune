@@ -163,9 +163,11 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	connector := launchHostTestProcess(t, log, "--config", machineFile, "fabricd")
 	defer func() {
 		connector.stop(t, syscall.SIGTERM)
-		manager, err := tmux.Open(machine.SessionDir)
-		if err == nil {
-			manager.Close()
+		for _, sessionDir := range []string{machine.SessionDir, filepath.Join(machine.SessionDir, "acp")} {
+			manager, err := tmux.Open(sessionDir)
+			if err == nil {
+				manager.Close()
+			}
 		}
 	}()
 	for _, entry := range []int{0, 2} {
