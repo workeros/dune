@@ -5,6 +5,7 @@ package fabricd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,6 +84,7 @@ func (a *acpController) snapshotLocked() api.ACPState {
 	for _, p := range a.permissions {
 		s.Permissions = append(s.Permissions, p.ACPPermission)
 	}
+	sort.Slice(s.Permissions, func(i, j int) bool { return s.Permissions[i].ID < s.Permissions[j].ID })
 	return s
 }
 func (a *acpController) snapshot() api.ACPState {
@@ -165,7 +167,7 @@ func (a *acpController) closedWithExitLocked(code *int) {
 	a.conversation.exitedWithCode(code)
 	a.state.Ready = false
 	a.state.Busy = ""
-	a.clearPermissionsLocked()
+	a.clearPermissionsLocked("expired")
 	if a.state.Error == "" {
 		a.state.Error = "ACP Agent exited"
 	}
@@ -217,7 +219,7 @@ func (a *acpController) receive(data []byte) {
 			a.settleOperationLocked(a.active, reply.Result, reply.Err)
 		}
 		if ch != nil && a.methods[id] != "session/list" {
-			a.clearPermissionsLocked()
+			a.clearPermissionsLocked("expired")
 			a.publishLocked()
 		}
 		a.mu.Unlock()
@@ -250,7 +252,8 @@ func (a *acpController) receive(data []byte) {
 		for _, p := range a.permissions {
 			permissionBytes += len(p.Params)
 		}
-		valid := permissionBytes <= 128*1024 && json.Unmarshal(m.Params, &params) == nil && params.SessionID == a.state.SessionID && a.state.Busy != "" && len(params.Options) > 0 && len(params.Options) <= 32 && len(a.permissions) < 16
+		conversation := a.conversation.describe()
+		valid := conversation != nil && permissionBytes <= 128*1024 && json.Unmarshal(m.Params, &params) == nil && params.SessionID == a.state.SessionID && a.state.Busy != "" && len(params.Options) > 0 && len(params.Options) <= 32 && len(a.permissions) < 16
 		for _, p := range a.permissions {
 			if string(p.rpcID) == string(m.ID) {
 				valid = false
@@ -265,7 +268,13 @@ func (a *acpController) receive(data []byte) {
 					return
 				}
 			}
-			a.permissions[key] = acpPermission{ACPPermission: api.ACPPermission{ID: key, Params: append(json.RawMessage(nil), m.Params...)}, rpcID: m.ID}
+			turnID := ""
+			if a.active != nil && a.active.request.Action == "prompt" {
+				turnID = conversationTurnID(a.active.ref)
+			}
+			permission := acpPermission{ACPPermission: api.ACPPermission{ID: key, ConversationID: conversation.ID, TurnID: turnID, Params: append(json.RawMessage(nil), m.Params...)}, rpcID: m.ID}
+			a.permissions[key] = permission
+			a.permissionRecordLocked(permission, "pending", "")
 			a.publishLocked()
 			a.mu.Unlock()
 			return
@@ -481,14 +490,15 @@ func (a *acpController) control(req api.ACPAction, admit func() error) (any, err
 		}
 		var params struct {
 			Options []struct {
-				ID string `json:"optionId"`
+				ID   string `json:"optionId"`
+				Name string `json:"name"`
 			} `json:"options"`
 		}
 		_ = json.Unmarshal(p.Params, &params)
-		found := false
+		found, response := false, ""
 		for _, o := range params.Options {
 			if o.ID == req.OptionID {
-				found = true
+				found, response = true, o.Name
 			}
 		}
 		if !found {
@@ -502,10 +512,18 @@ func (a *acpController) control(req api.ACPAction, admit func() error) (any, err
 			}
 		}
 		delete(a.permissions, req.PermissionID)
+		a.permissionRecordLocked(p, "submitting", "")
 		a.controlling = true
 		a.publishLocked()
 		a.mu.Unlock()
 		err := a.send(map[string]any{"jsonrpc": "2.0", "id": p.rpcID, "result": map[string]any{"outcome": map[string]string{"outcome": "selected", "optionId": req.OptionID}}})
+		a.mu.Lock()
+		outcome := "responded"
+		if err != nil {
+			outcome = "unknown"
+		}
+		a.permissionRecordLocked(p, outcome, response)
+		a.mu.Unlock()
 		a.finishControl(err)
 		// The response is consumed before writing: failure is never auto-replayed.
 		if err != nil {
@@ -527,7 +545,7 @@ func (a *acpController) control(req api.ACPAction, admit func() error) (any, err
 		}
 		id := a.state.SessionID
 		permissions := a.permissions
-		a.clearPermissionsLocked()
+		a.clearPermissionsLocked("cancelled")
 		a.state.Busy = "cancelling"
 		a.controlling = true
 		a.publishLocked()
@@ -544,13 +562,4 @@ func (a *acpController) control(req api.ACPAction, admit func() error) (any, err
 	}
 	defer a.mu.Unlock()
 	return a.enqueueLocked(req)
-}
-
-func (a *acpController) clearPermissionsLocked() {
-	if a.releaseControl != nil {
-		for id := range a.permissions {
-			a.releaseControl("permission", id)
-		}
-	}
-	a.permissions = map[string]acpPermission{}
 }
