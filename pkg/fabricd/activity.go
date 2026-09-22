@@ -39,7 +39,7 @@ func (r *runtime) updateActivity(state, source, agent, foreground string) {
 func (a *acpController) publishActivityLocked() {
 	state := "unknown"
 	switch {
-	case len(a.permissions) > 0:
+	case len(a.permissions) > 0 || len(a.pendingElicitationsLocked()) > 0:
 		state = "blocked"
 	case a.state.Busy != "":
 		state = "working"

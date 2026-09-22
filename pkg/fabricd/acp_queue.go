@@ -159,6 +159,7 @@ func (a *acpController) startNextLocked() {
 			operation.reconnect = a.openedOnce
 			a.openedOnce = true
 			a.reconnecting = operation.reconnect
+			a.clearElicitationsLocked("expired")
 			a.conversation.begin(req)
 			a.operations.mu.Lock()
 			a.operations.records[operation.ref].status.ConversationID = a.conversation.describe().ID

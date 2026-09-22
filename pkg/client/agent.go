@@ -116,8 +116,8 @@ func (c *Client) callACPRead(parent context.Context, operation string, request, 
 // target's reserved capacity. Stage "written" confirms pipe delivery only.
 // Its receipt is queried by key; it does not consume ordinary operation slots.
 func (c *Client) ACPControl(ctx context.Context, key api.SubmissionKey, action api.ACPAction) (api.SubmissionReceipt, error) {
-	if action.Action != "permission" && action.Action != "cancel" {
-		return api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, &api.SubmissionError{Key: key, Cause: &api.Error{Code: "INVALID_ARGUMENT", Detail: "ACPControl requires permission or cancel"}}
+	if action.Action != "permission" && action.Action != "elicitation" && action.Action != "cancel" {
+		return api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}, &api.SubmissionError{Key: key, Cause: &api.Error{Code: "INVALID_ARGUMENT", Detail: "ACPControl requires permission, elicitation or cancel"}}
 	}
 	return c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(action)})
 }

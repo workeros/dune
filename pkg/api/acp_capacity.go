@@ -28,9 +28,10 @@ type ControlCapacityUsage struct {
 // ACPResourceUsage belongs to the original host, including while fabricd is
 // absent. Result slots remain occupied until the host's completion TTL expires.
 type ACPResourceUsage struct {
-	Queue       CapacityUsage     `json:"queue"`
-	Permissions CapacityUsage     `json:"permissions"`
-	Operations  ACPOperationUsage `json:"operations"`
+	Queue        CapacityUsage     `json:"queue"`
+	Permissions  CapacityUsage     `json:"permissions"`
+	Elicitations CapacityUsage     `json:"elicitations"`
+	Operations   ACPOperationUsage `json:"operations"`
 }
 
 type ACPOperationUsage struct {

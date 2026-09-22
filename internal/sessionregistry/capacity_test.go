@@ -53,10 +53,11 @@ func TestCapacityCountsIndependentReservationsAndRetainedEvidenceWithoutWrites(t
 		Ordinary: api.CapacityUsage{Used: 3, Limit: 3}, Claimed: 1, Accepted: 1, Rejected: 1,
 		Runtimes: api.CapacityUsage{Used: 1, Limit: MaxLiveRuntimes}, RuntimeRecords: api.CapacityUsage{Used: 1, Limit: MaxRuntimeRecords},
 		Controls: map[string]api.ControlCapacityUsage{
-			ControlPermission: {Used: 2, Limit: 2, Reserved: 1, Accepted: 1, Completed: 1},
-			ControlCancel:     {Limit: 2},
-			ControlStop:       {Used: 1, Limit: MaxRuntimeRecords, Reserved: 1},
-			ControlForget:     {Used: 1, Limit: MaxRuntimeRecords, Reserved: 1},
+			ControlPermission:  {Used: 2, Limit: 2, Reserved: 1, Accepted: 1, Completed: 1},
+			ControlCancel:      {Limit: 2},
+			ControlElicitation: {Limit: 2},
+			ControlStop:        {Used: 1, Limit: MaxRuntimeRecords, Reserved: 1},
+			ControlForget:      {Used: 1, Limit: MaxRuntimeRecords, Reserved: 1},
 		},
 	}
 	for i := range 3 {

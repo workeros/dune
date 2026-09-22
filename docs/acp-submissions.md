@@ -133,6 +133,7 @@ Gateway 仍执行正常鉴权，宿主仍检查当前权限／可取消目标。
 | 状态、模型、回执等短查询 `read` | 16 | 16 | 128 |
 | 操作长轮询 `wait` | 16 | 16 | 128 |
 | 权限回答 `permission` | 16 | 16 | 128 |
+| 结构化提问回应 `elicitation` | 16 | 16 | 128 |
 | 取消 `cancel` | 16 | 16 | 128 |
 | 停止 `stop` | 16 | 16 | 128 |
 | 清理 `forget` | 16 | 16 | 128 |
@@ -140,13 +141,13 @@ Gateway 仍执行正常鉴权，宿主仍检查当前权限／可取消目标。
 
 这些默认值也是当前硬上限，尚不提供用户配置范围。fabricd 和宿主预算覆盖该进程的
 全部连接，旧连接排空期间仍计费。清理由 fabricd 的独立注册索引执行，宿主不接受
-forget。首包最多 4 MiB、读取期限 5 秒；Yamux 待接收 backlog 为 169（包含连接
+forget。首包最多 4 MiB、读取期限 5 秒；Yamux 待接收 backlog 为 185（包含连接
 控制流），增加 backlog 不增加普通执行额度。未分类首包、网络和鉴权本身仍受有界
 限流；这里保证普通**已分类工作**占满后保留控制能力，不保证在无限连接或半包洪泛
 下每次请求都成功。首包槽不足时关闭对应流，不猜测业务接纳结果。
 
 `Binding.Limits` 公布 `streams_ordinary/read/wait/permission/cancel/stop/forget/opening`，
-`streams=168` 是含首包读取的总业务流预算；单独的连接控制流不计入该值。
+`streams=184` 是含首包读取的总业务流预算；单独的连接控制流不计入该值。
 `machine.info.stream_capacity` 返回 fabricd 各类实际 `used/limit`；
 `Gateway.Status().StreamCapacity` 返回 Gateway 的全局用量，包含尚未退出的回调。
 并发拒绝使用 `RESOURCE_EXHAUSTED`，detail 指明层和类别；它不是持久 `not_accepted`。
@@ -255,3 +256,14 @@ JSON 重建可执行按钮。快照中的请求顺序稳定，响应仍使用原
 `cancelled`、`expired` 或 `unknown`。`responded` 仅证明响应已写入 Agent 连接，
 不证明工具已经执行。正常结束不抹去已回应的记录；停止或失效的未决请求不可再响应。
 历史条目仍受会话保留窗口限制，不是永久审计存储。
+
+
+## 结构化提问
+
+托管宿主在 initialize 显式声明 `elicitation.form` 和 `elicitation.url`。`elicitation/create` 必须引用同一连接上的有效 sessionId 或仍在等待的客户端 requestId；模式、URL、并发数和总字节数在进入待办前检查。请求保留独立控制预留和传输并发预算，普通请求无法占用其回应能力。
+
+状态中的 `elicitations` 仅包含尚可回应的请求。使用 `ACPAction{action:"elicitation", elicitation_id, elicitation_response:{action,content}}` 回应；宿主先校验当前请求和表单，再消费一次性提交身份并写入。结果未知时不重发。表单校验采用 ACP 的扁平 schema，未知结构保留为可拒绝/取消的请求；请求密码或凭据的表单不可提交。回答正文不写入交互历史与 ACP 诊断，只将回应状态保留为只读事实。
+
+URL 的 accept 表示用户同意打开，不表示外部流程成功。历史在 `awaiting_completion` 等待原连接同一 `elicitationId` 的 `elicitation/complete`，随后改为 completed；未同意、未知和重复 ID 均不产生完成状态。调用方负责展示完整地址、明确取得同意，并在隔离的外部页面打开。
+
+初始化等有期限的 RPC 在等待其 request-scoped 提问时暂停 Agent 超时计时；用户回应后重新给予一个正常的 RPC 等待周期。请求终结、取消、会话切换或进程退出都会使对应待办失效。

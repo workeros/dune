@@ -15,7 +15,7 @@ func (r *Registry) Capacity(ctx context.Context) (api.SubmissionCapacity, error)
 		RuntimeRecords: api.CapacityUsage{Limit: MaxRuntimeRecords},
 		Controls:       make(map[string]api.ControlCapacityUsage),
 	}
-	for _, kind := range []string{ControlPermission, ControlCancel, ControlStop, ControlForget} {
+	for _, kind := range []string{ControlElicitation, ControlPermission, ControlCancel, ControlStop, ControlForget} {
 		limit := r.maxControls
 		if kind == ControlStop || kind == ControlForget {
 			limit = MaxRuntimeRecords
