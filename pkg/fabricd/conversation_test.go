@@ -38,7 +38,7 @@ func conversationPage(t *testing.T, slot *conversationSlot) api.ACPConversationP
 
 func TestConversationProtocolMergingAndImmutableSnapshots(t *testing.T) {
 	slot := conversationFixture(t)
-	slot.startTurn("operation-1", "question")
+	slot.startTurn("operation-1", promptContent(api.ACPAction{Text: "question"}))
 	conversationUpdate(t, slot, "turn-operation-1", `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hel"}}`)
 	before := conversationPage(t, slot)
 	encodedBefore := string(api.Payload(before))
@@ -276,7 +276,7 @@ func TestConversationRejectsInvalidCursorsAndArguments(t *testing.T) {
 
 func TestConversationLateToolTerminalAndMissingTurn(t *testing.T) {
 	slot := conversationFixture(t)
-	slot.startTurn("one", "question")
+	slot.startTurn("one", promptContent(api.ACPAction{Text: "question"}))
 	conversationUpdate(t, slot, "turn-one", `{"sessionUpdate":"tool_call","toolCallId":"known","status":"in_progress","title":"work"}`)
 	tool := conversationPage(t, slot).Entries[2]
 	slot.finishTurn(api.AgentOperation{Ref: "one", State: "completed", StopReason: "end_turn"})
@@ -332,7 +332,7 @@ func TestConversationOldSnapshotIsImmutableAcrossSwitch(t *testing.T) {
 func TestConversationDoesNotDeduplicateEchoOrRepeatedInput(t *testing.T) {
 	slot := conversationFixture(t)
 	for _, operation := range []string{"first", "second"} {
-		slot.startTurn(operation, "same text")
+		slot.startTurn(operation, promptContent(api.ACPAction{Text: "same text"}))
 		conversationUpdate(t, slot, conversationTurnID(operation), `{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"same text"}}`)
 		slot.finishTurn(api.AgentOperation{Ref: operation, State: "completed"})
 	}

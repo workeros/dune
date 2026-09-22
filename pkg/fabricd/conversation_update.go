@@ -15,14 +15,14 @@ func rawString(fields map[string]json.RawMessage, key string) string {
 
 func conversationTurnID(ref string) string { return "turn-" + ref }
 
-func (s *conversationSlot) startTurn(ref, text string) {
+func (s *conversationSlot) startTurn(ref string, content []json.RawMessage) {
 	s.mutate(func(m *conversationModel) {
 		turn := &api.ACPTurn{ID: conversationTurnID(ref), OperationRef: ref, State: "running"}
 		m.invalidatesAll = true
 		m.description.CurrentTurn = turn
 		m.put(api.ACPEntry{Type: "turn", TurnID: turn.ID, Turn: turn}, turn.ID)
 		m.put(api.ACPEntry{Type: "message", TurnID: turn.ID, Message: &api.ACPMessage{Role: "user", Channel: "message", Source: "client", Status: "attempted",
-			Content: []json.RawMessage{api.Payload(map[string]string{"type": "text", "text": text})}}}, "")
+			Content: content}}, "")
 	})
 }
 
@@ -172,17 +172,7 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 			}
 			m.put(*entry, key)
 		case "plan", "available_commands_update", "current_mode_update", "config_option_update", "usage_update":
-			m.invalidatesAll = true
-			state := make(map[string]json.RawMessage, len(m.description.State)+1)
-			for key, value := range m.description.State {
-				state[key] = value
-			}
-			state[kind] = api.Payload(update)
-			if len(api.Payload(state)) > api.MaxACPConversationStateBytes {
-				state = boundConversationFields(state, api.MaxACPConversationStateBytes)
-				m.description.ContentOmitted = true
-			}
-			m.description.State = state
+			m.setState(kind, api.Payload(update))
 		default:
 			m.put(api.ACPEntry{Type: "activity", TurnID: turnID, Activity: &api.ACPActivity{UpdateType: kind, Data: api.Payload(update)}}, "")
 		}
@@ -241,4 +231,18 @@ func (a *acpController) recordConversationUpdate(params json.RawMessage) {
 		turnID = conversationTurnID(a.active.ref)
 	}
 	a.conversation.update(envelope.Update, turnID)
+}
+
+func (m *conversationModel) setState(kind string, data json.RawMessage) {
+	m.invalidatesAll = true
+	state := make(map[string]json.RawMessage, len(m.description.State)+1)
+	for key, value := range m.description.State {
+		state[key] = value
+	}
+	state[kind] = data
+	if len(api.Payload(state)) > api.MaxACPConversationStateBytes {
+		state = boundConversationFields(state, api.MaxACPConversationStateBytes)
+		m.description.ContentOmitted = true
+	}
+	m.description.State = state
 }

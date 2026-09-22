@@ -27,7 +27,7 @@ func (d *Engine) submitACP(s *executionStream, message *pb.Message, machine stri
 		return
 	}
 	var action api.ACPAction
-	if request.Operation != "acp.action" || json.Unmarshal(request.Payload, &action) != nil || (action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" && action.Action != "permission" && action.Action != "elicitation" && action.Action != "cancel") {
+	if request.Operation != "acp.action" || json.Unmarshal(request.Payload, &action) != nil || (action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" && action.Action != "set_config_option" && action.Action != "set_mode" && action.Action != "permission" && action.Action != "elicitation" && action.Action != "cancel") {
 		s.Fail("UNSUPPORTED", errors.New("submission.acp requires a managed ACP action"))
 		return
 	}

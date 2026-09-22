@@ -267,3 +267,9 @@ JSON 重建可执行按钮。快照中的请求顺序稳定，响应仍使用原
 URL 的 accept 表示用户同意打开，不表示外部流程成功。历史在 `awaiting_completion` 等待原连接同一 `elicitationId` 的 `elicitation/complete`，随后改为 completed；未同意、未知和重复 ID 均不产生完成状态。调用方负责展示完整地址、明确取得同意，并在隔离的外部页面打开。
 
 初始化等有期限的 RPC 在等待其 request-scoped 提问时暂停 Agent 超时计时；用户回应后重新给予一个正常的 RPC 等待周期。请求终结、取消、会话切换或进程退出都会使对应待办失效。
+
+## 配置和结构化输入
+
+初始化保留 Agent 的 `promptCapabilities`，并声明客户端 boolean config 支持。new/load 返回的 `configOptions` 和 `modes` 进入会话状态；`config_option_update` 始终整体替换配置列表。`set_config_option` / `set_mode` 使用普通提交与操作回执，要求原 `expected_conversation_id`、sessionId 和 cwd。宿主目前只在空闲时修改配置；Agent 确认前不改变当前值。已提供 config options（包括空列表）的会话不再使用 modes 接口。
+
+`ACPAction.attachments` 是附加到 `text` 后的 ACP 内容块，支持 image、audio、resource、resource_link。前三者受协商能力限制，resource_link 为基础能力。最多 8 个附件，完整 prompt JSON 不超过 2 MiB，文本仍限 64 KiB。能力与内容校验同时发生在准入和排队派发处；图片/音频数据必须为合法 Base64，嵌入资源必须明确提供 text 或 blob。用户消息保留同一组结构化内容，超过读模型保留上限仍按已有省略合同处理。
