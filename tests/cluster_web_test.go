@@ -436,22 +436,23 @@ func TestPostgresClusterWebProcesses(t *testing.T) {
 	if !bytes.Equal(journalBefore, journalAfter) {
 		t.Fatal("Gateway owner restart replayed Agent control RPCs")
 	}
-	// A fabricd process restart is a different lifetime: ACP and its operations
-	// disappear while the PTY caller remains valid. Old reads cannot fall back.
+	// Both the PTY caller and the independent ACP host survive a connector
+	// restart. Reattach the original operation and model without replaying RPCs.
 	connector.stop(t, syscall.SIGKILL)
 	connector = launchHostTestProcess(t, log, "--config", machineFile, "fabricd")
 	awaitCaller()
-	expired, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "agents_read", Arguments: agents.ReadRequest{OperationRef: second.Ref}})
+	var reattached agents.ReadResult
+	callMCP("agents_read", agents.ReadRequest{OperationRef: second.Ref}, &reattached)
+	if string(api.Payload(reattached)) != string(api.Payload(b)) {
+		t.Fatal("connector restart changed the original ACP operation output")
+	}
+	if restored := readConversation(2, selection); string(api.Payload(restored)) != firstPage {
+		t.Fatal("connector restart invalidated the original conversation cursor")
+	}
+	journalAfter, err = os.ReadFile(journal)
 	must(t, err)
-	if !expired.IsError {
-		t.Fatal("fabricd restart returned output for an expired ACP operation")
-	}
-	var failure struct {
-		Code string `json:"code"`
-	}
-	must(t, json.Unmarshal(api.Payload(expired.StructuredContent), &failure))
-	if failure.Code != "STALE_RUNTIME" && failure.Code != "OPERATION_EXPIRED" {
-		t.Fatal("old ACP reference did not report its lost execution lifetime", failure.Code)
+	if !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatal("connector restart replayed Agent control RPCs")
 	}
 }
 
