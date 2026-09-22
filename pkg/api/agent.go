@@ -10,6 +10,10 @@ type ACPAction struct {
 	ExpectedConversationID string                  `json:"expected_conversation_id,omitempty"`
 	Action                 string                  `json:"action"`
 	Text                   string                  `json:"text,omitempty"`
+	Attachments            []json.RawMessage       `json:"attachments,omitempty"`
+	ConfigID               string                  `json:"config_id,omitempty"`
+	ConfigValue            json.RawMessage         `json:"config_value,omitempty"`
+	ModeID                 string                  `json:"mode_id,omitempty"`
 	SessionID              string                  `json:"session_id,omitempty"`
 	Cwd                    string                  `json:"cwd,omitempty"`
 	Cursor                 string                  `json:"cursor,omitempty"`

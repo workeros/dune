@@ -54,6 +54,10 @@ func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func
 		if req.SessionID == "" {
 			return api.AgentOperation{}, fmt.Errorf("session ID required")
 		}
+	case "set_config_option", "set_mode":
+		if err := a.validateConfigurationLocked(req); err != nil {
+			return api.AgentOperation{}, err
+		}
 	case "prompt":
 		if err := a.checkPromptConversationLocked(req); err != nil {
 			return api.AgentOperation{}, err
@@ -61,8 +65,8 @@ func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func
 		if req.SessionID == "" {
 			req.SessionID = a.state.SessionID
 		}
-		if req.SessionID == "" || req.Text == "" || len(req.Text) > 64*1024 {
-			return api.AgentOperation{}, fmt.Errorf("create/load a session and supply 1..65536 bytes of text")
+		if err := a.validatePromptLocked(req); err != nil {
+			return api.AgentOperation{}, err
 		}
 		if req.SessionID != a.state.SessionID || req.Cwd != a.state.Cwd {
 			return api.AgentOperation{}, &api.Error{Code: "STALE_SESSION", Detail: "native ACP session changed"}
@@ -150,6 +154,13 @@ func (a *acpController) startNextLocked() {
 			a.releaseCancelLocked(operation)
 			continue
 		}
+		if req.Action == "prompt" {
+			if err := a.validatePromptLocked(req); err != nil {
+				a.publishOperation(a.operations.set(operation.ref, "failed", "", err.Error()))
+				a.releaseCancelLocked(operation)
+				continue
+			}
+		}
 		a.active = operation
 		a.state.OperationRef, a.state.Pending = operation.ref, len(a.queue)
 		a.state.Busy, a.state.Error, a.state.StopReason = req.Action, "", ""
@@ -179,8 +190,10 @@ func (a *acpController) startNextLocked() {
 				params["cursor"] = req.Cursor
 			}
 			a.state.List = nil
+		case "set_config_option", "set_mode":
+			params = a.configurationParamsLocked(req)
 		case "prompt":
-			params = map[string]any{"sessionId": req.SessionID, "prompt": []any{map[string]string{"type": "text", "text": req.Text}}}
+			params = map[string]any{"sessionId": req.SessionID, "prompt": promptContent(req)}
 		}
 		a.publishOperation(a.operations.set(operation.ref, "running", "", ""))
 		a.publishLocked()
@@ -188,8 +201,10 @@ func (a *acpController) startNextLocked() {
 			a.r.emit(&pb.Message{Kind: "acp_reset"})
 		}
 		if req.Action == "prompt" {
-			a.conversation.startTurn(operation.ref, string(a.redactCredential([]byte(req.Text))))
-			a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": req.SessionID, "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]string{"type": "text", "text": req.Text}}})})
+			a.conversation.startTurn(operation.ref, a.redactedPromptContent(req))
+			for _, content := range a.redactedPromptContent(req) {
+				a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": req.SessionID, "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": content}})})
+			}
 		}
 		go a.runOperation(operation, params)
 		return
@@ -228,7 +243,7 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	}
 	state, reason, detail := "completed", "", ""
 	if err == nil {
-		reason, err = a.applyResultLocked(operation.request.Action, result)
+		reason, err = a.applyResultLocked(operation.request, result)
 	}
 	if err != nil {
 		state = "failed"
@@ -292,8 +307,8 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	}
 }
 
-func (a *acpController) applyResultLocked(action string, result json.RawMessage) (string, error) {
-	switch action {
+func (a *acpController) applyResultLocked(req api.ACPAction, result json.RawMessage) (string, error) {
+	switch req.Action {
 	case "new":
 		var value struct {
 			ID string `json:"sessionId"`
@@ -302,10 +317,16 @@ func (a *acpController) applyResultLocked(action string, result json.RawMessage)
 			return "", &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent returned invalid sessionId"}
 		}
 		a.state.SessionID = value.ID
+		a.retainSessionConfigurationLocked(result)
 	case "load":
 		var value map[string]json.RawMessage
 		if json.Unmarshal(result, &value) != nil || value == nil {
 			return "", &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent returned invalid load result"}
+		}
+		a.retainSessionConfigurationLocked(result)
+	case "set_config_option", "set_mode":
+		if err := a.applyConfigurationResultLocked(req, result); err != nil {
+			return "", err
 		}
 	case "list":
 		var value struct {

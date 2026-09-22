@@ -447,13 +447,14 @@ func (a *acpController) initialize() {
 	}
 }
 func (a *acpController) initializeConnection() error {
-	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{"elicitation": map[string]any{"form": map[string]any{}, "url": map[string]any{}}}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
+	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{"session": map[string]any{"configOptions": map[string]any{"boolean": map[string]any{}}}, "elicitation": map[string]any{"form": map[string]any{}, "url": map[string]any{}}}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
 	var init struct {
 		Version      int             `json:"protocolVersion"`
 		Info         json.RawMessage `json:"agentInfo"`
 		Capabilities struct {
-			Load bool `json:"loadSession"`
-			MCP  struct {
+			Load   bool                      `json:"loadSession"`
+			Prompt api.ACPPromptCapabilities `json:"promptCapabilities"`
+			MCP    struct {
 				HTTP bool `json:"http"`
 			} `json:"mcpCapabilities"`
 			Sessions struct {
@@ -483,6 +484,7 @@ func (a *acpController) initializeConnection() error {
 	}
 	a.state.Agent = init.Info
 	a.state.CanLoad = init.Capabilities.Load
+	a.state.PromptCapabilities = init.Capabilities.Prompt
 	a.mcpHTTP = init.Capabilities.MCP.HTTP
 	var object map[string]any
 	a.state.CanList = json.Unmarshal(init.Capabilities.Sessions.List, &object) == nil && object != nil

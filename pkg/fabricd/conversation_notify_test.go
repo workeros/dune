@@ -142,7 +142,7 @@ func TestConversationStateChangesInvalidateTheWholeModel(t *testing.T) {
 		{"plan", func() {
 			conversationUpdate(t, slot, "", `{"sessionUpdate":"plan","entries":[{"content":"next step","status":"pending","priority":"medium"}]}`)
 		}},
-		{"turn start", func() { slot.startTurn("operation", "question") }},
+		{"turn start", func() { slot.startTurn("operation", promptContent(api.ACPAction{Text: "question"})) }},
 		{"turn terminal", func() { slot.finishTurn(api.AgentOperation{Ref: "operation", State: "completed"}) }},
 		{"exit", func() { slot.exited() }},
 	} {
