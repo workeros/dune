@@ -66,6 +66,12 @@ func TestAgentSubmissionLookupUsesOriginalKeyAcrossNativeSessionChange(t *testin
 		t.Fatal("cross-owner query succeeded")
 	}
 	stop := agents.SubmissionRequest{SubmissionID: "saved-stop", AgentRef: launched.AgentRef, ACPAction: api.ACPAction{Action: "stop"}}
+	invalidStop := stop
+	invalidStop.SubmissionID = "stop-with-config"
+	invalidStop.ConfigValue = api.Payload(false)
+	if _, err := service.Submit(t.Context(), f.agentScope(), invalidStop); err == nil {
+		t.Fatal("stop accepted ACP configuration parameters")
+	}
 	stopped, err := service.Submit(t.Context(), f.agentScope(), stop)
 	if err != nil || stopped.Admission != api.SubmissionAccepted || stopped.Stage != "stopped" {
 		t.Fatal("original Runtime stop depended on its changed native session", stopped, err)
