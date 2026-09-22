@@ -1,6 +1,7 @@
 package agentservice
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/aiomni/dune/pkg/agents"
@@ -49,7 +50,9 @@ func (s *Service) Submit(ctx context.Context, scope agents.Scope, request agents
 	}
 	defer closeConnection()
 	if operation == "runtime.stop" || operation == "runtime.forget" {
-		if request.ACPAction != (api.ACPAction{Action: request.Action}) {
+		// Compare the encoded contract so new ACP fields cannot accidentally
+		// become accepted parameters of stop/forget. Empty optional values omit.
+		if !bytes.Equal(api.Payload(request.ACPAction), api.Payload(api.ACPAction{Action: request.Action})) {
 			return result, invalid(request.Action + " takes no ACP action parameters")
 		}
 		return connection.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: operation})
