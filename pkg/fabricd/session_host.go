@@ -192,6 +192,7 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	d.runtimes[r.id] = r
 	if boot.Profile.ManagedACP {
 		r.acp = newACPController(r)
+		r.acp.v2Draft = boot.Profile.ACPV2Draft
 		r.acp.requireMCP = boot.Profile.RequireAgentMCP
 		r.acp.reserveControl = func(kind, id string) error { return d.registry.ReserveControl(ctx, reg.Target, kind, id) }
 		r.acp.releaseControl = func(kind, id string) { _ = d.registry.ReleaseControl(ctx, reg.Target, kind, id) }

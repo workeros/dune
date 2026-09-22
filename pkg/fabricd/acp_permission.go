@@ -8,7 +8,14 @@ import (
 
 func (a *acpController) permissionRecordLocked(permission acpPermission, state, response string) {
 	var params struct {
-		Title    string `json:"title"`
+		Title   string `json:"title"`
+		Subject struct {
+			Type       string `json:"type"`
+			ToolCallID string `json:"toolCallId"`
+			ToolCall   struct {
+				ID string `json:"toolCallId"`
+			} `json:"toolCall"`
+		} `json:"subject"`
 		ToolCall struct {
 			ID    string `json:"toolCallId"`
 			Title string `json:"title"`
@@ -21,6 +28,12 @@ func (a *acpController) permissionRecordLocked(permission acpPermission, state, 
 	}
 	if title == "" {
 		title = "Agent 操作"
+	}
+	if a.state.ProtocolVersion == 2 {
+		params.ToolCall.ID = params.Subject.ToolCallID
+		if params.Subject.Type == "tool_call" {
+			params.ToolCall.ID = params.Subject.ToolCall.ID
+		}
 	}
 	record := api.ACPInteractionRecord{ID: permission.ID, Kind: "permission", State: state, Title: title, ToolCallID: params.ToolCall.ID, Response: response}
 	a.interactionRecordLocked(permission.ConversationID, permission.TurnID, record)

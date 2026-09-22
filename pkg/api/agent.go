@@ -6,6 +6,7 @@ import "encoding/json"
 // ExpectedConversationID; intermediaries must never fill or refresh it. Native
 // SessionID/Cwd are additional selectors. Admission and dispatch both validate.
 type ACPAction struct {
+	Replay                 bool                    `json:"replay,omitempty"`
 	OperationRef           string                  `json:"operation_ref,omitempty"`
 	ExpectedConversationID string                  `json:"expected_conversation_id,omitempty"`
 	Action                 string                  `json:"action"`

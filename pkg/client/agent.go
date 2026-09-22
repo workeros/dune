@@ -39,7 +39,7 @@ func (c *Client) ConfigureAgentMCP(ctx context.Context, runtime api.Runtime, con
 // ACPSubmit admits a new/load/list/prompt to the Runtime queue. Closing this
 // connection never cancels it. Unknown submissions must not be replayed.
 func (c *Client) ACPSubmit(ctx context.Context, key api.SubmissionKey, action api.ACPAction) (api.AgentOperation, error) {
-	if action.Action != "new" && action.Action != "load" && action.Action != "list" && action.Action != "prompt" {
+	if action.Action != "new" && action.Action != "load" && action.Action != "resume" && action.Action != "list" && action.Action != "prompt" {
 		return api.AgentOperation{Submission: &api.SubmissionReceipt{SubmissionKey: key, Admission: api.SubmissionUnknown}}, &api.SubmissionError{Key: key, Cause: &api.Error{Code: "INVALID_ARGUMENT", Detail: "ACPSubmit requires new, load, list or prompt"}}
 	}
 	receipt, err := c.Submit(ctx, api.SubmissionRequest{SubmissionKey: key, Operation: "acp.action", Payload: api.Payload(action)})

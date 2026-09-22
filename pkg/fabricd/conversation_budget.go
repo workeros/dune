@@ -15,6 +15,9 @@ func boundedConversationEntry(entry api.ACPEntry) api.ACPEntry {
 	switch {
 	case entry.Message != nil:
 		message := *entry.Message
+		if len(message.Meta) > 16*1024 {
+			message.Meta = omittedConversationValue(message.Meta)
+		}
 		tail := message.Tail
 		if len(tail) == 0 {
 			tail = message.Content

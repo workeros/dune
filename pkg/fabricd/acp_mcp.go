@@ -33,6 +33,9 @@ func (a *acpController) configureMCP(config api.AgentMCP) (api.AgentMCPStatus, e
 		server = map[string]any{"type": "http", "name": "dune-agents", "url": config.URL,
 			"headers": []map[string]string{{"name": "Authorization", "value": "Bearer " + config.Token}}}
 	} else {
+		if a.state.ProtocolVersion == 2 && !a.mcpStdio {
+			return result, &api.Error{Code: "UNSUPPORTED", Detail: "Agent did not advertise an MCP transport"}
+		}
 		executable, err := os.Executable()
 		if err != nil {
 			return result, &api.Error{Code: "UNSUPPORTED", Detail: "Runner cannot locate its native MCP bridge"}
@@ -40,6 +43,9 @@ func (a *acpController) configureMCP(config api.AgentMCP) (api.AgentMCPStatus, e
 		result.Transport = "stdio"
 		server = map[string]any{"name": "dune-agents", "command": executable, "args": []string{mcpbridge.Command},
 			"env": []map[string]string{{"name": mcpbridge.URLEnv, "value": config.URL}, {"name": mcpbridge.TokenEnv, "value": config.Token}}}
+	}
+	if a.state.ProtocolVersion == 2 && result.Transport == "stdio" {
+		server.(map[string]any)["type"] = "stdio"
 	}
 	a.mcpServers = []any{server}
 	a.mcpSecret.Store(&config.Token)

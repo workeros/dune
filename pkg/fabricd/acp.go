@@ -34,6 +34,8 @@ const (
 )
 
 type acpController struct {
+	v2Draft          bool
+	mcpStdio         bool
 	inputMu          sync.Mutex
 	connection       *process.Process
 	openedOnce       bool
@@ -71,7 +73,7 @@ func newACPController(r *runtime) *acpController {
 	}
 	a := &acpController{connection: r.p, r: r, operations: r.operationLog(), conversation: r.conversations.register(r.id, r.inc, func(change api.ACPConversationChanged) {
 		r.emit(&pb.Message{Kind: "acp_conversation_changed", Payload: api.Payload(change)})
-	}), state: api.ACPState{Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, elicitations: map[string]*acpElicitation{}, done: make(chan struct{}), methods: map[string]string{}}
+	}), state: api.ACPState{ProtocolVersion: 1, Busy: "initialize", Cwd: r.cwd}, pending: map[string]chan acpReply{}, permissions: map[string]acpPermission{}, elicitations: map[string]*acpElicitation{}, done: make(chan struct{}), methods: map[string]string{}}
 	r.conversations.mu.Lock()
 	a.conversation.events = r.events
 	r.conversations.mu.Unlock()
@@ -232,12 +234,11 @@ func (a *acpController) receive(data []byte) {
 			reply.Err = formatACPError(m.Error.Code, m.Error.Message, m.Error.Data)
 		}
 		if a.active != nil && a.active.rpcID == id {
-			a.active.responded = true
-			a.settleOperationLocked(a.active, reply.Result, reply.Err)
+			a.receiveOperationReplyLocked(a.active, reply.Result, reply.Err)
 		}
 		if ch != nil {
 			a.expireRequestElicitationsLocked(id)
-			if a.methods[id] != "session/list" {
+			if a.state.ProtocolVersion != 2 && a.methods[id] != "session/list" {
 				a.clearPermissionsLocked("expired")
 			}
 			a.publishLocked()
@@ -264,7 +265,8 @@ func (a *acpController) receive(data []byte) {
 	}
 	if m.Method == "session/request_permission" {
 		var params struct {
-			SessionID string `json:"sessionId"`
+			SessionID string  `json:"sessionId"`
+			Title     *string `json:"title"`
 			Options   []struct {
 				ID string `json:"optionId"`
 			} `json:"options"`
@@ -281,7 +283,7 @@ func (a *acpController) receive(data []byte) {
 			permissionBytes += len(p.Params)
 		}
 		conversation := a.conversation.describe()
-		valid := conversation != nil && permissionBytes <= 128*1024 && json.Unmarshal(m.Params, &params) == nil && params.SessionID == a.state.SessionID && a.state.Busy != "" && len(params.Options) > 0 && len(params.Options) <= 32 && len(a.permissions) < 16
+		valid := conversation != nil && permissionBytes <= 128*1024 && json.Unmarshal(m.Params, &params) == nil && params.SessionID == a.state.SessionID && (a.state.Busy != "" || a.state.ProtocolVersion == 2) && (a.state.ProtocolVersion != 2 || params.Title != nil) && len(params.Options) > 0 && len(params.Options) <= 32 && len(a.permissions) < 16
 		for _, p := range a.permissions {
 			if string(p.rpcID) == string(m.ID) {
 				valid = false
@@ -297,7 +299,7 @@ func (a *acpController) receive(data []byte) {
 				}
 			}
 			turnID := ""
-			if a.active != nil && a.active.request.Action == "prompt" {
+			if a.active.isForeground() {
 				turnID = conversationTurnID(a.active.ref)
 			}
 			permission := acpPermission{ACPPermission: api.ACPPermission{ID: key, ConversationID: conversation.ID, TurnID: turnID, Params: append(json.RawMessage(nil), m.Params...)}, rpcID: m.ID}
@@ -344,8 +346,8 @@ func formatACPError(code int, message string, data json.RawMessage) error {
 
 func (a *acpController) emitUpdate(params json.RawMessage) {
 	params = redactMCPConfiguration(params)
-	a.recordConversationUpdate(params)
 	a.recordUpdate(params)
+	a.recordConversationUpdate(params)
 	if len(params) <= acpBrowserUpdateBytes {
 		a.r.emit(&pb.Message{Kind: "acp_update", Payload: params})
 		return
@@ -447,23 +449,10 @@ func (a *acpController) initialize() {
 	}
 }
 func (a *acpController) initializeConnection() error {
-	result, err := a.rpc("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{"session": map[string]any{"configOptions": map[string]any{"boolean": map[string]any{}}}, "elicitation": map[string]any{"form": map[string]any{}, "url": map[string]any{}}}, "clientInfo": map[string]string{"name": "dune", "version": "0.1.0"}}, 30*time.Second, nil)
-	var init struct {
-		Version      int             `json:"protocolVersion"`
-		Info         json.RawMessage `json:"agentInfo"`
-		Capabilities struct {
-			Load   bool                      `json:"loadSession"`
-			Prompt api.ACPPromptCapabilities `json:"promptCapabilities"`
-			MCP    struct {
-				HTTP bool `json:"http"`
-			} `json:"mcpCapabilities"`
-			Sessions struct {
-				List json.RawMessage `json:"list"`
-			} `json:"sessionCapabilities"`
-		} `json:"agentCapabilities"`
-	}
-	if err == nil && (json.Unmarshal(result, &init) != nil || init.Version != 1) {
-		err = fmt.Errorf("unsupported ACP protocol version; expected 1")
+	result, err := a.rpc("initialize", a.initializationParams(), 30*time.Second, nil)
+	var negotiated acpNegotiation
+	if err == nil {
+		negotiated, err = negotiateACP(result, a.v2Draft)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -475,19 +464,23 @@ func (a *acpController) initializeConnection() error {
 		return &api.Error{Code: "RESULT_UNKNOWN", Detail: "ACP exited during initialization"}
 	default:
 	}
-	if a.state.MCPTransport == "http" && !init.Capabilities.MCP.HTTP {
+	if a.state.MCPTransport == "http" && !negotiated.http {
 		return &api.Error{Code: "UNSUPPORTED", Detail: "isolated connection no longer supports the configured HTTP MCP transport"}
+	}
+	if a.openedOnce && a.state.ProtocolVersion != negotiated.version {
+		return &api.Error{Code: "UNSUPPORTED", Detail: "isolated connection changed the negotiated ACP version"}
+	}
+	if a.state.MCPTransport == "stdio" && !negotiated.stdio {
+		return &api.Error{Code: "UNSUPPORTED", Detail: "isolated connection no longer supports stdio MCP"}
 	}
 	a.state.Ready = true
 	if a.active == nil {
 		a.state.Busy = ""
 	}
-	a.state.Agent = init.Info
-	a.state.CanLoad = init.Capabilities.Load
-	a.state.PromptCapabilities = init.Capabilities.Prompt
-	a.mcpHTTP = init.Capabilities.MCP.HTTP
-	var object map[string]any
-	a.state.CanList = json.Unmarshal(init.Capabilities.Sessions.List, &object) == nil && object != nil
+	a.state.ProtocolVersion = negotiated.version
+	a.state.Agent, a.state.CanLoad, a.state.CanResume = negotiated.info, negotiated.load, negotiated.resume
+	a.state.PromptCapabilities, a.state.CanList = negotiated.prompt, negotiated.list
+	a.mcpHTTP, a.mcpStdio = negotiated.http, negotiated.stdio
 	a.publishLocked()
 	return nil
 }
