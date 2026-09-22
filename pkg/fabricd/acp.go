@@ -34,36 +34,38 @@ const (
 )
 
 type acpController struct {
-	v2Draft          bool
-	mcpStdio         bool
-	inputMu          sync.Mutex
-	connection       *process.Process
-	openedOnce       bool
-	reconnecting     bool
-	renewConnection  func() error
-	mu               sync.Mutex
-	controlMu        sync.Mutex
-	reserveControl   func(string, string) error
-	releaseControl   func(string, string)
-	controlling      bool
-	r                *runtime
-	state            api.ACPState
-	pending          map[string]chan acpReply
-	questionActivity map[string]time.Time
-	permissions      map[string]acpPermission
-	elicitations     map[string]*acpElicitation
-	methods          map[string]string
-	done             chan struct{}
-	once             sync.Once
-	queue            []*acpQueuedAction
-	active           *acpQueuedAction
-	operations       *operationLog
-	conversation     *conversationSlot
-	nativeSequence   int64
-	requireMCP       bool
-	mcpHTTP          bool
-	mcpServers       []any
-	mcpSecret        atomic.Pointer[string]
+	v2Draft                bool
+	elicitationEnabled     bool
+	mcpStdio               bool
+	inputMu                sync.Mutex
+	connection             *process.Process
+	openedOnce             bool
+	reconnecting           bool
+	renewConnection        func() error
+	mu                     sync.Mutex
+	controlMu              sync.Mutex
+	reserveControl         func(string, string) error
+	releaseControl         func(string, string)
+	controlling            bool
+	r                      *runtime
+	state                  api.ACPState
+	pending                map[string]chan acpReply
+	questionActivity       map[string]time.Time
+	permissions            map[string]acpPermission
+	elicitations           map[string]*acpElicitation
+	elicitationCompletions []acpElicitationCompletion
+	methods                map[string]string
+	done                   chan struct{}
+	once                   sync.Once
+	queue                  []*acpQueuedAction
+	active                 *acpQueuedAction
+	operations             *operationLog
+	conversation           *conversationSlot
+	nativeSequence         int64
+	requireMCP             bool
+	mcpHTTP                bool
+	mcpServers             []any
+	mcpSecret              atomic.Pointer[string]
 }
 
 func newACPController(r *runtime) *acpController {

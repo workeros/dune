@@ -234,12 +234,19 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{"code": code, "error": message})
 }
+
+const defaultJSONBodyBytes = 256 * 1024
+
 func readJSON(w http.ResponseWriter, r *http.Request, value any) bool {
+	return readJSONWithLimit(w, r, value, defaultJSONBodyBytes)
+}
+
+func readJSONWithLimit(w http.ResponseWriter, r *http.Request, value any, maxBytes int64) bool {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		writeError(w, 415, "CONTENT_TYPE", "application/json required")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(value); err != nil {

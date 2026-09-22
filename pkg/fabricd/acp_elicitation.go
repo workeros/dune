@@ -39,6 +39,11 @@ func (a *acpController) receiveElicitation(rpcID, raw json.RawMessage) {
 		a.mu.Unlock()
 		return
 	}
+	if !a.elicitationEnabled {
+		a.mu.Unlock()
+		_ = a.send(map[string]any{"jsonrpc": "2.0", "id": rpcID, "error": map[string]any{"code": -32601, "message": "Elicitation capability is not enabled"}})
+		return
+	}
 	var params elicitationParams
 	valid := len(raw) <= 128*1024 && json.Unmarshal(raw, &params) == nil && params.Message != ""
 	requestID := ""
@@ -62,6 +67,11 @@ func (a *acpController) receiveElicitation(rpcID, raw json.RawMessage) {
 		if string(pending.rpcID) == string(rpcID) {
 			a.mu.Unlock()
 			return
+		}
+	}
+	for _, completion := range a.elicitationCompletions {
+		if params.Mode == "url" && completion.urlID == params.ElicitationID {
+			valid = false
 		}
 	}
 	valid = valid && len(a.elicitations) < 16 && bytes <= 128*1024
@@ -146,6 +156,9 @@ func (a *acpController) clearElicitationsLocked(state string) {
 	for _, e := range a.elicitations {
 		a.endElicitationLocked(e, state)
 	}
+	for len(a.elicitationCompletions) > 0 {
+		a.endElicitationCompletionLocked(0, state)
+	}
 }
 
 func (a *acpController) expireRequestElicitationsLocked(requestID string) {
@@ -207,9 +220,11 @@ func (a *acpController) respondElicitationLocked(action api.ACPAction, admit fun
 		}
 		e.state = state
 		a.elicitationRecordLocked(e, state, "")
-		if state != "awaiting_completion" {
-			delete(a.elicitations, e.ID)
+		delete(a.elicitations, e.ID)
+		if state == "awaiting_completion" {
+			a.retainElicitationCompletionLocked(e)
 		}
+		a.publishLocked()
 	}
 	a.mu.Unlock()
 	a.finishControl(err)
@@ -266,19 +281,23 @@ func (a *acpController) completeElicitation(raw json.RawMessage) {
 		return
 	}
 	for _, e := range a.elicitations {
-		if !e.acceptedURL || e.params.ElicitationID != params.ID || (e.state != "awaiting_completion" && e.state != "submitting") {
+		if !e.acceptedURL || e.params.ElicitationID != params.ID || e.state != "submitting" {
 			continue
 		}
 		// A fast completion may arrive before the response writer returns.
 		a.markQuestionActivityLocked(e.requestID)
-		previous := e.state
 		e.state = "completed"
 		a.elicitationRecordLocked(e, "completed", "")
-		if previous != "submitting" {
-			delete(a.elicitations, e.ID)
-		}
 		a.publishLocked()
 		return
+	}
+	for i, completion := range a.elicitationCompletions {
+		if completion.urlID == params.ID {
+			a.markQuestionActivityLocked(completion.requestID)
+			a.endElicitationCompletionLocked(i, "completed")
+			a.publishLocked()
+			return
+		}
 	}
 }
 

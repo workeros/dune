@@ -260,11 +260,15 @@ JSON 重建可执行按钮。快照中的请求顺序稳定，响应仍使用原
 
 ## 结构化提问
 
-托管宿主在 initialize 显式声明 `elicitation.form` 和 `elicitation.url`。`elicitation/create` 必须引用同一连接上的有效 sessionId 或仍在等待的客户端 requestId；模式、URL、并发数和总字节数在进入待办前检查。请求保留独立控制预留和传输并发预算，普通请求无法占用其回应能力。
+只有在 managed ACP Profile 显式设置 `acp_elicitation: true` 时，托管宿主才在 initialize 声明 `elicitation.form` 和 `elicitation.url`；默认关闭，也不随 v2 草案开关自动启用。启用者必须提供表单回答与 URL 同意入口，并能处理初始化和会话创建期间的请求。Dune 独立 Web 当前没有该入口，应保持关闭；支持这些交互的嵌入宿主可显式启用。未启用时收到 `elicitation/create` 会返回不支持的方法错误，不进入待办。
+
+`elicitation/create` 必须引用同一连接上的有效 sessionId 或仍在等待的客户端 requestId；模式、URL、并发数和总字节数在进入待办前检查。请求保留独立控制预留和传输并发预算，普通请求无法占用其回应能力。
 
 状态中的 `elicitations` 仅包含尚可回应的请求。使用 `ACPAction{action:"elicitation", elicitation_id, elicitation_response:{action,content}}` 回应；宿主先校验当前请求和表单，再消费一次性提交身份并写入。结果未知时不重发。表单校验采用 ACP 的扁平 schema，未知结构保留为可拒绝/取消的请求；请求密码或凭据的表单不可提交。回答正文不写入交互历史与 ACP 诊断，只将回应状态保留为只读事实。
 
 URL 的 accept 表示用户同意打开，不表示外部流程成功。历史在 `awaiting_completion` 等待原连接同一 `elicitationId` 的 `elicitation/complete`，随后改为 completed；未同意、未知和重复 ID 均不产生完成状态。调用方负责展示完整地址、明确取得同意，并在隔离的外部页面打开。
+
+URL 回应成功后立即释放待回答请求的数量与字节预算。可选的完成通知由独立索引关联，只保存最近 64 条、合计 128 KiB 的 ID 和交互摘要，不保留原始 URL 或表单。超出任一预算时淘汰最早记录并将其标记为 `expired`；被淘汰的完成通知不再更新历史。取消、停止和会话切换也清理该索引。Agent 省略完成通知不会阻塞后续提问。
 
 初始化等有期限的 RPC 在等待其 request-scoped 提问时暂停 Agent 超时计时；用户回应后重新给予一个正常的 RPC 等待周期。请求终结、取消、会话切换或进程退出都会使对应待办失效。
 
@@ -273,3 +277,5 @@ URL 的 accept 表示用户同意打开，不表示外部流程成功。历史�
 初始化保留 Agent 的 `promptCapabilities`，并声明客户端 boolean config 支持。new/load 返回的 `configOptions` 和 `modes` 进入会话状态；`config_option_update` 始终整体替换配置列表。`set_config_option` / `set_mode` 使用普通提交与操作回执，要求原 `expected_conversation_id`、sessionId 和 cwd。宿主目前只在空闲时修改配置；Agent 确认前不改变当前值。已提供 config options（包括空列表）的会话不再使用 modes 接口。
 
 `ACPAction.attachments` 是附加到 `text` 后的 ACP 内容块，支持 image、audio、resource、resource_link。前三者受协商能力限制，resource_link 为基础能力。最多 8 个附件，完整 prompt JSON 不超过 2 MiB，文本仍限 64 KiB。能力与内容校验同时发生在准入和排队派发处；图片/音频数据必须为合法 Base64，嵌入资源必须明确提供 text 或 blob。用户消息保留同一组结构化内容，超过读模型保留上限仍按已有省略合同处理。
+
+HTTP `POST /agents/submit`（个人与租户路由均适用）的请求体上限为 2 MiB + 64 KiB，为 Agent 引用、提交身份和 action 封装预留空间；宿主仍单独校验上述 prompt 内容预算。其他 JSON 接口保持 256 KiB 上限。

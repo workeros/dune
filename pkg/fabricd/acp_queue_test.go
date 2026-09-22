@@ -26,6 +26,7 @@ func queueFixture(t *testing.T) (*acpController, <-chan queuedRPC) {
 	reader, writer := io.Pipe()
 	r := &runtime{cwd: "/tmp", subs: map[*subscription]bool{}, p: &process.Process{Input: writer}}
 	a := newACPController(r)
+	a.elicitationEnabled = true
 	r.acp = a
 	// Scheduling tests use a controllable synthetic wire; connection replacement
 	// itself is covered by the subprocess and old-connection callback tests.
