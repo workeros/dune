@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 const (
@@ -135,6 +136,9 @@ type ACPOmission struct {
 }
 
 type ACPMessage struct {
+	// RecordedAt is the host's first observation of a live message. Replayed
+	// history and incomplete objects omit it because their original time is unknown.
+	RecordedAt   *time.Time        `json:"recorded_at,omitempty"`
 	Meta         json.RawMessage   `json:"meta,omitempty"`
 	OperationRef string            `json:"operation_ref,omitempty"`
 	Role         string            `json:"role"`

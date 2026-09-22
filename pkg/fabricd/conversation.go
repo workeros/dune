@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/wire"
@@ -226,6 +227,10 @@ func (m *conversationModel) evictFirst() {
 func (m *conversationModel) put(entry api.ACPEntry, key string) {
 	entry.Revision = m.description.Revision + 1
 	if entry.Order == 0 {
+		if entry.Message != nil && m.description.Phase == "ready" && !entry.ContextIncomplete {
+			recordedAt := time.Now().UTC()
+			entry.Message.RecordedAt = &recordedAt
+		}
 		m.description.HeadOrder++
 		entry.Order = m.description.HeadOrder
 		entry.ID = "e-" + strconv.FormatUint(entry.Order, 10)

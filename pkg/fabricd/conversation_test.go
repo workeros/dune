@@ -387,6 +387,15 @@ func TestConversationReplayAndLiveProtocolSemanticsMatch(t *testing.T) {
 	for i := range a.Entries {
 		a.Entries[i].Revision = 0
 		b.Entries[i].Revision = 0
+		if a.Entries[i].Message != nil {
+			if a.Entries[i].Message.RecordedAt == nil || b.Entries[i].Message.RecordedAt != nil {
+				t.Fatal("host observation time must distinguish live messages from replay")
+			}
+			// Host observation metadata is not part of the replayed ACP facts.
+			message := *a.Entries[i].Message
+			message.RecordedAt = nil
+			a.Entries[i].Message = &message
+		}
 	}
 	if string(api.Payload(a.Entries)) != string(api.Payload(b.Entries)) {
 		t.Fatal("replay and live protocol merging diverged")
