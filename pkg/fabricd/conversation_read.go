@@ -106,8 +106,10 @@ func conversationEntryOrder(id string) (uint64, error) {
 
 func (s *conversationSlot) get(request api.ACPConversationGet) (api.ACPConversationEntries, error) {
 	result := api.ACPConversationEntries{Entries: []api.ACPEntry{}, Missing: []api.ACPMissingEntry{}, UnprocessedEntryIDs: []string{}}
-	if request.ConversationID == "" || len(request.EntryIDs) < 1 || len(request.EntryIDs) > api.MaxACPConversationLimit {
-		return result, conversationArgument("conversation_id and 1..200 entry_ids are required")
+	terminalLookup := request.TerminalID != "" && validNativeID(request.TerminalID) && len(request.EntryIDs) == 0
+	entryLookup := request.TerminalID == "" && len(request.EntryIDs) >= 1 && len(request.EntryIDs) <= api.MaxACPConversationLimit
+	if request.ConversationID == "" || (!terminalLookup && !entryLookup) {
+		return result, conversationArgument("conversation_id and either terminal_id or 1..200 entry_ids are required")
 	}
 	orders := make([]uint64, 0, len(request.EntryIDs))
 	ids := make([]string, 0, len(request.EntryIDs))
@@ -130,6 +132,12 @@ func (s *conversationSlot) get(request api.ACPConversationGet) (api.ACPConversat
 		return result, err
 	}
 	result.Conversation = m.description
+	if terminalLookup {
+		if entry := m.find(terminalKey(request.TerminalID)); entry != nil {
+			result.Entries = append(result.Entries, *entry)
+		}
+		return result, nil
+	}
 	remainingBytes := api.MaxACPConversationResponseBytes - len(api.Payload(result)) - 16384
 	for i, order := range orders {
 		switch {

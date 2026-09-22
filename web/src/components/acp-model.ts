@@ -5,7 +5,7 @@ export type ModelDescription = {
  prefix_evicted: boolean; content_omitted: boolean; context_incomplete: boolean;
  native_history_coverage: string; state?: Record<string, unknown>;
 };
-export type ModelEntry = {
+export type ModelEntry = { terminal?: unknown;
  entry_id: string; order: string; entry_revision: string; type: string; turn_id?: string;
  content_omitted: boolean; context_incomplete: boolean;
  message?: { role: string; channel: string; status: string; content: unknown[]; tail?: unknown[] };

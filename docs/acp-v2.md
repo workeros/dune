@@ -19,4 +19,6 @@
 
 `TestACPV2*` 覆盖协商、不同消息/回应/idle 顺序、相同文本提交、内容替换与清空、后续工具输出、审批/取消、显式恢复/回放以及未知插入。现有 v1 队列、历史与提交回归继续运行。SandDance 通过宿主读模型展示，并有对应浏览器交互用例。
 
-只读终端字节流和跨仓库发布接入仍在后续切片。没有配置真实 Agent 的环境，协议 fixture 不计为真实 Agent 验收。
+只读终端按 terminalId 保存原始字节，每段独立解码，output 快照替换全部保留内容。单终端保留 128 KiB 尾部；快照、截断及非法字节改变 generation，禁止跨缺口继续解码。终端退出与工具完成独立。`acp.conversation.get` 可用原 conversation_id + terminal_id 查找仍保留的输出，空结果不证明终端从未存在。SandDance 提供只读 xterm 详情，Dune 独立 Web 当前仅提供原始终端数据查看。
+
+跨仓库正式依赖接入和最终全包检查仍在后续切片。没有配置真实 Agent 的环境，协议 fixture 不计为真实 Agent 验收。
