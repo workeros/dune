@@ -11,8 +11,6 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
-const maxACPPromptBytes = 2 * 1024 * 1024
-
 func promptContent(req api.ACPAction) []json.RawMessage {
 	content := make([]json.RawMessage, 0, len(req.Attachments)+1)
 	if req.Text != "" {
@@ -31,7 +29,7 @@ func (a *acpController) validatePromptLocked(req api.ACPAction) error {
 	if req.SessionID == "" || len(req.Text) > 64*1024 || !utf8.ValidString(req.Text) || req.Text == "" && len(req.Attachments) == 0 {
 		return fmt.Errorf("create/load a session and supply text or supported attachments; text is limited to 64 KiB")
 	}
-	if len(req.Attachments) > 8 || len(api.Payload(promptContent(req))) > maxACPPromptBytes {
+	if len(req.Attachments) > 8 || len(api.Payload(promptContent(req))) > api.MaxACPPromptBytes {
 		return fmt.Errorf("prompt exceeds 8 attachments or 2 MiB")
 	}
 	for _, raw := range req.Attachments {

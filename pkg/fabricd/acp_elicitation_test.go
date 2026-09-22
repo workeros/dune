@@ -2,11 +2,14 @@ package fabricd
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/process"
 	"github.com/aiomni/dune/pkg/api"
 )
 
@@ -93,6 +96,212 @@ func TestElicitationURLConsentAndCompletionAreSeparate(t *testing.T) {
 	a.completeElicitation(json.RawMessage(`{"elicitationId":"opaque-id"}`))
 	if records := permissionHistory(t, a); len(records) != 1 || records[0].State != "completed" {
 		t.Fatal(records)
+	}
+}
+
+func TestElicitationURLCompletionRetentionDoesNotSpendPendingCapacity(t *testing.T) {
+	a, requests := queueFixture(t)
+	var firstID, lastID string
+	for i := range maxACPElicitationCompletions + 1 {
+		urlID := fmt.Sprintf("url-%d", i)
+		elicit(a, urlID, map[string]any{"mode": "url", "sessionId": "session-a", "elicitationId": urlID, "url": "https://example.com/connect?token=" + strings.Repeat("x", 8*1024), "message": "Connect account", "toolCallId": urlID})
+		live := a.snapshot().Elicitations
+		if len(live) != 1 {
+			t.Fatalf("URL request %d was not admitted after earlier answers: %+v", i, live)
+		}
+		if i == 0 {
+			firstID = live[0].ID
+		}
+		lastID = live[0].ID
+		if _, err := a.action(api.ACPAction{Action: "elicitation", ElicitationID: lastID, ElicitationResponse: &api.ACPElicitationResponse{Action: "accept"}}); err != nil {
+			t.Fatal(err)
+		}
+		if response := takeRPC(t, requests); response.ID != urlID || string(response.Result) != `{"action":"accept"}` {
+			t.Fatal(response)
+		}
+		if state := a.snapshot(); len(state.Elicitations) != 0 || state.Resources.Elicitations.Used != 0 {
+			t.Fatal("answered URL consumed pending capacity", state)
+		}
+	}
+	a.mu.Lock()
+	retained := append([]acpElicitationCompletion(nil), a.elicitationCompletions...)
+	a.mu.Unlock()
+	if len(retained) != maxACPElicitationCompletions || retained[0].urlID != "url-1" {
+		t.Fatal("completion retention did not evict the oldest correlation", retained)
+	}
+	elicit(a, "next-form", map[string]any{"mode": "form", "sessionId": "session-a", "message": "Choose settings", "requestedSchema": map[string]any{}})
+	elicit(a, "next-url", map[string]any{"mode": "url", "sessionId": "session-a", "elicitationId": "next-url", "url": "https://example.com/connect", "message": "Connect account"})
+	if live := a.snapshot().Elicitations; len(live) != 2 {
+		t.Fatal("completion retention rejected a new form or URL", live)
+	}
+	a.completeElicitation(api.Payload(map[string]string{"elicitationId": "url-0"}))
+	a.completeElicitation(api.Payload(map[string]string{"elicitationId": fmt.Sprintf("url-%d", maxACPElicitationCompletions)}))
+	limit := api.MaxACPConversationLimit
+	page, err := a.conversation.read(api.ACPConversationRead{ConversationID: a.snapshot().Conversation.ID, Limit: &limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]string{}
+	for _, entry := range page.Entries {
+		if entry.Activity == nil || entry.Activity.UpdateType != "interaction" {
+			continue
+		}
+		var record api.ACPInteractionRecord
+		if err := json.Unmarshal(entry.Activity.Data, &record); err != nil {
+			t.Fatal(err)
+		}
+		states[record.ID] = record.State
+		if record.ID == lastID && (record.Title != "Connect account" || record.ToolCallID != fmt.Sprintf("url-%d", maxACPElicitationCompletions)) {
+			t.Fatal("completion lost its original interaction metadata", record)
+		}
+	}
+	if states[firstID] != "expired" || states[lastID] != "completed" {
+		t.Fatal("completion was not correlated with its retained request", states)
+	}
+	if _, err := a.action(api.ACPAction{Action: "elicitation", ElicitationID: lastID, ElicitationResponse: &api.ACPElicitationResponse{Action: "accept"}}); err == nil {
+		t.Fatal("completed URL accepted a second answer")
+	}
+}
+
+func TestElicitationURLCompletionRetentionHasIndependentByteBudget(t *testing.T) {
+	a, requests := queueFixture(t)
+	for i := range 3 {
+		urlID := fmt.Sprintf("large-url-%d", i)
+		elicit(a, urlID, map[string]any{"mode": "url", "sessionId": "session-a", "elicitationId": urlID, "url": "https://example.com/connect", "message": strings.Repeat("x", 70*1024)})
+		live := a.snapshot().Elicitations
+		if len(live) != 1 {
+			t.Fatalf("large URL request %d was rejected: %+v", i, live)
+		}
+		if _, err := a.action(api.ACPAction{Action: "elicitation", ElicitationID: live[0].ID, ElicitationResponse: &api.ACPElicitationResponse{Action: "accept"}}); err != nil {
+			t.Fatal(err)
+		}
+		_ = takeRPC(t, requests)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.elicitationCompletions) != 1 || a.elicitationCompletions[0].urlID != "large-url-2" || a.elicitationCompletions[0].bytes() > acpElicitationCompletionBytes {
+		t.Fatal("completion metadata exceeded its independent byte budget")
+	}
+}
+
+func TestElicitationAcceptedURLCompletionDoesNotSuspendLifecycleTimeout(t *testing.T) {
+	a, requests := queueFixture(t)
+	a.mu.Lock()
+	a.pending["parent"] = make(chan acpReply, 1)
+	a.methods["parent"] = "initialize"
+	a.mu.Unlock()
+	elicit(a, "url-request", map[string]any{"mode": "url", "requestId": "parent", "elicitationId": "opaque-id", "url": "https://example.com/connect", "message": "Connect account"})
+	id := a.snapshot().Elicitations[0].ID
+	if _, err := a.action(api.ACPAction{Action: "elicitation", ElicitationID: id, ElicitationResponse: &api.ACPElicitationResponse{Action: "accept"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = takeRPC(t, requests)
+	a.mu.Lock()
+	a.questionActivity["parent"] = time.Now().Add(-time.Minute)
+	a.mu.Unlock()
+	if remaining := a.elicitationWaitRemaining("parent", time.Second); remaining > 0 {
+		t.Fatal("optional URL completion suspended the parent's timeout", remaining)
+	}
+	a.completeElicitation(json.RawMessage(`{"elicitationId":"opaque-id"}`))
+	if remaining := a.elicitationWaitRemaining("parent", time.Second); remaining <= 0 || remaining > time.Second {
+		t.Fatal("completion did not give the parent a fresh bounded interval", remaining)
+	}
+}
+
+type elicitationWriteHook struct {
+	write func([]byte) (int, error)
+}
+
+func (w elicitationWriteHook) Write(data []byte) (int, error) { return w.write(data) }
+func (w elicitationWriteHook) Close() error                   { return nil }
+
+func TestElicitationFastURLCompletionAndUnknownWrite(t *testing.T) {
+	for _, failWrite := range []bool{false, true} {
+		t.Run(fmt.Sprintf("write_failure_%t", failWrite), func(t *testing.T) {
+			a, _ := queueFixture(t)
+			elicit(a, "url-request", map[string]any{"mode": "url", "sessionId": "session-a", "elicitationId": "opaque-id", "url": "https://example.com/connect", "message": "Connect account"})
+			id := a.snapshot().Elicitations[0].ID
+			writes := 0
+			a.r.mu.Lock()
+			a.r.p = &process.Process{Input: elicitationWriteHook{write: func(data []byte) (int, error) {
+				writes++
+				a.completeElicitation(json.RawMessage(`{"elicitationId":"opaque-id"}`))
+				if failWrite {
+					return 0, io.ErrClosedPipe
+				}
+				return len(data), nil
+			}}}
+			a.r.mu.Unlock()
+			action := api.ACPAction{Action: "elicitation", ElicitationID: id, ElicitationResponse: &api.ACPElicitationResponse{Action: "accept"}}
+			_, err := a.action(action)
+			if (err != nil) != failWrite {
+				t.Fatal(err)
+			}
+			a.completeElicitation(json.RawMessage(`{"elicitationId":"opaque-id"}`))
+			want := "completed"
+			if failWrite {
+				want = "unknown"
+			}
+			if records := permissionHistory(t, a); len(records) != 1 || records[0].State != want {
+				t.Fatal("fast completion overrode the write outcome", records)
+			}
+			a.mu.Lock()
+			pending, retained := len(a.elicitations), len(a.elicitationCompletions)
+			a.mu.Unlock()
+			if pending != 0 || retained != 0 {
+				t.Fatal("terminal response retained executable or completion state", pending, retained)
+			}
+			if _, err := a.action(action); err == nil || writes != 1 {
+				t.Fatal("terminal response was replayed", err, writes)
+			}
+		})
+	}
+}
+
+func TestElicitationURLCompletionExpiresWithControllerScope(t *testing.T) {
+	for _, boundary := range []string{"cancel", "close", "load"} {
+		t.Run(boundary, func(t *testing.T) {
+			a, requests := queueFixture(t)
+			var prompt queuedRPC
+			if boundary == "cancel" {
+				submitAction(t, a, api.ACPAction{Action: "prompt", Text: "work", ExpectedConversationID: a.snapshot().Conversation.ID})
+				prompt = takeRPC(t, requests)
+			}
+			elicit(a, "url-request", map[string]any{"mode": "url", "sessionId": "session-a", "elicitationId": "opaque-id", "url": "https://example.com/connect", "message": "Connect account"})
+			id := a.snapshot().Elicitations[0].ID
+			if _, err := a.action(api.ACPAction{Action: "elicitation", ElicitationID: id, ElicitationResponse: &api.ACPElicitationResponse{Action: "accept"}}); err != nil {
+				t.Fatal(err)
+			}
+			_ = takeRPC(t, requests)
+			switch boundary {
+			case "cancel":
+				if _, err := a.action(api.ACPAction{Action: "cancel"}); err != nil {
+					t.Fatal(err)
+				}
+				if request := takeRPC(t, requests); request.Method != "session/cancel" {
+					t.Fatal("accepted URL was answered again during cancellation", request)
+				}
+				replyRPC(a, prompt, map[string]string{"stopReason": "cancelled"})
+			case "close":
+				a.closed()
+			case "load":
+				op := submitAction(t, a, api.ACPAction{Action: "load", SessionID: "session-b"})
+				replyRPC(a, takeRPC(t, requests), map[string]any{})
+				waitOperation(t, a, op)
+			}
+			a.mu.Lock()
+			retained := len(a.elicitationCompletions)
+			a.mu.Unlock()
+			if retained != 0 {
+				t.Fatal("controller boundary retained old URL completion correlation")
+			}
+			a.completeElicitation(json.RawMessage(`{"elicitationId":"opaque-id"}`))
+			for _, record := range permissionHistory(t, a) {
+				if record.State == "completed" {
+					t.Fatal("late completion revived a cleared URL", record)
+				}
+			}
+		})
 	}
 }
 

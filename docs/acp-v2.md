@@ -2,6 +2,8 @@
 
 默认使用 ACP v1。在 managed ACP Agent Profile 中显式设置 `acp_v2_draft: true`，初始化才请求 v2。首次协商允许 Agent 选择仍受支持的 v1；同一 Runtime 的后续隔离连接不能改变已协商版本。
 
+结构化提问另需 `acp_elicitation: true`，只供具备表单回答与 URL 同意入口的宿主启用；默认关闭，Dune 独立 Web 应保持关闭。初始化阶段的提问也必须可回答。
+
 协议基线固定为 [agent-client-protocol `b9d6aca6757d0f5b6e435cad54f9f04657aa9802` 的 schema/v2/schema.json](https://github.com/agentclientprotocol/agent-client-protocol/blob/b9d6aca6757d0f5b6e435cad54f9f04657aa9802/schema/v2/schema.json)。2026-09-22 读取的原文件共 289442 bytes，SHA-256 为 `3df13661962bf9ed3162a3e50d75fab3d768247995bfb1754b0d844ae139ce4c`。这是 v2 草案中的基线，未启用 unstable schema。网站协议说明用于解释生命周期，固定 schema 用于核对字段。
 
 ## 当前行为

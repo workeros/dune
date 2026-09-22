@@ -48,6 +48,28 @@ func TestValidateExecutionID(t *testing.T) {
 	}
 }
 
+func TestProfileElicitationRequiresManagedACP(t *testing.T) {
+	for _, test := range []struct {
+		name, kind, adapter string
+		managed, valid      bool
+	}{
+		{name: "managed ACP", kind: "agent", adapter: "acp", managed: true, valid: true},
+		{name: "raw ACP", kind: "agent", adapter: "acp"},
+		{name: "PTY", kind: "agent", adapter: "pty"},
+		{name: "environment", kind: "environment"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := Profile{Version: 1, Kind: test.kind, Adapter: test.adapter, ManagedACP: test.managed, ACPElicitation: true, WorkingDirectory: "/workspace"}
+			if test.kind == "agent" {
+				profile.Start = Command{Argv: []string{"/bin/cat"}}
+			}
+			if err := profile.Validate(); (err == nil) != test.valid {
+				t.Fatalf("valid=%v: %v", test.valid, err)
+			}
+		})
+	}
+}
+
 func TestProfileValidateSizeLimit(t *testing.T) {
 	p := Profile{Version: 1, Kind: "environment", WorkingDirectory: "/workspace", Env: map[string]string{"TOO_LARGE": strings.Repeat("x", MaxProfileBytes)}}
 	if err := p.Validate(); err == nil {

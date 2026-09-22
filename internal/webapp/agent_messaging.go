@@ -9,35 +9,39 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
+// The prompt budget excludes the surrounding action, Agent reference and
+// submission identity. Other JSON endpoints keep the smaller default limit.
+const maxAgentSubmissionBytes = api.MaxACPPromptBytes + 64*1024
+
 func (s *Server) agentMessagingRoutes(prefix string) {
-	s.mux.HandleFunc("POST "+prefix+"/agents/submit", agentMessageHandler(s, "workspace.write", func(ctx context.Context, scope agents.Scope, request agents.SubmissionRequest) (api.SubmissionReceipt, error) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/submit", agentMessageHandler(s, "workspace.write", maxAgentSubmissionBytes, func(ctx context.Context, scope agents.Scope, request agents.SubmissionRequest) (api.SubmissionReceipt, error) {
 		return s.options.AgentMessenger.Submit(ctx, scope, request)
 	}))
-	s.mux.HandleFunc("POST "+prefix+"/agents/submission", agentMessageHandler(s, "workspace.read", func(ctx context.Context, scope agents.Scope, request agents.SubmissionQuery) (api.SubmissionReceipt, error) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/submission", agentMessageHandler(s, "workspace.read", defaultJSONBodyBytes, func(ctx context.Context, scope agents.Scope, request agents.SubmissionQuery) (api.SubmissionReceipt, error) {
 		return s.options.AgentMessenger.QuerySubmission(ctx, scope, request)
 	}))
-	s.mux.HandleFunc("POST "+prefix+"/agents/prompt", agentMessageHandler(s, "workspace.write", func(ctx context.Context, scope agents.Scope, request agents.PromptRequest) (agents.Operation, error) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/prompt", agentMessageHandler(s, "workspace.write", defaultJSONBodyBytes, func(ctx context.Context, scope agents.Scope, request agents.PromptRequest) (agents.Operation, error) {
 		return s.options.AgentMessenger.Prompt(ctx, scope, request)
 	}))
-	s.mux.HandleFunc("POST "+prefix+"/agents/send-keys", agentMessageHandler(s, "workspace.write", func(ctx context.Context, scope agents.Scope, request agents.KeysRequest) (agents.Operation, error) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/send-keys", agentMessageHandler(s, "workspace.write", defaultJSONBodyBytes, func(ctx context.Context, scope agents.Scope, request agents.KeysRequest) (agents.Operation, error) {
 		return s.options.AgentMessenger.SendKeys(ctx, scope, request)
 	}))
-	s.mux.HandleFunc("POST "+prefix+"/agents/wait", agentMessageHandler(s, "workspace.read", func(ctx context.Context, scope agents.Scope, request agents.WaitRequest) (agents.WaitResult, error) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/wait", agentMessageHandler(s, "workspace.read", defaultJSONBodyBytes, func(ctx context.Context, scope agents.Scope, request agents.WaitRequest) (agents.WaitResult, error) {
 		return s.options.AgentMessenger.Wait(ctx, scope, request)
 	}))
-	s.mux.HandleFunc("POST "+prefix+"/agents/read", agentMessageHandler(s, "workspace.read", func(ctx context.Context, scope agents.Scope, request agents.ReadRequest) (agents.ReadResult, error) {
+	s.mux.HandleFunc("POST "+prefix+"/agents/read", agentMessageHandler(s, "workspace.read", defaultJSONBodyBytes, func(ctx context.Context, scope agents.Scope, request agents.ReadRequest) (agents.ReadResult, error) {
 		return s.options.AgentMessenger.Read(ctx, scope, request)
 	}))
 }
 
-func agentMessageHandler[Request, Result any](s *Server, access string, call func(context.Context, agents.Scope, Request) (Result, error)) http.HandlerFunc {
+func agentMessageHandler[Request, Result any](s *Server, access string, maxBytes int64, call func(context.Context, agents.Scope, Request) (Result, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, owner, ok := s.workbenchOwner(w, r, access)
 		if !ok {
 			return
 		}
 		var request Request
-		if !readJSON(w, r, &request) {
+		if !readJSONWithLimit(w, r, &request, maxBytes) {
 			return
 		}
 		if s.options.AgentMessenger == nil {

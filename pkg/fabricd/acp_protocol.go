@@ -11,13 +11,15 @@ import (
 // supported surfaces are documented in docs/acp-v2.md.
 func (a *acpController) initializationParams() map[string]any {
 	info := map[string]string{"name": "dune", "version": "0.1.0"}
-	elicitation := map[string]any{"form": map[string]any{}, "url": map[string]any{}}
-	if a.v2Draft {
-		return map[string]any{"protocolVersion": 2, "info": info, "capabilities": map[string]any{"elicitation": elicitation}}
+	capabilities := map[string]any{}
+	if a.elicitationEnabled {
+		capabilities["elicitation"] = map[string]any{"form": map[string]any{}, "url": map[string]any{}}
 	}
-	return map[string]any{"protocolVersion": 1, "clientInfo": info, "clientCapabilities": map[string]any{
-		"elicitation": elicitation, "session": map[string]any{"configOptions": map[string]any{"boolean": map[string]any{}}},
-	}}
+	if a.v2Draft {
+		return map[string]any{"protocolVersion": 2, "info": info, "capabilities": capabilities}
+	}
+	capabilities["session"] = map[string]any{"configOptions": map[string]any{"boolean": map[string]any{}}}
+	return map[string]any{"protocolVersion": 1, "clientInfo": info, "clientCapabilities": capabilities}
 }
 
 type acpNegotiation struct {

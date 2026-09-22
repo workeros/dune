@@ -60,6 +60,9 @@ type Profile struct {
 	HistoryLines int     `json:"history_lines,omitempty" yaml:"history_lines,omitempty"`
 	ManagedACP   bool    `json:"managed_acp,omitempty" yaml:"managed_acp,omitempty"`
 	ACPV2Draft   bool    `json:"acp_v2_draft,omitempty" yaml:"acp_v2_draft,omitempty"`
+	// ACPElicitation requires a host that can present and answer form/URL requests,
+	// including requests received before initialization or session creation ends.
+	ACPElicitation bool `json:"acp_elicitation,omitempty" yaml:"acp_elicitation,omitempty"`
 	// RequireAgentMCP gates ACP new/load or the native PTY MCP bridge until configured.
 	RequireAgentMCP bool `json:"require_agent_mcp,omitempty" yaml:"require_agent_mcp,omitempty"`
 }
@@ -176,7 +179,7 @@ func (p Profile) Validate() error {
 		if len(p.Start.Argv) != 0 || p.Start.Run != "" || p.Start.Shell != "" || p.Start.Name != "" || p.Start.TimeoutSeconds != 0 {
 			return fmt.Errorf("environment Profile cannot include start")
 		}
-		if p.Adapter != "" || p.ManagedACP || p.ACPV2Draft || p.RequireAgentMCP || p.HistoryLines != 0 {
+		if p.Adapter != "" || p.ManagedACP || p.ACPV2Draft || p.ACPElicitation || p.RequireAgentMCP || p.HistoryLines != 0 {
 			return fmt.Errorf("environment Profile cannot include Agent adapter or history")
 		}
 		return nil
@@ -186,6 +189,9 @@ func (p Profile) Validate() error {
 	}
 	if p.ACPV2Draft && !p.ManagedACP {
 		return fmt.Errorf("acp_v2_draft requires managed ACP")
+	}
+	if p.ACPElicitation && !p.ManagedACP {
+		return fmt.Errorf("acp_elicitation requires managed ACP")
 	}
 	if p.ManagedACP && p.Adapter != "acp" {
 		return fmt.Errorf("managed_acp requires ACP adapter")

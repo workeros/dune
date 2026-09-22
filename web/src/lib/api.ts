@@ -46,7 +46,7 @@ export function eventPath(binding: Binding, runtime: Runtime): string {
   return `/api/v1/ws/runners/${encodeURIComponent(binding.runner_id)}/sessions/${encodeURIComponent(runtime.id)}/events?${query}`;
 }
 export type ProfileCommand = { name?: string; argv?: string[]; run?: string; shell?: string; timeout_seconds?: number };
-export type Profile = { version: 1; kind: "environment" | "agent"; working_directory: string; env?: Record<string, string>; setup: { steps: ProfileCommand[] | null }; start: ProfileCommand; adapter: "pty" | "acp" | ""; history_lines?: number; managed_acp?: boolean };
+export type Profile = { version: 1; kind: "environment" | "agent"; working_directory: string; env?: Record<string, string>; setup: { steps: ProfileCommand[] | null }; start: ProfileCommand; adapter: "pty" | "acp" | ""; history_lines?: number; managed_acp?: boolean; acp_elicitation?: boolean };
 export type ProfileRecord = { id: string; owner_id: string; name: string; description: string; revision: number; profile: Profile; created_by: { type: string; subject: string }; created_at: string; updated_at: string };
 
 export type ManagedField = { name: string; label: string; type: "string" | "integer" | "boolean"; required: boolean; minimum?: string; maximum?: string; max_length?: number; choices?: string[] };

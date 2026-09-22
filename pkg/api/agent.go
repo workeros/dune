@@ -2,6 +2,10 @@ package api
 
 import "encoding/json"
 
+// MaxACPPromptBytes bounds the encoded content blocks, including attachments.
+// HTTP submissions need additional space for the action and target selectors.
+const MaxACPPromptBytes = 2 * 1024 * 1024
+
 // ACPAction is a managed request. Prompts require the caller's observed
 // ExpectedConversationID; intermediaries must never fill or refresh it. Native
 // SessionID/Cwd are additional selectors. Admission and dispatch both validate.
