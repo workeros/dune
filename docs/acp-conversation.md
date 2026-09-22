@@ -26,6 +26,15 @@ preserve field presence, explicit nulls and structured ACP values. UI rendering
 is the caller's responsibility. The model describes retained current values,
 not a log of every token or a promise of complete native history.
 
+`message.recorded_at`, when present, is an RFC 3339 UTC timestamp assigned by
+the host when it first records a live message in a ready conversation. It is
+unchanged by chunks, full-message replacements, acknowledgements, completion,
+truncation, paging or reconnect reads. It is not an Agent-authored send time or
+a turn duration. Messages first observed during native history loading, and
+objects with lost context after eviction, omit it. Updating those retained
+messages does not assign the current time to their earlier content. Clients
+must not substitute their own receipt time when the field is absent.
+
 `ReadACPConversation` selects a recent window, then paginates backward with a
 stateless cursor. Each page is ascending by insertion order. The cursor fixes
 the member upper bound, while entry values may change between pages.
