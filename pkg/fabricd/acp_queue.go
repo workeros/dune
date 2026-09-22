@@ -16,11 +16,12 @@ import (
 const maxACPPending = 32
 
 type acpQueuedAction struct {
-	request   api.ACPAction
-	ref       string
-	rpcID     string
-	responded bool
-	reconnect bool
+	request    api.ACPAction
+	ref        string
+	rpcID      string
+	responded  bool
+	idleResult json.RawMessage
+	reconnect  bool
 }
 
 // Called with the controller lock: validation, admission and order are shared
@@ -39,7 +40,7 @@ func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func
 	if a.requireMCP && a.state.MCPTransport == "" {
 		return api.AgentOperation{}, &api.Error{Code: "AGENT_NOT_READY", Detail: "Agent MCP configuration has not been confirmed"}
 	}
-	if (req.Action == "list" && !a.state.CanList) || (req.Action == "load" && !a.state.CanLoad) {
+	if (req.Action == "list" && !a.state.CanList) || (req.Action == "load" && !a.state.CanLoad) || (req.Action == "resume" && !a.state.CanResume) {
 		return api.AgentOperation{}, &api.Error{Code: "UNSUPPORTED", Detail: "Agent did not advertise session/" + req.Action}
 	}
 	if req.Cwd == "" {
@@ -50,7 +51,7 @@ func (a *acpController) enqueueWithAdmissionLocked(req api.ACPAction, admit func
 	}
 	switch req.Action {
 	case "new", "list":
-	case "load":
+	case "load", "resume":
 		if req.SessionID == "" {
 			return api.AgentOperation{}, fmt.Errorf("session ID required")
 		}
@@ -166,12 +167,15 @@ func (a *acpController) startNextLocked() {
 		a.state.Busy, a.state.Error, a.state.StopReason = req.Action, "", ""
 		params := map[string]any{}
 		switch req.Action {
-		case "new", "load":
+		case "new", "load", "resume":
 			operation.reconnect = a.openedOnce
 			a.openedOnce = true
 			a.reconnecting = operation.reconnect
+			a.clearPermissionsLocked("expired")
 			a.clearElicitationsLocked("expired")
+			a.state.ForegroundState = ""
 			a.conversation.begin(req)
+			a.conversation.mutate(func(m *conversationModel) { m.description.ProtocolVersion = a.state.ProtocolVersion })
 			a.operations.mu.Lock()
 			a.operations.records[operation.ref].status.ConversationID = a.conversation.describe().ID
 			a.operations.mu.Unlock()
@@ -180,8 +184,11 @@ func (a *acpController) startNextLocked() {
 				servers = []any{}
 			}
 			params = map[string]any{"cwd": req.Cwd, "mcpServers": servers}
-			if req.Action == "load" {
+			if req.Action == "load" || req.Action == "resume" {
 				params["sessionId"] = req.SessionID
+			}
+			if req.Action == "resume" && req.Replay {
+				params["replayFrom"] = map[string]string{"type": "start"}
 			}
 			a.state.SessionID, a.state.Cwd = req.SessionID, req.Cwd
 		case "list":
@@ -197,13 +204,15 @@ func (a *acpController) startNextLocked() {
 		}
 		a.publishOperation(a.operations.set(operation.ref, "running", "", ""))
 		a.publishLocked()
-		if req.Action == "new" || req.Action == "load" {
+		if isSessionOpen(req.Action) {
 			a.r.emit(&pb.Message{Kind: "acp_reset"})
 		}
 		if req.Action == "prompt" {
 			a.conversation.startTurn(operation.ref, a.redactedPromptContent(req))
-			for _, content := range a.redactedPromptContent(req) {
-				a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": req.SessionID, "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": content}})})
+			if a.state.ProtocolVersion != 2 {
+				for _, content := range a.redactedPromptContent(req) {
+					a.r.emit(&pb.Message{Kind: "acp_update", Payload: api.Payload(map[string]any{"sessionId": req.SessionID, "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": content}})})
+				}
 			}
 		}
 		go a.runOperation(operation, params)
@@ -231,7 +240,7 @@ func (a *acpController) runOperation(operation *acpQueuedAction, params map[stri
 	result, err := a.rpc("session/"+operation.request.Action, params, timeout, operation)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.settleOperationLocked(operation, result, err)
+	a.receiveOperationReplyLocked(operation, result, err)
 }
 
 // receive calls this before reading the next protocol line or publishing exit.
@@ -253,7 +262,7 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 		}
 		detail = err.Error()
 		a.state.Error = detail
-		if operation.request.Action == "new" || operation.request.Action == "load" {
+		if isSessionOpen(operation.request.Action) {
 			a.state.SessionID = ""
 		}
 	} else if reason == "cancelled" || reason == "canceled" {
@@ -262,7 +271,7 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	if state == "unknown" {
 		a.operations.markIncomplete(operation.ref)
 	}
-	if err == nil && (operation.request.Action == "new" || operation.request.Action == "load") {
+	if err == nil && (isSessionOpen(operation.request.Action)) {
 		native := a.confirmSessionLocked()
 		a.operations.mu.Lock()
 		if record := a.operations.records[operation.ref]; record != nil {
@@ -271,7 +280,7 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 		a.operations.mu.Unlock()
 	}
 	status := api.AgentOperation{Ref: operation.ref, State: state, StopReason: reason, Error: detail}
-	if operation.request.Action == "new" || operation.request.Action == "load" {
+	if isSessionOpen(operation.request.Action) {
 		outcome := "succeeded"
 		var failure *api.ACPFailure
 		if err != nil {
@@ -285,7 +294,7 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 		}
 		a.conversation.opened(a.state.SessionID, a.state.Cwd, outcome, failure)
 	}
-	if operation.request.Action == "prompt" {
+	if operation.isForeground() {
 		a.conversation.finishTurn(status)
 	}
 	a.publishOperation(a.operations.set(operation.ref, state, reason, detail))
@@ -294,7 +303,9 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	}
 	a.active = nil
 	a.state.Busy, a.state.OperationRef = "", ""
-	a.clearPermissionsLocked("expired")
+	if a.state.ProtocolVersion != 2 {
+		a.clearPermissionsLocked("expired")
+	}
 	if state == "unknown" {
 		// An unconfirmed boundary cannot safely release the next queued prompt.
 		a.cancelPendingLocked("previous ACP outcome is unknown; request was not sent")
@@ -303,7 +314,10 @@ func (a *acpController) settleOperationLocked(operation *acpQueuedAction, result
 	}
 	a.publishLocked()
 	if a.state.Ready && !a.controlling {
-		a.startNextLocked()
+		a.adoptV2ForegroundLocked()
+		if a.active == nil {
+			a.startNextLocked()
+		}
 	}
 }
 
@@ -318,7 +332,7 @@ func (a *acpController) applyResultLocked(req api.ACPAction, result json.RawMess
 		}
 		a.state.SessionID = value.ID
 		a.retainSessionConfigurationLocked(result)
-	case "load":
+	case "load", "resume":
 		var value map[string]json.RawMessage
 		if json.Unmarshal(result, &value) != nil || value == nil {
 			return "", &api.Error{Code: "RESULT_UNKNOWN", Detail: "Agent returned invalid load result"}
@@ -336,7 +350,7 @@ func (a *acpController) applyResultLocked(req api.ACPAction, result json.RawMess
 			return "", fmt.Errorf("Agent returned invalid session list")
 		}
 		a.state.List = result
-	case "prompt":
+	case "prompt", "foreground":
 		var value struct {
 			Reason string `json:"stopReason"`
 		}
@@ -362,7 +376,7 @@ func (a *acpController) confirmSessionLocked() *api.NativeSession {
 	a.nativeSequence++
 	native := &api.NativeSession{ID: a.state.SessionID, Cwd: a.state.Cwd,
 		Sequence: a.nativeSequence, Source: "acp-response", AgentVersion: agent.Version,
-		ResumeSupported: a.state.CanLoad}
+		ResumeSupported: a.state.CanLoad || a.state.CanResume}
 	a.r.mu.Lock()
 	a.r.nativeSession = native
 	a.r.mu.Unlock()
@@ -378,7 +392,7 @@ func (a *acpController) cancelPendingLocked(detail string) {
 }
 
 func (a *acpController) releaseCancelLocked(operation *acpQueuedAction) {
-	if a.releaseControl != nil && operation.request.Action == "prompt" {
+	if a.releaseControl != nil && operation.isForeground() {
 		a.releaseControl("cancel", operation.ref)
 	}
 }
@@ -387,7 +401,7 @@ func (a *acpController) closeQueueLocked() {
 	if a.active != nil {
 		a.operations.markIncomplete(a.active.ref)
 		status := a.operations.set(a.active.ref, "unknown", "", "Agent exited before operation completion; request was not replayed")
-		if a.active.request.Action == "prompt" {
+		if a.active.isForeground() {
 			a.conversation.finishTurn(status)
 		}
 		a.publishOperation(status)
@@ -403,13 +417,13 @@ func (a *acpController) closeQueueLocked() {
 func (a *acpController) recordUpdate(params json.RawMessage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.active == nil || a.active.request.Action != "prompt" {
+	if !a.active.isForeground() {
 		return
 	}
 	var envelope struct {
 		SessionID string `json:"sessionId"`
 	}
-	if a.active.responded || a.active.rpcID == "" || json.Unmarshal(params, &envelope) != nil || envelope.SessionID != a.active.request.SessionID {
+	if (a.state.ProtocolVersion != 2 && (a.active.responded || a.active.rpcID == "")) || json.Unmarshal(params, &envelope) != nil || envelope.SessionID != a.active.request.SessionID {
 		a.operations.markIncomplete(a.active.ref)
 		return
 	}

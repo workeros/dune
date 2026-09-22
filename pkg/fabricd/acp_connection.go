@@ -86,8 +86,8 @@ func (a *acpController) reconnect() error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.active != nil && a.active.request.Action == "load" && !a.state.CanLoad {
-		return &api.Error{Code: "UNSUPPORTED", Detail: "new ACP connection does not support session/load"}
+	if a.active != nil && ((a.active.request.Action == "load" && !a.state.CanLoad) || (a.active.request.Action == "resume" && !a.state.CanResume)) {
+		return &api.Error{Code: "UNSUPPORTED", Detail: "new ACP connection does not support this session restore method"}
 	}
 	return nil
 }

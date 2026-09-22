@@ -8,9 +8,10 @@ import (
 )
 
 type acpConfigOption struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Options []struct {
+	ID       string `json:"id"`
+	ConfigID string `json:"configId"`
+	Type     string `json:"type"`
+	Options  []struct {
 		Value   *string `json:"value"`
 		Options []struct {
 			Value string `json:"value"`
@@ -33,6 +34,11 @@ func (a *acpController) configurationOptionsLocked() ([]acpConfigOption, bool) {
 	if json.Unmarshal(raw, &state) != nil {
 		return nil, true
 	}
+	if a.state.ProtocolVersion == 2 {
+		for i := range state.Options {
+			state.Options[i].ID = state.Options[i].ConfigID
+		}
+	}
 	return state.Options, true
 }
 
@@ -48,6 +54,9 @@ func (a *acpController) validateConfigurationLocked(req api.ACPAction) error {
 	}
 	options, hasConfig := a.configurationOptionsLocked()
 	if req.Action == "set_mode" {
+		if a.state.ProtocolVersion == 2 {
+			return fmt.Errorf("ACP v2 has no session modes method")
+		}
 		if hasConfig {
 			return fmt.Errorf("this Agent exposes modes through config options")
 		}
@@ -105,6 +114,9 @@ func (a *acpController) configurationParamsLocked(req api.ACPAction) map[string]
 	for _, option := range options {
 		if option.ID == req.ConfigID {
 			params["type"] = option.Type
+			if a.state.ProtocolVersion == 2 && option.Type == "select" {
+				params["type"] = "id"
+			}
 			break
 		}
 	}

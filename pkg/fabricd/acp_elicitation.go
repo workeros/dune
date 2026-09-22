@@ -83,7 +83,7 @@ func (a *acpController) receiveElicitation(rpcID, raw json.RawMessage) {
 	e := &acpElicitation{ACPElicitation: api.ACPElicitation{ID: wire.ID(), Params: append(json.RawMessage(nil), raw...)}, rpcID: append(json.RawMessage(nil), rpcID...), params: params, requestID: requestID, state: "pending"}
 	if conversation := a.conversation.describe(); conversation != nil {
 		e.ConversationID = conversation.ID
-		if a.active != nil && a.active.request.Action == "prompt" {
+		if a.active.isForeground() {
 			e.TurnID = conversationTurnID(a.active.ref)
 		}
 	}

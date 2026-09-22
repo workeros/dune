@@ -20,6 +20,9 @@ const (
 // ACPState describes the live controller. Conversation describes retained data,
 // independently of whether the Agent can still accept an operation.
 type ACPState struct {
+	ProtocolVersion    int                   `json:"protocol_version"`
+	ForegroundState    string                `json:"foreground_state,omitempty"`
+	CanResume          bool                  `json:"can_resume"`
 	OperationRef       string                `json:"operation_ref,omitempty"`
 	Pending            int                   `json:"pending"`
 	Revision           uint64                `json:"revision"`
@@ -83,6 +86,7 @@ type ACPFailure struct {
 // ACPConversation revision orders commits only within ID. NativeSession and
 // controller revisions are separate counters. Reads never open a session.
 type ACPConversation struct {
+	ProtocolVersion       int                        `json:"protocol_version"`
 	ID                    string                     `json:"conversation_id"`
 	Revision              uint64                     `json:"revision,string"`
 	Phase                 string                     `json:"phase"`
@@ -130,12 +134,14 @@ type ACPOmission struct {
 }
 
 type ACPMessage struct {
-	Role      string            `json:"role"`
-	Channel   string            `json:"channel"`
-	MessageID string            `json:"message_id,omitempty"`
-	Source    string            `json:"source"`
-	Status    string            `json:"status"`
-	Content   []json.RawMessage `json:"content"`
+	Meta         json.RawMessage   `json:"meta,omitempty"`
+	OperationRef string            `json:"operation_ref,omitempty"`
+	Role         string            `json:"role"`
+	Channel      string            `json:"channel"`
+	MessageID    string            `json:"message_id,omitempty"`
+	Source       string            `json:"source"`
+	Status       string            `json:"status"`
+	Content      []json.RawMessage `json:"content"`
 	// Tail follows an omitted region after Content. It is not contiguous text.
 	Tail []json.RawMessage `json:"tail,omitempty"`
 }

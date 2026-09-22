@@ -21,6 +21,9 @@ func (s *conversationSlot) startTurn(ref string, content []json.RawMessage) {
 		m.invalidatesAll = true
 		m.description.CurrentTurn = turn
 		m.put(api.ACPEntry{Type: "turn", TurnID: turn.ID, Turn: turn}, turn.ID)
+		if m.description.ProtocolVersion == 2 {
+			return
+		}
 		m.put(api.ACPEntry{Type: "message", TurnID: turn.ID, Message: &api.ACPMessage{Role: "user", Channel: "message", Source: "client", Status: "attempted",
 			Content: content}}, "")
 	})
@@ -52,7 +55,7 @@ func (s *conversationSlot) finishTurn(operation api.AgentOperation) {
 				value.Message = &message
 				m.put(value, retained.key)
 			}
-			if value.Tool != nil && value.Tool.Status != "completed" && value.Tool.Status != "failed" {
+			if m.description.ProtocolVersion != 2 && value.Tool != nil && value.Tool.Status != "completed" && value.Tool.Status != "failed" {
 				tool := *value.Tool
 				tool.Status, tool.StatusReason = "unknown", "turn_ended_without_tool_result"
 				if operation.State == "cancelled" {
@@ -187,10 +190,10 @@ func appendConversationContent(message *api.ACPMessage, content json.RawMessage)
 		return
 	}
 	var next map[string]json.RawMessage
-	if json.Unmarshal(content, &next) == nil && rawString(next, "type") == "text" && len(message.Content) > 0 {
+	if json.Unmarshal(content, &next) == nil && rawString(next, "type") == "text" && len(next) == 2 && len(message.Content) > 0 {
 		last := len(message.Content) - 1
 		var previous map[string]json.RawMessage
-		if json.Unmarshal(message.Content[last], &previous) == nil && rawString(previous, "type") == "text" {
+		if json.Unmarshal(message.Content[last], &previous) == nil && rawString(previous, "type") == "text" && len(previous) == 2 {
 			previous["text"] = api.Payload(rawString(previous, "text") + rawString(next, "text"))
 			message.Content[last] = api.Payload(previous)
 			return
@@ -227,10 +230,16 @@ func (a *acpController) recordConversationUpdate(params json.RawMessage) {
 		return
 	}
 	turnID := ""
-	if a.active != nil && a.active.request.Action == "prompt" && !a.active.responded && a.active.rpcID != "" {
+	withinV2Work := a.state.ProtocolVersion == 2 && (a.state.ForegroundState == "running" || a.state.ForegroundState == "requires_action")
+	if a.active.isForeground() && (withinV2Work || (a.state.ProtocolVersion != 2 && !a.active.responded && a.active.rpcID != "")) {
 		turnID = conversationTurnID(a.active.ref)
 	}
-	a.conversation.update(envelope.Update, turnID)
+	if a.state.ProtocolVersion == 2 {
+		a.conversation.updateV2(envelope.Update, turnID)
+		a.applyV2StateLocked(envelope.Update)
+	} else {
+		a.conversation.update(envelope.Update, turnID)
+	}
 }
 
 func (m *conversationModel) setState(kind string, data json.RawMessage) {

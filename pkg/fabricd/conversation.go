@@ -84,10 +84,13 @@ func (s *conversationSlot) begin(action api.ACPAction) {
 		s.store.bytes -= s.model.bytes
 	}
 	phase, coverage := "creating", "not_applicable"
-	if action.Action == "load" {
+	if action.Action == "load" || action.Action == "resume" {
 		phase, coverage = "loading", "unknown"
 	}
-	s.model = &conversationModel{description: api.ACPConversation{ID: wire.ID(), Origin: action.Action,
+	if action.Action == "resume" && !action.Replay {
+		coverage = "not_requested"
+	}
+	s.model = &conversationModel{description: api.ACPConversation{ProtocolVersion: 1, ID: wire.ID(), Origin: action.Action,
 		Phase: phase, OpenOutcome: "pending", RequestedSessionID: action.SessionID, RequestedCwd: action.Cwd,
 		RetainedFromOrder: 1, NativeHistoryCoverage: coverage}, index: map[string]uint64{}}
 	s.commitLocked()
