@@ -1,7 +1,7 @@
 # Runner 在线升级实现与验收记录
 
 目标合同：[Runner 升级需求](../../SandDance/docs/dune-runner-upgrade-requirements.md)。
-本记录描述正在实现的在线升级，不能将 ACP 标题等既有交付算作在线升级交付。
+本记录只描述 Runner 在线升级。当前合同的 API、独立 worker、平台核验和自动回滚已实现；下文列出 U01–U19 的测试证据及平台验证边界。
 
 ## 实现边界
 
@@ -68,7 +68,7 @@
 终态确认和封闭清理是有序步骤：终态已落盘但封闭未清理的任务仍占活动位置，恢复可以只完成
 清理，不能重新升级。历史保留最新 128 个终态及至少 24 小时详情，随后保留原键/摘要墓碑。
 总提交证据最多 4096 条，不回收键容量重新执行；满额时明确拒绝继续接纳。活动和受阻恢复不回收。
-状态机默认总期限 10 分钟，worker 还需落实每阶段和回滚期限。
+总期限 10 分钟，下载 2 分钟、预检 20 秒、重启 30 秒、目标确认 90 秒、回滚 2 分钟。到达总期限后不再开始新的安装切换。
 
 ### 原机器控制与正常路由核验
 
@@ -79,7 +79,7 @@
 
 `TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute` 已通过本机真实 Gateway 协议往返，
 包含错误尝试、缺失组件及“取得证明尚未成功”的断言。授权/配置/Host/WebApp 回归通过。
-此证据未覆盖多个 Gateway 或完整服务切换；worker 和原生服务管理器的证据单独列出。
+此用例只覆盖单个 Gateway 的协议边界；完整服务切换由下文原生整链验收覆盖。
 
 ### Worker 执行与回滚
 
@@ -100,7 +100,10 @@ worker 初始化失败会持久报告切换前失败或切换后恢复受阻；�
 
 `go test ./internal/runnerupgrade -count=1` 已通过可控副作用测试：成功、平台注册拒绝后回滚、
 切换/重启/确认边界中断、下载期间辅助组件变化、接收证明后安装变化，以及回滚无法确认。
-这些测试使用真实文件/SQLite/封闭和可控平台、服务效果；完整原生发行升级进程验收仍需补齐。
+这些用例使用真实文件/SQLite/封闭和可控平台、服务效果；原生发行进程验收另列，不混算证据。
+`TestWorkerSIGKILLAtDurableBoundaries` 另在下载完成、预检封闭、切换完成、重启完成、收到证明、
+终态提交及解封前杀死实际 worker 测试子进程；不执行 Go 清理函数。恢复只执行一次所需重启。
+这组测试的服务与平台效果可控，文件、SQLite、安装和封闭使用实际实现。
 
 ### 标准安装和独立服务
 
@@ -113,7 +116,7 @@ managed bootstrap 也走该安装器；当前基线要求 systemd 用户实例�
 `DUNE_TEST_SERVICE_MANAGER=1 go test ./internal/service -run 'Test(NativeService|ServiceDefinitions)' -count=1 -timeout=90s -v`
 已在 macOS arm64 通过：连接器 PID 67708→67713，独立 worker 保持 67710；SIGKILL worker 后恢复为 67714。
 临时 LaunchAgent 已卸载并删除。该测试验证原生管理器隔离与重启，不等于完整真实发行在线升级验收。
-本地发行权限标准化、安装别名拒绝、bootstrap、安装事务和 worker 回归已通过。
+本地发行权限标准化、安装别名拒绝、bootstrap、安装事务和 worker 回归已通过。完整 Dune 原生升级现已由下面的独立用例执行。
 
 ### 公开 API 与宿主持久观察
 
@@ -124,12 +127,12 @@ Go `RunnerUpgrader()`、授权 HTTP 五个动作和 `pkg/client` / SDK 已接通
 
 正常 Gateway 路由的公开检查、完整 `already_current`、持久 queued 接纳、按原键查询及历史、
 断线后的最近观察、当前权限拒绝均已测试。SQLite 重开、并发保留原键、终态防倒退和未知提交
-分页已通过；PostgreSQL 用例因环境未配置而跳过。HTTP 五个动作及接纳未知的原键保留已通过。
+分页已通过；本次另启动隔离 PostgreSQL，执行了元数据回归及跨宿主升级整链。HTTP 五个动作及接纳未知的原键保留已通过。
 接口和配置见 [公开 API](runner-upgrade-api.md)。
 
-## 后续装配决策
+## 宿主接入与发行
 
-宿主配置 `upgrade.Source`，负责从固定发行引用解析获准的不可变清单。Runner/worker 使用
+宿主配置 `upgrade.Source`，负责从固定发行引用解析获准的不可变清单。`upgrade.NewCatalog` / `ReadCatalog` 提供内置不可变目录；CLI 使用 `web --upgrade-catalog`。打包脚本生成归档、完整清单、引用和目录，详见 [发行说明](releases.md)。Runner/worker 使用
 安装时固定的宿主控制端点及原机器凭据；公开提交只接纳发行引用，不能让客户端注入下载命令
 或绕过宿主发行策略。执行前再向宿主核验原有效 binding。
 
@@ -138,19 +141,96 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 证据返回 worker。worker 核对并持久提交结果；网页生命周期不参与确认。多宿主共用持久
 观察存储，无法接通时只返回最近事实及其时间，不推断成功。升级和回滚使用不同尝试。
 
-## 实际验证证据
+## U01–U19 证据索引
 
-| 场景 | 命令与证据 | 范围 |
+各行对应需求断言。原语故障注入、真实进程及原生服务管理器是不同层次的证据；
+不是每个排列组合都在所有操作系统原生执行。测试源码随本次实现提交。
+
+| 编号 | 已执行的主要验证 | 证据层次 |
 | --- | --- | --- |
-| U07/U15 部分 | `go test ./internal/launchgate -count=1`：杀死真实持锁子进程，在恢复前拒绝新启动；陈旧 owner 被拒绝 | 本机文件锁/持久记录，不是服务管理器验收 |
-| U07/U15 部分 | `go test ./pkg/fabricd -run '^TestUpgradeSealRejectsLaunchAcrossConnectorRestart$' -count=1`：真实 connector 及 Gateway 路由返回持久拒绝，connector 重启、解除封闭后原键仍被拒绝；无启动副作用 | 本机真实进程；此用例未启动升级 worker |
-| U01 | `TestInspectPinsActualExecutingImageAcrossPathReplacement`、`TestMachineInfoReportsOriginalImageAfterInstallationReplacement`：替换及删除原程序路径，内核运行摘要和启动身份不变 | 本机 macOS arm64 真实进程，后者经过 Gateway |
-| U06 部分 | `TestUpgradePreflightRejectsPendingHostWithDifferentWriteSemantics`、`TestSharedContractRefusesReopenWithoutChangingAcceptedEvidence`：不同合同在预检/打开数据库时被拒绝，提交证据不丢失 | 待启动宿主及当前 schema，无历史迁移 |
-| 受影响回归 | `go test ./internal/sessionregistry ./internal/launchgate ./internal/runningprogram ./internal/retainedprogram ./pkg/fabricd -count=1 -timeout=900s` 全部通过 | 包含本机真实宿主与可控 Agent；不等于厂商 Agent 或原生服务管理器 |
-| U02/U03/U05/U13 部分 | `go test ./internal/release ./internal/installation ./pkg/upgrade -count=1`：完整组件核验、非法归档、源变化、回滚修订、原先缺失组件保留；切换意图/链接替换/记录提交边界恢复 | 本机文件与状态测试；跨文件系统及服务管理器待验收 |
-| U02/U03/U04/U10/U11/U12/U16/U17/U18/U19 部分 | `go test -race ./internal/upgradejob -count=1 -timeout=120s`：跨数据库连接并发去重、修订冲突、重开后原键查询、证明不全不能成功、恢复 fencing、回滚迟到确认、分页与过期键不重放 | SQLite/状态机测试；未替代真实平台拒绝或 HTTP/worker 整链 |
-| 静态/竞争检查 | `go test -race ./internal/launchgate ./internal/installation ./internal/release ./internal/upgradejob ./pkg/upgrade -count=1 -timeout=180s`；`go vet ./internal/launchgate ./internal/runningprogram ./internal/installation ./internal/release ./internal/upgradejob ./pkg/upgrade` 通过 | 当前新增原语 |
+| U01 | 替换、删除磁盘程序后，内核映像摘要和启动身份保持；通过 Gateway 查询实际连接器 | `internal/runningprogram`、fabricd 真实子进程 |
+| U02 | Dune/tmux/rg/许可证逐项核验；完整已就绪返回 `already_current`，旧目录的同 SHA 进程仍需重启 | release、upgradejob；标准安装原生无操作及同 SHA 发行升级 |
+| U03 | 同键去重、异请求冲突、并发只有一个活动任务；接纳/下载后源修订变化被拒绝，回滚修订不复用 | upgradejob、installation、worker 屏障与 race |
+| U04 | 宿主先持久保留原键，响应丢失后只查询；另一客户端/重开的宿主发现同一任务 | 公开 Go/HTTP、宿主观察存储及原生任务重查 |
+| U05 | 下载/摘要/非法归档/候选核验失败，未切换源安装 | release、runnerupgrade 故障注入 |
+| U06 | 源/目标/旧宿主/待启动宿主合同不符即拒绝，拒绝前后接纳记录不变 | fabricd 预检、sessionregistry、worker |
+| U07 | 启动竞争进入同一闸门；已接纳待启动宿主被枚举；worker 死后新键持久拒绝 | 真实启动与原生升级 |
+| U08 | v1 宿主和 PTY 跨 v2→v3 成功；待启动 v1 宿主在成功后进入并读写；后续重启仍保留约束 | LaunchAgent、真实 ACP 宿主、可控 Agent |
+| U09 | connector/worker 是独立服务；重启 connector 不清理 worker，杀 worker 后原服务恢复 | macOS arm64 原生 launchd |
+| U10 | WebSocket 已建立、目标程序已运行，Gateway 拒绝发布路由；始终不成功并自动恢复 v2 | 原生整链，专门复现注册拒绝 |
+| U11 | 已取得实际路由证明，但确认响应持续不可交付；超时后回滚并保留错误原因 | 原生整链；路由不可达另有协议/worker 测试 |
+| U12 | HTTP 入口和 Runner owner 分属两个 Gateway，经 mTLS peer 路由确认；旧尝试/回滚后的迟到证明被拒绝 | PostgreSQL 原生整链、证明状态机 |
+| U13 | HFS+ 发行源→APFS 标准安装、升级及回滚；同 Dune SHA 许可证更新、组件缺失/部分切换恢复 | 跨盘原生整链、release/installation 故障注入 |
+| U14 | v3 运行时旧 v1 宿主完成权限响应并新增 prompt；回滚 v2 后两份新记录可查询；待启动 v1 仍可进入 | 原生整链；恢复受阻/失败另有 worker 测试 |
+| U15 | 七个持久边界 SIGKILL；原生目标在线时杀 worker 并延迟接管，新启动持久拒绝，恢复不重复重启 | 实际 worker 测试子进程、原生服务整链、owner fencing |
+| U16 | SIGKILL 发起 HTTP 提交的 host，重开 PostgreSQL 连接后找回原任务；Runner 断线返回最近事实 | 两宿主进程原生整链、公开 API 离线观察 |
+| U17 | 后续升级不改写旧任务结果和原证明；当前检查独立于历史；未知任务不借当前版本补记成功 | 原生连续升级、宿主存储/worker 状态机 |
+| U18 | 当前权限、原 binding/安装身份、修订与过期键分别校验；离线缓存不绕过权限 | 授权 API、元数据、installation/upgradejob |
+| U19 | 重开持久记录恢复原阶段；确认后解封/清理中断可继续；活动和受阻材料不回收 | worker、installation、upgradejob；未执行整机断电 |
 
-U01–U19 的完整闭环、原生 systemd/launchd、四平台运行和真实厂商 Agent 尚未验收。
+### 原生 macOS arm64 整链
 
-managed 恢复入口按原 bootstrap 身份调用安装内 `recovery/dune repair-services`，恢复连接器和 worker 的原注册服务。安装根目录使用 `/var/tmp/dune-managed`，避免依赖重启时通常被清空的 `/tmp`；不迁移旧 bootstrap。
+```sh
+DUNE_TEST_SERVICE_MANAGER=1 go test ./pkg/host \
+  -run '^TestNativeRunnerOnlineUpgrade$' -count=1 -timeout=480s -v
+```
+
+可组合设置 `DUNE_TEST_RELEASE_SOURCE_DIR` 指向另一个文件系统的私有测试目录，
+以及 `DUNE_TEST_POSTGRES` 指向专用测试库。测试创建、删除随机 schema，不使用业务库。
+未配置 PostgreSQL 时使用 SQLite 和单宿主；配置后经宿主 B 的真实授权 HTTP API 发起升级，
+由宿主 A 持有 Runner，正常确认通过 B→A 的 mTLS peer 路由。确认前杀死宿主 B 后重启，
+同时重开 A 的装配，原任务、身份、证明规则及后续查询保持。
+
+测试构建当前源码的 v1/v2/v3 和与 v3 Dune SHA 相同的 v3-notices，标准 managed 安装创建
+真实 LaunchAgent 连接器及独立 worker。仅 v1 在构建时使用临时 Go overlay 加入“宿主进入前等待”
+屏障，产品源码及发行不包含该钩子；其余安装、worker、宿主和 Agent 生命周期均执行实际实现。
+两个原 v1 宿主在接纳后暂停，分别跨失败回滚和 v3 成功后继续进入；另一个 v1 宿主始终存活。
+
+完整序列包含：无操作提交及原键重查、v1→v2 成功、v2→v3 注册拒绝回滚、v2→v3 成功、
+同 SHA 辅助发行确认超时回滚，以及杀 worker/host 后恢复并成功。存活 v1 宿主始终只有
+一次 initialize、一次 session/new、11 次 prompt、5 次 cancel；原 PTY shell PID 和 Runtime 身份不变。
+目标运行时写入的新权限响应和任务记录在回滚后仍可查，没有恢复旧快照。
+新启动在 worker 空窗持久拒绝，解封后旧键仍被拒绝；历史任务保留各自原证明。
+
+2026-09-23，跨文件系统的 SQLite/单宿主运行通过，耗时 **231.73 秒**。
+同日 PostgreSQL/双 Gateway/真实 host 中断组合通过，耗时 **232.96 秒**：
+
+- 源 PID 99505 → v2 99558；Gateway 拒绝后回滚到 2889；随后 v3 3160。
+- 同 SHA 辅助发行确认超时后回滚到 6297；下次目标 PID 6370。
+- worker 99509、发起请求的 host 99495 被 SIGKILL；恢复后目标仍为 6370，连接代次 1→2。
+- 保留宿主 99540、Agent 99542；原待启动 v1 宿主 99527、99535 分别按原接纳继续进入。
+- 发行源和安装文件系统设备号为 16777237 / 16777230。配置字节保持不变。
+
+`TestNativeRunnerUpgradePreview` 在双 Gateway/PostgreSQL 下另行通过，耗时 **34.20 秒**：
+公开 HTTP 预览实际执行源/候选的 `upgrade-check`，包含一个存活及两个待启动 v1 宿主，
+安装修订、连接器启动身份、启动封闭和升级历史均保持不变。
+
+测试使用可控 ACP Agent，不调用厂商模型。测试服务、tmux、子进程及临时目录已由夹具清理；
+验收使用的磁盘映像已卸载删除，隔离 PostgreSQL 已关闭并删除。日志保留于 `.local/runner-upgrade-acceptance/`。
+
+### 回归与构建
+
+- `DUNE_TEST_POSTGRES=… make test`：最终全量通过，主 Go module 和 IM module 均通过；
+  fabricd 196.80 秒、跨进程 tests 255.85 秒。PostgreSQL 使用本次创建的隔离实例。
+  前两轮分别暴露 Gateway 回调和 ACP 拒绝响应与测试发送完成的时序竞争；
+  测试改为显式屏障或读取原拒绝响应，不重放握手。Gateway 连续 5 次包级 race、ACP 控制用例连续 200 次 race 通过。
+- `make check-go web-check web-build`：通过，Web 打包只有体积建议警告。
+- worker、状态机、公开 API 与发行目录的定向 `go test -race` 通过；匹配不到用例的包不计作 race 验收。
+- `TestPublishedArchiveMatchesGoManifestAndDownloader` 验证 Python 发布清单摘要与 Go 一致，真实下载器完整展开归档。
+- 四平台 `CGO_ENABLED=0 go build ./cmd/dune` 通过；从提交 `e121f78` 的源码归档构建，
+  不包含工作区其他未提交修改。产物和 SHA-256 记录位于 `.local/runner-upgrade-builds/`。
+- SandDance 用临时 modfile 将 Dune / IM 替换为本地 main 后，cmd、internal、provider 业务包通过。
+  `go test ./...` 总命令因其 `artifacts/acp-host-startup-3f7ac74` 历史测试越界导入 Dune `internal/config` 而失败；
+  未修改其 go.mod 或该历史测试。
+
+### 平台与交付边界
+
+已原生验证 macOS arm64、launchd、SQLite/PostgreSQL、同机双 Gateway、真实 host/worker 中断、
+跨文件系统标准安装及当前合同内的多代宿主。Linux 的 systemd 和其他架构仅有构建及服务定义测试，
+未在本次环境执行原生验收；四平台编译不能替代它们。同机多进程也不等于跨主机网络故障验收。
+未执行整机断电或厂商 Agent 编码任务；不把它们记作通过。
+
+Dune 的公开合同及发布工具已交付；发行 URL、发布和 SandDance 产品接入仍由宿主选择。
+本次没有 push、发布远端发行或替换 SandDance 的现有升级 UI/执行器。
+managed 恢复调用安装内 `recovery/dune repair-services`，安装根目录为 `/var/tmp/dune-managed`；
+不迁移旧 bootstrap。接入方式见 [公开 API](runner-upgrade-api.md) 和 [发行说明](releases.md)。

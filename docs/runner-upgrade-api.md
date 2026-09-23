@@ -25,6 +25,7 @@ Dune 负责安装、执行、核验和本次失败回滚；宿主负责当前成
 获准的完整清单。清单必须含 Dune、tmux、rg、许可证的 SHA-256、字节数及权限，归档 URL
 和 SHA-256，以及当前共享状态合同。目标必须可下载；初始本地安装回执不会虚构下载地址。
 使用 `Manifest.Digest()` 计算按路径排序的标准 JSON 摘要，发布者和调用方保留这个固定引用。
+可用 `upgrade.ReadCatalog` / `NewCatalog` 加载打包脚本生成的目录；CLI 配置为 `web --upgrade-catalog /absolute/upgrade-catalog.json`。
 未配置发行源时检查和历史仍可用，目标解析明确返回 `UPGRADE_SOURCE_UNAVAILABLE`。
 
 `host.Options.UpgradeObservations` 可注入 `upgrade.ObservationStore`；默认使用宿主配置的
@@ -83,3 +84,7 @@ SQLite 或 PostgreSQL 元数据库。多个 host 使用同一数据库或同一�
 提交键，不重用旧键容量。宿主最多保留每安装 4096 个提交/观察。分页还受响应大小预算约束。
 默认升级总期限 10 分钟、下载 2 分钟、检查 20 秒、服务重启 30 秒、目标确认 90 秒、回滚
 2 分钟。页面等待期限不改变执行期限，自动恢复不延长原预算。
+
+`running_from_selected_release` 区分仍执行旧发行 inode 的连接器。即使磁盘全组件和 Dune SHA 均等于目标，这种进程仍需要重启，不能返回 `already_current`。同 SHA 更新的最终证明还必须包含本次启动尝试。
+
+本机离线诊断用 `upgrade-status --root … [--operation …]`，读取当前活动或最近任务；修复后用 `upgrade-recover --root … --operation … --revision …` 显式给予一次新的回滚预算。两者都不接纳新的升级。
