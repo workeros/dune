@@ -205,11 +205,12 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	app.agentMCP = app.newAgentMCP(service.Namespace(), addresses.Origin)
 	web, err := webapp.NewServer(ctx, webapp.Options{
-		AgentNativeSessions: app.AgentNativeSessions(),
-		AgentLauncher:       app.AgentLauncher(),
-		AgentDirectory:      app.AgentDirectory(),
-		AgentMessenger:      app.AgentMessenger(),
-		Assets:              options.Assets, Binaries: options.Binaries,
+		AgentNativeSessions:    app.AgentNativeSessions(),
+		AgentLauncher:          app.AgentLauncher(),
+		AgentDirectory:         app.AgentDirectory(),
+		AgentDirectoryObserver: app.AgentDirectoryObserver(),
+		AgentMessenger:         app.AgentMessenger(),
+		Assets:                 options.Assets, Binaries: options.Binaries,
 		PublicURL: addresses.PublicURL, GatewayURL: addresses.GatewayURL,
 		DialGateway:            dial,
 		Online:                 online,

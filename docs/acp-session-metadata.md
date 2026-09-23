@@ -7,7 +7,7 @@
 
 - [x] ACP 常驻宿主唯一归并点、统一元数据、发现和会话读取；实际子进程贯通验证。
 - [x] Runner 范围完整快照通知、合并与有界背压；保留宿主跨 connector 重连。
-- [ ] Tenant / Runner 目录订阅与 SDK：就绪、发现衔接、成员资格、撤权、重同步。
+- [x] Tenant / Runner 目录订阅与 SDK：就绪、发现衔接、成员资格、撤权、重同步。
 - [ ] Dune Web 消费标准元数据和目录订阅。
 - [ ] 屏障、乱序、生命周期、权限与整链验收；文档、构建产物与交付。
 
@@ -60,7 +60,7 @@ Connector 内每秒扫描注册表以发现异步注册的宿主，仅用于成�
 
 覆盖 v1/v2 归并、缺失/null/非法/超限/重复、跨代次与大修订、正文淘汰、并发原子快照，
 以及 SDK/Gateway/独立 ACP 宿主和 AgentDirectory 的实际子进程发现。RPC 日志验证
-读取与浏览器重连没有调用原生控制方法。目录范围通知及 connector 重启验收尚未完成。
+读取与浏览器重连没有调用原生控制方法。目录范围通知及 connector 重启验收见第二个切片。
 第二个切片：
 
 - `go test -race ./internal/latest ./internal/wire ./pkg/fabricd ./tests -run '^(TestMailbox|TestRuntimeWatch|TestProtectedStreamsAfterConnectorCrashWithOrdinarySubscriptionsFull|TestRequestClass)' -count=1 -timeout=240s`：通过。
@@ -70,3 +70,46 @@ Connector 内每秒扫描注册表以发现异步注册的宿主，仅用于成�
 connector 后重订阅恢复最后标题，RPC 日志不增加；普通流占满时控制和恢复仍可用。
 
 mock 进程不计为真实厂商 Agent 验收；本次环境未启用 `DUNE_REAL_AGENT`。
+
+## Tenant 目录与公开 SDK
+
+`app.AgentDirectoryObserver().Subscribe(ctx, scope, agents.DirectoryWatch{RunnerIDs: ids})`
+按 Tenant 授权范围建立逻辑订阅；不传 IDs 覆盖当前 Tenant。最多 128 个 Runner，
+每个订阅最多积压 4096 个成员。每个 `member` 事件确认当前成员资格，并带完整
+Agent（Runner binding、Runtime 身份与标准元数据）。标题事件不需要任何补查。
+
+Subscribe 返回前，已有可连接 Runner 的范围流已注册。初始不可连接的 Runner
+恢复、新 Runner 加入、Runner 移除/换绑/撤权、Runtime 移除或流中断，均终止整个
+目录订阅并报告 `RESYNC_REQUIRED`；服务丢弃全部缓冲值。最迟每秒核对 Runner
+成员与授权；每次发送前再次校验 Runner 授权。已有 TCP 在途字节不能撤回，SDK
+收到失效/连接错误后立即作废整批数据。初始离线来源恢复时必须重新订阅，避免把
+连接前产生的分页误当成连续观察。标题修订不能延长目录成员资格。
+
+推荐使用拥有发现与失效屏障的高层 SDK：
+
+```go
+monitor, err := agents.ObserveDirectory(ctx, app.AgentDirectory(),
+    app.AgentDirectoryObserver(), scope, agents.DirectoryWatch{})
+if err != nil { return err }
+defer monitor.Close()
+for {
+    page, err := monitor.Next(ctx)
+    if err != nil { return err } // 丢弃本轮目录，再订阅并批量发现
+    render(page.Items)
+}
+```
+
+Monitor 在订阅就绪后批量分页发现。事件和分页先校验订阅/发现代次，然后比较
+同一准确身份的元数据修订；中间状态可合并。错误在返回前清空内部目录，迟到的
+分页即使忽略网络取消也不能恢复条目。调用方收到错误也应清空已渲染的目录。
+`DirectoryCache` 提供相同的底层合并能力；`Begin` 返回不可重标记的发现批次，
+`Invalidate` 作废批次及旧事件，新订阅必须使用新的服务端订阅 ID。
+
+HTTP `GET /api/v1/agents/events`（Tenant 路由相同后缀）使用 SSE；可重复传入
+`runner_id`。首事件是 `ready`，包含 `subscription_id`，之后批量读取 `/agents`。
+正常事件为 `member`，心跳为 `heartbeat`，失效为 `invalidated`。任何传输错误
+也表示必须清空当前目录并重新订阅发现。浏览器身份每次写入前校验，心跳间隔
+5 秒，写入期限 5 秒，慢消费者不会无限占用写入队列。
+
+第三个切片的 race 测试覆盖 SDK 发现窗口、迟到分页屏障、大修订、慢消费者最终值，
+以及公开宿主订阅新增 Runtime 和撤权、HTTP Tenant 边界与发送前凭据撤销。

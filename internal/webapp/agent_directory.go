@@ -12,6 +12,7 @@ func (s *Server) agentDirectoryRoutes(prefix string) {
 	s.mux.HandleFunc("POST "+prefix+"/agents/launch-submission", s.queryAgentLaunch)
 	s.mux.HandleFunc("POST "+prefix+"/agents/open-session", s.openAgentSession)
 	s.mux.HandleFunc("GET "+prefix+"/agents", s.listAgents)
+	s.mux.HandleFunc("GET "+prefix+"/agents/events", s.watchAgentDirectory)
 	s.mux.HandleFunc("POST "+prefix+"/agents/get", s.getAgent)
 }
 

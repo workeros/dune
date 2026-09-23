@@ -36,6 +36,7 @@ func (d *Engine) watchTmux() {
 				continue
 			} // An unavailable server is not evidence that a process exited.
 			for _, r := range runtimes {
+				before := r.info()
 				r.readNativeSession()
 				p, exists := panes[r.id]
 				if exists && !p.Dead {
@@ -59,6 +60,10 @@ func (d *Engine) watchTmux() {
 					r.finish(-1)
 				} else if p.Dead {
 					r.finish(p.ExitCode)
+				}
+				after := r.info()
+				if *before.Activity != *after.Activity || before.NativeSession != after.NativeSession {
+					r.publishObservation()
 				}
 			}
 		}
