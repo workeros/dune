@@ -138,6 +138,13 @@ func (u *runnerUpgrades) ListUpgrades(ctx context.Context, scope upgrade.Scope, 
 		return upgrade.History{}, err
 	}
 	defer finish()
+	// Freeze unknown submissions before reading the executor. A receipt arriving
+	// during that read must not remove a key from both sources of this page.
+	// MergePages prefers any executor facts over this earlier observation.
+	unknown, err := u.app.upgradeObservations.UnknownSubmissions(ctx, scope.OwnerID, request)
+	if err != nil {
+		return upgrade.History{}, err
+	}
 	var page upgrade.Page
 	if err := u.call(ctx, scope, "runner.upgrade.list", request, &page); err != nil {
 		if authErr := u.authorize(ctx, scope, "runner.upgrade.list"); authErr != nil {
@@ -162,10 +169,6 @@ func (u *runnerUpgrades) ListUpgrades(ctx context.Context, scope upgrade.Scope, 
 		if err := u.app.upgradeObservations.Observe(ctx, scope.OwnerID, upgrade.Observation{Operation: op, Freshness: "live", ObservedAt: now}); err != nil {
 			return upgrade.History{Page: page, Freshness: "live", ObservedAt: now}, err
 		}
-	}
-	unknown, err := u.app.upgradeObservations.UnknownSubmissions(ctx, scope.OwnerID, request)
-	if err != nil {
-		return upgrade.History{}, err
 	}
 	merged, err := upgrade.MergePages(page, unknown, request.Cursor, request.Limit)
 	return upgrade.History{Page: merged, Freshness: "live", ObservedAt: now}, err

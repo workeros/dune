@@ -154,6 +154,13 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
   路由发现 Reserve 后未派发的 unknown；`TestRunnerUpgradeHistoryKeepsPaginationAcrossAdmissionAndDisconnect`
   验证后续接纳去重及在线到离线的同游标续页。分页单测覆盖同时间不同提交、字节截断及
   独立活动任务；宿主观察存储在 SQLite 和隔离 PostgreSQL 的 race 回归通过。
+- 分页读取边界：`TestRunnerUpgradeHistoryRetainsSubmissionsAcrossSourceReads` 在未知页
+  读取前、读取后、执行端列表返回后三个边界完成另一提交及回执落盘；固定未知页后再读
+  执行端，分页均保留 `d、c、b、a`。执行端已返回的事实覆盖 unknown，晚于该次读取的
+  回执不会让本页丢失原提交，也不把本页的 unknown 推断为已确认。
+  该修正通过 `make test`、`make check-go web-check web-build` 及
+  `go test -race ./pkg/upgrade ./pkg/host ./internal/metadata -count=1 -timeout=240s`；
+  本次未重跑 PostgreSQL 和原生平台验收。
 - 本轮直接更新内部提交协议与游标格式，应用层 Go/HTTP 提交参数不变。原生服务管理器、
   整机断电及真实 Agent 未在本轮重新执行，不扩大为新的平台验收结论。
 
