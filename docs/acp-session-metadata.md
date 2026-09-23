@@ -38,6 +38,38 @@ bytes；非法类型、无效 UTF-8、超限、trim 后仍含 Unicode 控制字�
 元数据不落盘，生命周期跟随常驻 ACP 宿主。Connector 重启不得初始化 Agent 或
 重放请求；宿主死亡不承诺恢复。目录成员资格与订阅代次在标题修订比较之前校验。
 
+## 完整 Runtime 观察排序
+
+`Runtime.observation` 与 `session_metadata.revision` 各自表达一种顺序：
+
+```json
+{
+  "observation": { "epoch": "opaque-connector-epoch", "revision": "103" },
+  "state": "exited",
+  "session_metadata": { "revision": "12", "conversation_id": "conversation-b", "title": "修复登录失败" }
+}
+```
+
+标题修订只在标题和 conversation 代次变化时推进。`observation` 则排序完整 Runtime
+观察，包括 NativeSession 确认、退出、Activity、可用性和最后确认时间；Agent 的操作
+引用随该 Runtime 一起替换。同一准确 Runtime、同一 epoch 的观察修订是递增的十进制
+字符串，相同版本表示同一完整观察。采样未变化的状态也可以推进观察修订，不能将其
+视为业务变更计数或操作成功证明。
+
+列表、单项读取和通知共用这一顺序。独立 ACP 宿主在原子取样时赋予来源版本；connector
+先拒绝迟到的 IPC 来源快照，再为包含本地可用性状态的完整观察赋予版本。失败探测只可
+影响其开始时的观察，不能覆盖其间已确认的新状态。取消某个调用方的读取不会改变
+共享观察的可用性。保留观察维持原 `last_confirmed_at`。
+
+SDK 先校验目录成员资格、订阅和发现批次，再比较观察版本；同 epoch 的低版本和重复
+版本均不覆盖现值。因此标题修订相同的原生确认/退出能正常更新，旧分页和旧通知也不
+会回退执行引用或状态。元数据对象缺失仍不代表清空标题。
+
+观察 epoch 是不透明代次，不能跨代次比较数字。Connector 重启后使用新 epoch；同一
+订阅中遇到不同 epoch 必须清空目录并重新订阅、批量发现。旧订阅的分页和通知始终
+失效。宿主仍存活时，标题及其元数据修订保持连续。离线索引若保存整份 Runtime，应
+同时保存观察版本，不能只用标题修订排序整份快照。
+
 ## Runner 范围通知
 
 `client.SubscribeRuntimes(ctx)`（`runtime.watch`）在确认订阅后返回，`Next` 读取
@@ -48,13 +80,16 @@ bytes；非法类型、无效 UTF-8、超限、trim 后仍含 Unicode 控制字�
 同一 Runtime 的待发值可以合并，移除优先于该成员迟到的发布。每条范围流最多缓存
 512 个 Runtime；超限以 `RESYNC_REQUIRED` 结束并丢弃缓冲值。网络中断同样使该
 订阅失效，调用方先建立新订阅再批量发现。订阅使用独立 `watch` 容量，单连接/Engine
-最多 16 条，不占用普通执行、状态读取或控制保留槽。
+最多 16 条，不占用普通执行、状态读取或控制保留槽。容量用尽返回 `RESOURCE_EXHAUSTED`。
 
 Connector 内每秒扫描注册表以发现异步注册的宿主，仅用于成员变化；标题不通过
 轮询获取。来源暂时不可用时发布保留观察和 `availability:unavailable`，不会伪造
 更高修订的空标题；恢复连接后主动推送当前宿主快照。
 
-## 验证记录
+## 初始实现的历史验证记录
+
+以下为初始切片的过程记录。旧宿主撤权测试的结论已被本次复审否定，不能作为
+撤权验收证据；当前替代测试及重跑结果见文末。
 
 首个切片：
 
@@ -82,7 +117,8 @@ Runner，拒绝的 Runner 不占用来源连接。显式选择未获授权的 Ru
 每个订阅最多积压 4096 个成员。每个 `member` 事件确认当前成员资格，并带完整
 Agent（Runner binding、Runtime 身份与标准元数据）。标题事件不需要任何补查。
 
-Subscribe 返回前，已有可连接 Runner 的范围流已注册。初始不可连接的 Runner
+Subscribe 返回前，已有可连接 Runner 的范围流已注册。容量不足、能力不支持和明确
+拒绝等准入错误保留原错误码返回，绝不能当作初始离线并报告 ready。初始不可连接的 Runner
 恢复、新 Runner 加入、Runner 移除/换绑/撤权、Runtime 移除或流中断，均终止整个
 目录订阅并报告 `RESYNC_REQUIRED`；服务丢弃全部缓冲值。每秒启动一次 Runner
 成员与授权核对；每次发送前再次校验 Runner 授权。已有 TCP 在途字节不能撤回，SDK
@@ -104,7 +140,7 @@ for {
 ```
 
 Monitor 在订阅就绪后批量分页发现。事件和分页先校验订阅/发现代次，然后比较
-同一准确身份的元数据修订；中间状态可合并。错误在返回前清空内部目录，迟到的
+同一准确身份的完整观察版本；中间状态可合并。错误在返回前清空内部目录，迟到的
 分页即使忽略网络取消也不能恢复条目。调用方收到错误也应清空已渲染的目录。
 `DirectoryCache` 提供相同的底层合并能力；`Begin` 返回不可重标记的发现批次，
 `Invalidate` 作废批次及旧事件，新订阅必须使用新的服务端订阅 ID。
@@ -116,7 +152,8 @@ HTTP `GET /api/v1/agents/events`（Tenant 路由相同后缀）使用 SSE；可�
 5 秒，写入期限 5 秒，慢消费者不会无限占用写入队列。
 
 第三个切片的 race 测试覆盖 SDK 发现窗口、迟到分页屏障、大修订、慢消费者最终值，
-以及公开宿主订阅新增 Runtime 和撤权、HTTP Tenant 边界与发送前凭据撤销。
+以及公开宿主订阅新增 Runtime、HTTP Tenant 边界与发送前凭据撤销。
+初始宿主撤权用例不构成有效证据，已由下述发送屏障正反对照替代。
 
 
 ## Dune Web 消费
@@ -144,7 +181,7 @@ Web 生产构建通过，保留现有 bundle 大小警告。
 | new/load/resume，同原生 ID 的新代次 | `TestSessionMetadataOutlivesContentAndConversationRevisions` 与现有 ACP 队列/原生会话测试 |
 | resume 回放 × 成功/失败/未知 × 有无标题；建立前拒绝 | `TestACPV2ResumeTitleOutcomes`；实际 controller 队列、原生结果回调及模型元数据 |
 | 切换后旧连接和在途标题回调 | `TestACPRejectsCallbacksFromOldConnectionWithSameNativeID`、`TestACPInFlightCallbacksCannotCrossLoadBoundary` |
-| 新通知先到、旧分页后到、修订 > 2^53 | Go/浏览器 `DirectoryCache` 测试；同时保留与新标题对应的原生操作引用 |
+| 双向乱序、相同标题修订、观察修订 > 2^53 | Go/Web `DirectoryCache` 完整观察排序；真实 IPC 扣留 get/watch 响应；保留原生确认、执行引用和退出状态 |
 | 并发原子快照 | `TestSessionMetadataAtomicConcurrentReads` 及相关 race 测试 |
 | 正文/原始对象淘汰不丢标题 | `TestSessionMetadataOutlivesContentAndConversationRevisions`、宿主发现测试 |
 | 未开面板实时更新，新增 Runtime | `TestRuntimeWatchIncludesUnopenedAndNewRuntimes`、公开 `AgentDirectorySubscription` 测试及 Chromium 标题场景 |
@@ -153,7 +190,8 @@ Web 生产构建通过，保留现有 bundle 大小警告。
 | 浏览器重连、connector 强杀重启 | Runtime watch 进程测试和 Chromium；标题/修订保持，原生 RPC 日志不增加 |
 | 退出保留、暂不可用、替换、forget | 标题保留测试、现有 `TestHostLossUsesIndependentEvidenceAndDoesNotReplay`、移除屏障、生命周期浏览器测试 |
 | v1/v2、无标题、PTY/raw | 归并矩阵、初始空模型快照，现有 raw ACP/PTY 回归及工作台回退名称 |
-| Tenant、Runner 授权、绑定、撤权 | HTTP personal/Tenant 订阅、发送前注销、宿主订阅撤权与现有 `pkg/access` 回归 |
+| Tenant、Runner 授权、绑定、撤权 | HTTP personal/Tenant 订阅、发送前注销；`TestAgentDirectorySubscriptionRechecksBufferedDelivery` 动态拒绝与未撤权对照，在宿主仍有效时断言 |
+| 16 条 watch 容量已满 | `TestAgentDirectorySubscriptionRejectsWatchCapacityExhaustion`：第 17 条订阅直接返回容量错误 |
 | 先失效再释放旧通知/分页，含重新订阅 | Go/浏览器缓存的移除/替换/撤权屏障；Monitor 的无视取消迟到分页不能恢复条目 |
 | 一页多个 ACP Runtime 无逐会话补查 | `TestAgentDirectoryPreservesPartialRuntimeDiscoveryFromOneRunner`：多个完整标题、一个连接、一次 runtime.list，保留独立发现错误 |
 
@@ -169,22 +207,42 @@ Web 生产构建通过，保留现有 bundle 大小警告。
 手动标题和离线索引仍由 SandDance 管理，显示顺序为手动标题 → 自动标题 → 启动名称。
 旧订阅失效后清空受影响的在线目录；离线保存的观察不能恢复在线成员资格。
 
+本次增加必需的 `Runtime.observation`，ACP 宿主 IPC 合同版本更新为 2。匹配的 Dune、
+SDK、Web 与 Runner 一起接入；不支持旧宿主 IPC/无观察版本的目录快照，不提供降级。
+旧版开发 ACP 实例应在其原版本中 stop/forget，再使用新 Runner 新建；旧在线缓存和
+自动标题离线快照通过重新订阅与批量发现重建。手动标题和业务数据不属于重建范围。
+
 本次使用临时 modfile 将 SandDance 的 Dune/IM 依赖指向本地工作树；其
 `go test ./cmd/... ./internal/... ./provider/...` 通过。完整 `go test ./...` 受其
 `artifacts/acp-host-startup-3f7ac74/release-harness-e2e_test.go` 跨 module 导入
 Dune internal 包阻断。没有修改 SandDance 当前代码、go.mod 或 go.sum。
 
-## 交付验证与限制
+## 复审修复与当前验证
 
-- 前端：`npm --prefix web test` 18 项通过；`npm --prefix web run e2e` Chromium 30 项通过；`make web-check web-build` 通过。
-- 全量 Go：修复启动关闭锁等待、退休身份残留诊断后，`make test` 完整通过，包含主 module 与独立 IM module。
-- 静态检查：`make check-go` 覆盖主 module 与 IM module，通过。
-- 专项 race：`pkg/agents`、`pkg/host` 的目录测试，`pkg/fabricd` 的归并/代次/旧连接/启动失败测试，以及 `tests/TestRuntimeWatchIncludesUnopenedAndNewRuntimes` 通过。
-- 移除边界：`go test -race ./pkg/access ./pkg/fabricd -run '^Test(ConversationAuthorizationIdentityAndRetainedExit|RuntimeWatchRemovalFencesLatePublication)' -count=3 -timeout=90s` 通过；`go test -race ./pkg/access -count=1 -timeout=120s` 通过。
-- IM：`make test-im` 覆盖 channel、duneagent、feishu、sqlite，通过。
-- 最终 Tenant 授权范围调整：公开宿主订阅 race 测试与目录 Chromium 用例复验通过；无读取权限的 Runner 在拨号前排除。
-- 环境未配置 `DUNE_REAL_AGENT` 或 `DUNE_TEST_POSTGRES`，对应外部验收不计为通过。本次没有部署到远端，也没有推送 Git 分支。
+`2d7b361..1bfd8a0` 的复审确认三项问题：标题修订不足以排序完整 Runtime；容量用尽
+错误被当成初始离线；旧撤权测试会把 fixture 超时当成成功。先前“宿主撤权 race 通过”
+的记录撤回，不再作为当前验收结论。
 
+替代撤权测试使用动态 Runner 读取策略，先在事件出队后的授权检查处等待屏障，再撤权
+并释放；要求立即失效，并确认 host context 和 Runner 连接仍有效。同一屏障不撤权时
+必须正常送达。标题发现的原生 RPC 只读断言保留为独立测试。
+
+本轮验证：
+
+| 检查 | 结果 |
+| --- | --- |
+| `make test` | 主 Go module 与独立 IM module 全量通过 |
+| `make check-go` | 两个 module 的 vet 通过 |
+| 用户复审使用的 Go race 组合，加完整观察回归 | 六个 package 通过，覆盖目录、撤权、容量、元数据、resume、IPC 乱序与 Runtime watch |
+| 宿主合同与单项读取 race 复验 | IPC v2、重启、List/Get/watch 顺序、取消分页、宿主丢失及公开目录通过 |
+| `npm --prefix web test` | 21 项通过 |
+| `npm --prefix web run e2e` | 32 项 Chromium 通过，包含迟到分页退出状态与分页 epoch 失效后的自动重连 |
+| `make web-check web-build` | 通过，保留既有 bundle 大小警告 |
+| SandDance 本地替换依赖 | 业务源码包通过；全量仍受既有 artifact 测试跨 module 导入 internal 包阻断 |
+
+完整命令日志和发布提交校验记录保存在
+`.local/acceptance/acp-title-review-20260923/`；历史交付 manifest 不代表本次修复结果。
+环境未配置 `DUNE_REAL_AGENT` 或 `DUNE_TEST_POSTGRES`，未部署远端或推送 Git。
 
 ## Runner 交付包
 
@@ -197,5 +255,5 @@ Dune internal 包阻断。没有修改 SandDance 当前代码、go.mod 或 go.su
 
 每包包含匹配提交的 dune、固定版本的 tmux/rg 及许可证；安装时整体替换程序包。
 产物不纳入源码提交。实际校验记录保存在本地
-`.local/acceptance/acp-title-20260923/manifest.json`，记录源码提交、包 SHA-256、
+`.local/acceptance/acp-title-review-20260923/manifest.json`，记录源码提交、包 SHA-256、
 可执行权限与归档成员检查。跨平台编译和包校验不等于各目标平台的运行/部署验收。
