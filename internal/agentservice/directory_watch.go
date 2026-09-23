@@ -25,7 +25,7 @@ type directorySubscription struct {
 	query   agents.DirectoryWatch
 	id      string
 	ctx     context.Context
-	cancel  context.CancelFunc
+	cancel  context.CancelCauseFunc
 	mailbox *latest.Mailbox[workbench.AgentTarget, agents.DirectoryEvent]
 	done    chan struct{}
 	ready   chan struct{}
@@ -41,12 +41,12 @@ func (s *Service) Subscribe(ctx context.Context, scope agents.Scope, query agent
 		return nil, invalid("directory subscriptions accept at most 128 Runner IDs")
 	}
 	query.RunnerIDs = append([]string(nil), query.RunnerIDs...)
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancelCause(ctx)
 	sub := &directorySubscription{service: s, scope: scope, query: query, id: wire.ID(), ctx: ctx, cancel: cancel,
 		mailbox: latest.New[workbench.AgentTarget, agents.DirectoryEvent](agents.MaxDirectoryMembers), done: make(chan struct{}), ready: make(chan struct{})}
 	resources, err := sub.resources(ctx)
 	if err != nil {
-		cancel()
+		cancel(err)
 		return nil, err
 	}
 	go sub.run(resources)
@@ -54,11 +54,11 @@ func (s *Service) Subscribe(ctx context.Context, scope agents.Scope, query agent
 	case <-sub.ready:
 	case <-ctx.Done():
 		_ = sub.Close()
-		return nil, ctx.Err()
+		return nil, context.Cause(ctx)
 	}
 	if ctx.Err() != nil {
 		_ = sub.Close()
-		return nil, &api.Error{Code: "RESYNC_REQUIRED", Detail: "directory changed during subscription setup"}
+		return nil, context.Cause(ctx)
 	}
 	return sub, nil
 }
@@ -72,9 +72,13 @@ func (s *directorySubscription) Close() error {
 }
 
 func (s *directorySubscription) fail(detail string) {
+	s.failWith(&api.Error{Code: "RESYNC_REQUIRED", Detail: detail})
+}
+
+func (s *directorySubscription) failWith(err error) {
 	s.once.Do(func() {
-		s.mailbox.Fail(&api.Error{Code: "RESYNC_REQUIRED", Detail: detail})
-		s.cancel()
+		s.mailbox.Fail(err)
+		s.cancel(err)
 	})
 }
 
@@ -158,7 +162,7 @@ func (s *directorySubscription) resources(ctx context.Context) ([]authorization.
 func (s *directorySubscription) run(resources []authorization.Resource) {
 	defer close(s.done)
 	defer s.workers.Wait()
-	defer s.cancel()
+	defer s.cancel(nil)
 	bindings := make(map[string]runner.Binding)
 	var initial sync.WaitGroup
 	start := func(resource authorization.Resource) {
@@ -256,9 +260,14 @@ func (s *directorySubscription) observeRunner(resource authorization.Resource, r
 			return
 		}
 		var failure *api.Error
-		if errors.As(err, &failure) && (failure.Code == "ACCESS_DENIED" || failure.Code == "UNSUPPORTED" || failure.Code == "BINDING_CHANGED") {
-			s.fail("Runner subscription unavailable under current authorization or capabilities")
-			return
+		if errors.As(err, &failure) {
+			switch failure.Code {
+			case "RESOURCE_EXHAUSTED", "RESYNC_REQUIRED", "ACCESS_DENIED", "UNSUPPORTED", "BINDING_CHANGED":
+				// Admission failure is not an offline source. Preserve its cause
+				// before releasing the setup barrier so Subscribe cannot report ready.
+				s.failWith(failure)
+				return
+			}
 		}
 		initial = false
 		announce.Do(ready)
