@@ -62,21 +62,22 @@ const (
 // Worker validation includes its fresh challenge; another attempt cannot reuse
 // an otherwise matching process or historical successful distribution.
 type Proof struct {
-	OperationID          string             `json:"operation_id"`
-	AttemptID            string             `json:"attempt_id"`
-	Challenge            string             `json:"challenge"`
-	Binding              runner.Binding     `json:"binding"`
-	InstallationID       string             `json:"installation_id"`
-	InstallationRevision string             `json:"installation_revision"`
-	ManifestSHA256       string             `json:"manifest_sha256"`
-	Running              api.RunningProgram `json:"running"`
-	Incarnation          string             `json:"incarnation"`
-	ConnectionGeneration uint64             `json:"connection_generation"`
-	RouteEpoch           uint64             `json:"route_epoch"`
-	ReleaseVerified      bool               `json:"release_verified"`
-	GatewayAccepted      bool               `json:"gateway_accepted"`
-	Routed               bool               `json:"routed"`
-	ObservedAt           time.Time          `json:"observed_at"`
+	OperationID                  string             `json:"operation_id"`
+	AttemptID                    string             `json:"attempt_id"`
+	Challenge                    string             `json:"challenge"`
+	Binding                      runner.Binding     `json:"binding"`
+	InstallationID               string             `json:"installation_id"`
+	InstallationRevision         string             `json:"installation_revision"`
+	ManifestSHA256               string             `json:"manifest_sha256"`
+	Running                      api.RunningProgram `json:"running"`
+	Incarnation                  string             `json:"incarnation"`
+	ConnectionGeneration         uint64             `json:"connection_generation"`
+	RouteEpoch                   uint64             `json:"route_epoch"`
+	OriginalInstallationRestored bool               `json:"original_installation_restored"`
+	ReleaseVerified              bool               `json:"release_verified"`
+	GatewayAccepted              bool               `json:"gateway_accepted"`
+	Routed                       bool               `json:"routed"`
+	ObservedAt                   time.Time          `json:"observed_at"`
 }
 
 type Operation struct {

@@ -16,6 +16,7 @@ import (
 	internalgateway "github.com/aiomni/dune/internal/gateway"
 	"github.com/aiomni/dune/internal/install"
 	"github.com/aiomni/dune/internal/lifecycle"
+	"github.com/aiomni/dune/internal/runnerupgrade"
 	"github.com/aiomni/dune/internal/service"
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/fabricd"
@@ -102,6 +103,20 @@ func run() (runErr error) {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 	switch args[0] {
+	case "upgrade-worker":
+		workerFlags := flag.NewFlagSet("upgrade-worker", flag.ContinueOnError)
+		root := workerFlags.String("root", "", "registered installation root")
+		once := workerFlags.Bool("once", false, "resume one existing operation")
+		if err := workerFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *root == "" {
+			return fmt.Errorf("installation root required")
+		}
+		if *once {
+			return runnerupgrade.Run(ctx, *root)
+		}
+		return runnerupgrade.Watch(ctx, *root)
 	case "upgrade-check":
 		report := fabricd.CheckUpgrade(ctx, machineConfig.SessionDir)
 		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {

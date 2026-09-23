@@ -32,13 +32,14 @@ const MaxRecordBytes = 256 << 10
 // Record includes private recovery locations. Public queries return Operation
 // only; paths and service/configuration bytes are never diagnostics.
 type Record struct {
-	Operation        upgrade.Operation     `json:"operation"`
-	Owner            string                `json:"owner"`
-	Original         installation.Location `json:"original"`
-	Candidate        installation.Location `json:"candidate"`
-	Switched         bool                  `json:"switched"`
-	Deadline         time.Time             `json:"deadline"`
-	RollbackDeadline time.Time             `json:"rollback_deadline,omitempty"`
+	Operation           upgrade.Operation     `json:"operation"`
+	Owner               string                `json:"owner"`
+	Original            installation.Location `json:"original"`
+	Candidate           installation.Location `json:"candidate"`
+	ConfigurationSHA256 string                `json:"configuration_sha256"`
+	Switched            bool                  `json:"switched"`
+	Deadline            time.Time             `json:"deadline"`
+	RollbackDeadline    time.Time             `json:"rollback_deadline,omitempty"`
 }
 
 type Store struct {

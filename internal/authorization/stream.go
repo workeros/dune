@@ -89,7 +89,7 @@ func (c streamChecker) Check(ctx context.Context, request access.Request) (acces
 		return access.Decision{}, err
 	}
 	if c.record.UpgradeVerification {
-		if request.Operation != "runner.upgrade.probe" || request.Runtime.ID != "" {
+		if (request.Operation != "runner.upgrade.probe" && request.Operation != "runner.upgrade.inspect") || request.Runtime.ID != "" {
 			return access.Decision{}, access.ErrDenied
 		}
 		return access.Decision{Allowed: true, Reason: "RUNNER_UPGRADE_VERIFICATION", ID: request.RequestID, ValidUntil: earliest(started.Add(access.StreamLeaseLimit), expires)}, nil

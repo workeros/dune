@@ -28,10 +28,11 @@ type Request struct {
 }
 
 type Response struct {
-	Binding   runner.Binding    `json:"binding"`
-	Release   *upgrade.Manifest `json:"release,omitempty"`
-	Proof     *upgrade.Proof    `json:"proof,omitempty"`
-	ErrorCode string            `json:"error_code,omitempty"`
+	Binding    runner.Binding      `json:"binding"`
+	Release    *upgrade.Manifest   `json:"release,omitempty"`
+	Inspection *upgrade.Inspection `json:"inspection,omitempty"`
+	Proof      *upgrade.Proof      `json:"proof,omitempty"`
+	ErrorCode  string              `json:"error_code,omitempty"`
 }
 
 type Client struct {
@@ -110,4 +111,15 @@ func (c *Client) Confirm(ctx context.Context, probe upgrade.Probe) (upgrade.Proo
 		return upgrade.Proof{}, &api.Error{Code: "UPGRADE_PROOF_MISSING", Detail: "host did not confirm a routed probe"}
 	}
 	return *result.Proof, nil
+}
+
+func (c *Client) Inspect(ctx context.Context, binding runner.Binding) (upgrade.Inspection, error) {
+	result, err := c.call(ctx, Request{Action: "inspect", Binding: binding})
+	if err != nil {
+		return upgrade.Inspection{}, err
+	}
+	if result.Inspection == nil || result.Inspection.Binding != binding {
+		return upgrade.Inspection{}, &api.Error{Code: "UPGRADE_INSPECTION_INVALID", Detail: "original Runner inspection missing"}
+	}
+	return *result.Inspection, nil
 }

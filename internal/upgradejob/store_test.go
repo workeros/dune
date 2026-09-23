@@ -225,7 +225,7 @@ func proofFor(t *testing.T, operation upgrade.Operation, target upgrade.Manifest
 			size = component.Bytes
 		}
 	}
-	return upgrade.Proof{OperationID: operation.ID, AttemptID: operation.AttemptID, Challenge: operation.Challenge, Binding: operation.Request.Binding, InstallationID: operation.Request.InstallationID, InstallationRevision: "2", ManifestSHA256: digest, Running: api.RunningProgram{PID: 202, StartID: "target-process", SHA256: target.ProgramSHA256(), Bytes: size, Build: api.BuildInfo{OS: target.Platform.OS, Arch: target.Platform.Arch}}, Incarnation: "target-incarnation", ConnectionGeneration: 2, RouteEpoch: 3, ReleaseVerified: true, GatewayAccepted: true, Routed: true, ObservedAt: time.Now().UTC()}
+	return upgrade.Proof{OperationID: operation.ID, AttemptID: operation.AttemptID, Challenge: operation.Challenge, Binding: operation.Request.Binding, InstallationID: operation.Request.InstallationID, InstallationRevision: "2", ManifestSHA256: digest, Running: api.RunningProgram{PID: 202, StartID: "target-process", SHA256: target.ProgramSHA256(), Bytes: size, Build: api.BuildInfo{OS: target.Platform.OS, Arch: target.Platform.Arch}}, Incarnation: "target-incarnation", ConnectionGeneration: 2, RouteEpoch: 3, OriginalInstallationRestored: true, ReleaseVerified: true, GatewayAccepted: true, Routed: true, ObservedAt: time.Now().UTC()}
 }
 
 func TestTerminalSuccessRequiresAllProofAndCannotRegress(t *testing.T) {

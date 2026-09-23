@@ -203,6 +203,10 @@ func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T)
 	}
 	defer control.Close()
 	probe := upgrade.Probe{Binding: f.binding, InstallationID: observed.ID, OperationID: op.ID, AttemptID: record.Operation.AttemptID, Challenge: record.Operation.Challenge}
+	inspected, err := control.Inspect(ctx, f.binding)
+	if err != nil || inspected.Installation == nil || inspected.Installation.ID != observed.ID || inspected.Running.SHA256 != program.SHA256 {
+		t.Fatal("worker inspection did not route", inspected, err)
+	}
 	proof, err := control.Confirm(ctx, probe)
 	if err != nil {
 		t.Fatal(err)

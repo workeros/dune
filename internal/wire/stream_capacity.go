@@ -37,7 +37,7 @@ func RequestClass(m *pb.Message) StreamClass {
 	switch m.Operation {
 	case "runtime.watch":
 		return StreamWatch
-	case "runner.upgrade.probe", "machine.info", "runtime.list", "runtime.get", "acp.state", "acp.raw.state", "acp.raw.read", "acp.conversation.read", "acp.conversation.get", "agent.operation.read", "runtime.capture", "runtime.scrollback", "profile.status":
+	case "runner.upgrade.probe", "runner.upgrade.inspect", "machine.info", "runtime.list", "runtime.get", "acp.state", "acp.raw.state", "acp.raw.read", "acp.conversation.read", "acp.conversation.get", "agent.operation.read", "runtime.capture", "runtime.scrollback", "profile.status":
 		return StreamRead
 	case "agent.operation.wait":
 		// Long polls cannot occupy the slots used to read current state.

@@ -102,6 +102,15 @@ func validateTransition(before, after Record) error {
 	if after.Owner != before.Owner || b.ID != a.ID || b.Request != a.Request || !reflect.DeepEqual(b.Target, a.Target) || !reflect.DeepEqual(b.Source, a.Source) || !reflect.DeepEqual(b.Plan, a.Plan) || b.StateContract != a.StateContract || b.Admission != a.Admission || b.StartedAt != a.StartedAt || after.Deadline != before.Deadline {
 		return fmt.Errorf("execution attempted to replace admitted upgrade facts")
 	}
+	if before.ConfigurationSHA256 != "" && after.ConfigurationSHA256 != before.ConfigurationSHA256 {
+		return fmt.Errorf("original configuration identity cannot change")
+	}
+	if before.Original.Directory != "" && !reflect.DeepEqual(before.Original, after.Original) {
+		return fmt.Errorf("original recovery distribution cannot change")
+	}
+	if before.Candidate.Directory != "" && !reflect.DeepEqual(before.Candidate, after.Candidate) {
+		return fmt.Errorf("frozen candidate location cannot change")
+	}
 	if a.Failure != nil && !reflect.DeepEqual(a.Failure, b.Failure) {
 		return fmt.Errorf("original upgrade failure must be retained")
 	}
@@ -202,7 +211,7 @@ func validateProof(operation upgrade.Operation, rollback bool) error {
 	if proof == nil || proof.OperationID != operation.ID || proof.AttemptID != operation.AttemptID || proof.Challenge != operation.Challenge || api.ValidateSubmissionID(proof.AttemptID) != nil || api.ValidateSubmissionID(proof.Challenge) != nil || proof.Binding != operation.Request.Binding || proof.InstallationID != operation.Request.InstallationID {
 		return fmt.Errorf("platform proof does not match current operation attempt")
 	}
-	if !proof.ReleaseVerified || !proof.GatewayAccepted || !proof.Routed || proof.Running.PID <= 1 || proof.Running.StartID == "" || proof.Incarnation == "" || proof.ConnectionGeneration == 0 {
+	if (!rollback && !proof.ReleaseVerified) || (rollback && !proof.OriginalInstallationRestored) || !proof.GatewayAccepted || !proof.Routed || proof.Running.PID <= 1 || proof.Running.StartID == "" || proof.Incarnation == "" || proof.ConnectionGeneration == 0 {
 		return fmt.Errorf("platform proof lacks installation, running process or accepted routed connection")
 	}
 	if proof.ObservedAt.Before(operation.AttemptStartedAt) || time.Since(proof.ObservedAt) > 30*time.Second || proof.ObservedAt.After(time.Now().Add(time.Second)) {
@@ -238,4 +247,11 @@ func validateProof(operation upgrade.Operation, rollback bool) error {
 		return fmt.Errorf("platform proof lacks canonical installation revision")
 	}
 	return nil
+}
+
+// ValidateProof lets the executor reject stale or mismatched evidence before
+// attempting a terminal transaction. Update repeats validation at commit time.
+func ValidateProof(operation upgrade.Operation, proof upgrade.Proof, rollback bool) error {
+	operation.Proof = &proof
+	return validateProof(operation, rollback)
 }

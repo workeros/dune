@@ -3,6 +3,7 @@ package fabricd
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 
 	"github.com/aiomni/dune/internal/installation"
 	"github.com/aiomni/dune/internal/launchgate"
@@ -49,7 +50,7 @@ func (d *Engine) probeUpgrade(s *executionStream, message *pb.Message) {
 		return
 	}
 	observed, err := installation.View(s.ctx, registration.Root)
-	if err != nil || !observed.Complete {
+	if err != nil {
 		s.Fail("INSTALLATION_UNVERIFIABLE", fmt.Errorf("complete installation cannot be verified"))
 		return
 	}
@@ -58,6 +59,7 @@ func (d *Engine) probeUpgrade(s *executionStream, message *pb.Message) {
 		s.Fail("RUNNING_PROGRAM_UNVERIFIABLE", fmt.Errorf("kernel executable cannot be verified"))
 		return
 	}
+	restored := false
 	expected := operation.Target
 	if operation.Phase == upgrade.RollbackVerifying {
 		if operation.Source.Installation == nil {
@@ -65,6 +67,15 @@ func (d *Engine) probeUpgrade(s *executionStream, message *pb.Message) {
 			return
 		}
 		expected = operation.Source.Installation.Release
+		restored = reflect.DeepEqual(observed.Components, operation.Source.Installation.Components)
+		if !restored {
+			s.Fail("ROLLBACK_FILES_CHANGED", fmt.Errorf("original installation observation differs"))
+			return
+		}
+	}
+	if !restored && !observed.Complete {
+		s.Fail("INSTALLATION_INCOMPLETE", fmt.Errorf("target installation is incomplete"))
+		return
 	}
 	digest, err := observed.Release.Digest()
 	wanted, wantedErr := expected.Digest()
@@ -79,6 +90,6 @@ func (d *Engine) probeUpgrade(s *executionStream, message *pb.Message) {
 		s.Fail("UPGRADE_ATTEMPT_CHANGED", fmt.Errorf("upgrade changed during probe"))
 		return
 	}
-	proof := upgrade.Proof{OperationID: operation.ID, AttemptID: probe.AttemptID, Challenge: probe.Challenge, Binding: probe.Binding, InstallationID: observed.ID, InstallationRevision: observed.Revision, ManifestSHA256: digest, Running: running, Incarnation: d.inc, ConnectionGeneration: s.generation, RouteEpoch: s.epoch, ReleaseVerified: true, ObservedAt: running.ObservedAt}
+	proof := upgrade.Proof{OperationID: operation.ID, AttemptID: probe.AttemptID, Challenge: probe.Challenge, Binding: probe.Binding, InstallationID: observed.ID, InstallationRevision: observed.Revision, ManifestSHA256: digest, Running: running, Incarnation: d.inc, ConnectionGeneration: s.generation, RouteEpoch: s.epoch, OriginalInstallationRestored: restored, ReleaseVerified: observed.Complete, ObservedAt: running.ObservedAt}
 	_ = s.Send(&pb.Message{Kind: "result", Payload: api.Payload(proof)})
 }

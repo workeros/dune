@@ -78,6 +78,17 @@ func (a *App) serveUpgradeControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.Release = &manifest
+	case "inspect":
+		if request.Binding != actual {
+			writeControlFailure(w, runner.ErrBindingChanged)
+			return
+		}
+		inspection, err := a.inspectUpgradeRoute(ctx, credential, actual)
+		if err != nil {
+			writeControlFailure(w, err)
+			return
+		}
+		response.Inspection = &inspection
 	case "confirm":
 		if request.Probe.Binding != actual || request.Binding != actual {
 			writeControlFailure(w, runner.ErrBindingChanged)
@@ -142,4 +153,19 @@ func writeControlFailure(w http.ResponseWriter, err error) {
 		code = failure.Code
 	}
 	writeUpgradeControl(w, status, upgradecontrol.Response{ErrorCode: code})
+}
+
+func (a *App) inspectUpgradeRoute(ctx context.Context, credential string, binding runner.Binding) (upgrade.Inspection, error) {
+	grant, handler, err := a.authorizer.UpgradeVerification(ctx, credential, binding)
+	if err != nil {
+		return upgrade.Inspection{}, err
+	}
+	connection, close, err := a.connectGrantedRunner(ctx, binding, "runner.upgrade.inspect", grant, handler)
+	if err != nil {
+		return upgrade.Inspection{}, err
+	}
+	defer close()
+	var result upgrade.Inspection
+	err = connection.Call(ctx, "runner.upgrade.inspect", binding, &result)
+	return result, err
 }
