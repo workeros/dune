@@ -127,7 +127,9 @@ type TerminalScrollbackRequest struct {
 
 // TerminalScrollback is a read-only snapshot of tmux's retained history and
 // active screen. Content contains the newest complete physical rows, each with
-// a trailing LF, without ANSI sequences. Soft wraps remain separate rows.
+// a trailing LF, ANSI SGR styling and hyperlink sequences. Each row carries its
+// own styling, so a bounded suffix remains independently renderable. Soft wraps
+// remain separate rows.
 type TerminalScrollback struct {
 	Content       string `json:"content"`
 	Cols          int    `json:"cols"`

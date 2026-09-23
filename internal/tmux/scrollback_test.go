@@ -26,7 +26,7 @@ func TestScrollbackRetainedExitAndReadOnly(t *testing.T) {
 			return out
 		}
 		before := state()
-		want, err := s.run("capture-pane", "-p", "-t", r.pane(), "-S", "-", "-E", "-")
+		want, err := s.run("capture-pane", "-p", "-e", "-t", r.pane(), "-S", "-", "-E", "-")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -34,7 +34,7 @@ func TestScrollbackRetainedExitAndReadOnly(t *testing.T) {
 		if err != nil || got.Content != want || got.Truncated || got.Cols != 80 || got.Rows != 24 || got.HistoryLines == 0 || got.CapturedLines != got.HistoryLines+got.Rows {
 			t.Fatalf("snapshot: %+v, %v", got, err)
 		}
-		if strings.ContainsAny(got.Content, "\x1b\x07") || !utf8.ValidString(got.Content) || !strings.Contains(got.Content, "中文🙂LINK") || strings.Count(got.Content, "长") != 100 {
+		if strings.ContainsAny(got.Content, "\x07") || !utf8.ValidString(got.Content) || !strings.Contains(got.Content, "\x1b[31m中文🙂\x1b[39m") || !strings.Contains(got.Content, "LINK") || strings.Count(got.Content, "长") != 100 {
 			t.Fatalf("text was corrupted: %q", got.Content)
 		}
 		for _, limit := range []int{1, 10, 24, 30} {
@@ -92,17 +92,18 @@ func TestScrollbackByteLimit(t *testing.T) {
 	// At 400 columns these rows exceed both the public byte bound and run's
 	// ordinary 2 MiB bound. The capture must drain and retain the newest rows.
 	row := strings.Repeat("界", 199)
-	r := session(t, s, "l", fmt.Sprintf(`read -r ready; i=0; while [ "$i" -lt 6000 ]; do printf '%%s\n' '%s'; i=$((i+1)); done; printf 'NEWEST🙂\n'; exit`, row), []string{"PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"})
+	r := session(t, s, "l", fmt.Sprintf(`read -r ready; printf '\033[31m'; i=0; while [ "$i" -lt 6000 ]; do printf '%%s\n' '%s'; i=$((i+1)); done; printf 'NEWEST🙂\033[0m\n'; exit`, row), []string{"PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"})
 	if _, err := s.run("resize-window", "-t", r.target(), "-x", "400", "-y", "24", ";", "send-keys", "-t", r.pane(), "Enter"); err != nil {
 		t.Fatal(err)
 	}
 	await(t, func() bool { p, err := r.Inspect(); return err == nil && p.Dead })
 	got, err := r.Scrollback(api.MaxTerminalScrollbackLines)
-	if err != nil || !got.Truncated || len(got.Content) > api.MaxTerminalScrollbackBytes || !utf8.ValidString(got.Content) || !strings.Contains(got.Content, "NEWEST🙂\n") || got.CapturedLines != strings.Count(got.Content, "\n") {
+	if err != nil || !got.Truncated || len(got.Content) > api.MaxTerminalScrollbackBytes || !utf8.ValidString(got.Content) || !strings.Contains(got.Content, "\x1b[31mNEWEST🙂\x1b[39m\n") || got.CapturedLines != strings.Count(got.Content, "\n") {
 		t.Fatalf("byte limit: bytes=%d lines=%d truncated=%v err=%v", len(got.Content), got.CapturedLines, got.Truncated, err)
 	}
-	if !strings.HasPrefix(got.Content, row+"\n") || len(got.Content) < api.MaxTerminalScrollbackBytes-len(row)-1 {
-		t.Fatal("did not retain the newest complete rows")
+	styledRow := "\x1b[31m" + row + "\x1b[39m\n"
+	if !strings.HasPrefix(got.Content, styledRow) || len(got.Content) < api.MaxTerminalScrollbackBytes-len(styledRow) {
+		t.Fatal("did not retain the newest complete rows with independent styling")
 	}
 }
 

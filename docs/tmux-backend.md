@@ -35,14 +35,16 @@ Web 界面显示只读状态，提供“接管输入 / 获取输入权”和“�
 
 | 字段 | 含义 |
 | --- | --- |
-| `content` | 最新完整物理行，按时间顺序、LF 分隔且每行保留末尾 LF；无 ANSI、颜色或超链接控制序列，软换行不合并，行末空格由 tmux 去除 |
+| `content` | 最新完整物理行，按时间顺序、LF 分隔且每行保留末尾 LF；保留 tmux 的 ANSI 样式和超链接序列，软换行不合并，行末空格由 tmux 去除 |
 | `cols` / `rows` | 读取时 pane 的列数 / 屏幕行数 |
 | `history_lines` | tmux 当前保留的历史行数，不含屏幕，不是进程累计输出行数 |
 | `captured_lines` | 实际返回的完整物理行数，包含屏幕空白行，可小于 `limit` |
 | `truncated` | 行数或字节限制丢弃了内容，或 tmux 可能已经淘汰过历史 |
 
 内容最多 512 KiB UTF-8 字节；超限丢弃最旧的完整行，保证返回最新内容和有效
-UTF-8。极端情况下单行超过字节上限，该行整体省略。API 常量在 `pkg/api`，
+UTF-8。`capture-pane -e` 为每行输出独立的样式，截取完整行后仍可正确还原颜色。
+客户端应解释 ANSI 样式并安全渲染文本，不能将快照直接当 HTML 或普通文本展示。
+极端情况下单行超过字节上限，该行整体省略。API 常量在 `pkg/api`，
 默认 SDK 与协议客户端均提供 `ScrollbackTerminal(ctx, runtime, request)`。
 同一 request ID 不缓存大快照，再次使用返回 `RESULT_UNKNOWN`，需发起新的只读请求。
 

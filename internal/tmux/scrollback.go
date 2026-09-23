@@ -23,7 +23,7 @@ func (r *Session) Scrollback(limit int) (api.TerminalScrollback, error) {
 	start := fmt.Sprintf("#{e|-:#{pane_height},%d}", limit)
 	err := r.Server.runOutput(out,
 		"display-message", "-p", "-t", r.pane(), "#{pane_height} #{pane_width} #{history_size} #{history_limit}", ";",
-		"capture-pane", "-p", "-t", r.pane(), "-S", start, "-E", "-")
+		"capture-pane", "-p", "-e", "-t", r.pane(), "-S", start, "-E", "-")
 	if err != nil {
 		return snapshot, err
 	}
