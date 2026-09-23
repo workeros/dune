@@ -43,6 +43,14 @@ import (
 // This test installs unique user service jobs and cleans them up. It runs real
 // release executables and the independent worker, not service command shims.
 func TestNativeRunnerOnlineUpgrade(t *testing.T) {
+	testNativeRunnerUpgrade(t, false)
+}
+
+func TestNativeRunnerUpgradePreview(t *testing.T) {
+	testNativeRunnerUpgrade(t, true)
+}
+
+func testNativeRunnerUpgrade(t *testing.T, previewOnly bool) {
 	if os.Getenv("DUNE_TEST_SERVICE_MANAGER") != "1" {
 		t.Skip("set DUNE_TEST_SERVICE_MANAGER=1 for native installation and upgrade acceptance")
 	}
@@ -363,6 +371,27 @@ func TestNativeRunnerOnlineUpgrade(t *testing.T) {
 	check(err)
 	if originalHost.ACPHost == nil || originalHost.ACPHost.Build.Version != "v1" {
 		t.Fatal("v1 retained host missing", originalHost)
+	}
+	previewTarget := manifests["v2"]
+	previewDigest, err := previewTarget.Digest()
+	check(err)
+	preview, err := apiService.PreviewUpgrade(ctx, scope, upgrade.PreviewRequest{Binding: binding, Release: upgrade.ReleaseRef{ID: previewTarget.ID, ManifestSHA256: previewDigest}})
+	check(err)
+	if !preview.Allowed || !preview.Plan.ReleaseUpdateRequired || !preview.Plan.ConnectorRestartRequired || len(preview.SourceCheck.Hosts) != 3 || len(preview.TargetCheck.Hosts) != 3 {
+		t.Fatal("preview omitted current or pending host obligations", preview)
+	}
+	afterPreview, err := apiService.InspectRunner(ctx, scope)
+	check(err)
+	seal, err := launchgate.ReadSeal(stateDir)
+	check(err)
+	history, err := apiService.ListUpgrades(ctx, scope, upgrade.ListRequest{Binding: binding, InstallationID: current.Installation.ID})
+	check(err)
+	if afterPreview.Installation.Revision != current.Installation.Revision || afterPreview.Running.StartID != current.Running.StartID || seal != nil || history.Page.Active != nil || len(history.Page.Items) != 1 {
+		t.Fatal("preview changed installation, service, seal or task history", afterPreview, history)
+	}
+	t.Log("public preview checked source, candidate and three retained/admitted hosts without changing installation or task history")
+	if previewOnly {
+		return
 	}
 	target := agent.target
 	target.RuntimeID, target.RuntimeIncarnation, target.RuntimeGeneration = rt.ID, rt.Incarnation, rt.Generation
