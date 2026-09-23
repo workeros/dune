@@ -153,7 +153,7 @@ func validateTransition(before, after Record) error {
 			}
 			return validateProof(b, true)
 		}
-		if before.Switched || !beforeSwitch(a.Phase) || b.Rollback != upgrade.RollbackNotNeeded {
+		if before.Switched || (!beforeSwitch(a.Phase) && a.Phase != upgrade.Switching) || b.Rollback != upgrade.RollbackNotNeeded {
 			return fmt.Errorf("post-switch failure must complete or block recovery")
 		}
 		return nil
@@ -191,7 +191,7 @@ func phaseAllowed(from, to upgrade.Phase) bool {
 	case upgrade.Checking:
 		return to == upgrade.Switching
 	case upgrade.Switching:
-		return to == upgrade.Reconnecting || to == upgrade.Verifying || to == upgrade.RollingBack
+		return to == upgrade.Reconnecting || to == upgrade.Verifying || to == upgrade.RollingBack || to == upgrade.Failed
 	case upgrade.Reconnecting:
 		return to == upgrade.Verifying || to == upgrade.RollingBack
 	case upgrade.Verifying:

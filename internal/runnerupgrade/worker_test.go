@@ -506,3 +506,27 @@ func TestAuxiliaryUpdateRequiresThisAttemptStartup(t *testing.T) {
 		})
 	}
 }
+
+func TestSwitchIntentFailureDoesNotRestartUntouchedSource(t *testing.T) {
+	f := newWorkerFixture(t)
+	check := f.worker.check
+	f.worker.check = func(ctx context.Context, executable, path string, m upgrade.Manifest) (api.UpgradeReport, error) {
+		report, err := check(ctx, executable, path, m)
+		if m.ID == f.target.ID {
+			// Model an external auxiliary change immediately before Switch's
+			// complete-source comparison. No target file has become selected.
+			if err := os.WriteFile(filepath.Join(f.worker.root, f.source.Directory, "rg"), []byte("external"), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return report, err
+	}
+	if err := f.worker.execute(t.Context(), f.operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	op := f.result()
+	if !op.Confirmed || op.Phase != upgrade.Failed || op.Rollback != upgrade.RollbackNotNeeded || f.restarts != 0 {
+		t.Fatalf("untouched source restarted: %+v restarts=%d", op, f.restarts)
+	}
+	f.assertUnsealed()
+}

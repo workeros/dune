@@ -227,6 +227,11 @@ func (w *worker) execute(ctx context.Context, id string) error {
 			}
 		case upgrade.Switching:
 			if err := w.switchTarget(ctx); err != nil {
+				// The phase is an intent, not proof that current changed. A failure
+				// before the installation transaction must leave the source running.
+				if current, readErr := w.installed.Read(); readErr == nil && current.Pending == nil && !w.record.Switched && current.Current.Directory == w.record.Original.Directory {
+					return w.failBeforeSwitch(ctx, err)
+				}
 				return w.startRollback(ctx, err)
 			}
 		case upgrade.Reconnecting:
@@ -423,7 +428,7 @@ func (w *worker) switchTarget(ctx context.Context) error {
 
 func (w *worker) failBeforeSwitch(ctx context.Context, cause error) error {
 	current, err := w.installed.Read()
-	if err != nil || current.Pending != nil || w.record.Switched {
+	if err != nil || current.Pending != nil || w.record.Switched || (w.record.Original.Directory != "" && current.Current.Directory != w.record.Original.Directory) {
 		return issue("INSTALLATION_RECOVERY_REQUIRED")
 	}
 	failure := failureIssue(cause, string(w.record.Operation.Phase))
