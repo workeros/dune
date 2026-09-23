@@ -14,9 +14,10 @@ for (const adapter of ["acp", "pty"] as const) {
     await expect.poll(() => state.connections.filter((path) => path.includes(original.id)).length).toBe(2);
     const otherConnections = state.connections.filter((path) => path.includes(other.id)).length;
     state.runtimes.one = state.runtimes.one.filter((runtime) => runtime.id !== original.id);
-    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    await page.evaluate(() => (window as any).directoryStreams.at(-1).emit({ kind: "invalidated" }));
     await expect(page.getByText("原会话已结束，可以新建 Agent。", { exact: true })).toBeVisible();
-    expect(state.connections.filter((path) => path.includes(other.id))).toHaveLength(otherConnections);
+    // Runtime removal invalidates the range; surviving panes reconnect read-only.
+    await expect.poll(() => state.connections.filter((path) => path.includes(other.id)).length).toBe(otherConnections + 1);
     await page.reload();
     await expect(page.getByText("原会话已结束，可以新建 Agent。", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "继续会话", exact: true })).toHaveCount(0);

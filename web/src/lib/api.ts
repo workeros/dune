@@ -28,7 +28,10 @@ export function runnerPath(binding: Binding, suffix: string): string {
   const query = new URLSearchParams({ machine_id: binding.machine_id, fabric_id: binding.fabric_id, revision: String(binding.revision) });
   return `/api/v1/runners/${encodeURIComponent(binding.runner_id)}/${suffix}?${query}`;
 }
+export type SessionMetadata = { revision: string; conversation_id: string | null; title: string | null };
+export function runtimeTitle(runtime?: Runtime, fallback = "会话"): string { return runtime?.session_metadata?.title ?? (runtime?.title || fallback); }
 export type Runtime = {
+ session_metadata?: SessionMetadata;
  availability?: "unavailable" | "lost";
  last_confirmed_at?: string; persistent_acp?: boolean; acp_mode?: "raw" | "managed";
  project_id?: string; directory_id?: string; id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };

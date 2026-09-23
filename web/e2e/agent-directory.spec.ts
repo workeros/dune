@@ -48,3 +48,34 @@ test("partial discovery retains healthy panes and marks only missing cached targ
   expect(state.starts).toBe(0);
   expect(state.inputs.filter((input) => input.message.type !== "resize")).toHaveLength(0);
 });
+
+test("unopened titles use full directory snapshots and recover by batch discovery", async ({ page }) => {
+  const state = workbenchState();
+  await mockWorkbench(page, state); await page.goto("/");
+  await expect(page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true })).toBeVisible();
+  const runtime = state.runtimes.one.find((item) => item.adapter === "acp")!;
+  const runner = state.runners[0];
+  const emitTitle = async (revision: string, title: string | null) => {
+    await page.evaluate(({ runtime, runner, revision, title }) => {
+      const stream = (window as any).directoryStreams.at(-1);
+      stream.emit({ kind: "member", agent: { agent_ref: `ref-${runtime.id}`, runner, target: { binding: runner.binding, runtime: { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter } }, runtime: { ...runtime, session_metadata: { revision, conversation_id: "current", title } } } });
+    }, { runtime, runner, revision, title });
+  };
+  const initialPages = state.directoryRequests.length;
+  await emitTitle("9007199254740994", "修复登录失败");
+  await expect(page.getByRole("button", { name: "打开 修复登录失败 · Runner one", exact: true })).toBeVisible();
+  await emitTitle("9007199254740993", "迟到旧标题");
+  await expect(page.getByRole("button", { name: "打开 修复登录失败 · Runner one", exact: true })).toBeVisible();
+  await emitTitle("9007199254740995", null);
+  await expect(page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true })).toBeVisible();
+  expect(state.directoryRequests).toHaveLength(initialPages);
+  expect(state.connections).toHaveLength(0);
+  expect(state.calls.filter((call) => call.operation !== "machine.info")).toHaveLength(0);
+  runtime.session_metadata = { revision: "9007199254740999", conversation_id: "current", title: "断线后的最终标题" };
+  await page.evaluate(() => (window as any).directoryStreams.at(-1).onerror());
+  await expect(page.getByRole("button", { name: "打开 断线后的最终标题 · Runner one", exact: true })).toBeVisible();
+  expect(state.directoryRequests.length).toBeGreaterThan(initialPages);
+  expect(state.connections).toHaveLength(0);
+  expect(state.calls.filter((call) => call.operation !== "machine.info")).toHaveLength(0);
+  expect(state.starts).toBe(0);
+});

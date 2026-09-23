@@ -14,7 +14,7 @@ export const emptyView: ViewSpec = { root: null };
 
 export function targetKey(target: AgentTarget): string {
   const b = target.binding, r = target.runtime;
-  return JSON.stringify([b.runner_id, b.fabric_id, b.machine_id, b.revision, r.id, r.incarnation, r.generation]);
+  return JSON.stringify([b.runner_id, b.fabric_id, b.machine_id, b.revision, r.id, r.incarnation, r.generation, r.adapter]);
 }
 export function targetFor(binding: Binding, runtime: AgentTarget["runtime"]): AgentTarget {
   return { binding, runtime: { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter } };

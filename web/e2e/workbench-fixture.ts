@@ -27,6 +27,24 @@ export function workbenchState() {
 export type WorkbenchState = ReturnType<typeof workbenchState>;
 
 export async function mockWorkbench(page: Page, state: WorkbenchState) {
+  // Keep the browser subscription open; HTTP/SSE serialization and credential
+  // checks are covered by the Go handler tests. Tests explicitly deliver events.
+  await page.addInitScript(() => {
+    const streams: any[] = [];
+    (window as any).directoryStreams = streams;
+    (window as any).EventSource = class {
+      onmessage?: (message: { data: string }) => void;
+      onerror?: () => void;
+      closed = false;
+      id = `directory-${streams.length + 1}`;
+      constructor(public url: string) {
+        streams.push(this);
+        setTimeout(() => this.emit({ kind: "ready" }), 0);
+      }
+      emit(event: object) { if (!this.closed) this.onmessage?.({ data: JSON.stringify({ subscription_id: this.id, ...event }) }); }
+      close() { this.closed = true; }
+    };
+  });
   await page.routeWebSocket(/\/api\/v1\/ws\/runners\//, (socket) => {
     const path = new URL(socket.url()).pathname;
     state.connections.push(path);

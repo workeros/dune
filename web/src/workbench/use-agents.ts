@@ -1,80 +1,118 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { APIError, bindingKey, errorText, request, type AgentRuntime, type Runner } from "../lib/api";
-const isAccessError = (error: unknown) => error instanceof APIError && [401, 403].includes(error.status);
+import { bindingKey, errorText, request, siteURL, type AgentRuntime, type Runner } from "../lib/api";
+import { targetFor, targetKey, type Agent } from "./model";
+import { DirectoryCache, type DirectoryEvent, type DirectoryPage, type DiscoveryBatch } from "./directory-cache";
 
-import { targetFor, targetKey, type Agent, type AgentTarget } from "./model";
-
-type DirectoryPage = {
-  items: { agent_ref: string; target: AgentTarget; runtime: AgentRuntime }[];
-  runners: { runner: Pick<Runner, "id" | "binding">; online: boolean; ready: boolean }[];
-  issues: { runner_id: string; code: string; runtime?: AgentRuntime }[]; next_cursor?: string; complete: boolean;
-};
 type Discovery = { agents: Agent[]; errors: Record<string, string>; checked: Set<string> };
+const emptyDiscovery = (): Discovery => ({ agents: [], errors: {}, checked: new Set() });
 const issueText = (code: string) => ({ OFFLINE: "开发环境暂时离线", ACCESS_DENIED: "会话访问已失效", BINDING_CHANGED: "开发环境绑定已变化", UNSUPPORTED: "开发环境暂不支持会话发现", REGISTRATION_INVALID: "部分会话的注册信息无法核实", SESSION_UNAVAILABLE: "部分会话暂不可连接", SESSION_PROTOCOL_UNSUPPORTED: "部分会话需要支持其协议的连接服务", HOST_REGISTRATION_PENDING: "原会话正在完成宿主注册", REGISTRY_UNAVAILABLE: "暂时无法读取会话注册索引", LAUNCH_FAILED: "部分会话的启动已失败，可查询原提交" } as Record<string, string>)[code] ?? "暂时无法读取 Agent 列表";
 
 export function useAgents(runners: Runner[], prefix = "/api/v1") {
-  const [discovery, setDiscovery] = useState<Discovery>({ agents: [], errors: {}, checked: new Set() });
+  const [discovery, setDiscovery] = useState<Discovery>(emptyDiscovery);
   const current = useRef(runners); current.current = runners;
-  const epoch = useRef(0);
-  const signature = JSON.stringify(runners.map((runner) => [bindingKey(runner.binding), runner.online]));
-  const refresh = useCallback(async () => {
-    const generation = ++epoch.current, selected = current.current;
-    const agents: Agent[] = [], errors: Record<string, string> = {}, checked = new Set<string>(), denied = new Set<string>();
-    if (!selected.length) { setDiscovery({ agents: [], errors: {}, checked: new Set() }); return; }
-    const seen = new Set<string>();
-    let cursor = "";
-    try {
-      do {
-        const page = await request<DirectoryPage>(`${prefix}/agents?limit=32&cursor=${encodeURIComponent(cursor)}`);
-        if (generation !== epoch.current) return;
-        const issues = new Map(page.issues.map((issue) => [issue.runner_id, issue.code]));
-        for (const availability of page.runners) {
-          const runner = selected.find((item) => item.id === availability.runner.id && bindingKey(item.binding) === bindingKey(availability.runner.binding));
-          if (!runner?.binding) continue;
-          const key = bindingKey(runner.binding), issue = issues.get(runner.id);
-          if (issue) { errors[key] = issueText(issue); if (issue === "ACCESS_DENIED") denied.add(key); }
-          else if (availability.online && (page.complete || page.issues.length > 0)) checked.add(key);
-          else if (availability.online) errors[key] = "会话发现尚未完成";
-          else errors[key] = issueText("OFFLINE");
-        }
-        for (const item of page.items) {
-          const runner = selected.find((runner) => bindingKey(runner.binding) === bindingKey(item.target.binding));
-          if (!runner) continue;
-          agents.push({ runner, target: item.target, runtime: item.runtime, ref: item.agent_ref });
-        }
-        cursor = page.next_cursor ?? "";
-        if (cursor && seen.has(cursor)) throw new Error("Agent 列表分页未前进，请刷新重试。");
-        seen.add(cursor);
-      } while (cursor);
-    } catch (cause) {
-      for (const runner of selected) {
-        if (!runner.binding) continue;
-        const key = bindingKey(runner.binding);
-        if (!checked.has(key)) errors[key] = errorText(cause);
-        if (isAccessError(cause)) denied.add(key);
-      }
-    }
-    const observed = new Set(agents.map((agent) => targetKey(agent.target)));
-    if (generation === epoch.current) setDiscovery((old) => ({
-      agents: [...agents.filter((agent) => !denied.has(bindingKey(agent.target.binding))), ...old.agents.filter((agent) => {
-        const key = bindingKey(agent.target.binding);
-        return errors[key] && !checked.has(key) && !denied.has(key) && !observed.has(targetKey(agent.target));
-      }).map((agent) => ({ ...agent, runtime: { ...agent.runtime, availability: "unavailable" as const } }))], errors, checked,
-    }));
-  }, [prefix]);
+  const refreshAction = useRef<() => Promise<void>>(async () => {});
+  const signature = JSON.stringify(runners.map((runner) => [runner.id, bindingKey(runner.binding)]));
+  const refresh = useCallback(() => refreshAction.current(), []);
+
   useEffect(() => {
-    let disposed = false, active = false;
-    const tick = async () => { if (active || disposed) return; active = true; try { await refresh(); } finally { active = false; } };
-    void tick();
-    const timer = setInterval(() => { if (!document.hidden) void tick(); }, 4000);
-    return () => { disposed = true; epoch.current++; clearInterval(timer); };
-  }, [signature, refresh]);
+    const cache = new DirectoryCache();
+    let disposed = false, source: EventSource | undefined, batch: DiscoveryBatch | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined, backoff = 500, discoveryEpoch = 0;
+    let controller: AbortController | undefined;
+    let errors: Record<string, string> = {}, checked = new Set<string>(), observed = new Set<string>();
+    const publish = () => {
+      const agents: Agent[] = [];
+      for (const item of cache.snapshot()) {
+        const key = bindingKey(item.target.binding);
+        const runner = current.current.find((value) => bindingKey(value.binding) === key);
+        if (!runner || errors[key] === issueText("ACCESS_DENIED")) continue;
+        const unavailable = errors[key] && !observed.has(targetKey(item.target));
+        agents.push({ runner, target: item.target, runtime: unavailable ? { ...item.runtime, availability: "unavailable" } : item.runtime, ref: item.agent_ref });
+      }
+      setDiscovery({ agents, errors: { ...errors }, checked: new Set(checked) });
+    };
+    const invalidate = (cause: unknown) => {
+      cache.invalidate(); batch = undefined; discoveryEpoch++;
+      controller?.abort(); source?.close();
+      if (disposed) return;
+      errors = Object.fromEntries(current.current.filter((runner) => runner.binding).map((runner) => [bindingKey(runner.binding), errorText(cause)]));
+      checked.clear(); publish();
+      if (!retry) retry = setTimeout(() => { retry = undefined; connect(); }, backoff);
+      backoff = Math.min(backoff * 2, 10000);
+    };
+    const discover = async () => {
+      if (!batch || disposed) return;
+      const activeBatch = batch, epoch = ++discoveryEpoch;
+      controller?.abort(); controller = new AbortController();
+      const signal = controller.signal;
+      const nextErrors: Record<string, string> = {}, nextChecked = new Set<string>(), nextObserved = new Set<string>();
+      let cursor = "";
+      const seen = new Set<string>();
+      try {
+        do {
+          const page = await request<DirectoryPage>(`${prefix}/agents?limit=32&cursor=${encodeURIComponent(cursor)}`, { signal });
+          if (disposed || epoch !== discoveryEpoch || !cache.valid(activeBatch)) return;
+          const issues = new Map((page.issues ?? []).map((issue) => [issue.runner_id, issue.code]));
+          for (const availability of page.runners ?? []) {
+            const key = bindingKey(availability.runner.binding), issue = issues.get(availability.runner.id);
+            if (issue) nextErrors[key] = issueText(issue);
+            else if (!availability.online) nextErrors[key] = issueText("OFFLINE");
+            else nextChecked.add(key);
+          }
+          page.items = page.items.filter((item) => current.current.some((runner) => bindingKey(runner.binding) === bindingKey(item.target.binding)));
+          for (const item of page.items) nextObserved.add(targetKey(item.target));
+          if (!cache.mergePage(activeBatch, page)) throw new Error("会话列表已变化，正在重新同步…");
+          cursor = page.next_cursor ?? "";
+          if (cursor && seen.has(cursor)) throw new Error("Agent 列表分页未前进，请刷新重试。");
+          seen.add(cursor);
+        } while (cursor);
+        errors = nextErrors; checked = nextChecked; observed = nextObserved;
+        publish();
+      } catch (cause) {
+        if (!disposed && epoch === discoveryEpoch && cache.valid(activeBatch)) invalidate(cause);
+      }
+    };
+    const connect = () => {
+      if (disposed || !current.current.length) return;
+      const query = new URLSearchParams();
+      for (const runner of current.current) query.append("runner_id", runner.id);
+      const activeSource = new EventSource(siteURL(`${prefix}/agents/events?${query}`));
+      source = activeSource;
+      activeSource.onmessage = (message) => {
+        if (disposed || source !== activeSource) return;
+        try {
+          const event = JSON.parse(message.data) as DirectoryEvent;
+          if (event.kind === "ready") {
+            if (batch || !event.subscription_id) throw new Error("无效的目录订阅确认");
+            batch = cache.begin(event.subscription_id); backoff = 500;
+            errors = {}; checked.clear(); observed.clear();
+            void discover(); return;
+          }
+          if (!batch || !cache.apply(batch, event) || event.kind === "invalidated") throw new Error("会话列表已变化，正在重新同步…");
+          if (event.agent) {
+            observed.add(targetKey(event.agent.target));
+            const key = bindingKey(event.agent.target.binding);
+            if (errors[key] === issueText("OFFLINE")) delete errors[key];
+            checked.add(key); publish();
+          }
+        } catch (cause) { invalidate(cause); }
+      };
+      activeSource.onerror = () => { if (source === activeSource) invalidate(new Error("目录连接已断开，正在重新同步…")); };
+    };
+    setDiscovery(emptyDiscovery());
+    refreshAction.current = discover;
+    connect();
+    return () => {
+      disposed = true; cache.invalidate(); controller?.abort(); source?.close();
+      if (retry) clearTimeout(retry);
+      refreshAction.current = async () => {};
+    };
+  }, [signature, prefix]);
+
   const add = (runner: Runner, runtime: AgentRuntime) => {
-    epoch.current++;
     if (!runner.binding) return;
-    const agent = { runner, runtime, target: targetFor(runner.binding, runtime) };
-    setDiscovery((old) => ({ ...old, agents: [...old.agents.filter((item) => item.runtime.id !== runtime.id || bindingKey(item.target.binding) !== bindingKey(runner.binding)), agent], checked: new Set([...old.checked, bindingKey(runner.binding)]) }));
-    return agent;
+    void refresh();
+    return { runner, runtime, target: targetFor(runner.binding, runtime) };
   };
   return { ...discovery, refresh, add };
 }
