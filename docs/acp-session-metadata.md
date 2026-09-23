@@ -6,7 +6,7 @@
 ## 实现切片
 
 - [x] ACP 常驻宿主唯一归并点、统一元数据、发现和会话读取；实际子进程贯通验证。
-- [ ] Runner 范围完整快照通知、合并与有界背压；保留宿主跨 connector 重连。
+- [x] Runner 范围完整快照通知、合并与有界背压；保留宿主跨 connector 重连。
 - [ ] Tenant / Runner 目录订阅与 SDK：就绪、发现衔接、成员资格、撤权、重同步。
 - [ ] Dune Web 消费标准元数据和目录订阅。
 - [ ] 屏障、乱序、生命周期、权限与整链验收；文档、构建产物与交付。
@@ -35,6 +35,22 @@ bytes；非法类型、无效 UTF-8、超限、trim 后仍含 Unicode 控制字�
 元数据不落盘，生命周期跟随常驻 ACP 宿主。Connector 重启不得初始化 Agent 或
 重放请求；宿主死亡不承诺恢复。目录成员资格与订阅代次在标题修订比较之前校验。
 
+## Runner 范围通知
+
+`client.SubscribeRuntimes(ctx)`（`runtime.watch`）在确认订阅后返回，`Next` 读取
+`api.RuntimeChange`。每次携带完整 Runtime；`removed:true` 是准确身份的成员移除。
+首次连接与每次宿主重连主动提供当前观察，随后标题更新通过宿主 IPC 推送，不查询
+`acp.state`、`runtime.get` 或原生历史。独立宿主的来源连接由 connector 共享。
+
+同一 Runtime 的待发值可以合并，移除优先于该成员迟到的发布。每条范围流最多缓存
+512 个 Runtime；超限以 `RESYNC_REQUIRED` 结束并丢弃缓冲值。网络中断同样使该
+订阅失效，调用方先建立新订阅再批量发现。订阅使用独立 `watch` 容量，单连接/Engine
+最多 16 条，不占用普通执行、状态读取或控制保留槽。
+
+Connector 内每秒扫描注册表以发现异步注册的宿主，仅用于成员变化；标题不通过
+轮询获取。来源暂时不可用时发布保留观察和 `availability:unavailable`，不会伪造
+更高修订的空标题；恢复连接后主动推送当前宿主快照。
+
 ## 验证记录
 
 首个切片：
@@ -45,4 +61,12 @@ bytes；非法类型、无效 UTF-8、超限、trim 后仍含 Unicode 控制字�
 覆盖 v1/v2 归并、缺失/null/非法/超限/重复、跨代次与大修订、正文淘汰、并发原子快照，
 以及 SDK/Gateway/独立 ACP 宿主和 AgentDirectory 的实际子进程发现。RPC 日志验证
 读取与浏览器重连没有调用原生控制方法。目录范围通知及 connector 重启验收尚未完成。
+第二个切片：
+
+- `go test -race ./internal/latest ./internal/wire ./pkg/fabricd ./tests -run '^(TestMailbox|TestRuntimeWatch|TestProtectedStreamsAfterConnectorCrashWithOrdinarySubscriptionsFull|TestRequestClass)' -count=1 -timeout=240s`：通过。
+
+覆盖有界合并、缓冲失效、移除后的迟到发布，以及 SDK → Gateway → connector →
+独立宿主通知；订阅后启动的新 Runtime 无需打开面板即可收到标题。强杀并重启
+connector 后重订阅恢复最后标题，RPC 日志不增加；普通流占满时控制和恢复仍可用。
+
 mock 进程不计为真实厂商 Agent 验收；本次环境未启用 `DUNE_REAL_AGENT`。

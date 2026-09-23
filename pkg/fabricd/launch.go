@@ -85,6 +85,7 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 	}
 	argv, _ := p.Start.Args()
 	r := &runtime{id: wire.ID(), inc: wire.ID(), adapter: p.Adapter, title: filepath.Base(argv[0]), cwd: p.WorkingDirectory, projectID: p.ProjectID, directoryID: p.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+	r.observer = d.publishRuntime
 	if p.Adapter == "acp" {
 		r.hostInfo = &api.ACPHostInfo{Protocol: sessionProtocol}
 	}
@@ -173,6 +174,10 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 	d.mu.Lock()
 	d.runtimes[r.id] = r
 	d.mu.Unlock()
+	d.startRuntimeObservers()
+	if r.host == nil {
+		r.publishObservation()
+	}
 	info := r.info()
 	if err := progress("started", "", &info); err != nil {
 		failSubmission(s, receipt, err)

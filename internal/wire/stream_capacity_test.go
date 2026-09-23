@@ -46,6 +46,10 @@ func TestRequestClassUsesDecodedBusinessActionAndExactTarget(t *testing.T) {
 	if RequestClass(m) != StreamWait {
 		t.Fatal("long poll can occupy state readers")
 	}
+	m.Operation = "runtime.watch"
+	if RequestClass(m) != StreamWatch {
+		t.Fatal("directory subscription can occupy ordinary or state-read slots")
+	}
 }
 
 func TestStreamCapacityBoundsIndependentClassesAndConcurrentRelease(t *testing.T) {

@@ -93,6 +93,7 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 	for _, session := range sessions {
 		m := session.Runtime
 		r := &runtime{id: m.ID, inc: m.Incarnation, title: m.Title, cwd: m.WorkingDirectory, projectID: m.ProjectID, directoryID: m.DirectoryID, adapter: "pty", tmux: session, subs: map[*subscription]bool{}, done: make(chan struct{})}
+		r.observer = d.publishRuntime
 		state, err := session.TimeoutState()
 		if err != nil {
 			return nil, err

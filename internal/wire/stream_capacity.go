@@ -17,6 +17,7 @@ const (
 	StreamOrdinary     StreamClass = "ordinary"
 	StreamRead         StreamClass = "read"
 	StreamWait         StreamClass = "wait"
+	StreamWatch        StreamClass = "watch"
 	StreamPermission   StreamClass = "permission"
 	StreamElicitation  StreamClass = "elicitation"
 	StreamCancel       StreamClass = "cancel"
@@ -26,7 +27,7 @@ const (
 	MaxReservedStreams             = 16
 	// Includes the connection control stream. Ordinary streams cannot borrow
 	// reserved execution slots even when the transport backlog has room.
-	MaxPendingStreams = 1 + MaxRequestReaders + MaxStreams + 7*MaxReservedStreams
+	MaxPendingStreams = 1 + MaxRequestReaders + MaxStreams + 8*MaxReservedStreams
 )
 
 func RequestClass(m *pb.Message) StreamClass {
@@ -34,6 +35,8 @@ func RequestClass(m *pb.Message) StreamClass {
 		return StreamOrdinary
 	}
 	switch m.Operation {
+	case "runtime.watch":
+		return StreamWatch
 	case "machine.info", "runtime.list", "runtime.get", "acp.state", "acp.raw.state", "acp.raw.read", "acp.conversation.read", "acp.conversation.get", "agent.operation.read", "runtime.capture", "runtime.scrollback", "profile.status":
 		return StreamRead
 	case "agent.operation.wait":
@@ -89,7 +92,7 @@ func NewStreamCapacity(scale int) *StreamCapacity {
 		panic("stream capacity scale must be positive")
 	}
 	c := &StreamCapacity{slots: make(map[StreamClass]chan struct{})}
-	for _, class := range []StreamClass{StreamOpening, StreamOrdinary, StreamRead, StreamWait, StreamPermission, StreamElicitation, StreamCancel, StreamStop, StreamForget} {
+	for _, class := range []StreamClass{StreamOpening, StreamOrdinary, StreamRead, StreamWait, StreamWatch, StreamPermission, StreamElicitation, StreamCancel, StreamStop, StreamForget} {
 		limit := MaxReservedStreams
 		if class == StreamOpening {
 			limit = MaxRequestReaders

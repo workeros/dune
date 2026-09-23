@@ -62,6 +62,12 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || submission.Operation != m.Operation || submission.Target.RuntimeID == "" || !matchesSubmissionScope(scope, submission.Target, m) {
 			return r, ErrDenied
 		}
+	case "runtime.watch":
+		if r.Runtime.ID != "" || r.Runtime.Incarnation != "" || r.Runtime.Generation != 0 {
+			return r, ErrDenied
+		}
+		// A Runner directory stream carries the same observations as runtime.list.
+		r.Operation = "runtime.list"
 	case "machine.info", "runtime.list", "runtime.get", "runtime.capture", "runtime.scrollback", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys":
 	case "agent.mcp.configure":
 		var config api.AgentMCP

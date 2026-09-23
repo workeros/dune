@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-var capabilities = []string{"submission.get", "profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
+var capabilities = []string{"submission.get", "profile.prepare", "profile.start", "profile.status", "agent.mcp.configure", "acp.state", "acp.conversation.read", "acp.conversation.get", "acp.conversation.changed", "agent.operation.wait", "agent.operation.read", "pty.prompt", "pty.keys", "machine.info", "runtime.list", "runtime.get", "runtime.watch", "runtime.attach", "runtime.stop", "runtime.forget", "runtime.capture", "runtime.scrollback", "runtime.history", "exec", "files", "upload", "git", "worktree.list", "worktree.create", "ports.connect"}
 
 type cached struct {
 	hash   [32]byte
@@ -32,47 +32,49 @@ type profileAttempt struct {
 	at     time.Time
 }
 type Engine struct {
-	cleaner           *process.Cleaner
-	registry          *sessionregistry.Registry
-	events            *lifecycle.Log
-	submissionReads   chan struct{}
-	stateReads        chan struct{}
-	discoveryReads    chan struct{}
-	discoveryIssues   []api.RuntimeDiscoveryIssue
-	discoveryScanMu   sync.Mutex
-	discoveryNextScan time.Time
-	launching         map[string]string
-	operationWaits    chan struct{}
-	streams           *wire.StreamCapacity
-	starts            chan struct{}
-	mu                sync.Mutex
-	inc               string
-	generation        uint64
-	runtimes          map[string]*runtime
-	uploads           map[string]*upload
-	cache             map[string]*cached
-	attempts          map[string]*profileAttempt
-	bulk              chan struct{}
-	searchSlots       chan struct{}
-	conversations     *conversationStore
-	conversationReads chan struct{}
-	fileMu            sync.Mutex
-	gitLocks          gitRepositoryLocks
-	ctx               context.Context
-	tmux              *tmux.Server
-	stateDir          string
-	acpTmux           *tmux.Server
-	sessionTerm       uint64
-	cancel            context.CancelFunc
-	closeOnce         sync.Once
-	active            sync.WaitGroup
-	lock              *os.File
-	startedAt         time.Time
-	versionsMu        sync.Mutex
-	versions          []api.TmuxVersion
-	versionsAt        time.Time
-	cleanups          map[api.SubmissionKey]*cleanupExecution
-	cleanupBarrier    func(api.SubmissionKey, string) error
+	runtimeWatches     runtimeWatchHub
+	runtimeObserveOnce sync.Once
+	cleaner            *process.Cleaner
+	registry           *sessionregistry.Registry
+	events             *lifecycle.Log
+	submissionReads    chan struct{}
+	stateReads         chan struct{}
+	discoveryReads     chan struct{}
+	discoveryIssues    []api.RuntimeDiscoveryIssue
+	discoveryScanMu    sync.Mutex
+	discoveryNextScan  time.Time
+	launching          map[string]string
+	operationWaits     chan struct{}
+	streams            *wire.StreamCapacity
+	starts             chan struct{}
+	mu                 sync.Mutex
+	inc                string
+	generation         uint64
+	runtimes           map[string]*runtime
+	uploads            map[string]*upload
+	cache              map[string]*cached
+	attempts           map[string]*profileAttempt
+	bulk               chan struct{}
+	searchSlots        chan struct{}
+	conversations      *conversationStore
+	conversationReads  chan struct{}
+	fileMu             sync.Mutex
+	gitLocks           gitRepositoryLocks
+	ctx                context.Context
+	tmux               *tmux.Server
+	stateDir           string
+	acpTmux            *tmux.Server
+	sessionTerm        uint64
+	cancel             context.CancelFunc
+	closeOnce          sync.Once
+	active             sync.WaitGroup
+	lock               *os.File
+	startedAt          time.Time
+	versionsMu         sync.Mutex
+	versions           []api.TmuxVersion
+	versionsAt         time.Time
+	cleanups           map[api.SubmissionKey]*cleanupExecution
+	cleanupBarrier     func(api.SubmissionKey, string) error
 }
 
 func newEngine(parent context.Context) *Engine {
@@ -179,6 +181,9 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	}
 	var e error
 	switch m.Operation {
+	case "runtime.watch":
+		d.watchRuntimes(s, m)
+		return
 	case "runtime.forget":
 		d.submitForget(s, m, target)
 		return

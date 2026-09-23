@@ -43,6 +43,9 @@ type subscription struct {
 	pendingChange    *api.ACPConversationChanged
 }
 type runtime struct {
+	observer               func(*runtime, api.Runtime)
+	observationMu          sync.Mutex
+	observing              bool // Engine.mu protects source admission.
 	mu                     sync.Mutex
 	spawnMu                sync.Mutex
 	id, inc, adapter       string
@@ -278,6 +281,7 @@ func (d *Engine) stop(r *runtime) error {
 	if r.tmux != nil {
 		d.mu.Lock()
 		delete(d.runtimes, r.id)
+		d.runtimeWatches.publish(api.RuntimeChange{Runtime: api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter}, Removed: true})
 		d.mu.Unlock()
 	}
 	return nil
@@ -303,6 +307,8 @@ func (r *runtime) finish(code int) {
 	r.mu.Unlock()
 	if r.tmux == nil {
 		r.emit(&pb.Message{Kind: "exit", Payload: api.Payload(code)})
+	} else {
+		r.publishObservation()
 	}
 }
 func (r *runtime) subscribe(owner bool, conversationOnly bool) (*subscription, error) {
@@ -372,6 +378,9 @@ func (r *runtime) unsubscribe(s *subscription) {
 }
 
 func (r *runtime) emit(m *pb.Message) {
+	if m.Kind == "acp_conversation_changed" || m.Kind == "acp_state" || m.Kind == "exit" {
+		r.publishObservation()
+	}
 	r.mu.Lock()
 	subs := make([]*subscription, 0, len(r.subs))
 	for s := range r.subs {

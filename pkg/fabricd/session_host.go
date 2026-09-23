@@ -144,6 +144,7 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 		return err
 	}
 	r := &runtime{target: reg.Target, id: reg.Runtime.ID, inc: reg.Runtime.Incarnation, adapter: "acp", title: reg.Runtime.Title, cwd: boot.Profile.WorkingDirectory, projectID: boot.Profile.ProjectID, directoryID: boot.Profile.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
+	r.observer = d.publishRuntime
 	hostStarted := time.Now().UTC()
 	build := buildinfo.Current()
 	r.events = d.events
@@ -434,7 +435,7 @@ func serveSessionConnection(ctx context.Context, conn net.Conn, d *Engine, r *ru
 
 func sessionOperation(operation string) bool {
 	switch operation {
-	case "submission.acp", "submission.raw", "acp.raw.state", "acp.raw.read", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.mcp.configure", "agent.operation.wait", "agent.operation.read", "runtime.attach", "runtime.get", "runtime.stop":
+	case "submission.acp", "submission.raw", "acp.raw.state", "acp.raw.read", "acp.state", "acp.conversation.read", "acp.conversation.get", "agent.mcp.configure", "agent.operation.wait", "agent.operation.read", "runtime.attach", "runtime.get", "runtime.watch", "runtime.stop":
 		return true
 	default:
 		return false
