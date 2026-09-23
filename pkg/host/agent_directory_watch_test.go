@@ -8,8 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiomni/dune/internal/authorization"
+	"github.com/aiomni/dune/internal/identity"
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/client"
+	"github.com/aiomni/dune/pkg/runner"
 )
 
 func TestAgentDirectorySubscriptionDiscoversTitlesAndRevokesBufferedData(t *testing.T) {
@@ -55,5 +60,28 @@ func TestAgentDirectorySubscriptionDiscoversTitlesAndRevokesBufferedData(t *test
 	after, err := os.ReadFile(journal)
 	if err != nil || string(before) != string(after) {
 		t.Fatal("directory subscription dispatched native controls", err)
+	}
+}
+
+type directoryReadPolicy struct{}
+
+func (directoryReadPolicy) Check(_ context.Context, request access.Request) (access.Decision, error) {
+	return access.Decision{Allowed: request.Operation != "runtime.list", Reason: "DIRECTORY_READ", ID: request.RequestID, ValidUntil: time.Now().Add(access.MaxLease)}, nil
+}
+func TestAgentDirectorySubscriptionFiltersUnauthorizedRunnersBeforeDial(t *testing.T) {
+	f := openExecutorFixture(t)
+	service := f.app.agentService()
+	service.Access = authorization.New(t.Context(), identity.NewLocal(f.app.store, false), f.app.store, directoryReadPolicy{}, nil)
+	service.Dial = func(context.Context, agents.Scope, runner.Binding, string) (*client.Client, func(), error) {
+		t.Error("denied Runner reached the transport")
+		return nil, nil, errors.New("unexpected transport")
+	}
+	subscription, err := service.Subscribe(t.Context(), f.agentScope(), agents.DirectoryWatch{})
+	if err != nil {
+		t.Fatal("denied Runner broke the remaining authorized range", err)
+	}
+	subscription.Close()
+	if _, err := service.Subscribe(t.Context(), f.agentScope(), agents.DirectoryWatch{RunnerIDs: []string{f.binding.RunnerID}}); err == nil {
+		t.Fatal("explicit denied Runner accepted")
 	}
 }

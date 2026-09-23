@@ -10,6 +10,7 @@ import (
 	"github.com/aiomni/dune/internal/latest"
 	"github.com/aiomni/dune/internal/metadata"
 	"github.com/aiomni/dune/internal/wire"
+	"github.com/aiomni/dune/pkg/access"
 	"github.com/aiomni/dune/pkg/agents"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
@@ -131,7 +132,19 @@ func (s *directorySubscription) resources(ctx context.Context) ([]authorization.
 		if err != nil {
 			return nil, err
 		}
-		resources = append(resources, page.Items...)
+		for _, resource := range page.Items {
+			if resource.OwnerID != s.scope.OwnerID {
+				return nil, metadata.ErrNotFound
+			}
+			_, err := s.service.Access.Check(ctx, s.scope.Principal, resource, "runtime.list", resource.Runner.Kind)
+			if errors.Is(err, access.ErrDenied) && !errors.Is(err, access.ErrUnavailable) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			resources = append(resources, resource)
+		}
 		if len(resources) > maxDirectoryRunners {
 			return nil, &api.Error{Code: "RESOURCE_EXHAUSTED", Detail: "directory subscription exceeds 128 Runners; select a smaller range"}
 		}

@@ -74,9 +74,7 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
     };
     const connect = () => {
       if (disposed || !current.current.length) return;
-      const query = new URLSearchParams();
-      for (const runner of current.current) query.append("runner_id", runner.id);
-      const activeSource = new EventSource(siteURL(`${prefix}/agents/events?${query}`));
+      const activeSource = new EventSource(siteURL(`${prefix}/agents/events`));
       source = activeSource;
       activeSource.onmessage = (message) => {
         if (disposed || source !== activeSource) return;
