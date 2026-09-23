@@ -58,6 +58,18 @@
 
 这些原语已测试，尚未装配到独立 worker 和标准安装入口，不表示在线升级已经交付。
 
+### 持久任务与执行状态约束
+
+`internal/upgradejob` 用独立 SQLite 库持久接纳、冻结请求/清单和进度。原键去重先于源前置条件；
+拒绝也持久保存。部分唯一索引保证只有一个活动升级，恢复 owner 和操作修订同时约束每次写入。
+`succeeded` 需要完整、当前尝试的证明；平台拒绝、路由失败、旧进程、旧清单、旧挑战及超时
+均不能提交成功。回滚必须另建尝试，且保留原失败原因；迟到的目标确认不能结束回滚。
+
+终态确认和封闭清理是有序步骤：终态已落盘但封闭未清理的任务仍占活动位置，恢复可以只完成
+清理，不能重新升级。历史保留最新 128 个终态及至少 24 小时详情，随后保留原键/摘要墓碑。
+总提交证据最多 4096 条，不回收键容量重新执行；满额时明确拒绝继续接纳。活动和受阻恢复不回收。
+状态机默认总期限 10 分钟，worker 还需落实每阶段和回滚期限。
+
 ## 后续装配决策
 
 宿主配置 `upgrade.Source`，负责从固定发行引用解析获准的不可变清单。Runner/worker 使用
@@ -79,5 +91,7 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 | U06 部分 | `TestUpgradePreflightRejectsPendingHostWithDifferentWriteSemantics`、`TestSharedContractRefusesReopenWithoutChangingAcceptedEvidence`：不同合同在预检/打开数据库时被拒绝，提交证据不丢失 | 待启动宿主及当前 schema，无历史迁移 |
 | 受影响回归 | `go test ./internal/sessionregistry ./internal/launchgate ./internal/runningprogram ./internal/retainedprogram ./pkg/fabricd -count=1 -timeout=900s` 全部通过 | 包含本机真实宿主与可控 Agent；不等于厂商 Agent 或原生服务管理器 |
 | U02/U03/U05/U13 部分 | `go test ./internal/release ./internal/installation ./pkg/upgrade -count=1`：完整组件核验、非法归档、源变化、回滚修订、原先缺失组件保留；切换意图/链接替换/记录提交边界恢复 | 本机文件与状态测试；跨文件系统及服务管理器待验收 |
+| U02/U03/U04/U10/U11/U12/U16/U17/U18/U19 部分 | `go test -race ./internal/upgradejob -count=1 -timeout=120s`：跨数据库连接并发去重、修订冲突、重开后原键查询、证明不全不能成功、恢复 fencing、回滚迟到确认、分页与过期键不重放 | SQLite/状态机测试；未替代真实平台拒绝或 HTTP/worker 整链 |
+| 静态/竞争检查 | `go test -race ./internal/launchgate ./internal/installation ./internal/release ./internal/upgradejob ./pkg/upgrade -count=1 -timeout=180s`；`go vet ./internal/launchgate ./internal/runningprogram ./internal/installation ./internal/release ./internal/upgradejob ./pkg/upgrade` 通过 | 当前新增原语 |
 
 U01–U19 的完整闭环、原生 systemd/launchd、四平台运行和真实厂商 Agent 尚未验收。
