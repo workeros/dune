@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestManifestDigestFreezesEveryComponentAndIgnoresListOrder(t *testing.T) {
+func testManifest() Manifest {
 	m := Manifest{ID: "release", Platform: Platform{OS: "darwin", Arch: "arm64"}, ArchiveURL: "https://releases.example/dune.tar.gz", ArchiveSHA256: strings.Repeat("a", 64), StateContract: strings.Repeat("b", 64)}
 	for _, path := range []string{"dune", "tmux", "rg", "licenses/NOTICE"} {
 		mode := uint32(0700)
@@ -14,6 +14,11 @@ func TestManifestDigestFreezesEveryComponentAndIgnoresListOrder(t *testing.T) {
 		}
 		m.Components = append(m.Components, Component{Path: path, SHA256: strings.Repeat("c", 64), Bytes: 42, Mode: mode})
 	}
+	return m
+}
+
+func TestManifestDigestFreezesEveryComponentAndIgnoresListOrder(t *testing.T) {
+	m := testManifest()
 	digest, err := m.Digest()
 	if err != nil {
 		t.Fatal(err)

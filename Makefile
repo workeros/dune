@@ -69,4 +69,4 @@ release: build web
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o bin/dune-darwin-arm64 ./cmd/dune
 	python3 scripts/fetch-tmux.py --all
 	python3 scripts/fetch-rg.py --all
-	python3 scripts/package-release.py
+	python3 scripts/package-release.py --release-id "$(RELEASE_ID)" --base-url "$(RELEASE_BASE_URL)"

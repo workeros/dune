@@ -30,12 +30,26 @@ fabricd 默认只调用当前程序目录中的 `rg`，不自动使用 PATH 中�
 
 ## 发行包
 
-`make release` 构建 Web 资源和 Linux/macOS × amd64/arm64 的 Dune 程序，
+`make release RELEASE_ID=<固定发行ID> RELEASE_BASE_URL=https://example.com/releases/<固定目录>`
+构建 Web 资源和 Linux/macOS × amd64/arm64 的 Dune 程序，
 准备所有固定依赖，再生成 `bin/dune-<os>-<arch>.tar.gz` 和相邻的 `.sha256` 文件。
 每份归档包含：
 
 - `dune`、`tmux`、`rg`，位于同一级程序目录。
 - `licenses/`，包含上游授权说明和 tmux/ripgrep 的固定版本清单。
+
+每个平台同时生成 `.manifest.json`、`.ref.json`，以及整个发行的 `upgrade-catalog.json`。
+清单记录全部普通文件的摘要、大小及安装权限、当前共享状态合同、不可变归档 URL 和摘要；
+引用摘要按 Go `Manifest.Digest` 的 JSON 规则计算。归档成员按路径排序，时间戳固定，
+不包含本机用户名或符号链接。发布方将归档放在指定固定 URL 后，宿主加载获准目录：
+
+```sh
+dune web --url https://dune.example.com --upgrade-catalog /absolute/upgrade-catalog.json
+```
+
+嵌入宿主也可用 `upgrade.NewCatalog` / `ReadCatalog` 配置 `host.Options.UpgradeSource`，
+或实现自身发行策略。目录在宿主启动时冻结；更新目录后重启宿主。客户端只提交 `.ref.json`
+中的固定身份，不能指定下载命令。单平台已构建产物可用打包脚本的 `--platform OS-ARCH` 发布。
 
 安装和升级必须整体安装这些内容。持久配置、证书、SessionDir、tmux socket 与
 工作目录放在发行目录之外。升级保持 tmux 3.7c 不变：新的 tmux 客户端继续连接
@@ -55,7 +69,6 @@ PTY 超时 helper 在创建 Runtime 时已启动，到期只使用当前进程�
 重开后读取原因与历史，以及 stop/forget 清理。真实休眠、真实 Agent 和服务管理器
 升级仍按[开发流程](workflow.md)及目标平台条件另行验收。
 
-`tests/installer_test.go` 使用临时 HOME 和私有服务命令替身启动真实 fabricd，
-验证启动回执成功才清理旧目录、错误 nonce 不清理，以及 PTY 超时跨目录切换与
-旧程序删除后的恢复。它不会调用测试机器的真实 launchctl/systemctl；服务管理器
-自身的行为仍需要目标平台验收。
+`TestNativeRunnerOnlineUpgrade` 使用独立、唯一的用户服务名称运行真实安装器、worker 和
+不同 Dune 发行，通过公开升级 API 及真实 Gateway 路由检查成功与平台注册拒绝后的回滚。
+用 `DUNE_TEST_SERVICE_MANAGER=1` 显式启用；该测试在结束时卸载自身创建的服务。

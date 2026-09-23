@@ -21,6 +21,7 @@ import (
 	"github.com/aiomni/dune/internal/webapp"
 	"github.com/aiomni/dune/pkg/fabricd"
 	"github.com/aiomni/dune/pkg/host"
+	"github.com/aiomni/dune/pkg/upgrade"
 )
 
 func main() {
@@ -191,6 +192,7 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 	databaseFile := flags.String("database-config", "", "private SQL configuration; replaces the default SQLite data directory")
 	clusterFile := flags.String("cluster-config", "", "private PostgreSQL cluster and mutual TLS peer configuration")
 	assets := flags.String("assets", "web/dist", "built React assets directory")
+	catalogPath := flags.String("upgrade-catalog", "", "approved immutable release catalog JSON")
 	binaries := flags.String("binaries", "bin", "published dune-OS-ARCH binaries directory")
 	publicURL := flags.String("url", "", "public browser HTTP(S) URL, optionally with a deployment prefix")
 	gatewayURL := flags.String("gateway-url", "", "optional complete machine WS(S) URL; defaults to public URL + api/v1/ws/tunnel")
@@ -202,6 +204,18 @@ func runWebCommand(ctx context.Context, machineConfig config.Config, args []stri
 		return err
 	}
 	options := host.Options{DataDir: *data, Assets: *assets, PublicURL: *publicURL, GatewayURL: *gatewayURL, Binaries: *binaries, DisableRegistration: *disableRegistration}
+	if *catalogPath != "" {
+		file, err := os.Open(*catalogPath)
+		if err != nil {
+			return err
+		}
+		catalog, err := upgrade.ReadCatalog(file)
+		file.Close()
+		if err != nil {
+			return fmt.Errorf("read approved upgrade catalog: %w", err)
+		}
+		options.UpgradeSource = catalog
+	}
 	if *trustedProxies != "" {
 		options.TrustedProxies = strings.Split(*trustedProxies, ",")
 	}
