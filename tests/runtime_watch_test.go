@@ -2,6 +2,8 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -20,8 +22,12 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 	defer subscription.Close()
 	p := profile(h.dir, "acp", mockACPBinary(t))
 	p.ManagedACP = true
+	updates, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	defer updates.Close()
+	_ = updates.(*net.TCPListener).SetDeadline(time.Now().Add(20 * time.Second))
 	journal := filepath.Join(h.dir, "watch-rpcs.log")
-	p.Env = map[string]string{"DUNE_MOCK_SESSION_TITLE": "unopened title", "DUNE_MOCK_RPC_LOG": journal}
+	p.Env = map[string]string{"DUNE_MOCK_SESSION_TITLE": "unopened title", "DUNE_MOCK_RPC_LOG": journal, "DUNE_MOCK_UPDATE_SOURCE": updates.Addr().String()}
 	runtime, launch, err := testStartProfile(h.client, h.ctx, p)
 	must(t, err)
 	launch.Close()
@@ -45,6 +51,29 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 	}
 	before, err := os.ReadFile(journal)
 	must(t, err)
+	producer, err := updates.Accept()
+	must(t, err)
+	defer producer.Close()
+	encoder := json.NewEncoder(producer)
+	var revision uint64
+	for _, title := range []string{"A", "B", "", "final before reconnect"} {
+		must(t, encoder.Encode(map[string]any{"sessionUpdate": "session_info_update", "title": title}))
+		for {
+			change, err := subscription.Next()
+			must(t, err)
+			metadata := change.Runtime.SessionMetadata
+			if metadata == nil || metadata.Revision <= revision || (title == "" && metadata.Title != nil) || (title != "" && (metadata.Title == nil || *metadata.Title != title)) {
+				continue
+			}
+			revision = metadata.Revision
+			page, err := h.client.List(ctx)
+			must(t, err)
+			if len(page.Items) != 1 || string(api.Payload(page.Items[0].SessionMetadata)) != string(api.Payload(metadata)) || page.Items[0].Title != runtime.Title {
+				t.Fatal("barrier-confirmed notification and discovery disagree", page)
+			}
+			break
+		}
+	}
 	// A new subscription recovers the current value without requiring a new
 	// title event, a per-Runtime attach, or a native session replay.
 	subscription.Close()
@@ -59,6 +88,9 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 		change, err := recovered.Next()
 		must(t, err)
 		if change.Runtime.ID == runtime.ID && change.Runtime.SessionMetadata != nil && change.Runtime.SessionMetadata.Title != nil {
+			if change.Runtime.SessionMetadata.Revision != revision || *change.Runtime.SessionMetadata.Title != "final before reconnect" {
+				t.Fatal("reconnect lost the final title or revision", change)
+			}
 			break
 		}
 	}

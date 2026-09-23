@@ -487,10 +487,20 @@ func TestACPRejectsCallbacksFromOldConnectionWithSameNativeID(t *testing.T) {
 	if page := conversationPage(t, a.conversation); len(page.Entries) != 1 || rawMessageText(page.Entries[0].Message.Content[0]) != "from fresh connection" {
 		t.Fatal("fresh replay was not retained")
 	}
+	title := api.Payload(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "session-a", "update": map[string]any{"sessionUpdate": "session_info_update", "title": "current title"}}})
+	before := a.snapshot().SessionMetadata
+	a.r.acceptACPLineFrom(title, old)
+	if string(api.Payload(a.snapshot().SessionMetadata)) != string(api.Payload(before)) {
+		t.Fatal("old title callback crossed the connection boundary")
+	}
+	a.r.acceptACPLineFrom(title, fresh)
+	if current := a.snapshot().SessionMetadata; current.Title == nil || *current.Title != "current title" || current.Revision <= before.Revision {
+		t.Fatal("fresh title was not accepted", current)
+	}
 }
 
 func TestACPInFlightCallbacksCannotCrossLoadBoundary(t *testing.T) {
-	for _, kind := range []string{"permission", "response"} {
+	for _, kind := range []string{"permission", "response", "title"} {
 		t.Run(kind, func(t *testing.T) {
 			a, _ := queueFixture(t)
 			a.mu.Lock()
@@ -510,10 +520,16 @@ func TestACPInFlightCallbacksCannotCrossLoadBoundary(t *testing.T) {
 			if kind == "response" {
 				message = map[string]any{"jsonrpc": "2.0", "id": "old-prompt", "result": map[string]string{"stopReason": "end_turn"}}
 			}
+			if kind == "title" {
+				message = map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "session-a", "update": map[string]any{"sessionUpdate": "session_info_update", "title": "late title"}}}
+			}
 			a.receive(api.Payload(message))
 			after := a.snapshot()
 			if len(after.Permissions) != 0 || after.Revision != before.Revision || after.Conversation.Revision != before.Conversation.Revision {
 				t.Fatalf("in-flight old callback changed new state: before=%+v after=%+v", before, after)
+			}
+			if string(api.Payload(after.SessionMetadata)) != string(api.Payload(before.SessionMetadata)) {
+				t.Fatal("in-flight title changed the new generation")
 			}
 			select {
 			case <-reply:

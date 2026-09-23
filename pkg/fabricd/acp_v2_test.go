@@ -238,3 +238,43 @@ func TestACPV2ConfigurationAndPlanReplacement(t *testing.T) {
 		t.Fatal(state)
 	}
 }
+
+func TestACPV2ResumeTitleOutcomes(t *testing.T) {
+	for _, replay := range []bool{false, true} {
+		for _, outcome := range []string{"succeeded", "failed", "unknown"} {
+			for _, withTitle := range []bool{false, true} {
+				a, requests := v2QueueFixture(t)
+				emitV2(a, `{"sessionUpdate":"session_info_update","title":"old generation"}`)
+				previous := a.snapshot().SessionMetadata
+				if _, err := a.action(api.ACPAction{Action: "resume"}); err == nil {
+					t.Fatal("invalid resume accepted")
+				}
+				if string(api.Payload(previous)) != string(api.Payload(a.snapshot().SessionMetadata)) {
+					t.Fatal("rejected resume changed metadata")
+				}
+				operation := submitAction(t, a, api.ACPAction{Action: "resume", SessionID: "session-a", Replay: replay})
+				rpc := takeRPC(t, requests)
+				current := a.snapshot().SessionMetadata
+				if current.Title != nil || current.Revision <= previous.Revision || *current.ConversationID == *previous.ConversationID {
+					t.Fatal("resume inherited previous generation", current)
+				}
+				if withTitle {
+					emitV2(a, `{"sessionUpdate":"session_info_update","title":"observed before outcome"}`)
+				}
+				switch outcome {
+				case "succeeded":
+					replyRPC(a, rpc, map[string]any{})
+				case "failed":
+					a.receive(api.Payload(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "error": map[string]any{"code": -32000, "message": "resume denied"}}))
+				case "unknown":
+					a.closed()
+				}
+				waitOperation(t, a, operation)
+				snapshot := a.snapshot()
+				if snapshot.Conversation.OpenOutcome != outcome || (withTitle && (snapshot.SessionMetadata.Title == nil || *snapshot.SessionMetadata.Title != "observed before outcome")) || (!withTitle && snapshot.SessionMetadata.Title != nil) {
+					t.Fatalf("replay=%v outcome=%s withTitle=%v: %+v", replay, outcome, withTitle, snapshot)
+				}
+			}
+		}
+	}
+}

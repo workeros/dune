@@ -76,26 +76,34 @@ func TestSessionMetadataOutlivesContentAndConversationRevisions(t *testing.T) {
 	for _, action := range []string{"new", "load", "resume"} {
 		for _, replay := range []bool{false, true} {
 			for _, outcome := range []string{"succeeded", "failed", "unknown"} {
-				prior := slot.metadata
-				slot.begin(api.ACPAction{Action: action, SessionID: "same-native-id", Replay: replay})
-				model, metadata = slot.snapshot()
-				if metadata.Revision <= prior.Revision || metadata.Title != nil || metadata.ConversationID == prior.ConversationID {
-					t.Fatal("new generation inherited metadata", metadata)
-				}
-				conversationUpdate(t, slot, "", `{"sessionUpdate":"session_info_update","title":"A"}`)
-				slot.opened("same-native-id", "/work", outcome, nil)
-				slot.store.maxEntries = 1
-				for i := 0; i < 3; i++ {
-					conversationUpdate(t, slot, "", `{"sessionUpdate":"vendor_event","data":"body"}`)
-				}
-				conversationUpdate(t, slot, "", `{"sessionUpdate":"session_info_update","updatedAt":"later"}`)
-				slot.exited()
-				current := slot.describe()
-				if current.SessionMetadata.Title == nil || *current.SessionMetadata.Title != "A" || current.SessionMetadata.Revision != metadata.Revision+1 || !current.PrefixEvicted {
-					t.Fatal("metadata lost with content/open outcome", current)
-				}
-				if slot.pending.SessionMetadata.Revision != current.SessionMetadata.Revision || *slot.pending.SessionMetadata.Title != "A" {
-					t.Fatal("merged notification lost final metadata", slot.pending)
+				for _, withTitle := range []bool{false, true} {
+					prior := slot.metadata
+					slot.begin(api.ACPAction{Action: action, SessionID: "same-native-id", Replay: replay})
+					model, metadata = slot.snapshot()
+					if metadata.Revision <= prior.Revision || metadata.Title != nil || metadata.ConversationID == prior.ConversationID {
+						t.Fatal("new generation inherited metadata", metadata)
+					}
+					if withTitle {
+						conversationUpdate(t, slot, "", `{"sessionUpdate":"session_info_update","title":"A"}`)
+					}
+					slot.opened("same-native-id", "/work", outcome, nil)
+					slot.store.maxEntries = 1
+					for i := 0; i < 3; i++ {
+						conversationUpdate(t, slot, "", `{"sessionUpdate":"vendor_event","data":"body"}`)
+					}
+					conversationUpdate(t, slot, "", `{"sessionUpdate":"session_info_update","updatedAt":"later"}`)
+					slot.exited()
+					current := slot.describe()
+					expectedRevision := metadata.Revision
+					if withTitle {
+						expectedRevision++
+					}
+					if (withTitle && (current.SessionMetadata.Title == nil || *current.SessionMetadata.Title != "A")) || (!withTitle && current.SessionMetadata.Title != nil) || current.SessionMetadata.Revision != expectedRevision || !current.PrefixEvicted {
+						t.Fatal("metadata lost with content/open outcome", current)
+					}
+					if string(api.Payload(slot.pending.SessionMetadata)) != string(api.Payload(current.SessionMetadata)) {
+						t.Fatal("merged notification lost final metadata", slot.pending)
+					}
 				}
 			}
 		}

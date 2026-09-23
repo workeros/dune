@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,7 +36,10 @@ func main() {
 	scan := bufio.NewScanner(os.Stdin)
 	scan.Buffer(make([]byte, 4096), 256*1024)
 	enc := json.NewEncoder(os.Stdout)
+	var outputMu sync.Mutex
 	send := func(v any) {
+		outputMu.Lock()
+		defer outputMu.Unlock()
 		if e := enc.Encode(v); e != nil {
 			os.Exit(1)
 		}
@@ -115,6 +119,9 @@ func main() {
 			reply(m.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dune-mock-acp", "version": "1"}, "agentCapabilities": caps, "authMethods": []any{}})
 		case "session/new":
 			reply(m.ID, map[string]string{"sessionId": "mock-session"})
+			if address := os.Getenv("DUNE_MOCK_UPDATE_SOURCE"); address != "" {
+				go readUpdates(address, send)
+			}
 			if title := os.Getenv("DUNE_MOCK_SESSION_TITLE"); title != "" {
 				for _, update := range []map[string]any{
 					{"sessionUpdate": "session_info_update", "title": title},
@@ -207,5 +214,24 @@ func main() {
 	if e := scan.Err(); e != nil {
 		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
+	}
+}
+
+// Tests supply asynchronous updates through a separate barrier-controlled
+// channel. This leaves native RPC logs meaningful: discovery never drives the
+// Agent just to make a title observable.
+func readUpdates(address string, send func(any)) {
+	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		panic(err)
+	}
+	defer connection.Close()
+	scanner := bufio.NewScanner(connection)
+	for scanner.Scan() {
+		var update map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &update); err != nil {
+			panic(err)
+		}
+		send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "mock-session", "update": update}})
 	}
 }

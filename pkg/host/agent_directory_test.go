@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,9 +190,15 @@ func TestAgentDirectoryKeepsHealthyRunnersWhenAnotherRunnerIsOffline(t *testing.
 func TestAgentDirectoryPreservesPartialRuntimeDiscoveryFromOneRunner(t *testing.T) {
 	f := openExecutorFixture(t)
 	healthy := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, Adapter: "acp", State: "running"}
+	title, conversation := "batch title", "conversation"
+	healthy.SessionMetadata = &api.SessionMetadata{Revision: 1 << 53, ConversationID: &conversation, Title: &title}
+	sibling := healthy
+	sibling.ID = wire.ID()
 	broken := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, Adapter: "acp", Availability: "unavailable"}
 	service := f.app.agentService()
+	var connections, calls atomic.Int32
 	service.Dial = func(ctx context.Context, _ agents.Scope, binding runner.Binding, operation string) (*client.Client, func(), error) {
+		connections.Add(1)
 		if binding != f.binding || operation != "runtime.list" {
 			t.Error("discovery changed target or performed a control", binding, operation)
 		}
@@ -224,10 +231,11 @@ func TestAgentDirectoryPreservesPartialRuntimeDiscoveryFromOneRunner(t *testing.
 				t.Error("unexpected RPC", request.Operation)
 				return
 			}
+			calls.Add(1)
 			if err := wire.Write(stream, &pb.Message{Kind: "accepted"}); err != nil {
 				return
 			}
-			_ = wire.Write(stream, &pb.Message{Kind: "result", Payload: api.Payload(api.RuntimeList{Items: []api.Runtime{healthy}, Complete: false, Issues: []api.RuntimeDiscoveryIssue{{Runtime: &broken, Code: "REGISTRATION_INVALID"}}})})
+			_ = wire.Write(stream, &pb.Message{Kind: "result", Payload: api.Payload(api.RuntimeList{Items: []api.Runtime{healthy, sibling}, Complete: false, Issues: []api.RuntimeDiscoveryIssue{{Runtime: &broken, Code: "REGISTRATION_INVALID"}}})})
 		}()
 		connection, err := client.Connect(ctx, local, binding.MachineID)
 		if err != nil {
@@ -237,8 +245,16 @@ func TestAgentDirectoryPreservesPartialRuntimeDiscoveryFromOneRunner(t *testing.
 		return connection, func() { connection.Close(); server.Close() }, nil
 	}
 	page, err := service.List(t.Context(), f.agentScope(), runner.Query{})
-	if err != nil || page.Complete || len(page.Items) != 1 || page.Items[0].Runtime.ID != healthy.ID || len(page.Runners) != 1 || !page.Runners[0].Ready || len(page.Issues) != 1 || page.Issues[0].Runtime == nil || page.Issues[0].Runtime.ID != broken.ID || page.Issues[0].Code != "REGISTRATION_INVALID" {
+	if err != nil || page.Complete || len(page.Items) != 2 || page.Items[0].Runtime.ID != healthy.ID || len(page.Runners) != 1 || !page.Runners[0].Ready || len(page.Issues) != 1 || page.Issues[0].Runtime == nil || page.Issues[0].Runtime.ID != broken.ID || page.Issues[0].Code != "REGISTRATION_INVALID" {
 		t.Fatal("partial discovery hid healthy sibling or lost original issue", page, err)
+	}
+	for _, item := range page.Items {
+		if string(api.Payload(item.Runtime.SessionMetadata)) != string(api.Payload(healthy.SessionMetadata)) {
+			t.Fatal("batch discovery omitted metadata", item)
+		}
+	}
+	if connections.Load() != 1 || calls.Load() != 1 {
+		t.Fatal("batch discovery added per-Runtime reads", connections.Load(), calls.Load())
 	}
 }
 
