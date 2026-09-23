@@ -585,3 +585,113 @@ func TestTerminalCleanupSurvivesLostConfiguration(t *testing.T) {
 	}
 	f.assertUnsealed()
 }
+
+func replaceCurrent(t *testing.T, root, directory string) {
+	t.Helper()
+	link := filepath.Join(root, ".external-current")
+	if err := os.Symlink(directory, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(link, filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *workerFixture) assertRecoveryMaterialsRetained() {
+	f.t.Helper()
+	for _, directory := range []string{f.source.Directory, f.worker.record.Candidate.Directory} {
+		if _, err := os.Stat(filepath.Join(f.worker.root, directory, "dune")); err != nil {
+			f.t.Fatal("recovery distribution removed", directory, err)
+		}
+	}
+	if _, err := launchgate.Acquire(f.worker.metadata.StateDir, false); !errors.Is(err, launchgate.ErrBusy) {
+		f.t.Fatal("unverified installation allowed launch", err)
+	}
+}
+
+func TestWorkerRetainsUnexpectedlySelectedDownload(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("interrupted-%t", interrupted), func(t *testing.T) {
+			f := newWorkerFixture(t)
+			download := f.worker.download
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			f.worker.download = func(ctx context.Context, manifest upgrade.Manifest, path string) error {
+				if err := download(ctx, manifest, path); err != nil {
+					return err
+				}
+				replaceCurrent(t, f.worker.root, f.worker.record.Candidate.Directory)
+				if interrupted {
+					cancel()
+					return context.Canceled
+				}
+				return nil
+			}
+			err := f.worker.execute(ctx, f.operation.ID)
+			if interrupted {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+				f.worker.gate = nil
+				err = f.worker.execute(t.Context(), f.operation.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := f.result()
+			if op.Confirmed || op.Phase != upgrade.RecoveryBlocked || !op.LaunchSealed || op.Rollback != upgrade.RollbackBlocked || f.restarts != 0 {
+				t.Fatalf("unexpected pointer treated as untouched source: %+v", op)
+			}
+			f.assertRecoveryMaterialsRetained()
+		})
+	}
+}
+
+func TestWorkerChecksSelectionBeforeTerminalRelease(t *testing.T) {
+	for _, stage := range []string{"proof_received", "confirmed", "unseal"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newWorkerFixture(t)
+			f.worker.barrier = func(point string) error {
+				if point == stage {
+					replaceCurrent(t, f.worker.root, f.source.Directory)
+				}
+				return nil
+			}
+			_ = f.worker.execute(t.Context(), f.operation.ID)
+			op := f.result()
+			if !op.LaunchSealed || (stage == "proof_received" && op.Confirmed) {
+				t.Fatalf("unexpected pointer finalized or unsealed: %+v", op)
+			}
+			f.assertRecoveryMaterialsRetained()
+			// A worker restart must obey the same check when resuming a durable
+			// terminal result, without changing its already-confirmed facts.
+			if err := f.worker.installed.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_ = Run(t.Context(), f.worker.root)
+			f.assertRecoveryMaterialsRetained()
+		})
+	}
+}
+
+func TestMaintenanceRetainsUnexpectedlySelectedMaterials(t *testing.T) {
+	f := newWorkerFixture(t)
+	if err := f.worker.execute(t.Context(), f.operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Reintroduce an old owned release after terminal cleanup, then select it
+	// without updating the installation record. Maintenance must not collect it.
+	writeDistribution(t, filepath.Join(f.worker.root, f.source.Directory), "v1")
+	replaceCurrent(t, f.worker.root, f.source.Directory)
+	if err := f.worker.installed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Maintain(t.Context(), f.worker.root); err == nil {
+		t.Fatal("maintenance trusted only the installation record")
+	}
+	for _, directory := range []string{f.source.Directory, f.worker.record.Candidate.Directory} {
+		if _, err := os.Stat(filepath.Join(f.worker.root, directory, "dune")); err != nil {
+			t.Fatal("maintenance removed recovery material", err)
+		}
+	}
+}

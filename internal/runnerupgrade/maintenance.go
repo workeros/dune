@@ -20,11 +20,11 @@ func cleanupMaterials(root string, installed *installation.Store, record upgrade
 }
 
 func removeMaterials(root string, installed *installation.Store, materials upgradejob.Materials) error {
-	current, err := installed.Read()
+	current, err := installed.Selected()
 	if err != nil {
 		return err
 	}
-	if current.Pending != nil || current.Metadata.ID != materials.InstallationID {
+	if current.Metadata.ID != materials.InstallationID {
 		return issue("INSTALLATION_CHANGED")
 	}
 	for _, directory := range materials.Directories {

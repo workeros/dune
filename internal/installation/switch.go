@@ -71,15 +71,12 @@ func (s *Store) Restore(ctx context.Context, owner launchgate.Seal, source Locat
 }
 
 func (s *Store) switchTo(ctx context.Context, owner launchgate.Seal, target Location) error {
-	record, err := s.Read()
+	record, err := s.Selected()
 	if err != nil {
 		return err
 	}
 	if api.ValidateSubmissionID(owner.OperationID) != nil {
 		return fmt.Errorf("original operation required")
-	}
-	if record.Pending != nil {
-		return ErrRecoveryRequired
 	}
 	// The seal is an independent fail-closed obligation, not an optional caller
 	// convention. Ownership is additionally fenced by this installation lock.
@@ -126,7 +123,8 @@ func (s *Store) RecoverSwitch(ctx context.Context, owner launchgate.Seal) error 
 		return err
 	}
 	if record.Pending == nil {
-		return nil
+		_, err := s.Selected()
+		return err
 	}
 	if record.Pending.OperationID != owner.OperationID {
 		return fmt.Errorf("another operation owns installation recovery")

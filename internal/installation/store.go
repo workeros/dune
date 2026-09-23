@@ -150,6 +150,24 @@ func (s *Store) Read() (Record, error) {
 	return readRecord(s.root)
 }
 
+// Selected verifies that the physical current pointer agrees with the durable
+// record. It neither hashes components nor advances the revision, and remains
+// usable for recovery cleanup when configuration files have become unavailable.
+func (s *Store) Selected() (Record, error) {
+	record, err := s.Read()
+	if err != nil {
+		return Record{}, err
+	}
+	if record.Pending != nil {
+		return Record{}, ErrRecoveryRequired
+	}
+	actual, err := s.currentDirectory()
+	if err != nil || actual != record.Current.Directory {
+		return Record{}, ErrRecoveryRequired
+	}
+	return record, nil
+}
+
 func readRecord(root string) (Record, error) {
 	var record Record
 	if err := launchgate.CheckDirectory(root); err != nil {
@@ -213,17 +231,11 @@ func fingerprint(directory string, components []upgrade.ComponentObservation) st
 // Observe atomically advances the revision on external file/attribute changes.
 // A plain read or an operation-progress write cannot advance this counter.
 func (s *Store) Observe(ctx context.Context) (upgrade.Installation, error) {
-	record, err := s.Read()
+	record, err := s.Selected()
 	if err != nil {
 		return upgrade.Installation{}, err
 	}
-	if record.Pending != nil {
-		return upgrade.Installation{}, ErrRecoveryRequired
-	}
-	actual, err := s.currentDirectory()
-	if err != nil || actual != record.Current.Directory {
-		return upgrade.Installation{}, fmt.Errorf("unrecorded installation directory replacement")
-	}
+	actual := record.Current.Directory
 	components, complete, err := release.Observe(ctx, filepath.Join(s.root, actual), record.Current.Manifest.Components)
 	if err != nil {
 		return upgrade.Installation{}, err

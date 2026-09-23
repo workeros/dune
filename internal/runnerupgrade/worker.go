@@ -197,11 +197,10 @@ func (w *worker) execute(ctx context.Context, id string) error {
 			}
 		case upgrade.Downloading:
 			path := filepath.Join(w.root, w.record.Candidate.Directory)
-			// This directory was reserved by this original job before download. It is
-			// never selected while downloading, so interrupted staging can be discarded.
-			current, err := w.installed.Read()
-			if err != nil || current.Current.Directory == w.record.Candidate.Directory || current.Pending != nil {
-				return issue("INSTALLATION_RECOVERY_REQUIRED")
+			// Discard interrupted staging only after verifying the actual pointer;
+			// an external writer may have selected it since the last checkpoint.
+			if err := w.verifySelection(w.record.Original.Directory); err != nil {
+				return w.block(ctx, err, upgrade.RollbackBlocked)
 			}
 			if err := os.Remove(path + ".archive"); err != nil && !os.IsNotExist(err) {
 				return w.failBeforeSwitch(ctx, err)
@@ -255,6 +254,9 @@ func (w *worker) execute(ctx context.Context, id string) error {
 			}
 			if err := w.checkpoint("proof_received"); err != nil {
 				return err
+			}
+			if err := w.verifySelection(w.record.Candidate.Directory); err != nil {
+				return w.block(ctx, err, upgrade.RollbackBlocked)
 			}
 			if err := w.update(ctx, func(r *upgradejob.Record) {
 				r.Operation.Proof = &proof
@@ -439,9 +441,8 @@ func (w *worker) switchTarget(ctx context.Context) error {
 }
 
 func (w *worker) failBeforeSwitch(ctx context.Context, cause error) error {
-	current, err := w.installed.Read()
-	if err != nil || current.Pending != nil || w.record.Switched || (w.record.Original.Directory != "" && current.Current.Directory != w.record.Original.Directory) {
-		return issue("INSTALLATION_RECOVERY_REQUIRED")
+	if w.record.Switched || w.verifySelection(w.record.Original.Directory) != nil {
+		return w.block(ctx, issue("INSTALLATION_RECOVERY_REQUIRED"), upgrade.RollbackBlocked)
 	}
 	failure := failureIssue(cause, string(w.record.Operation.Phase))
 	if err := w.update(ctx, func(r *upgradejob.Record) {
@@ -514,6 +515,9 @@ func (w *worker) rollback(ctx context.Context) error {
 	if err != nil {
 		return w.block(ctx, err, upgrade.RollbackUnconfirmed)
 	}
+	if err := w.verifySelection(w.record.Original.Directory); err != nil {
+		return w.block(ctx, err, upgrade.RollbackBlocked)
+	}
 	if err := w.update(ctx, func(r *upgradejob.Record) {
 		r.Operation.Phase = upgrade.Failed
 		r.Operation.Confirmed = true
@@ -584,6 +588,9 @@ func (w *worker) block(ctx context.Context, cause error, state upgrade.RollbackS
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if err := w.claimSeal(ctx); err != nil {
+		return err
+	}
 	failure := failureIssue(cause, string(w.record.Operation.Phase))
 	return w.update(ctx, func(r *upgradejob.Record) {
 		if r.Operation.Failure == nil {
@@ -605,6 +612,13 @@ func (w *worker) unseal(ctx context.Context) error {
 	if err := w.checkpoint("unseal"); err != nil {
 		return err
 	}
+	expected := w.record.Original.Directory
+	if w.record.Operation.Phase == upgrade.Succeeded {
+		expected = w.record.Candidate.Directory
+	}
+	if err := w.verifySelection(expected); err != nil {
+		return err
+	}
 	if err := w.gate.ClearSeal(w.seal); err != nil {
 		return err
 	}
@@ -614,6 +628,14 @@ func (w *worker) unseal(ctx context.Context) error {
 		return cleanupMaterials(w.root, w.installed, record)
 	}
 	return err
+}
+
+func (w *worker) verifySelection(expected string) error {
+	current, err := w.installed.Selected()
+	if err != nil || current.Metadata != w.metadata || (expected != "" && current.Current.Directory != expected) {
+		return issue("INSTALLATION_RECOVERY_REQUIRED")
+	}
+	return nil
 }
 func failureIssue(err error, stage string) upgrade.Issue {
 	code := "UPGRADE_STAGE_FAILED"

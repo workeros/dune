@@ -165,8 +165,8 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 | U15 | 七个持久边界 SIGKILL；原生目标在线时杀 worker 并延迟接管，新启动持久拒绝，恢复不重复重启 | 实际 worker 测试子进程、原生服务整链、owner fencing |
 | U16 | SIGKILL 发起 HTTP 提交的 host，重开 PostgreSQL 连接后找回原任务；Runner 断线返回最近事实 | 两宿主进程原生整链、公开 API 离线观察 |
 | U17 | 后续升级不改写旧任务结果和原证明；当前检查独立于历史；未知任务不借当前版本补记成功 | 原生连续升级、宿主存储/worker 状态机 |
-| U18 | 当前权限、原 binding/安装身份、修订与过期键分别校验；离线缓存不绕过权限 | 授权 API、元数据、installation/upgradejob |
-| U19 | 重开持久记录恢复原阶段；确认后解封/清理中断可继续；活动和受阻材料不回收 | worker、installation、upgradejob；未执行整机断电 |
+| U18 | 当前权限、原 binding/安装身份、修订与过期键分别校验；离线缓存不绕过权限；实际 current 与记录不一致时拒绝终结和解封 | 授权 API、元数据、installation/upgradejob、worker 指针异常回归 |
+| U19 | 重开持久记录恢复原阶段；确认后解封/清理中断可继续；下载恢复和维护清理先核验实际 current；异常时保留封闭及恢复材料 | worker、installation、upgradejob；未执行整机断电 |
 
 ### 原生 macOS arm64 整链
 
