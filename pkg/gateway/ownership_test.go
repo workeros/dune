@@ -238,6 +238,7 @@ func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			defer cancel()
 			bindingSeen := make(chan api.Binding, 1)
+			callbackResult := make(chan struct{})
 			online := func(callbackCtx context.Context, binding api.Binding) error {
 				callbacks.Add(1)
 				if published.Load() != 1 || g.Online("machine") {
@@ -247,6 +248,14 @@ func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
 				observed.Capabilities = append([]string(nil), binding.Capabilities...)
 				bindingSeen <- observed
 				binding.Capabilities[0] = "mutated"
+				// Keep rejection from closing Yamux while the peer is still
+				// returning from Send(lease_ready). Receipt and send completion
+				// are independent events, not a transport success guarantee.
+				select {
+				case <-callbackResult:
+				case <-callbackCtx.Done():
+					return callbackCtx.Err()
+				}
 				switch behavior {
 				case "failure":
 					return errors.New("confirmation rejected")
@@ -273,6 +282,7 @@ func TestDaemonOnlineCallbackRunsAfterPublishBeforeVisibility(t *testing.T) {
 			if err := control.Send(&pb.Message{Kind: "lease_ready", InputLeaseId: welcome.InputLeaseId, RouteEpoch: 4}); err != nil {
 				t.Fatal(err)
 			}
+			close(callbackResult)
 			select {
 			case observed := <-bindingSeen:
 				if observed.Target != "machine" || observed.Generation != 2 || observed.RouteEpoch != 4 {
