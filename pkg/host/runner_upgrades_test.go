@@ -30,13 +30,15 @@ func TestRunnerUpgradePublicAdmissionQueriesAndOfflineObservations(t *testing.T)
 	service := f.app.RunnerUpgrader()
 	scope := upgrade.Scope{Principal: f.principal, OwnerID: f.owner, Binding: f.binding}
 	inspected, err := service.InspectRunner(t.Context(), scope)
-	if err != nil || inspected.Installation == nil || inspected.Running.SHA256 != f.program.SHA256 {
+	if err != nil || inspected.Installation == nil || inspected.Running.SHA256 != f.program.SHA256 || inspected.RunningFromSelectedRelease {
 		t.Fatal(inspected, err)
 	}
 	digest, _ := selected.Digest()
-	request := upgrade.Request{SubmissionID: "already-current", Binding: f.binding, InstallationID: f.observed.ID, ExpectedInstallationRevision: "999", ExpectedRunningSHA256: f.program.SHA256, Release: upgrade.ReleaseRef{ID: selected.ID, ManifestSHA256: digest}}
+	// The in-process fixture executes outside the installation. Equal bytes on
+	// disk cannot make it current or bypass the stale installation precondition.
+	request := upgrade.Request{SubmissionID: "old-running-directory", Binding: f.binding, InstallationID: f.observed.ID, ExpectedInstallationRevision: "999", ExpectedRunningSHA256: f.program.SHA256, Release: upgrade.ReleaseRef{ID: selected.ID, ManifestSHA256: digest}}
 	current, err := service.StartUpgrade(t.Context(), scope, request)
-	if err != nil || current.Operation.Phase != upgrade.AlreadyCurrent || !current.Operation.Confirmed || current.Freshness != "live" {
+	if err != nil || current.Operation.Admission != api.SubmissionNotAccepted || current.Operation.Failure == nil || current.Operation.Failure.Code != "INSTALLATION_CHANGED" || !current.Operation.Confirmed || current.Freshness != "live" {
 		t.Fatal(current, err)
 	}
 	again, err := service.StartUpgrade(t.Context(), scope, request)

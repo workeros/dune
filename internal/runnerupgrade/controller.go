@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/installation"
 	"github.com/aiomni/dune/internal/launchgate"
 	"github.com/aiomni/dune/internal/release"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/upgradecontrol"
 	"github.com/aiomni/dune/internal/upgradejob"
 	"github.com/aiomni/dune/internal/wire"
@@ -126,6 +127,7 @@ func (c *Controller) Start(ctx context.Context, request upgrade.Request, running
 		return reject(err)
 	}
 	source := upgrade.Inspection{Binding: request.Binding, Installation: &observed, Running: running, Supported: true, Issues: []upgrade.Issue{}}
+	source.RunningFromSelectedRelease = runningprogram.IsExecuting(filepath.Join(c.registration.Root, "current", "dune"))
 	return jobs.Admit(ctx, request, manifest, source, configurationSHA)
 }
 
@@ -146,7 +148,7 @@ func (c *Controller) Preview(ctx context.Context, request upgrade.PreviewRequest
 		return result, err
 	}
 	result.Target = manifest
-	result.Plan = upgrade.Compare(*source.Installation, source.Running, manifest)
+	result.Plan = upgrade.Compare(source, manifest)
 	// One ephemeral directory owns the download and extracted candidate. It is
 	// outside releases and never selected or registered as an installation.
 	cache, err := c.previewCache()

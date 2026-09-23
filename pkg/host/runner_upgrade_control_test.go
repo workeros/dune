@@ -180,7 +180,7 @@ func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T)
 		t.Fatal(err)
 	}
 	defer jobs.Close()
-	source := upgrade.Inspection{Binding: f.binding, Installation: &observed, Running: program, Supported: true}
+	source := upgrade.Inspection{RunningFromSelectedRelease: true, Binding: f.binding, Installation: &observed, Running: program, Supported: true}
 	source.Running.SHA256, source.Running.StartID = strings.Repeat("b", 64), "previous-process"
 	digest, _ := manifest.Digest()
 	request := upgrade.Request{SubmissionID: "routed-proof", Binding: f.binding, InstallationID: observed.ID, ExpectedInstallationRevision: observed.Revision, ExpectedRunningSHA256: source.Running.SHA256, Release: upgrade.ReleaseRef{ID: manifest.ID, ManifestSHA256: digest}}

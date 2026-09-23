@@ -22,6 +22,10 @@ func TestImageChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	selected, err := os.Executable()
+	if err != nil || !IsExecuting(selected) {
+		t.Fatal("original selected program was not recognized", err)
+	}
 	if err := json.NewEncoder(os.Stdout).Encode(first); err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +35,9 @@ func TestImageChild(t *testing.T) {
 	second, err := Inspect(t.Context())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if IsExecuting(selected) {
+		t.Fatal("replacement pathname was mistaken for executing file")
 	}
 	if first.StartID != second.StartID || first.SHA256 != second.SHA256 || first.PID != second.PID {
 		t.Fatal("replacement changed executing identity")

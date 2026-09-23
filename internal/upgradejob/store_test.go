@@ -43,7 +43,7 @@ func inspection(m upgrade.Manifest, revision string) upgrade.Inspection {
 	for _, c := range m.Components {
 		observations = append(observations, upgrade.ComponentObservation{Path: c.Path, SHA256: c.SHA256, Bytes: c.Bytes, Mode: c.Mode, Present: true, Matches: true})
 	}
-	return upgrade.Inspection{Supported: true, Binding: runner.Binding{RunnerID: "runner", MachineID: "machine", FabricID: "fabric", Revision: 1}, Running: api.RunningProgram{PID: 101, StartID: "source-process", SHA256: m.ProgramSHA256()}, Installation: &upgrade.Installation{ID: "installation", Revision: revision, Method: "service", Release: m, Components: observations, Complete: true}}
+	return upgrade.Inspection{RunningFromSelectedRelease: true, Supported: true, Binding: runner.Binding{RunnerID: "runner", MachineID: "machine", FabricID: "fabric", Revision: 1}, Running: api.RunningProgram{PID: 101, StartID: "source-process", SHA256: m.ProgramSHA256()}, Installation: &upgrade.Installation{ID: "installation", Revision: revision, Method: "service", Release: m, Components: observations, Complete: true}}
 }
 
 func jobFixture(t *testing.T) (*Store, upgrade.Request, upgrade.Manifest, upgrade.Inspection) {
@@ -380,5 +380,19 @@ func TestReadOnlyStoreCannotCreateOrAdvanceUpgrade(t *testing.T) {
 	defer reader.Close()
 	if _, err := reader.db.ExecContext(t.Context(), `DELETE FROM upgrade_settings`); err == nil {
 		t.Fatal("read-only handle permitted shared state mutation")
+	}
+}
+
+func TestEqualFilesStillRequireRestartOfOldReleaseProcess(t *testing.T) {
+	s, request, target, source := jobFixture(t)
+	source = inspection(target, source.Installation.Revision)
+	source.RunningFromSelectedRelease = false
+	request.ExpectedRunningSHA256 = source.Running.SHA256
+	op, err := s.Admit(t.Context(), request, target, source, digestText("config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.Phase == upgrade.AlreadyCurrent || op.Confirmed || op.Plan.ReleaseUpdateRequired || !op.Plan.ConnectorRestartRequired || op.Plan.RestartReason != "RUNNING_RELEASE_DIRECTORY_CHANGED" {
+		t.Fatal("stale process counted as already current", op)
 	}
 }

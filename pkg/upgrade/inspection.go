@@ -29,12 +29,13 @@ type Installation struct {
 }
 
 type Inspection struct {
-	StartedForUpgrade *Probe             `json:"started_for_upgrade,omitempty"`
-	Binding           runner.Binding     `json:"binding"`
-	Installation      *Installation      `json:"installation,omitempty"`
-	Running           api.RunningProgram `json:"running"`
-	Supported         bool               `json:"supported"`
-	Issues            []Issue            `json:"issues"`
+	RunningFromSelectedRelease bool               `json:"running_from_selected_release"`
+	StartedForUpgrade          *Probe             `json:"started_for_upgrade,omitempty"`
+	Binding                    runner.Binding     `json:"binding"`
+	Installation               *Installation      `json:"installation,omitempty"`
+	Running                    api.RunningProgram `json:"running"`
+	Supported                  bool               `json:"supported"`
+	Issues                     []Issue            `json:"issues"`
 }
 
 type Issue struct {
@@ -52,7 +53,11 @@ type Plan struct {
 // Compare considers the actual source observation. Helper programs are resolved
 // at connector startup, so changing any program or its active directory requires
 // restart. Existing tmux servers and retained session hosts are never restarted.
-func Compare(source Installation, running api.RunningProgram, target Manifest) Plan {
+func Compare(inspection Inspection, target Manifest) Plan {
+	if inspection.Installation == nil {
+		return Plan{ReleaseUpdateRequired: true, ConnectorRestartRequired: true, RestartReason: "INSTALLATION_UNVERIFIABLE", Differences: []string{}}
+	}
+	source, running := *inspection.Installation, inspection.Running
 	plan := Plan{Differences: []string{}}
 	observations := make(map[string]ComponentObservation, len(source.Components))
 	for _, c := range source.Components {
@@ -79,6 +84,10 @@ func Compare(source Installation, running api.RunningProgram, target Manifest) P
 	if plan.ReleaseUpdateRequired && !plan.ConnectorRestartRequired {
 		plan.ConnectorRestartRequired = true
 		plan.RestartReason = "DEPENDENCY_DIRECTORY_CHANGED"
+	}
+	if !inspection.RunningFromSelectedRelease && !plan.ConnectorRestartRequired {
+		plan.ConnectorRestartRequired = true
+		plan.RestartReason = "RUNNING_RELEASE_DIRECTORY_CHANGED"
 	}
 	return plan
 }

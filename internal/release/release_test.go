@@ -131,7 +131,7 @@ func TestFullReleaseObservationAndExactSourceCopy(t *testing.T) {
 			if err != nil || complete != (changed == "none") {
 				t.Fatal(observed, complete, err)
 			}
-			plan := upgrade.Compare(upgrade.Installation{Release: manifest, Components: observed, Complete: complete}, api.RunningProgram{SHA256: manifest.ProgramSHA256()}, manifest)
+			plan := upgrade.Compare(upgrade.Inspection{Installation: &upgrade.Installation{Release: manifest, Components: observed, Complete: complete}, Running: api.RunningProgram{SHA256: manifest.ProgramSHA256()}, RunningFromSelectedRelease: true}, manifest)
 			if plan.ReleaseUpdateRequired != (changed != "none") {
 				t.Fatal("Dune SHA hid component change", plan)
 			}

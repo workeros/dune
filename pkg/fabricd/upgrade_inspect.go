@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/upgrade"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
+	"path/filepath"
 )
 
 func (d *Engine) inspectUpgrade(s *executionStream, message *pb.Message) {
@@ -55,5 +56,6 @@ func (d *Engine) inspectInstallation(ctx context.Context, binding runner.Binding
 		return result, err
 	}
 	result.Installation, result.Supported = &observed, true
+	result.RunningFromSelectedRelease = runningprogram.IsExecuting(filepath.Join(registration.Root, "current", "dune"))
 	return result, nil
 }

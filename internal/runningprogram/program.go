@@ -82,6 +82,18 @@ func Open() (*os.File, error) {
 	return duplicate(image.file)
 }
 
+// IsExecuting compares the selected pathname with the pinned kernel file. Equal
+// digests do not establish that a process started from a new release directory.
+func IsExecuting(path string) bool {
+	image, err := current()
+	if err != nil {
+		return false
+	}
+	running, err := image.file.Stat()
+	selected, selectedErr := os.Stat(path)
+	return err == nil && selectedErr == nil && os.SameFile(running, selected)
+}
+
 func measure(ctx context.Context, file *os.File) (api.RunningProgram, error) {
 	var identity api.RunningProgram
 	before, err := file.Stat()

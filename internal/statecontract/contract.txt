@@ -34,7 +34,10 @@ progress or recovery cannot substitute a new endpoint or credential identity.
 
 Upgrade data: immutable release manifests include every program and license with
 content hash and mode. Installation revisions advance on every physical change,
-including rollback and externally detected changes. Operation revisions order
+including rollback and externally detected changes. Equal program content does
+not prove that the connector uses the selected dependency directory: no-op
+admission verifies the selected kernel file, and equal-image restarts attest
+the original attempt at connector startup. Operation revisions order
 progress separately. Durable admission precedes worker dispatch. One exclusive
 installation owner performs switching or recovery with write-ahead checkpoints.
 The persistent launch seal precedes switching/shared target writes and survives

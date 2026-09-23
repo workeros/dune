@@ -141,7 +141,7 @@ func newWorkerFixture(t *testing.T, auxiliaryOnly ...bool) *workerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceView := upgrade.Inspection{Binding: binding, Installation: &observed, Running: f.running, Supported: true}
+	sourceView := upgrade.Inspection{RunningFromSelectedRelease: true, Binding: binding, Installation: &observed, Running: f.running, Supported: true}
 	digest, _ := target.Digest()
 	request := upgrade.Request{SubmissionID: "request", Binding: binding, InstallationID: metadata.ID, ExpectedInstallationRevision: observed.Revision, ExpectedRunningSHA256: f.running.SHA256, Release: upgrade.ReleaseRef{ID: target.ID, ManifestSHA256: digest}}
 	configurationSHA, err := configurationFingerprint(configPath)
@@ -174,7 +174,7 @@ func (f *workerFixture) Binding(ctx context.Context, expected runner.Binding) (r
 }
 func (f *workerFixture) Inspect(ctx context.Context, binding runner.Binding) (upgrade.Inspection, error) {
 	observed, err := installation.View(ctx, f.worker.root)
-	return upgrade.Inspection{Binding: binding, Installation: &observed, Running: f.running, Supported: true, StartedForUpgrade: f.started}, err
+	return upgrade.Inspection{RunningFromSelectedRelease: true, Binding: binding, Installation: &observed, Running: f.running, Supported: true, StartedForUpgrade: f.started}, err
 }
 func (f *workerFixture) Confirm(ctx context.Context, probe upgrade.Probe) (upgrade.Proof, error) {
 	observed, err := installation.View(ctx, f.worker.root)

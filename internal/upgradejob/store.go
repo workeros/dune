@@ -276,7 +276,7 @@ func (s *Store) admit(ctx context.Context, request upgrade.Request, target upgra
 	case !source.Supported:
 		reject("UPGRADE_UNSUPPORTED")
 	default:
-		op.Plan = upgrade.Compare(*source.Installation, source.Running, target)
+		op.Plan = upgrade.Compare(source, target)
 		if !op.Plan.ReleaseUpdateRequired && !op.Plan.ConnectorRestartRequired {
 			op.Phase, op.Confirmed = upgrade.AlreadyCurrent, true
 		} else if source.Installation.Revision != request.ExpectedInstallationRevision || source.Running.SHA256 != request.ExpectedRunningSHA256 {

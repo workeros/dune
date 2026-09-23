@@ -2,7 +2,6 @@ package runnerupgrade
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"reflect"
 
@@ -61,14 +60,7 @@ func StartedAttempt(ctx context.Context, stateDir string) *upgrade.Probe {
 	}
 	// Equal content alone is insufficient: an old release inode can still be
 	// executing while current selects identical Dune with different helpers.
-	image, err := runningprogram.Open()
-	if err != nil {
-		return nil
-	}
-	defer image.Close()
-	running, err := image.Stat()
-	selected, selectedErr := os.Stat(filepath.Join(registration.Root, "current", "dune"))
-	if err != nil || selectedErr != nil || !os.SameFile(running, selected) {
+	if !runningprogram.IsExecuting(filepath.Join(registration.Root, "current", "dune")) {
 		return nil
 	}
 	latest, err := jobs.Active(ctx)
