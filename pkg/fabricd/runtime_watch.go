@@ -66,7 +66,7 @@ func (h *runtimeWatchHub) publish(change api.RuntimeChange) {
 func (d *Engine) publishRuntime(r *runtime, current api.Runtime) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.runtimes[r.id] == r {
+	if d.ctx.Err() == nil && d.runtimes[r.id] == r {
 		d.runtimeWatches.publish(api.RuntimeChange{Runtime: current})
 	}
 }

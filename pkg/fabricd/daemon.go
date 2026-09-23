@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
+	"maps"
 	"os"
 	goruntime "runtime"
 	"strconv"
@@ -104,8 +105,11 @@ func (d *Engine) Close() {
 		// accepted work has left the old engine.
 		d.active.Wait()
 		d.mu.Lock()
-		defer d.mu.Unlock()
-		for _, r := range d.runtimes {
+		runtimes, uploads := maps.Clone(d.runtimes), maps.Clone(d.uploads)
+		d.mu.Unlock()
+		// Process shutdown publishes its final observation. Do not hold the
+		// membership lock while waiting for callbacks that need that same lock.
+		for _, r := range runtimes {
 			if r.host != nil {
 				r.host.close()
 				continue
@@ -116,7 +120,7 @@ func (d *Engine) Close() {
 				_ = r.waitStop(context.Background())
 			}
 		}
-		for _, u := range d.uploads {
+		for _, u := range uploads {
 			u.cleanup()
 		}
 		if d.cleaner != nil {
