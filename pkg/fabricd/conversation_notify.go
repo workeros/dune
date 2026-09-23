@@ -40,6 +40,7 @@ func (s *conversationStore) run(ctx context.Context) {
 func (s *conversationSlot) notifyLocked(previous uint64) {
 	m := s.model
 	change := api.ACPConversationChanged{ConversationID: m.description.ID, PreviousRevision: previous, Revision: m.description.Revision, InvalidatesAll: m.invalidatesAll || previous == 0}
+	change.SessionMetadata = s.metadata
 	if !change.InvalidatesAll {
 		for id := range m.changed {
 			change.ChangedEntryIDs = append(change.ChangedEntryIDs, id)
@@ -59,6 +60,9 @@ func (s *conversationSlot) notifyLocked(previous uint64) {
 }
 
 func mergeConversationChanges(previous, next api.ACPConversationChanged) api.ACPConversationChanged {
+	if next.SessionMetadata.Revision < previous.SessionMetadata.Revision {
+		return previous
+	}
 	if previous.ConversationID != next.ConversationID {
 		next.PreviousRevision, next.InvalidatesAll, next.ChangedEntryIDs = 0, true, nil
 		return next

@@ -115,6 +115,14 @@ func main() {
 			reply(m.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dune-mock-acp", "version": "1"}, "agentCapabilities": caps, "authMethods": []any{}})
 		case "session/new":
 			reply(m.ID, map[string]string{"sessionId": "mock-session"})
+			if title := os.Getenv("DUNE_MOCK_SESSION_TITLE"); title != "" {
+				for _, update := range []map[string]any{
+					{"sessionUpdate": "session_info_update", "title": title},
+					{"sessionUpdate": "session_info_update", "updatedAt": "2026-09-23T00:00:00Z"},
+				} {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "mock-session", "update": update}})
+				}
+			}
 		case "session/list":
 			if !historyEnabled {
 				reply(m.ID, map[string]any{"sessions": []any{}})

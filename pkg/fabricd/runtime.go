@@ -120,9 +120,12 @@ func (r *runtime) info() api.Runtime {
 		state = "exited"
 	}
 	conversationID := ""
+	var metadata *api.SessionMetadata
 	if r.acp != nil {
-		if description := r.acp.conversation.describe(); description != nil {
-			conversationID = description.ID
+		_, snapshot := r.acp.conversation.snapshot()
+		metadata = &snapshot
+		if snapshot.ConversationID != nil {
+			conversationID = *snapshot.ConversationID
 		}
 	}
 	activity := r.activityLocked()
@@ -130,6 +133,7 @@ func (r *runtime) info() api.Runtime {
 		activity.State = "unknown"
 	}
 	info := api.Runtime{ConversationID: conversationID, ProjectID: r.projectID, DirectoryID: r.directoryID, ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter, State: state, ExitCode: r.exit, StopReason: r.stopReason, StartedAt: r.startedAt, DeadlineAt: r.deadlineAt, Title: r.title, WorkingDirectory: r.cwd, Activity: &activity, NativeSession: r.nativeSession}
+	info.SessionMetadata = metadata
 	if r.hostInfo != nil {
 		host := *r.hostInfo
 		host.LifecycleLog = lifecycleUsage(r.events)

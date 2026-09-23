@@ -223,6 +223,7 @@ type ExecResult struct {
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 }
 type Runtime struct {
+	SessionMetadata *SessionMetadata `json:"session_metadata,omitempty"`
 	// Availability describes the current connection, independently of State.
 	// Unavailable preserves the last confirmed lifecycle fact.
 	// Lost requires independent proof that the original host/group no longer exist.

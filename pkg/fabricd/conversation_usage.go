@@ -40,6 +40,10 @@ func (s *conversationStore) recordRead(bytes int, elapsed time.Duration) {
 func (s *conversationStore) mergeFailure(reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.mergeFailureLocked(reason)
+}
+
+func (s *conversationStore) mergeFailureLocked(reason string) {
 	if s.usage.MergeFailures == nil {
 		s.usage.MergeFailures = map[string]uint64{}
 	}

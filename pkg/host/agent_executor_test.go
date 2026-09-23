@@ -103,6 +103,14 @@ func TestFakeACPChild(t *testing.T) {
 			}
 			sessionID = "fake-acp-session"
 			fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-acp-session"}}`+"\n", request.ID)
+			if title := os.Getenv("DUNE_HOST_FAKE_ACP_TITLE"); title != "" {
+				for _, update := range []map[string]any{
+					{"sessionUpdate": "session_info_update", "title": title},
+					{"sessionUpdate": "session_info_update", "updatedAt": "2026-09-23T00:00:00Z"},
+				} {
+					fmt.Fprintln(os.Stdout, string(api.Payload(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": sessionID, "update": update}})))
+				}
+			}
 		case "session/load":
 			if !exerciseInjectedMCP(request.Params.MCPServers) {
 				fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"injected MCP unavailable"}}`+"\n", request.ID)

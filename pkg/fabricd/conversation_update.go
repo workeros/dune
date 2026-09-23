@@ -174,6 +174,9 @@ func (s *conversationSlot) update(update map[string]json.RawMessage, turnID stri
 				entry.ContextIncomplete = entry.TurnID == ""
 			}
 			m.put(*entry, key)
+		case "session_info_update":
+			s.mergeSessionInfo(update)
+			m.setState(kind, api.Payload(update))
 		case "plan", "available_commands_update", "current_mode_update", "config_option_update", "usage_update":
 			m.setState(kind, api.Payload(update))
 		default:

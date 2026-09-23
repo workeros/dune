@@ -21,6 +21,7 @@ const (
 // ACPState describes the live controller. Conversation describes retained data,
 // independently of whether the Agent can still accept an operation.
 type ACPState struct {
+	SessionMetadata    SessionMetadata       `json:"session_metadata"`
 	ProtocolVersion    int                   `json:"protocol_version"`
 	ForegroundState    string                `json:"foreground_state,omitempty"`
 	CanResume          bool                  `json:"can_resume"`
@@ -87,6 +88,7 @@ type ACPFailure struct {
 // ACPConversation revision orders commits only within ID. NativeSession and
 // controller revisions are separate counters. Reads never open a session.
 type ACPConversation struct {
+	SessionMetadata       SessionMetadata            `json:"session_metadata"`
 	ProtocolVersion       int                        `json:"protocol_version"`
 	ID                    string                     `json:"conversation_id"`
 	Revision              uint64                     `json:"revision,string"`
@@ -256,9 +258,10 @@ type ACPConversationEntries struct {
 }
 
 type ACPConversationChanged struct {
-	ConversationID   string   `json:"conversation_id"`
-	PreviousRevision uint64   `json:"previous_revision,string"`
-	Revision         uint64   `json:"revision,string"`
-	ChangedEntryIDs  []string `json:"changed_entry_ids,omitempty"`
-	InvalidatesAll   bool     `json:"invalidates_all"`
+	SessionMetadata  SessionMetadata `json:"session_metadata"`
+	ConversationID   string          `json:"conversation_id"`
+	PreviousRevision uint64          `json:"previous_revision,string"`
+	Revision         uint64          `json:"revision,string"`
+	ChangedEntryIDs  []string        `json:"changed_entry_ids,omitempty"`
+	InvalidatesAll   bool            `json:"invalidates_all"`
 }

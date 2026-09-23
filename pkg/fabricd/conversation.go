@@ -27,6 +27,7 @@ type conversationStore struct {
 }
 
 type conversationSlot struct {
+	metadata    api.SessionMetadata
 	store       *conversationStore
 	runtimeID   string
 	incarnation string
@@ -94,17 +95,26 @@ func (s *conversationSlot) begin(action api.ACPAction) {
 	s.model = &conversationModel{description: api.ACPConversation{ProtocolVersion: 1, ID: wire.ID(), Origin: action.Action,
 		Phase: phase, OpenOutcome: "pending", RequestedSessionID: action.SessionID, RequestedCwd: action.Cwd,
 		RetainedFromOrder: 1, NativeHistoryCoverage: coverage}, index: map[string]uint64{}}
+	s.metadata = api.SessionMetadata{Revision: s.metadata.Revision + 1, ConversationID: &s.model.description.ID}
+	s.model.description.SessionMetadata = s.metadata
 	s.commitLocked()
 }
 
 func (s *conversationSlot) describe() *api.ACPConversation {
+	description, _ := s.snapshot()
+	return description
+}
+
+// The model and metadata must be observed under one lock, including the
+// pre-conversation state. Published values are replaced, never edited in place.
+func (s *conversationSlot) snapshot() (*api.ACPConversation, api.SessionMetadata) {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
 	if s.model == nil {
-		return nil
+		return nil, s.metadata
 	}
 	description := s.model.description
-	return &description
+	return &description, s.metadata
 }
 
 func (s *conversationSlot) opened(sessionID, cwd, outcome string, failure *api.ACPFailure) {

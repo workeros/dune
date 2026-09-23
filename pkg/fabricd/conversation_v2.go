@@ -109,7 +109,10 @@ func (s *conversationSlot) updateV2(update map[string]json.RawMessage, turnID st
 				return
 			}
 			m.setState("plan/"+rawString(plan, "planId"), update["plan"])
-		case "state_update", "available_commands_update", "config_option_update", "usage_update", "session_info_update":
+		case "session_info_update":
+			s.mergeSessionInfo(update)
+			m.setState(kind, api.Payload(update))
+		case "state_update", "available_commands_update", "config_option_update", "usage_update":
 			m.setState(kind, api.Payload(update))
 		default:
 			m.retainUnknownUpdate(kind, update, turnID)
