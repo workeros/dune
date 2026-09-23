@@ -106,11 +106,8 @@ func (s *Store) Close() error {
 }
 
 func (m Metadata) Validate(root string) error {
-	if api.ValidateSubmissionID(m.ID) != nil || (m.Method != "service" && m.Method != "managed") || !filepath.IsAbs(m.ConfigPath) || !filepath.IsAbs(m.StateDir) {
-		return fmt.Errorf("complete standard installation metadata required")
-	}
-	if m.ServiceName == "" || len(m.ServiceName) > 64 || strings.Trim(m.ServiceName, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != "" {
-		return fmt.Errorf("standard service identity required")
+	if err := m.validateFields(); err != nil {
+		return err
 	}
 	for _, persistent := range []string{m.ConfigPath, m.StateDir} {
 		resolved, err := filepath.EvalSymlinks(persistent)
@@ -125,6 +122,19 @@ func (m Metadata) Validate(root string) error {
 		if err != nil || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
 			return fmt.Errorf("persistent state must be outside release directories")
 		}
+	}
+	return nil
+}
+
+// Decoding an installation identity cannot depend on its config still being
+// readable. Diagnostics and post-terminal seal cleanup must survive that loss.
+// Installation creation and worker mutation separately verify physical paths.
+func (m Metadata) validateFields() error {
+	if api.ValidateSubmissionID(m.ID) != nil || (m.Method != "service" && m.Method != "managed") || !filepath.IsAbs(m.ConfigPath) || !filepath.IsAbs(m.StateDir) {
+		return fmt.Errorf("complete standard installation metadata required")
+	}
+	if m.ServiceName == "" || len(m.ServiceName) > 64 || strings.Trim(m.ServiceName, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != "" {
+		return fmt.Errorf("standard service identity required")
 	}
 	return nil
 }
@@ -151,7 +161,7 @@ func readRecord(root string) (Record, error) {
 	if err := readJSON(filepath.Join(root, "installation.json"), &record); err != nil {
 		return record, err
 	}
-	if record.Metadata.Validate(root) != nil || record.Revision == 0 || !record.Current.valid() || !upgrade.ValidSHA256(record.Fingerprint) {
+	if record.Metadata.validateFields() != nil || record.Revision == 0 || !record.Current.valid() || !upgrade.ValidSHA256(record.Fingerprint) {
 		return record, fmt.Errorf("invalid installation record")
 	}
 	if pending := record.Pending; pending != nil && (api.ValidateSubmissionID(pending.OperationID) != nil || !pending.From.valid() || !pending.To.valid()) {

@@ -332,7 +332,7 @@ func (w *worker) validateContext(ctx context.Context) error {
 		return issue("UPGRADE_CONFIG_CHANGED")
 	}
 	current, err := w.installed.Read()
-	if err != nil || current.Metadata != w.metadata {
+	if err != nil || current.Metadata != w.metadata || current.Metadata.Validate(w.root) != nil {
 		return issue("INSTALLATION_CHANGED")
 	}
 	binding, err := w.control.Binding(ctx, w.record.Operation.Request.Binding)
@@ -395,6 +395,9 @@ func (w *worker) prepareSwitch(ctx context.Context) error {
 }
 
 func (w *worker) switchTarget(ctx context.Context) error {
+	if time.Now().After(w.record.Deadline) {
+		return issue("UPGRADE_DEADLINE")
+	}
 	if err := w.validateContext(ctx); err != nil {
 		return err
 	}

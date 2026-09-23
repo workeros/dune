@@ -99,6 +99,19 @@ func run() (runErr error) {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if args[0] == "upgrade-status" {
+		statusFlags := flag.NewFlagSet("upgrade-status", flag.ContinueOnError)
+		root := statusFlags.String("root", "", "original installation root")
+		operation := statusFlags.String("operation", "", "operation ID; default is active or most recent")
+		if err := statusFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		result, err := runnerupgrade.Status(ctx, *root, *operation)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
 	if args[0] == "upgrade-recover" {
 		recoveryFlags := flag.NewFlagSet("upgrade-recover", flag.ContinueOnError)
 		root := recoveryFlags.String("root", "", "original installation root")

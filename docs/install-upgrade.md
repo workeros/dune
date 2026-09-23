@@ -36,6 +36,8 @@ Linux 使用 systemd 用户实例，macOS 使用 launchd 用户域。attached �
 dune repair-services --root /absolute/installation
 # 手动唤醒已有活动操作，绝不接纳新升级：
 dune upgrade-worker --root /absolute/installation --once
+# 即使 connector 或原宿主不可达，也可读取本机活动任务的阶段、错误和当前修订：
+dune upgrade-status --root /absolute/installation
 # 修复 recovery_blocked 的诊断原因后，按查询返回的原操作和当前修订重试一次回滚：
 dune upgrade-recover --root /absolute/installation --operation OPERATION_ID --revision REVISION
 ```

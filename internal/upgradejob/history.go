@@ -23,6 +23,30 @@ func (s *Store) Active(ctx context.Context) (*Record, error) {
 	return &record, nil
 }
 
+// LocalStatus is for the installation owner's offline diagnostic command. It
+// never exposes private recovery paths/configuration, nor creates a task.
+func (s *Store) LocalStatus(ctx context.Context, installationID, operationID string) (upgrade.Operation, error) {
+	if api.ValidateSubmissionID(installationID) != nil || (operationID != "" && api.ValidateSubmissionID(operationID) != nil) {
+		return upgrade.Operation{}, fmt.Errorf("original installation and valid operation required")
+	}
+	query := `SELECT data,digest FROM upgrades ORDER BY active DESC,sequence DESC LIMIT 1`
+	var args []any
+	if operationID != "" {
+		query, args = `SELECT data,digest FROM upgrades WHERE operation_id=?`, []any{operationID}
+	}
+	record, _, err := scan(s.db.QueryRowContext(ctx, query, args...))
+	if errors.Is(err, sql.ErrNoRows) {
+		return upgrade.Operation{}, &api.Error{Code: "UPGRADE_NOT_FOUND", Detail: "no matching local upgrade record"}
+	}
+	if err != nil {
+		return upgrade.Operation{}, err
+	}
+	if record.Operation.Request.InstallationID != installationID {
+		return upgrade.Operation{}, &api.Error{Code: "INSTALLATION_CHANGED", Detail: "upgrade belongs to another installation"}
+	}
+	return record.Operation, nil
+}
+
 func (s *Store) List(ctx context.Context, binding runner.Binding, installationID, cursor string, limit int) (upgrade.Page, error) {
 	page := upgrade.Page{Items: []upgrade.Operation{}}
 	if !binding.Valid() || api.ValidateSubmissionID(installationID) != nil {

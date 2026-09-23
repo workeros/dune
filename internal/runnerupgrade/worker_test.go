@@ -530,3 +530,50 @@ func TestSwitchIntentFailureDoesNotRestartUntouchedSource(t *testing.T) {
 	}
 	f.assertUnsealed()
 }
+
+func TestOfflineStatusPreservesOriginalCheckpointWithoutConfig(t *testing.T) {
+	f := newWorkerFixture(t)
+	if err := os.Remove(f.worker.metadata.ConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, selector := range []string{"", f.operation.ID} {
+		observed, err := Status(t.Context(), f.worker.root, selector)
+		if err != nil || observed.ID != f.operation.ID || observed.Revision != f.operation.Revision || observed.Confirmed {
+			t.Fatal("diagnosis changed execution", observed, err)
+		}
+	}
+	if _, err := Status(t.Context(), f.worker.root, "missing"); err == nil {
+		t.Fatal("invented local operation")
+	}
+	if f.restarts != 0 || f.result().Revision != f.operation.Revision {
+		t.Fatal("local diagnosis restarted work")
+	}
+}
+
+func TestTerminalCleanupSurvivesLostConfiguration(t *testing.T) {
+	f := newWorkerFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	f.worker.barrier = func(stage string) error {
+		if stage == "confirmed" {
+			cancel()
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := f.worker.execute(ctx, f.operation.ID); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := os.Remove(f.worker.metadata.ConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.worker.installed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(t.Context(), f.worker.root); err != nil {
+		t.Fatal("confirmed cleanup depended on missing config", err)
+	}
+	if op := f.result(); op.Phase != upgrade.Succeeded || !op.Confirmed || op.LaunchSealed {
+		t.Fatal(op)
+	}
+	f.assertUnsealed()
+}
