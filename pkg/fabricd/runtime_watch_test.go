@@ -16,13 +16,13 @@ func TestRuntimeWatchRemovalFencesLatePublication(t *testing.T) {
 	old := api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, SessionMetadata: &api.SessionMetadata{Revision: 12}}
 	d.publishRuntime(r, old)
 	d.mu.Lock()
-	delete(d.runtimes, r.id)
-	d.runtimeWatches.publish(api.RuntimeChange{Runtime: old, Removed: true})
+	d.discoveryIssues = []api.RuntimeDiscoveryIssue{{Runtime: &old, Code: "REGISTRATION_TEMPORARY_FILE"}}
+	d.removeRuntimeLocked(r)
 	d.mu.Unlock()
 	old.SessionMetadata = &api.SessionMetadata{Revision: 100}
 	d.publishRuntime(r, old)
 	change, err := mailbox.Next(t.Context())
-	if err != nil || !change.Removed || change.Runtime.SessionMetadata.Revision != 12 {
+	if err != nil || !change.Removed || change.Runtime.Incarnation != r.inc || len(d.discoveryIssues) != 0 {
 		t.Fatal("late snapshot restored removed member", change, err)
 	}
 }

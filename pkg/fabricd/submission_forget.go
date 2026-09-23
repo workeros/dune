@@ -259,8 +259,7 @@ func (d *Engine) executeCleanup(ctx context.Context, job sessionregistry.Cleanup
 	d.mu.Lock()
 	r := d.runtimes[job.Key.Target.RuntimeID]
 	if r != nil && r.inc == job.Key.Target.RuntimeIncarnation {
-		delete(d.runtimes, r.id)
-		d.runtimeWatches.publish(api.RuntimeChange{Runtime: api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter}, Removed: true})
+		d.removeRuntimeLocked(r)
 	}
 	d.mu.Unlock()
 	d.discoveryScanMu.Unlock()

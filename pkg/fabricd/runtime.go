@@ -280,8 +280,7 @@ func (d *Engine) stop(r *runtime) error {
 	}
 	if r.tmux != nil {
 		d.mu.Lock()
-		delete(d.runtimes, r.id)
-		d.runtimeWatches.publish(api.RuntimeChange{Runtime: api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter}, Removed: true})
+		d.removeRuntimeLocked(r)
 		d.mu.Unlock()
 	}
 	return nil

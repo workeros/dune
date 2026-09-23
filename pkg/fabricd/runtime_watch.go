@@ -71,6 +71,21 @@ func (d *Engine) publishRuntime(r *runtime, current api.Runtime) {
 	}
 }
 
+// removeRuntimeLocked retires membership and cached discovery diagnostics at
+// the same boundary. A completed forget cannot leave an old registration issue
+// that makes the retired identity appear temporarily recoverable. Requires mu.
+func (d *Engine) removeRuntimeLocked(r *runtime) {
+	delete(d.runtimes, r.id)
+	issues := d.discoveryIssues[:0]
+	for _, issue := range d.discoveryIssues {
+		if issue.Runtime == nil || issue.Runtime.ID != r.id || issue.Runtime.Incarnation != r.inc {
+			issues = append(issues, issue)
+		}
+	}
+	d.discoveryIssues = issues
+	d.runtimeWatches.publish(api.RuntimeChange{Runtime: api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, Adapter: r.adapter}, Removed: true})
+}
+
 func (r *runtime) publishObservation() {
 	if r.observer == nil {
 		return
