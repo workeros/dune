@@ -37,12 +37,12 @@ func TestSessionHostControlFencesOlderConnectorsAndProbesAreReadOnly(t *testing.
 		}
 		stream := wire.Wrap(raw)
 		_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-		if err := stream.Send(&pb.Message{Kind: "host.connect", Payload: api.Payload(hello)}); err != nil {
-			t.Fatal(err)
-		}
+		// A rejected peer may send its reply and close before Send returns.
+		// Consume the original reply even then; never replay the handshake.
+		sendErr := stream.Send(&pb.Message{Kind: "host.connect", Payload: api.Payload(hello)})
 		m, err := stream.Recv()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("host reply unavailable: send=%v receive=%v", sendErr, err)
 		}
 		return sess, m
 	}
