@@ -66,7 +66,7 @@ func run() (runErr error) {
 		return runVersion(*configPath, args[1:])
 	}
 	if args[0] == "help" {
-		fmt.Println("Dune\n  dune version [--runner] (JSON; --runner uses --config FILE)\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN --runner-id ID\n  dune --config FILE repair|upgrade [--root DIR]\n  dune --config FILE upgrade-check (read-only target executable preflight)\n  dune --config FILE service install|restart|stop|status [--name dune]")
+		fmt.Println("Dune\n  dune version [--runner] (JSON; --runner uses --config FILE)\n  dune --config FILE init [IP:PORT] or init --listen IP:PORT --gateway ws://HOST:PORT/api/v1/ws/tunnel\n  dune --config FILE gateway\n  dune --config FILE fabricd\n  dune --config FILE web [--data DIR | --database-config FILE] [--url URL] [--cluster-config FILE]\n  dune --config FILE enroll --site URL --token TOKEN --runner-id ID\n  dune --config FILE install [--root DIR] [--method service|managed]\n  dune --config FILE upgrade-check (read-only target executable preflight)\n  dune --config FILE service restart|stop|status [--name dune]")
 		return nil
 	}
 	if args[0] == "init" {
@@ -98,12 +98,15 @@ func run() (runErr error) {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	machineConfig, err := config.Load(*configPath)
-	if err != nil {
-		return fmt.Errorf("load configuration: %w", err)
+	if args[0] == "repair-services" {
+		repairFlags := flag.NewFlagSet("repair-services", flag.ContinueOnError)
+		root := repairFlags.String("root", "", "registered installation root")
+		if err := repairFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		return install.RepairServices(ctx, *root)
 	}
-	switch args[0] {
-	case "upgrade-worker":
+	if args[0] == "upgrade-worker" {
 		workerFlags := flag.NewFlagSet("upgrade-worker", flag.ContinueOnError)
 		root := workerFlags.String("root", "", "registered installation root")
 		once := workerFlags.Bool("once", false, "resume one existing operation")
@@ -117,6 +120,13 @@ func run() (runErr error) {
 			return runnerupgrade.Run(ctx, *root)
 		}
 		return runnerupgrade.Watch(ctx, *root)
+	}
+	machineConfig, err := config.Load(*configPath)
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	switch args[0] {
+
 	case "upgrade-check":
 		report := fabricd.CheckUpgrade(ctx, machineConfig.SessionDir)
 		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
@@ -126,43 +136,30 @@ func run() (runErr error) {
 			return fmt.Errorf("uninterrupted connector replacement refused; see upgrade-check issues")
 		}
 		return nil
-	case "repair", "upgrade":
-		installFlags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	case "install":
+		installFlags := flag.NewFlagSet("install", flag.ContinueOnError)
 		home, _ := os.UserHomeDir()
-		root := installFlags.String("root", home+"/.local/share/dune", "owned installation directory")
+		root := installFlags.String("root", home+"/.local/share/dune", "new standard installation directory")
 		name := installFlags.String("name", "dune", "per-user service name")
+		method := installFlags.String("method", "service", "service or managed installation")
 		if err := installFlags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return install.Run(ctx, args[0], *configPath, *root, *name)
+		return install.Run(ctx, *configPath, *root, *name, *method)
+
 	case "gateway":
 		return internalgateway.Run(ctx, machineConfig)
 	case "service":
 		if len(args) < 2 {
-			return fmt.Errorf("service install|restart|stop|status [--name dune]")
+			return fmt.Errorf("service restart|stop|status [--name dune]")
 		}
 		serviceFlags := flag.NewFlagSet("service", flag.ContinueOnError)
-		readyFile := serviceFlags.String("ready-file", "", "private startup receipt path")
-		readyNonce := serviceFlags.String("ready-nonce", "", "private startup nonce")
-		name := serviceFlags.String("name", "dune", "per-user service name")
+		name := serviceFlags.String("name", "dune", "registered per-user service name")
 		if err := serviceFlags.Parse(args[2:]); err != nil {
 			return err
 		}
-		if machineConfig.SessionDir == "" {
-			return fmt.Errorf("background connector requires session_dir; use dune enroll first")
-		}
-		if args[1] == "install" {
-			var stop context.CancelFunc
-			ctx, stop = context.WithTimeout(ctx, 45*time.Second)
-			defer stop()
-			gate, report := fabricd.PrepareUpgrade(ctx, machineConfig.SessionDir)
-			if gate == nil {
-				_ = json.NewEncoder(os.Stderr).Encode(report)
-				return fmt.Errorf("uninterrupted connector replacement refused before stopping fabricd; see upgrade-check issues")
-			}
-			defer gate.Close()
-		}
-		return service.Run(ctx, args[1], *configPath, *name, *readyFile, *readyNonce)
+		return service.Run(ctx, args[1], *name)
+
 	case "fabricd":
 		daemonFlags := flag.NewFlagSet("fabricd", flag.ContinueOnError)
 		readyFile := daemonFlags.String("ready-file", "", "private startup receipt path")

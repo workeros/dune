@@ -143,7 +143,7 @@ func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T)
 		t.Fatal(err)
 	}
 	defer installed.Close()
-	_, err = installed.Initialize(ctx, installation.Metadata{ID: "installation", Method: "managed", ConfigPath: configPath, StateDir: f.stateDir}, installation.Location{Directory: directory, Manifest: manifest})
+	_, err = installed.Initialize(ctx, installation.Metadata{ID: "installation", Method: "managed", ServiceName: "test-runner", ConfigPath: configPath, StateDir: f.stateDir}, installation.Location{Directory: directory, Manifest: manifest})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -65,8 +65,14 @@ func ValidSHA256(value string) bool {
 }
 
 func (m Manifest) Validate() error {
-	if m.ID == "" || len(m.ID) > 128 || strings.ContainsAny(m.ID, "\r\n\x00") || !m.Platform.Valid() || !ValidSHA256(m.ArchiveSHA256) || !ValidSHA256(m.StateContract) {
+	if m.ID == "" || len(m.ID) > 128 || strings.ContainsAny(m.ID, "\r\n\x00") || !m.Platform.Valid() || !ValidSHA256(m.StateContract) {
 		return fmt.Errorf("complete release identity, platform and state contract required")
+	}
+	if m.ArchiveURL == "" && m.ArchiveSHA256 == "" {
+		return ValidateComponents(m.Components)
+	}
+	if !ValidSHA256(m.ArchiveSHA256) {
+		return fmt.Errorf("archive digest required with archive URL")
 	}
 	u, err := url.Parse(m.ArchiveURL)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.Fragment != "" || len(m.ArchiveURL) > 4096 {
@@ -135,4 +141,16 @@ func (m Manifest) ProgramSHA256() string {
 		}
 	}
 	return ""
+}
+
+// ValidateDownload distinguishes a published target from an initial local
+// installation receipt, whose contents are known without a download origin.
+func (m Manifest) ValidateDownload() error {
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	if m.ArchiveURL == "" || !ValidSHA256(m.ArchiveSHA256) {
+		return fmt.Errorf("published immutable archive required")
+	}
+	return nil
 }

@@ -21,7 +21,7 @@ import (
 // Download verifies the frozen archive before decoding any member. Both bytes
 // and time are bounded independently of browser/request waiting preferences.
 func Download(ctx context.Context, client *http.Client, manifest upgrade.Manifest, destination string) (err error) {
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.ValidateDownload(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

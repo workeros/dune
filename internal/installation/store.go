@@ -34,6 +34,7 @@ type Metadata struct {
 	Method      string `json:"method"`
 	ConfigPath  string `json:"config_path"`
 	StateDir    string `json:"state_dir"`
+	ServicePATH string `json:"service_path"`
 	ServiceName string `json:"service_name,omitempty"`
 }
 
@@ -108,7 +109,7 @@ func (m Metadata) Validate(root string) error {
 	if api.ValidateSubmissionID(m.ID) != nil || (m.Method != "service" && m.Method != "managed") || !filepath.IsAbs(m.ConfigPath) || !filepath.IsAbs(m.StateDir) {
 		return fmt.Errorf("complete standard installation metadata required")
 	}
-	if m.Method == "service" && (m.ServiceName == "" || len(m.ServiceName) > 64 || strings.Trim(m.ServiceName, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != "") {
+	if m.ServiceName == "" || len(m.ServiceName) > 64 || strings.Trim(m.ServiceName, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != "" {
 		return fmt.Errorf("standard service identity required")
 	}
 	for _, persistent := range []string{m.ConfigPath, m.StateDir} {

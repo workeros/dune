@@ -96,7 +96,7 @@ func (c *Client) Resolve(ctx context.Context, binding runner.Binding, ref upgrad
 	if err != nil {
 		return upgrade.Manifest{}, err
 	}
-	if result.Release == nil || !result.Release.Matches(ref) || result.Release.Platform != platform {
+	if result.Release == nil || result.Release.ValidateDownload() != nil || !result.Release.Matches(ref) || result.Release.Platform != platform {
 		return upgrade.Manifest{}, &api.Error{Code: "RELEASE_CHANGED", Detail: "host release differs from frozen reference or platform"}
 	}
 	return *result.Release, nil

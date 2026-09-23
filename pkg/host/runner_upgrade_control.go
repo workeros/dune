@@ -73,7 +73,7 @@ func (a *App) serveUpgradeControl(w http.ResponseWriter, r *http.Request) {
 			writeUpgradeControl(w, http.StatusBadGateway, upgradecontrol.Response{ErrorCode: "RELEASE_UNAVAILABLE"})
 			return
 		}
-		if !manifest.Matches(request.Release) || manifest.Platform != request.Platform {
+		if manifest.ValidateDownload() != nil || !manifest.Matches(request.Release) || manifest.Platform != request.Platform {
 			writeUpgradeControl(w, http.StatusConflict, upgradecontrol.Response{ErrorCode: "RELEASE_CHANGED"})
 			return
 		}

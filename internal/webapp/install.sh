@@ -2,7 +2,7 @@
 # One implementation for personal and host-issued connector installation.
 set -eu
 umask 077
-action=${1:?Usage: install.sh enroll SITE TOKEN RUNNER_ID [CA_CERT] | repair/upgrade SITE [CA_CERT]}
+action=${1:?Usage: install.sh enroll SITE TOKEN RUNNER_ID [CA_CERT] | install SITE [CA_CERT]}
 site=${2:?site required}
 site=${site%/}
 case "$site" in http://*|https://*) ;; *) echo 'HTTP or HTTPS site required' >&2; exit 1;; esac
@@ -13,17 +13,17 @@ case "$action" in
  enroll)
   # Lstat equivalent: even corrupt configurations and dangling symlinks count.
   if [ -e "$config_file" ] || [ -L "$config_file" ]; then
-   echo "Configuration already exists: $config_file. Use repair or upgrade with this binding." >&2; exit 1
+   echo "Configuration already exists: $config_file. Inspect the existing binding; use the Runner upgrade API." >&2; exit 1
   fi
   token=${3:?one-time token required}
   runner_id=${4:?pending Runner ID required}
   cert=${5:-}
   ;;
- repair|upgrade)
+ install)
   if [ ! -f "$config_file" ]; then echo 'A valid existing configuration is required. Check and revoke any unknown enrollment before issuing a new command.' >&2; exit 1; fi
   cert=${3:-}
   ;;
- *) echo 'Action must be enroll, repair or upgrade' >&2; exit 1;;
+ *) echo 'Action must be enroll or install' >&2; exit 1;;
 esac
 case "$(uname -s)" in Linux) platform=linux;; Darwin) platform=darwin;; *) echo 'Linux/macOS required' >&2; exit 1;; esac
 case "$(uname -m)" in x86_64|amd64) arch=amd64;; arm64|aarch64) arch=arm64;; *) echo 'amd64/arm64 required' >&2; exit 1;; esac
@@ -53,7 +53,7 @@ if [ "$action" = enroll ]; then
  else
   "$work_dir/dune" --config "$config_file" enroll --site "$site" --token "$token" --runner-id "$runner_id"
  fi
- action=repair
+ action=install
 fi
 "$work_dir/dune" --config "$config_file" "$action" --root "$root" --name "$name"
 printf 'CLI directory for PATH: %s/current\n' "$root"

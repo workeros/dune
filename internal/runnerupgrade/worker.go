@@ -100,7 +100,7 @@ func Run(ctx context.Context, root string) error {
 			return release.Download(ctx, nil, m, path)
 		},
 		restart: func(ctx context.Context, m installation.Metadata) error {
-			return service.Run(ctx, "restart", m.ConfigPath, m.ServiceName, "", "")
+			return service.Run(ctx, "restart", m.ServiceName)
 		},
 	}
 	return w.execute(ctx, active.Operation.ID)

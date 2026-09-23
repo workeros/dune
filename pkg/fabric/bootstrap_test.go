@@ -27,7 +27,7 @@ func TestBootstrapPlanSelectsPlatformAndKeepsProviderTransportOut(t *testing.T) 
 	for _, expected := range []string{
 		"https://dune.example.test/base/api/v1/downloads/dune-linux-arm64.tar.gz",
 		" enroll --site 'https://dune.example.test/base/' --token '",
-		" fabricd >\"$root/fabricd.log\"",
+		" install --root \"$root/installation\" --method managed --name ",
 		"bootstrap.complete.tmp",
 		"--runner-id 'runner-1'",
 		".tar.gz.sha256",

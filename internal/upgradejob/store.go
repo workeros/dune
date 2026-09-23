@@ -251,7 +251,7 @@ func (s *Store) Admit(ctx context.Context, request upgrade.Request, target upgra
 	case activeErr == nil:
 		reject("UPGRADE_CONFLICT")
 		op.ActiveOperationID = active.Operation.ID
-	case !target.Matches(request.Release):
+	case target.ValidateDownload() != nil || !target.Matches(request.Release):
 		reject("RELEASE_CHANGED")
 	case target.StateContract != statecontract.ID():
 		reject("STATE_CONTRACT_UNSUPPORTED")

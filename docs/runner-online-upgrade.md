@@ -96,6 +96,19 @@ CLI `upgrade-worker --root …` 由独立进程运行。默认总升级期限 10
 切换/重启/确认边界中断、下载期间辅助组件变化、接收证明后安装变化，以及回滚无法确认。
 这些测试使用真实文件/SQLite/封闭和可控平台、服务效果；独立服务装配及原生进程验收尚未完成。
 
+### 标准安装和独立服务
+
+初次安装记录完整本地发行、安装身份和原配置，创建 `current` 相对指针、保留恢复发行及两个独立服务。
+连接器服务只执行稳定 `current/dune`；恢复服务执行 `recovery/dune upgrade-worker`，由系统持续守护。
+managed bootstrap 也走该安装器；当前基线要求 systemd 用户实例或 launchd 用户域，拒绝裸 nohup 降级。
+删除旧本地 repair/upgrade 的独立切换和清理实现，避免绕过持久任务及安装修订。
+`repair-services` 仅恢复完全匹配的原服务定义和启动状态，不改发行、不接纳新任务、不清除封闭。
+
+`DUNE_TEST_SERVICE_MANAGER=1 go test ./internal/service -run 'Test(NativeService|ServiceDefinitions)' -count=1 -timeout=90s -v`
+已在 macOS arm64 通过：连接器 PID 67708→67713，独立 worker 保持 67710；SIGKILL worker 后恢复为 67714。
+临时 LaunchAgent 已卸载并删除。该测试验证原生管理器隔离与重启，不等于完整真实发行在线升级验收。
+本地发行权限标准化、安装别名拒绝、bootstrap、安装事务和 worker 回归已通过。
+
 ## 后续装配决策
 
 宿主配置 `upgrade.Source`，负责从固定发行引用解析获准的不可变清单。Runner/worker 使用
