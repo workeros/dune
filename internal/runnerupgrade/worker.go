@@ -79,30 +79,18 @@ func Run(ctx context.Context, root string) error {
 	if err != nil || active == nil {
 		return err
 	}
+	if active.Operation.Confirmed {
+		w := worker{root: root, installed: installed, jobs: jobs, metadata: state.Metadata}
+		return w.execute(ctx, active.Operation.ID)
+	}
 	if active.Operation.Phase == upgrade.RecoveryBlocked {
 		return nil
 	}
-	cfg, err := config.Load(state.Metadata.ConfigPath)
+	w, close, err := newWorker(root, installed, jobs, state.Metadata)
 	if err != nil {
-		return issue("UPGRADE_CONFIG_UNAVAILABLE")
+		return recordSetupFailure(ctx, root, installed, jobs, state.Metadata, *active, err)
 	}
-	trust, err := cfg.TLS()
-	if err != nil {
-		return issue("UPGRADE_CONFIG_UNAVAILABLE")
-	}
-	control, err := upgradecontrol.New(cfg.UpgradeControlURL, cfg.Token, trust)
-	if err != nil {
-		return issue("UPGRADE_CONTROL_UNAVAILABLE")
-	}
-	defer control.Close()
-	w := worker{root: root, installed: installed, jobs: jobs, metadata: state.Metadata, control: control, check: checkProgram, poll: time.Second,
-		download: func(ctx context.Context, m upgrade.Manifest, path string) error {
-			return release.Download(ctx, nil, m, path)
-		},
-		restart: func(ctx context.Context, m installation.Metadata) error {
-			return service.Run(ctx, "restart", m.ServiceName)
-		},
-	}
+	defer close()
 	return w.execute(ctx, active.Operation.ID)
 }
 
@@ -111,6 +99,7 @@ func Run(ctx context.Context, root string) error {
 func Watch(ctx context.Context, root string) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	lastMaintenance := time.Time{}
 	for {
 		err := Run(ctx, root)
 		if ctx.Err() != nil {
@@ -120,6 +109,11 @@ func Watch(ctx context.Context, root string) error {
 		// confirmed/blocked jobs cannot be restarted by the next iteration.
 		if err != nil && !errors.Is(err, installation.ErrBusy) {
 			return issue(failureIssue(err, "worker").Code)
+		}
+		if time.Since(lastMaintenance) > 10*time.Minute {
+			if err := Maintain(ctx, root); err == nil {
+				lastMaintenance = time.Now()
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -208,6 +202,9 @@ func (w *worker) execute(ctx context.Context, id string) error {
 			current, err := w.installed.Read()
 			if err != nil || current.Current.Directory == w.record.Candidate.Directory || current.Pending != nil {
 				return issue("INSTALLATION_RECOVERY_REQUIRED")
+			}
+			if err := os.Remove(path + ".archive"); err != nil && !os.IsNotExist(err) {
+				return w.failBeforeSwitch(ctx, err)
 			}
 			if err := os.RemoveAll(path); err != nil {
 				return w.failBeforeSwitch(ctx, err)
@@ -515,7 +512,7 @@ func (w *worker) waitProof(ctx context.Context, deadline time.Time, rollback boo
 	wait, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	op := w.record.Operation
-	probe := upgrade.Probe{Binding: op.Request.Binding, InstallationID: op.Request.InstallationID, OperationID: op.ID, AttemptID: op.AttemptID, Challenge: op.Challenge}
+	probe := op.Probe()
 	var last error = issue("PLATFORM_CONFIRMATION_TIMEOUT")
 	for wait.Err() == nil {
 		proof, err := w.control.Confirm(wait, probe)
@@ -528,7 +525,9 @@ func (w *worker) waitProof(ctx context.Context, deadline time.Time, rollback boo
 				return proof, nil
 			}
 		}
-		last = err
+		if wait.Err() == nil {
+			last = err
+		}
 		select {
 		case <-wait.Done():
 		case <-time.After(w.poll):
@@ -570,6 +569,9 @@ func (w *worker) block(ctx context.Context, cause error, state upgrade.RollbackS
 	}
 	failure := failureIssue(cause, string(w.record.Operation.Phase))
 	return w.update(ctx, func(r *upgradejob.Record) {
+		if r.Operation.Failure == nil {
+			r.Operation.Failure = &failure
+		}
 		r.Operation.Phase = upgrade.RecoveryBlocked
 		r.Operation.Rollback = state
 		r.Operation.RollbackFailure = &failure
@@ -581,7 +583,7 @@ func (w *worker) unseal(ctx context.Context) error {
 		return fmt.Errorf("cannot release unfinished upgrade")
 	}
 	if !w.record.Operation.LaunchSealed {
-		return nil
+		return cleanupMaterials(w.root, w.installed, w.record)
 	}
 	if err := w.checkpoint("unseal"); err != nil {
 		return err
@@ -592,6 +594,7 @@ func (w *worker) unseal(ctx context.Context) error {
 	record, err := w.jobs.ReleaseSeal(ctx, w.record.Operation.ID, w.record.Owner, w.record.Operation.Revision)
 	if err == nil {
 		w.record = record
+		return cleanupMaterials(w.root, w.installed, record)
 	}
 	return err
 }
@@ -631,7 +634,8 @@ func (w *worker) ensureConnector(ctx context.Context, rollback bool) error {
 		expected = w.record.Original.Manifest.ProgramSHA256()
 	}
 	observed, err := w.control.Inspect(ctx, w.record.Operation.Request.Binding)
-	if err == nil && observed.Running.SHA256 == expected && (rollback || observed.Running.StartID != w.record.Operation.Source.Running.StartID) {
+	started := !w.record.Operation.RequiresStartupEvidence() || (observed.StartedForUpgrade != nil && *observed.StartedForUpgrade == w.record.Operation.Probe())
+	if err == nil && started && observed.Running.SHA256 == expected && (rollback || observed.Running.StartID != w.record.Operation.Source.Running.StartID) {
 		return nil
 	}
 	restartCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -640,4 +644,54 @@ func (w *worker) ensureConnector(ctx context.Context, rollback bool) error {
 		return issue("CONNECTOR_RESTART_FAILED")
 	}
 	return w.checkpoint("restarted")
+}
+
+func newWorker(root string, installed *installation.Store, jobs *upgradejob.Store, metadata installation.Metadata) (*worker, func(), error) {
+	cfg, err := config.Load(metadata.ConfigPath)
+	if err != nil {
+		return nil, nil, issue("UPGRADE_CONFIG_UNAVAILABLE")
+	}
+	trust, err := cfg.TLS()
+	if err != nil {
+		return nil, nil, issue("UPGRADE_CONFIG_UNAVAILABLE")
+	}
+	control, err := upgradecontrol.New(cfg.UpgradeControlURL, cfg.Token, trust)
+	if err != nil {
+		return nil, nil, issue("UPGRADE_CONTROL_UNAVAILABLE")
+	}
+
+	w := &worker{root: root, installed: installed, jobs: jobs, metadata: metadata, control: control, check: checkProgram, poll: time.Second,
+		download: func(ctx context.Context, m upgrade.Manifest, path string) error {
+			return release.Download(ctx, nil, m, path)
+		},
+		restart: func(ctx context.Context, m installation.Metadata) error {
+			return service.Run(ctx, "restart", m.ServiceName)
+		},
+	}
+	return w, control.Close, nil
+}
+
+func recordSetupFailure(ctx context.Context, root string, installed *installation.Store, jobs *upgradejob.Store, metadata installation.Metadata, active upgradejob.Record, cause error) error {
+	w := worker{root: root, installed: installed, jobs: jobs, metadata: metadata}
+	var err error
+	w.record, err = jobs.Claim(ctx, active.Operation.ID)
+	if err != nil {
+		return err
+	}
+	seal, err := launchgate.ReadSeal(metadata.StateDir)
+	if err != nil {
+		return err
+	}
+	if seal != nil || w.record.Operation.LaunchSealed {
+		bounded, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		if err := w.claimSeal(bounded); err != nil {
+			return err
+		}
+		defer w.gate.Close()
+	}
+	if beforeSwitch(w.record.Operation.Phase) {
+		return w.failBeforeSwitch(ctx, cause)
+	}
+	return w.block(ctx, cause, upgrade.RollbackBlocked)
 }

@@ -110,3 +110,30 @@ func (s *Store) Prune(ctx context.Context, now time.Time) ([]string, error) {
 	}
 	return ids, tx.Commit()
 }
+
+// Cleanable returns only confirmed records with no remaining physical seal.
+// The caller holds the installation lock and excludes the selected directory.
+type Materials struct {
+	InstallationID string
+	Directories    []string
+}
+
+func (s *Store) Cleanable(ctx context.Context) ([]Materials, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT data,digest FROM upgrades WHERE active=0 AND expired=0 LIMIT ?`, MaxKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []Materials
+	for rows.Next() {
+		record, _, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		if !record.Operation.Confirmed || record.Operation.LaunchSealed {
+			return nil, fmt.Errorf("active recovery cannot be collected")
+		}
+		records = append(records, Materials{InstallationID: record.Operation.Request.InstallationID, Directories: []string{record.Original.Directory, record.Candidate.Directory}})
+	}
+	return records, rows.Err()
+}

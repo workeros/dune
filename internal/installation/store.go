@@ -145,6 +145,9 @@ func readRecord(root string) (Record, error) {
 	if err := launchgate.CheckDirectory(root); err != nil {
 		return record, err
 	}
+	if err := launchgate.CheckDirectory(filepath.Join(root, "releases")); err != nil {
+		return record, err
+	}
 	if err := readJSON(filepath.Join(root, "installation.json"), &record); err != nil {
 		return record, err
 	}

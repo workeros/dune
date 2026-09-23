@@ -36,12 +36,19 @@ Linux 使用 systemd 用户实例，macOS 使用 launchd 用户域。attached �
 dune repair-services --root /absolute/installation
 # 手动唤醒已有活动操作，绝不接纳新升级：
 dune upgrade-worker --root /absolute/installation --once
+# 修复 recovery_blocked 的诊断原因后，按查询返回的原操作和当前修订重试一次回滚：
+dune upgrade-recover --root /absolute/installation --operation OPERATION_ID --revision REVISION
 ```
 
 升级使用持久任务和完整发行修订。目标实际程序、完整文件、原 binding 的 Gateway 接纳、
 正常路由只读往返均匹配本次尝试，执行方才持久提交成功并解除启动封闭。
 切换后失败会进入原发行回滚；回滚也必须核验当前共享状态、原文件和平台可达性。
 不能通过恢复旧 SessionDir 快照丢弃升级期间的新记录。
+
+显式恢复保持原绑定、配置和发行身份，创建新的回滚尝试及 2 分钟预算；重复旧修订命令不能
+延长预算或重新升级。普通 worker 不自动重试受阻回滚。已确认但尚未解封的任务即使控制端配置
+不可读取，也只完成原终态清理。成功或回滚已确认并解封后回收本次非当前发行；每 10 分钟
+检查残留材料和历史保留，活动或受阻恢复材料不会删除。
 
 公开接口见 [升级 API](runner-upgrade-api.md)，当前实现与剩余验收见 [在线升级交付记录](runner-online-upgrade.md)。
 已通过 macOS arm64 的独立 LaunchAgent 生命周期测试；systemd 原生运行、其他架构和完整 U01–U19

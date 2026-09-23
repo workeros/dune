@@ -13,6 +13,7 @@ import (
 	"github.com/aiomni/dune/internal/release"
 	"github.com/aiomni/dune/internal/upgradecontrol"
 	"github.com/aiomni/dune/internal/upgradejob"
+	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/upgrade"
@@ -148,7 +149,7 @@ func (c *Controller) Preview(ctx context.Context, request upgrade.PreviewRequest
 	result.Plan = upgrade.Compare(*source.Installation, source.Running, manifest)
 	// One ephemeral directory owns the download and extracted candidate. It is
 	// outside releases and never selected or registered as an installation.
-	cache, err := os.MkdirTemp("", "dune-upgrade-preview-")
+	cache, err := c.previewCache()
 	if err != nil {
 		return result, issue("UPGRADE_CACHE_UNAVAILABLE")
 	}
@@ -209,4 +210,35 @@ func (c *Controller) List(ctx context.Context, request upgrade.ListRequest) (upg
 	}
 	defer jobs.Close()
 	return jobs.List(ctx, request.Binding, request.InstallationID, request.Cursor, request.Limit)
+}
+
+// The Engine serializes previews for its exclusively owned installation. A new
+// connector removes abandoned, Dune-named preview directories before staging;
+// repeated process crashes cannot accumulate unbounded archives in /tmp.
+func (c *Controller) previewCache() (string, error) {
+	root := filepath.Join(c.registration.Root, "upgrades", "previews")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", err
+	}
+	if err := launchgate.CheckDirectory(root); err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if !wire.ValidID(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		if err := launchgate.CheckDirectory(path); err != nil {
+			return "", err
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return "", err
+		}
+	}
+	path := filepath.Join(root, wire.ID())
+	return path, os.Mkdir(path, 0700)
 }

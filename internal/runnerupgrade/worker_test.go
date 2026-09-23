@@ -31,6 +31,7 @@ type workerFixture struct {
 	template         string
 	binding          runner.Binding
 	running          api.RunningProgram
+	started          *upgrade.Probe
 	operation        upgrade.Operation
 	restarts         int
 	checks           int
@@ -60,7 +61,7 @@ func writeDistribution(t *testing.T, path, id string) upgrade.Manifest {
 	}
 	return manifest
 }
-func newWorkerFixture(t *testing.T) *workerFixture {
+func newWorkerFixture(t *testing.T, auxiliaryOnly ...bool) *workerFixture {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -79,6 +80,16 @@ func newWorkerFixture(t *testing.T) *workerFixture {
 	source.Manifest = writeDistribution(t, filepath.Join(root, source.Directory), "v1")
 	template := filepath.Join(t.TempDir(), "template")
 	target := writeDistribution(t, template, "v2")
+	if len(auxiliaryOnly) != 0 && auxiliaryOnly[0] {
+		target.Components[0] = source.Manifest.Components[0]
+		body, err := os.ReadFile(filepath.Join(root, source.Directory, "dune"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(template, "dune"), body, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.Symlink(source.Directory, filepath.Join(root, "current")); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +133,8 @@ func newWorkerFixture(t *testing.T) *workerFixture {
 			return err
 		}
 		f.running = fixtureProgram(state.Current.Manifest, fmt.Sprintf("restart-%d", f.restarts))
+		probe := f.worker.record.Operation.Probe()
+		f.started = &probe
 		return nil
 	}
 	observed, err := store.Observe(t.Context())
@@ -161,19 +174,20 @@ func (f *workerFixture) Binding(ctx context.Context, expected runner.Binding) (r
 }
 func (f *workerFixture) Inspect(ctx context.Context, binding runner.Binding) (upgrade.Inspection, error) {
 	observed, err := installation.View(ctx, f.worker.root)
-	return upgrade.Inspection{Binding: binding, Installation: &observed, Running: f.running, Supported: true}, err
+	return upgrade.Inspection{Binding: binding, Installation: &observed, Running: f.running, Supported: true, StartedForUpgrade: f.started}, err
 }
 func (f *workerFixture) Confirm(ctx context.Context, probe upgrade.Probe) (upgrade.Proof, error) {
-	if f.rejectAll || (f.rejectTarget && f.running.SHA256 == f.target.ProgramSHA256()) {
-		return upgrade.Proof{}, issue("GATEWAY_REGISTRATION_REJECTED")
-	}
 	observed, err := installation.View(ctx, f.worker.root)
 	if err != nil {
 		return upgrade.Proof{}, err
 	}
+	if f.rejectAll || (f.rejectTarget && observed.Release.ID == f.target.ID) {
+		return upgrade.Proof{}, issue("GATEWAY_REGISTRATION_REJECTED")
+	}
 	digest, _ := observed.Release.Digest()
 	restored := observed.Release.ID == f.source.Manifest.ID
 	proof := upgrade.Proof{OperationID: probe.OperationID, AttemptID: probe.AttemptID, Challenge: probe.Challenge, Binding: probe.Binding, InstallationID: observed.ID, InstallationRevision: observed.Revision, ManifestSHA256: digest, Running: f.running, Incarnation: "incarnation", ConnectionGeneration: 1, RouteEpoch: 1, ReleaseVerified: observed.Complete, OriginalInstallationRestored: restored, GatewayAccepted: true, Routed: true, ObservedAt: time.Now().UTC()}
+	proof.StartedForAttempt = f.started != nil && *f.started == probe
 	if f.mutateAfterProof {
 		f.mutateAfterProof = false
 		if err := os.WriteFile(filepath.Join(f.worker.root, "current", "rg"), []byte("externally changed"), 0700); err != nil {
@@ -367,6 +381,127 @@ func TestWorkerRefusesUnsafeSharedStateBeforeStopAndAfterTargetWrites(t *testing
 				if err != nil || state.Current.Manifest.ID != f.target.ID {
 					t.Fatal("unsafe source restored", state, err)
 				}
+			}
+		})
+	}
+}
+
+func TestExplicitRecoveryFencesRetriesAndCleansOnlyConvergedMaterials(t *testing.T) {
+	f := newWorkerFixture(t)
+	f.rejectAll = true
+	if err := f.worker.execute(t.Context(), f.operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	blocked := f.result()
+	candidate := filepath.Join(f.worker.root, f.worker.record.Candidate.Directory)
+	if _, err := os.Stat(candidate); err != nil {
+		t.Fatal("unconfirmed recovery lost its target material", err)
+	}
+	oldAttempt := blocked.AttemptID
+	resumed, err := f.worker.jobs.ResumeRecovery(t.Context(), blocked.ID, f.worker.record.Owner, blocked.Revision)
+	if err != nil || resumed.Operation.AttemptID == oldAttempt || resumed.Operation.Failure.Code != blocked.Failure.Code {
+		t.Fatal("manual recovery lost original failure or attempt fencing", resumed, err)
+	}
+	if _, err := f.worker.jobs.ResumeRecovery(t.Context(), blocked.ID, f.worker.record.Owner, blocked.Revision); err == nil {
+		t.Fatal("duplicate recovery extended the retry budget")
+	}
+	f.rejectAll = false
+	f.worker.gate = nil
+	if err := f.worker.execute(t.Context(), blocked.ID); err != nil {
+		t.Fatal(err)
+	}
+	result := f.result()
+	if result.Rollback != upgrade.RollbackRestored || !result.Confirmed || f.restarts != 2 {
+		t.Fatal(result, f.restarts)
+	}
+	if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+		t.Fatal("converged candidate retained", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.worker.root, f.source.Directory, "dune")); err != nil {
+		t.Fatal("selected original removed", err)
+	}
+	f.assertUnsealed()
+}
+
+func TestSetupFailureAfterSwitchIsDurablyBlocked(t *testing.T) {
+	f := newWorkerFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	f.worker.barrier = func(stage string) error {
+		if stage == "switched" {
+			cancel()
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := f.worker.execute(ctx, f.operation.ID); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	active, err := f.worker.jobs.Active(t.Context())
+	if err != nil || active == nil {
+		t.Fatal(active, err)
+	}
+	if err := recordSetupFailure(t.Context(), f.worker.root, f.worker.installed, f.worker.jobs, f.worker.metadata, *active, issue("UPGRADE_CONFIG_UNAVAILABLE")); err != nil {
+		t.Fatal(err)
+	}
+	result := f.result()
+	if result.Phase != upgrade.RecoveryBlocked || !result.LaunchSealed || result.Confirmed || result.Failure == nil || result.RollbackFailure == nil {
+		t.Fatal(result)
+	}
+}
+
+func TestRecoveryRemovesItsInterruptedArchiveBeforeDownloadingAgain(t *testing.T) {
+	f := newWorkerFixture(t)
+	download := f.worker.download
+	ctx, cancel := context.WithCancel(t.Context())
+	f.worker.download = func(ctx context.Context, m upgrade.Manifest, path string) error {
+		if err := os.WriteFile(path+".archive", []byte("partial archive"), 0600); err != nil {
+			return err
+		}
+		cancel()
+		return context.Canceled
+	}
+	if err := f.worker.execute(ctx, f.operation.ID); err == nil {
+		t.Fatal("interrupted download became a result")
+	}
+	f.worker.download = download
+	if err := f.worker.execute(t.Context(), f.operation.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(f.worker.root, f.worker.record.Candidate.Directory) + ".archive"
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("orphan archive retained", err)
+	}
+	if result := f.result(); result.Phase != upgrade.Succeeded {
+		t.Fatal(result)
+	}
+}
+
+func TestAuxiliaryUpdateRequiresThisAttemptStartup(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rollback-%t", rollback), func(t *testing.T) {
+			f := newWorkerFixture(t, true)
+			f.rejectTarget = rollback
+			// An unrelated restart after admission must not discharge this job's
+			// dependency-directory restart, even though Dune's digest is equal.
+			f.running.StartID = "external-restart-before-switch"
+			if !f.operation.RequiresStartupEvidence() {
+				t.Fatal("test must exercise equal-image dependency update")
+			}
+			if err := f.worker.execute(t.Context(), f.operation.ID); err != nil {
+				t.Fatal(err)
+			}
+			op := f.result()
+			wantRestarts := 1
+			if rollback {
+				wantRestarts = 2
+			}
+			if !op.Confirmed || f.restarts != wantRestarts || op.Proof == nil || !op.Proof.StartedForAttempt {
+				t.Fatalf("attempt startup missing: %+v restarts=%d", op, f.restarts)
+			}
+			proof := *op.Proof
+			proof.StartedForAttempt = false
+			if err := upgradejob.ValidateProof(op, proof, rollback); err == nil {
+				t.Fatal("equal SHA and changed StartID accepted without startup evidence")
 			}
 		})
 	}

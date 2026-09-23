@@ -11,6 +11,7 @@ import (
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/upgrade"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"maps"
 	"os"
@@ -34,6 +35,7 @@ type profileAttempt struct {
 	at     time.Time
 }
 type Engine struct {
+	upgradeStartup     *upgrade.Probe
 	upgradeReads       chan struct{}
 	upgradePreviews    chan struct{}
 	runtimeWatches     runtimeWatchHub

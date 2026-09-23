@@ -62,6 +62,7 @@ const (
 // Worker validation includes its fresh challenge; another attempt cannot reuse
 // an otherwise matching process or historical successful distribution.
 type Proof struct {
+	StartedForAttempt            bool               `json:"started_for_attempt"`
 	OperationID                  string             `json:"operation_id"`
 	AttemptID                    string             `json:"attempt_id"`
 	Challenge                    string             `json:"challenge"`

@@ -214,6 +214,9 @@ func validateProof(operation upgrade.Operation, rollback bool) error {
 	if (!rollback && !proof.ReleaseVerified) || (rollback && !proof.OriginalInstallationRestored) || !proof.GatewayAccepted || !proof.Routed || proof.Running.PID <= 1 || proof.Running.StartID == "" || proof.Incarnation == "" || proof.ConnectionGeneration == 0 {
 		return fmt.Errorf("platform proof lacks installation, running process or accepted routed connection")
 	}
+	if operation.RequiresStartupEvidence() && !proof.StartedForAttempt {
+		return fmt.Errorf("connector did not start for this dependency directory and attempt")
+	}
 	if proof.ObservedAt.Before(operation.AttemptStartedAt) || time.Since(proof.ObservedAt) > 30*time.Second || proof.ObservedAt.After(time.Now().Add(time.Second)) {
 		return fmt.Errorf("platform proof is stale")
 	}
@@ -254,4 +257,22 @@ func validateProof(operation upgrade.Operation, rollback bool) error {
 func ValidateProof(operation upgrade.Operation, proof upgrade.Proof, rollback bool) error {
 	operation.Proof = &proof
 	return validateProof(operation, rollback)
+}
+
+// ResumeRecovery is an explicit operator action, not an automatic retry. The
+// caller holds the installation lock and supplies the last observed revision.
+// A duplicate recovery command cannot reset the budget or create another attempt.
+func (s *Store) ResumeRecovery(ctx context.Context, operationID, owner, revision string) (Record, error) {
+	return s.change(ctx, operationID, owner, revision, func(record *Record) error {
+		op := &record.Operation
+		if op.Confirmed || op.Phase != upgrade.RecoveryBlocked || !op.LaunchSealed || op.Failure == nil {
+			return fmt.Errorf("original blocked recovery required")
+		}
+		op.Phase, op.Rollback = upgrade.RollingBack, upgrade.RollbackRunning
+		op.AttemptID, op.Challenge = wire.ID(), wire.ID()
+		op.AttemptStartedAt = time.Now().UTC()
+		record.RollbackDeadline = op.AttemptStartedAt.Add(2 * time.Minute)
+		op.RollbackFailure = nil
+		return nil
+	}, "recover")
 }

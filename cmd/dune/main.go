@@ -98,6 +98,16 @@ func run() (runErr error) {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if args[0] == "upgrade-recover" {
+		recoveryFlags := flag.NewFlagSet("upgrade-recover", flag.ContinueOnError)
+		root := recoveryFlags.String("root", "", "original installation root")
+		operation := recoveryFlags.String("operation", "", "original blocked operation")
+		revision := recoveryFlags.String("revision", "", "last observed operation revision")
+		if err := recoveryFlags.Parse(args[1:]); err != nil {
+			return err
+		}
+		return runnerupgrade.Recover(ctx, *root, *operation, *revision)
+	}
 	if args[0] == "repair-services" {
 		repairFlags := flag.NewFlagSet("repair-services", flag.ContinueOnError)
 		root := repairFlags.String("root", "", "registered installation root")

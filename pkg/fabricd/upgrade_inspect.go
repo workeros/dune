@@ -37,6 +37,7 @@ func (d *Engine) inspectInstallation(ctx context.Context, binding runner.Binding
 		return result, err
 	}
 	result.Running = program
+	result.StartedForUpgrade = d.upgradeStartup
 	registration, err := installation.Find(d.stateDir)
 	if err != nil {
 		result.Issues = append(result.Issues, upgrade.Issue{Code: "STANDARD_INSTALLATION_REQUIRED"})

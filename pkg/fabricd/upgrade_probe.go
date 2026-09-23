@@ -91,5 +91,6 @@ func (d *Engine) probeUpgrade(s *executionStream, message *pb.Message) {
 		return
 	}
 	proof := upgrade.Proof{OperationID: operation.ID, AttemptID: probe.AttemptID, Challenge: probe.Challenge, Binding: probe.Binding, InstallationID: observed.ID, InstallationRevision: observed.Revision, ManifestSHA256: digest, Running: running, Incarnation: d.inc, ConnectionGeneration: s.generation, RouteEpoch: s.epoch, OriginalInstallationRestored: restored, ReleaseVerified: observed.Complete, ObservedAt: running.ObservedAt}
+	proof.StartedForAttempt = d.upgradeStartup != nil && *d.upgradeStartup == probe
 	_ = s.Send(&pb.Message{Kind: "result", Payload: api.Payload(proof)})
 }

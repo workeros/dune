@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aiomni/dune/pkg/upgrade"
@@ -41,7 +41,7 @@ func Download(ctx context.Context, client *http.Client, manifest upgrade.Manifes
 	if response.StatusCode != http.StatusOK || response.ContentLength > upgrade.MaxArchiveBytes {
 		return fmt.Errorf("release download rejected or exceeds size limit")
 	}
-	archive, err := os.CreateTemp(filepath.Dir(destination), ".dune-download-")
+	archive, err := os.OpenFile(destination+".archive", os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return err
 	}

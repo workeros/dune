@@ -16,6 +16,7 @@ import (
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/runnerupgrade"
 	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
@@ -65,6 +66,7 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 	if err := syscall.Flock(int(d.lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return nil, fmt.Errorf("fabricd already running: %w", err)
 	}
+	d.upgradeStartup = runnerupgrade.StartedAttempt(ctx, stateDir)
 	// Validate the persistent read/write contract before tmux metadata, session
 	// terms, background maintenance or host recovery can write shared state.
 	d.registry, err = sessionregistry.Open(ctx, filepath.Join(stateDir, "registry"), sessionregistry.Options{})

@@ -29,11 +29,12 @@ type Installation struct {
 }
 
 type Inspection struct {
-	Binding      runner.Binding     `json:"binding"`
-	Installation *Installation      `json:"installation,omitempty"`
-	Running      api.RunningProgram `json:"running"`
-	Supported    bool               `json:"supported"`
-	Issues       []Issue            `json:"issues"`
+	StartedForUpgrade *Probe             `json:"started_for_upgrade,omitempty"`
+	Binding           runner.Binding     `json:"binding"`
+	Installation      *Installation      `json:"installation,omitempty"`
+	Running           api.RunningProgram `json:"running"`
+	Supported         bool               `json:"supported"`
+	Issues            []Issue            `json:"issues"`
 }
 
 type Issue struct {
