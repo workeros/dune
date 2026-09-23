@@ -72,7 +72,9 @@ func StartedAttempt(ctx context.Context, stateDir string) *upgrade.Probe {
 		return nil
 	}
 	latest, err := jobs.Active(ctx)
-	if err != nil || latest == nil || latest.Operation.Revision != op.Revision {
+	// Reconnecting → verifying may commit while startup measures the files.
+	// That progress preserves the attempt; rollback or completion does not.
+	if err != nil || latest == nil || latest.Operation.Probe() != op.Probe() || latest.Operation.Confirmed || !latest.Operation.LaunchSealed {
 		return nil
 	}
 	probe := op.Probe()

@@ -152,3 +152,5 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 | 静态/竞争检查 | `go test -race ./internal/launchgate ./internal/installation ./internal/release ./internal/upgradejob ./pkg/upgrade -count=1 -timeout=180s`；`go vet ./internal/launchgate ./internal/runningprogram ./internal/installation ./internal/release ./internal/upgradejob ./pkg/upgrade` 通过 | 当前新增原语 |
 
 U01–U19 的完整闭环、原生 systemd/launchd、四平台运行和真实厂商 Agent 尚未验收。
+
+managed 恢复入口按原 bootstrap 身份调用安装内 `recovery/dune repair-services`，恢复连接器和 worker 的原注册服务。安装根目录使用 `/var/tmp/dune-managed`，避免依赖重启时通常被清空的 `/tmp`；不迁移旧 bootstrap。

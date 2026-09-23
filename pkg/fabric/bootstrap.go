@@ -32,7 +32,7 @@ type BootstrapPlan struct {
 	Platform       BootstrapPlatform
 }
 
-const bootstrapRoot = "/tmp/dune-managed"
+const bootstrapRoot = "/var/tmp/dune-managed"
 
 // BootstrapCompletionPath returns the deterministic marker inspected by a
 // Provider's read-only ReconcileBootstrap implementation.

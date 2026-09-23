@@ -56,3 +56,5 @@ dune upgrade-recover --root /absolute/installation --operation OPERATION_ID --re
 
 反向代理部署可设置 `dune web --trusted-proxies CIDR[,CIDR...]` 或 `host.Options.TrustedProxies`。
 仅从可信代理接受 X-Forwarded-For，从右向左取首个不可信节点；代理必须正确追加或覆盖来源。
+
+managed 恢复入口按原 bootstrap 身份调用安装内 `recovery/dune repair-services`，恢复连接器和 worker 的原注册服务。安装根目录使用 `/var/tmp/dune-managed`，避免依赖重启时通常被清空的 `/tmp`；不迁移旧 bootstrap。
