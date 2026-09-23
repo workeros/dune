@@ -19,6 +19,7 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
     let disposed = false, source: EventSource | undefined, batch: DiscoveryBatch | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined, backoff = 500, discoveryEpoch = 0;
     let controller: AbortController | undefined;
+    let activeDiscoveryTargets: Set<string> | undefined;
     let errors: Record<string, string> = {}, checked = new Set<string>(), observed = new Set<string>();
     const publish = () => {
       const agents: Agent[] = [];
@@ -33,6 +34,7 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
     };
     const invalidate = (cause: unknown) => {
       cache.invalidate(); batch = undefined; discoveryEpoch++;
+      activeDiscoveryTargets = undefined;
       controller?.abort(); source?.close();
       if (disposed) return;
       errors = Object.fromEntries(current.current.filter((runner) => runner.binding).map((runner) => [bindingKey(runner.binding), errorText(cause)]));
@@ -46,6 +48,7 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
       controller?.abort(); controller = new AbortController();
       const signal = controller.signal;
       const nextErrors: Record<string, string> = {}, nextChecked = new Set<string>(), nextObserved = new Set<string>();
+      activeDiscoveryTargets = nextObserved;
       let cursor = "";
       const seen = new Set<string>();
       try {
@@ -70,6 +73,8 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
         publish();
       } catch (cause) {
         if (!disposed && epoch === discoveryEpoch && batch === activeBatch) invalidate(cause);
+      } finally {
+        if (activeDiscoveryTargets === nextObserved) activeDiscoveryTargets = undefined;
       }
     };
     const connect = () => {
@@ -88,7 +93,11 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
           }
           if (!batch || !cache.apply(batch, event) || event.kind === "invalidated") throw new Error("会话列表已变化，正在重新同步…");
           if (event.agent) {
-            observed.add(targetKey(event.agent.target));
+            const target = targetKey(event.agent.target);
+            observed.add(target);
+            // A late partial page cannot hide a Runtime confirmed by the live
+            // stream while that discovery was in flight.
+            activeDiscoveryTargets?.add(target);
             const key = bindingKey(event.agent.target.binding);
             if (errors[key] === issueText("OFFLINE")) delete errors[key];
             checked.add(key); publish();
