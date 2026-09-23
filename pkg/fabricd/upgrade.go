@@ -146,7 +146,7 @@ func checkUpgradeProgram(ctx context.Context, stateDir string, host sessionregis
 // PrepareUpgrade holds the exclusive launch gate until the caller finishes
 // switching services. A failed check always releases it. There is no force flag:
 // ending an incompatible Runtime remains a separate explicit lifecycle action.
-func PrepareUpgrade(ctx context.Context, stateDir string) (*os.File, api.UpgradeReport) {
+func PrepareUpgrade(ctx context.Context, stateDir string) (*launchgate.Gate, api.UpgradeReport) {
 	report := upgradeReport()
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		report.Issues = append(report.Issues, api.RuntimeDiscoveryIssue{Code: "STATE_DIRECTORY_INVALID"})
@@ -159,6 +159,12 @@ func PrepareUpgrade(ctx context.Context, stateDir string) (*os.File, api.Upgrade
 			code = "LAUNCH_IN_PROGRESS"
 		}
 		report.Issues = append(report.Issues, api.RuntimeDiscoveryIssue{Code: code})
+		return nil, report
+	}
+	seal, sealErr := launchgate.ReadSeal(stateDir)
+	if sealErr != nil || seal != nil {
+		gate.Close()
+		report.Issues = append(report.Issues, api.RuntimeDiscoveryIssue{Code: "UPGRADE_RECOVERY_REQUIRED"})
 		return nil, report
 	}
 	report = CheckUpgrade(ctx, stateDir)
