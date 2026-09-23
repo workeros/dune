@@ -180,6 +180,7 @@ test("unread activity stays in this browser without metadata requests", async ({
   await expect(agent.getByLabel("未读活动")).toHaveCount(0);
   await page.getByRole("button", { name: "打开 B-PTY · Runner two", exact: true }).click();
   state.runtimes.one[0].activity!.sequence++;
+  state.runtimes.one[0].observation.revision = "2";
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(agent.getByLabel("未读活动")).toBeVisible();
   await agent.click();

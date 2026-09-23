@@ -47,10 +47,15 @@ func (h *runtimeWatchHub) publish(change api.RuntimeChange) {
 		h.current = make(map[string]api.RuntimeChange)
 	}
 	if !change.Removed {
-		previous := h.current[change.Runtime.ID].Runtime
-		if previous.Incarnation == change.Runtime.Incarnation && previous.Generation == change.Runtime.Generation && previous.SessionMetadata != nil &&
-			(change.Runtime.SessionMetadata == nil || change.Runtime.SessionMetadata.Revision < previous.SessionMetadata.Revision) {
-			return
+		previous, exists := h.current[change.Runtime.ID]
+		if exists && previous.Runtime.Incarnation == change.Runtime.Incarnation && previous.Runtime.Generation == change.Runtime.Generation {
+			if previous.Runtime.Observation.Epoch != change.Runtime.Observation.Epoch {
+				for mailbox := range h.subscribers {
+					mailbox.Fail(fmt.Errorf("Runtime observation epoch changed; resynchronize"))
+				}
+			} else if change.Runtime.Observation.Revision <= previous.Runtime.Observation.Revision {
+				return
+			}
 		}
 		h.current[change.Runtime.ID] = change
 	} else {
@@ -202,11 +207,7 @@ func (d *Engine) observeRuntimeHost(r *runtime) {
 		if err != nil {
 			r.observationMu.Lock()
 			value := r.host.lastObservation()
-			value.Availability = "unavailable"
-			if r.host.lossProven() {
-				value.State, value.Availability, value.StopReason = "lost", "lost", "host_lost"
-				value.ExitCode = nil
-			}
+			value = r.host.observations.unavailable(value.Observation, r.host.lossProven())
 			d.publishRuntime(r, value)
 			r.observationMu.Unlock()
 		}
@@ -221,15 +222,12 @@ func (d *Engine) observeRuntimeHost(r *runtime) {
 }
 
 func (p *sessionProxy) lastObservation() api.Runtime {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.registration.Runtime
+	// Registration is immutable after construction; only observations are live.
+	return p.observations.snapshot(p.registration.Runtime)
 }
 
 func (p *sessionProxy) watch(ctx context.Context, publish func(api.Runtime)) error {
-	p.mu.Lock()
 	request := p.request("runtime.watch", struct{}{})
-	p.mu.Unlock()
 	stream, err := p.open(ctx, request)
 	if err != nil {
 		return err
@@ -251,12 +249,10 @@ func (p *sessionProxy) watch(ctx context.Context, publish func(api.Runtime)) err
 		if message.Kind != "runtime_changed" || wire.Decode(message, &change) != nil || change.Runtime.ID != request.RuntimeId || change.Runtime.Incarnation != request.RuntimeIncarnation || change.Runtime.Generation != request.RuntimeGeneration {
 			return fmt.Errorf("invalid ACP host observation")
 		}
-		now := time.Now().UTC()
-		change.Runtime.LastConfirmedAt = &now
-		p.mu.Lock()
-		p.registration.Runtime = change.Runtime
-		p.mu.Unlock()
-		p.observation.Store(&change.Runtime)
-		publish(change.Runtime)
+		observed, err := p.observations.confirm(change.Runtime)
+		if err != nil {
+			return err
+		}
+		publish(observed)
 	}
 }

@@ -45,6 +45,7 @@ type subscription struct {
 type runtime struct {
 	observer               func(*runtime, api.Runtime)
 	observationMu          sync.Mutex
+	observationVersion     api.ObservationVersion
 	observing              bool // Engine.mu protects source admission.
 	mu                     sync.Mutex
 	spawnMu                sync.Mutex
@@ -152,6 +153,8 @@ func (r *runtime) info() api.Runtime {
 			info.ACPMode = "raw"
 		}
 	}
+	r.observationVersion = advanceObservation(r.observationVersion)
+	info.Observation = r.observationVersion
 	return info
 }
 
@@ -646,10 +649,8 @@ func (d *Engine) list(ctx context.Context) api.RuntimeList {
 					out.Items[i] = r.host.informationContext(ctx)
 					<-d.discoveryReads
 				case <-ctx.Done():
-					r.host.mu.Lock()
-					out.Items[i] = r.host.registration.Runtime
-					r.host.mu.Unlock()
-					out.Items[i].Availability = "unavailable"
+					last := r.host.lastObservation()
+					out.Items[i] = r.host.observations.unavailable(last.Observation, false)
 				}
 			}
 		})

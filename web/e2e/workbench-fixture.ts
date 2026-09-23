@@ -13,7 +13,7 @@ export function workbenchACPState(id: string): State {
 
 export function workbenchState() {
   const runners: Runner[] = ["one", "two"].map((id) => ({ id, name: `Runner ${id}`, online: true, kind: "attached", binding: { runner_id: id, machine_id: `machine-${id}`, fabric_id: "attached", revision: 1 } }));
-  const runtimes: Record<string, AgentRuntime[]> = Object.fromEntries(runners.map((runner, index) => [runner.id, (["pty", "acp"] as const).map((adapter) => ({ id: `${runner.id}-${adapter}`, incarnation: `boot-${runner.id}`, generation: 1, adapter, state: "running", title: `${index ? "B" : "A"}-${adapter.toUpperCase()}`, working_directory: `/repo-${index ? "b" : "a"}`, activity: { state: "idle", source: adapter, epoch: "events", sequence: 2 } }))]));
+  const runtimes: Record<string, AgentRuntime[]> = Object.fromEntries(runners.map((runner, index) => [runner.id, (["pty", "acp"] as const).map((adapter) => ({ observation: { epoch: "connector", revision: "1" }, id: `${runner.id}-${adapter}`, incarnation: `boot-${runner.id}`, generation: 1, adapter, state: "running", title: `${index ? "B" : "A"}-${adapter.toUpperCase()}`, working_directory: `/repo-${index ? "b" : "a"}`, activity: { state: "idle", source: adapter, epoch: "events", sequence: 2 } }))]));
   const projects: Project[] = runners.map((runner, index) => ({ id: `project-${index}`, revision: 1, name: `Project ${index ? "B" : "A"}`, directories: [{ id: `directory-${index}`, binding: runner.binding!, path: `/repo-${index ? "b" : "a"}` }] }));
   return {
     runners, runtimes, projects, acpStates: Object.fromEntries(Object.values(runtimes).flat().filter((runtime) => runtime.adapter === "acp").map((runtime) => [runtime.id, workbenchACPState(runtime.id)])), view: { id: "main", revision: 0, root: null } as SavedView,
@@ -109,7 +109,7 @@ export async function mockWorkbench(page: Page, state: WorkbenchState) {
       if (runner[2] === "sessions") {
         state.starts++; state.launchRequests.push(body);
         const profile = body.custom ?? state.profiles.find((item) => item.id === body.profile?.id)?.profile;
-        const runtime: AgentRuntime = { id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
+        const runtime: AgentRuntime = { observation: { epoch: "connector", revision: "1" }, id: `new-${state.starts}-${profile.adapter}`, incarnation: "new-boot", generation: 1, adapter: profile.adapter, state: "running", project_id: body.project?.id, directory_id: body.worktree ? undefined : body.directory_id, title: `New ${profile.adapter}`, working_directory: body.worktree?.path ?? body.working_directory };
         const result: LaunchResult = { submission_id: body.submission_id, target: { owner_id: state.accountID, runner_id: runner[1], machine_id: url.searchParams.get("machine_id")!, fabric_id: url.searchParams.get("fabric_id")!, binding_revision: Number(url.searchParams.get("revision")) }, worktree: body.worktree ? { path: body.worktree.path, branch: body.worktree.branch } : undefined };
         if (state.launchFailure !== "start") { result.runtime = runtime; state.runtimes[runner[1]].push(runtime); }
         result.submission = { ...result, admission: "accepted", stage: state.launchFailure === "start" ? "failed" : "started" };

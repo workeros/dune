@@ -16,7 +16,7 @@ type DiscoveryBatch struct {
 }
 
 // DirectoryCache is the SDK's merge boundary. Membership and subscription
-// validity are checked before metadata revisions. All returned observations
+// validity are checked before complete observation versions. Returned values
 // are owned copies, not mutable references into the cache.
 type DirectoryCache struct {
 	mu           sync.Mutex
@@ -92,16 +92,16 @@ func (c *DirectoryCache) mergeLocked(next Agent, establishesMembership bool) boo
 	if !exists && (!establishesMembership || len(c.members) >= MaxDirectoryMembers) {
 		return false
 	}
-	if exists && previous.Runtime.SessionMetadata != nil && next.Runtime.SessionMetadata != nil && next.Runtime.SessionMetadata.Revision < previous.Runtime.SessionMetadata.Revision {
-		// Keep the associated action reference too: an old discovery page may
-		// describe the previous native conversation on this same Runtime.
+	if !next.Runtime.Observation.Valid() || (exists && next.Runtime.Observation.Epoch != previous.Runtime.Observation.Epoch) {
+		c.invalidateLocked()
+		return false
+	}
+	if exists && next.Runtime.Observation.Revision <= previous.Runtime.Observation.Revision {
 		return true
 	}
 	if exists && previous.Runtime.SessionMetadata != nil && next.Runtime.SessionMetadata == nil {
+		// Missing metadata is not an explicit title clear.
 		next.Runtime.SessionMetadata = previous.Runtime.SessionMetadata
-		next.Runtime.ConversationID = previous.Runtime.ConversationID
-		next.Runtime.NativeSession = previous.Runtime.NativeSession
-		next.Ref = previous.Ref
 	}
 	c.members[next.Target] = copyAgent(next)
 	return true

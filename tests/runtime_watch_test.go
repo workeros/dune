@@ -56,6 +56,7 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 	defer producer.Close()
 	encoder := json.NewEncoder(producer)
 	var revision uint64
+	var observation api.ObservationVersion
 	for _, title := range []string{"A", "B", "", "final before reconnect"} {
 		must(t, encoder.Encode(map[string]any{"sessionUpdate": "session_info_update", "title": title}))
 		for {
@@ -66,9 +67,13 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 				continue
 			}
 			revision = metadata.Revision
+			if !change.Runtime.Observation.Valid() || (observation.Valid() && (observation.Epoch != change.Runtime.Observation.Epoch || observation.Revision >= change.Runtime.Observation.Revision)) {
+				t.Fatal("stream did not advance full observation", change)
+			}
+			observation = change.Runtime.Observation
 			page, err := h.client.List(ctx)
 			must(t, err)
-			if len(page.Items) != 1 || string(api.Payload(page.Items[0].SessionMetadata)) != string(api.Payload(metadata)) || page.Items[0].Title != runtime.Title {
+			if len(page.Items) != 1 || page.Items[0].Observation.Epoch != observation.Epoch || page.Items[0].Observation.Revision < observation.Revision || string(api.Payload(page.Items[0].SessionMetadata)) != string(api.Payload(metadata)) || page.Items[0].Title != runtime.Title {
 				t.Fatal("barrier-confirmed notification and discovery disagree", page)
 			}
 			break
@@ -88,7 +93,7 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 		change, err := recovered.Next()
 		must(t, err)
 		if change.Runtime.ID == runtime.ID && change.Runtime.SessionMetadata != nil && change.Runtime.SessionMetadata.Title != nil {
-			if change.Runtime.SessionMetadata.Revision != revision || *change.Runtime.SessionMetadata.Title != "final before reconnect" {
+			if change.Runtime.Observation.Epoch == observation.Epoch || !change.Runtime.Observation.Valid() || change.Runtime.SessionMetadata.Revision != revision || *change.Runtime.SessionMetadata.Title != "final before reconnect" {
 				t.Fatal("reconnect lost the final title or revision", change)
 			}
 			break

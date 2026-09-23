@@ -11,7 +11,7 @@ import (
 func directoryCacheAgent(revision uint64, title string) Agent {
 	binding := runner.Binding{RunnerID: "runner", FabricID: "fabric", MachineID: "machine", Revision: 1}
 	conversation := "conversation"
-	runtime := api.Runtime{ID: "runtime", Incarnation: "original", Generation: 1, Adapter: "acp", ConversationID: conversation,
+	runtime := api.Runtime{Observation: api.ObservationVersion{Epoch: "connector", Revision: revision}, ID: "runtime", Incarnation: "original", Generation: 1, Adapter: "acp", ConversationID: conversation,
 		SessionMetadata: &api.SessionMetadata{Revision: revision, ConversationID: &conversation, Title: &title}}
 	return Agent{Target: workbench.AgentTarget{Binding: binding, Runtime: workbench.RuntimeRef{ID: runtime.ID, Incarnation: runtime.Incarnation, Generation: runtime.Generation, Adapter: runtime.Adapter}},
 		Runtime: runtime, Runner: runner.Runner{ID: binding.RunnerID, Binding: &binding}}
@@ -48,7 +48,7 @@ func TestDirectoryCacheFencesBufferedPagesAndEventsAfterInvalidation(t *testing.
 	}
 }
 
-func TestDirectoryCacheMergesSingleRevisionAfterMembership(t *testing.T) {
+func TestDirectoryCacheMergesObservationsAfterMembership(t *testing.T) {
 	var cache DirectoryCache
 	batch := cache.Begin("subscription")
 	newer := directoryCacheAgent(1<<53+2, "new")
@@ -59,9 +59,14 @@ func TestDirectoryCacheMergesSingleRevisionAfterMembership(t *testing.T) {
 	older := directoryCacheAgent(1<<53+1, "old")
 	older.Ref = "old-native-reference"
 	cache.MergePage(batch, DirectoryPage{Items: []Agent{older}})
-	absent := older
+	absent := copyAgent(newer)
+	absent.Runtime.Observation.Revision++
+	absent.Runtime.Availability = "unavailable"
 	absent.Runtime.SessionMetadata = nil
 	cache.MergePage(batch, DirectoryPage{Items: []Agent{absent}, Complete: false})
+	if cache.Snapshot()[0].Runtime.Availability != "unavailable" {
+		t.Fatal("new non-title observation was lost")
+	}
 	if value := cache.Snapshot()[0].Runtime.SessionMetadata; value.Revision != newer.Runtime.SessionMetadata.Revision || *value.Title != "new" {
 		t.Fatal("late or unavailable discovery overwrote a newer title", value)
 	}
@@ -69,6 +74,7 @@ func TestDirectoryCacheMergesSingleRevisionAfterMembership(t *testing.T) {
 		t.Fatal("old discovery replaced the current native action reference")
 	}
 	cleared := directoryCacheAgent(1<<53+3, "")
+	cleared.Runtime.Observation.Revision = absent.Runtime.Observation.Revision + 1
 	cleared.Runtime.SessionMetadata.Title = nil
 	cache.Apply(DirectoryEvent{SubscriptionID: "subscription", Kind: DirectoryMetadata, Agent: &cleared})
 	if cache.Snapshot()[0].Runtime.SessionMetadata.Title != nil {
@@ -80,5 +86,68 @@ func TestDirectoryCacheMergesSingleRevisionAfterMembership(t *testing.T) {
 	copy[0].Runtime.SessionMetadata.Revision = 2
 	if cache.Snapshot()[0].Runtime.SessionMetadata.Revision != 1<<53+3 {
 		t.Fatal("mutable metadata escaped the SDK cache")
+	}
+}
+
+func TestDirectoryCacheOrdersFullObservationsWithUnchangedTitle(t *testing.T) {
+	for _, newerFromPage := range []bool{false, true} {
+		name := "late_page"
+		if newerFromPage {
+			name = "late_event"
+		}
+		t.Run(name, func(t *testing.T) {
+			var cache DirectoryCache
+			batch := cache.Begin("subscription")
+			pending := directoryCacheAgent(12, "same title")
+			pending.Ref, pending.Runtime.State = "pending-reference", "running"
+			confirmed := copyAgent(pending)
+			confirmed.Runtime.Observation.Revision++
+			confirmed.Ref = "confirmed-reference"
+			confirmed.Runtime.NativeSession = &api.NativeSession{ID: "native", Cwd: "/workspace"}
+			exited := copyAgent(confirmed)
+			exited.Runtime.Observation.Revision++
+			code := 0
+			exited.Runtime.State, exited.Runtime.ExitCode, exited.Runtime.StopReason = "exited", &code, "completed"
+			page := func(agent Agent) bool { return cache.MergePage(batch, DirectoryPage{Items: []Agent{agent}}) }
+			event := func(agent Agent) bool {
+				return cache.Apply(DirectoryEvent{SubscriptionID: "subscription", Kind: DirectoryMember, Agent: &agent})
+			}
+			accept, delayed := event, page
+			if newerFromPage {
+				accept, delayed = page, event
+			}
+			for _, agent := range []Agent{pending, confirmed, exited} {
+				if !accept(agent) {
+					t.Fatal("valid full observation rejected")
+				}
+				if got := cache.Snapshot()[0]; string(api.Payload(got)) != string(api.Payload(agent)) {
+					t.Fatal("non-title update was lost", got)
+				}
+			}
+			for _, agent := range []Agent{pending, confirmed, exited} {
+				if !delayed(agent) {
+					t.Fatal("delayed observation broke subscription")
+				}
+				if got := cache.Snapshot()[0]; string(api.Payload(got)) != string(api.Payload(exited)) {
+					t.Fatal("late snapshot regressed Runtime or reference", got)
+				}
+			}
+		})
+	}
+}
+
+func TestDirectoryCacheObservationEpochRequiresResubscription(t *testing.T) {
+	var cache DirectoryCache
+	batch := cache.Begin("original")
+	old := directoryCacheAgent(100, "retained title")
+	cache.MergePage(batch, DirectoryPage{Items: []Agent{old}})
+	reconnected := copyAgent(old)
+	reconnected.Runtime.Observation = api.ObservationVersion{Epoch: "reconnected", Revision: 1}
+	if cache.Apply(DirectoryEvent{SubscriptionID: "original", Kind: DirectoryMember, Agent: &reconnected}) || len(cache.Snapshot()) != 0 {
+		t.Fatal("incomparable observation epoch did not invalidate the directory")
+	}
+	current := cache.Begin("new")
+	if !cache.MergePage(current, DirectoryPage{Items: []Agent{reconnected}}) || cache.MergePage(batch, DirectoryPage{Items: []Agent{old}}) {
+		t.Fatal("fresh discovery did not fence the old epoch")
 	}
 }

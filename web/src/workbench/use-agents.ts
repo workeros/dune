@@ -69,7 +69,7 @@ export function useAgents(runners: Runner[], prefix = "/api/v1") {
         errors = nextErrors; checked = nextChecked; observed = nextObserved;
         publish();
       } catch (cause) {
-        if (!disposed && epoch === discoveryEpoch && cache.valid(activeBatch)) invalidate(cause);
+        if (!disposed && epoch === discoveryEpoch && batch === activeBatch) invalidate(cause);
       }
     };
     const connect = () => {

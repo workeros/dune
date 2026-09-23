@@ -41,10 +41,14 @@ export class DirectoryCache {
     if (!previous && (!member || this.members.size >= 4096)) return false;
     const next = structuredClone(agent), metadata = runtime.session_metadata, old = previous?.runtime.session_metadata;
     if (metadata && !/^(0|[1-9][0-9]*)$/.test(metadata.revision)) return false;
-    if (old && metadata && BigInt(metadata.revision) < BigInt(old.revision)) return true;
+    const observation = runtime.observation, prior = previous?.runtime.observation;
+    if (!observation?.epoch || !/^[1-9][0-9]*$/.test(observation.revision) || (prior && observation.epoch !== prior.epoch)) {
+      this.invalidate();
+      return false;
+    }
+    if (prior && BigInt(observation.revision) <= BigInt(prior.revision)) return true;
     if (old && !metadata) {
       next.runtime.session_metadata = structuredClone(old);
-      next.agent_ref = previous?.agent_ref;
     }
     this.members.set(key, next);
     return true;

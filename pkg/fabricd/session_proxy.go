@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,8 +34,8 @@ type sessionProxy struct {
 	connection    *yamux.Session
 	control       *wire.Stream
 	registry      *sessionregistry.Registry
-	observeMu     sync.Mutex
-	observation   atomic.Pointer[api.Runtime]
+	probeMu       sync.Mutex
+	observations  hostObservations
 	nextProbe     time.Time
 	probeFailures int
 }
@@ -101,8 +100,11 @@ func (p *sessionProxy) connect(ctx context.Context) error {
 		return err
 	}
 	_ = ctrl.SetReadDeadline(time.Time{})
+	if _, err := p.observations.confirm(observed.Runtime); err != nil {
+		sess.Close()
+		return err
+	}
 	p.connection, p.control = sess, ctrl
-	p.registration.Runtime = observed.Runtime
 	return nil
 }
 
@@ -147,43 +149,22 @@ func (p *sessionProxy) information() api.Runtime {
 
 func (p *sessionProxy) informationContext(parent context.Context) api.Runtime {
 	if p.registry != nil {
-		p.mu.Lock()
 		target, instance := p.registration.Target, p.registration.Instance
-		p.mu.Unlock()
 		if host, err := p.registry.Host(parent, target); err == nil && host.Instance == instance && host.Phase == "failed" {
-			return host.Runtime
+			return p.observations.failed(host.Runtime)
 		}
 	}
 	// Coalesce concurrent probes before entering the connection mutex. Repeated
 	// reads of one bad endpoint cannot occupy every discovery worker in sequence.
-	if !p.observeMu.TryLock() {
-		if cached := p.observation.Load(); cached != nil {
-			result := *cached
-			result.Availability = "unavailable"
-			return result
-		}
-		p.mu.Lock()
-		result := p.registration.Runtime
-		p.mu.Unlock()
-		result.Availability = "unavailable"
-		return result
+	if !p.probeMu.TryLock() {
+		return p.lastObservation()
 	}
-	defer p.observeMu.Unlock()
+	defer p.probeMu.Unlock()
 	if time.Now().Before(p.nextProbe) {
-		if cached := p.observation.Load(); cached != nil {
-			return *cached
-		}
+		return p.lastObservation()
 	}
-	p.mu.Lock()
 	request := p.request("runtime.get", struct{}{})
-	last := p.registration.Runtime
-	p.mu.Unlock()
-	if cached := p.observation.Load(); cached != nil {
-		last.LastConfirmedAt = cached.LastConfirmedAt
-	}
-	initial := last
-	initial.Availability = "unavailable"
-	p.observation.Store(&initial)
+	last := p.lastObservation()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	stream, err := p.open(ctx, request)
@@ -200,36 +181,26 @@ func (p *sessionProxy) informationContext(parent context.Context) api.Runtime {
 		if err == nil && m.Kind == "result" {
 			var current api.Runtime
 			if wire.Decode(m, &current) == nil && current.ID == last.ID && current.Incarnation == last.Incarnation && current.Generation == last.Generation {
-				now := time.Now().UTC()
-				current.LastConfirmedAt = &now
-				p.mu.Lock()
-				p.registration.Runtime = current
-				p.mu.Unlock()
-				p.observation.Store(&current)
-				p.nextProbe, p.probeFailures = time.Time{}, 0
-				return current
+				observed, confirmErr := p.observations.confirm(current)
+				if confirmErr == nil {
+					p.nextProbe, p.probeFailures = time.Time{}, 0
+					return observed
+				}
 			}
 		}
 	}
 	// A failed probe is not a confirmed process exit.
-	last.Availability = "unavailable"
-	if p.lossProven() {
-		last.State, last.Availability, last.StopReason, last.ExitCode = "lost", "lost", "host_lost", nil
-	}
 	p.probeFailures++
 	delay := 250 * time.Millisecond * time.Duration(1<<min(p.probeFailures-1, 5))
 	p.nextProbe = time.Now().Add(delay + time.Duration(rand.Int64N(int64(delay/2))))
-	p.observation.Store(&last)
-	return last
+	return p.observations.unavailable(last.Observation, p.lossProven())
 }
 
 func (p *sessionProxy) lossProven() bool {
 	if p.registry == nil {
 		return false
 	}
-	p.mu.Lock()
 	reg := p.registration
-	p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	record, err := p.registry.Host(ctx, reg.Target)

@@ -58,7 +58,7 @@ test("unopened titles use full directory snapshots and recover by batch discover
   const emitTitle = async (revision: string, title: string | null) => {
     await page.evaluate(({ runtime, runner, revision, title }) => {
       const stream = (window as any).directoryStreams.at(-1);
-      stream.emit({ kind: "member", agent: { agent_ref: `ref-${runtime.id}`, runner, target: { binding: runner.binding, runtime: { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter } }, runtime: { ...runtime, session_metadata: { revision, conversation_id: "current", title } } } });
+      stream.emit({ kind: "member", agent: { agent_ref: `ref-${runtime.id}`, runner, target: { binding: runner.binding, runtime: { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter } }, runtime: { ...runtime, observation: { epoch: "connector", revision }, session_metadata: { revision, conversation_id: "current", title } } } });
     }, { runtime, runner, revision, title });
   };
   const initialPages = state.directoryRequests.length;
@@ -77,5 +77,51 @@ test("unopened titles use full directory snapshots and recover by batch discover
   expect(state.directoryRequests.length).toBeGreaterThan(initialPages);
   expect(state.connections).toHaveLength(0);
   expect(state.calls.filter((call) => call.operation !== "machine.info")).toHaveLength(0);
+  expect(state.starts).toBe(0);
+});
+
+test("observation epoch change in a page restarts discovery", async ({ page }) => {
+  const state = workbenchState();
+  await mockWorkbench(page, state); await page.goto("/");
+  await expect(page.getByRole("button", { name: "打开 A-ACP · Runner one", exact: true })).toBeVisible();
+  const runtime = state.runtimes.one.find((item) => item.adapter === "acp")!;
+  runtime.observation = { epoch: "reconnected", revision: "1" };
+  runtime.session_metadata = { revision: "5", conversation_id: "current", title: "重连后的标题" };
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).directoryStreams.length)).toBe(2);
+  await expect(page.getByRole("button", { name: "打开 重连后的标题 · Runner one", exact: true })).toBeVisible();
+  expect(state.starts).toBe(0);
+});
+
+test("late page with unchanged title cannot undo a Runtime exit", async ({ page }) => {
+  const state = workbenchState();
+  state.runners = state.runners.slice(0, 1);
+  const runtime = state.runtimes.one.find((item) => item.adapter === "acp")!;
+  state.runtimes.one = [runtime];
+  runtime.session_metadata = { revision: "12", conversation_id: "current", title: "观察排序" };
+  await mockWorkbench(page, state); await page.goto("/");
+  await page.getByRole("button", { name: "打开 观察排序 · Runner one", exact: true }).click();
+  await expect.poll(() => state.connections.length).toBe(1);
+  let release!: () => void, captured!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const requested = new Promise<void>((resolve) => { captured = resolve; });
+  const runner = state.runners[0];
+  const target = { binding: runner.binding!, runtime: { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter } };
+  const stale = { items: [{ agent_ref: "pending-reference", target, runtime: structuredClone(runtime) }], runners: [{ runner, online: true, ready: true }], issues: [{ runner_id: runner.id, code: "RUNNER_UNAVAILABLE" }], complete: false };
+  await page.route("**/api/v1/agents?**", async (route) => {
+    captured(); await held;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(stale) });
+  });
+  await page.getByRole("button", { name: "刷新", exact: true }).click(); await requested;
+  const exited = { ...runtime, observation: { epoch: "connector", revision: "2" }, state: "exited", exit_code: 0, stop_reason: "completed" };
+  await page.evaluate(({ target, runner, exited }) => {
+    (window as any).directoryStreams.at(-1).emit({ kind: "member", agent: { agent_ref: "confirmed-reference", target, runner, runtime: exited } });
+  }, { target, runner, exited });
+  await expect(page.getByText("Agent 进程已退出，可以新建 Agent。", { exact: true })).toBeVisible();
+  const response = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/agents");
+  release(); await response;
+  await expect(page.getByText("Runner one：暂时无法读取 Agent 列表", { exact: true })).toBeVisible();
+  await expect(page.getByText("Agent 进程已退出，可以新建 Agent。", { exact: true })).toBeVisible();
+  expect(state.connections).toHaveLength(1);
   expect(state.starts).toBe(0);
 });

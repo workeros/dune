@@ -13,7 +13,7 @@ func TestRuntimeWatchRemovalFencesLatePublication(t *testing.T) {
 	d.runtimes[r.id] = r
 	mailbox, unsubscribe := d.runtimeWatches.subscribe()
 	defer unsubscribe()
-	old := api.Runtime{ID: r.id, Incarnation: r.inc, Generation: 1, SessionMetadata: &api.SessionMetadata{Revision: 12}}
+	old := api.Runtime{Observation: api.ObservationVersion{Epoch: "connector", Revision: 1}, ID: r.id, Incarnation: r.inc, Generation: 1, SessionMetadata: &api.SessionMetadata{Revision: 12}}
 	d.publishRuntime(r, old)
 	d.mu.Lock()
 	d.discoveryIssues = []api.RuntimeDiscoveryIssue{{Runtime: &old, Code: "REGISTRATION_TEMPORARY_FILE"}}

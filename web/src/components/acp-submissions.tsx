@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { APIError, call, errorText, request, runtimeKey, bindingKey, type Binding, type Runtime } from "@/lib/api";
+import { APIError, call, errorText, request, runtimeKey, bindingKey, type Binding, type Runtime, type RuntimeIdentity } from "@/lib/api";
 import { Button } from "./ui/button";
 
 function storageKey(accountID: string) {
@@ -12,7 +12,7 @@ const actions: Record<string, string> = { new: "新建对话", load: "加载对�
 type Admission = "unknown" | "accepted" | "not_accepted" | "expired";
 type Cleanup = { confirmed: string[]; remaining: string[] };
 type Receipt = { cleanup?: Cleanup; submission_id: string; admission: Admission; operation_ref?: string; stage?: string; error_code?: string; target: { owner_id: string; runner_id: string; fabric_id: string; machine_id: string; binding_revision: number; runtime_id: string; runtime_incarnation: string; runtime_generation: number } };
-type Saved = { submission_id: string; agent_ref: string; prefix: string; binding: Binding; runtime: Runtime; action: string; created_at: string; admission?: Admission; stage?: string; operation_ref?: string; outcome?: string; error_code?: string; cleanup?: Cleanup };
+type Saved = { submission_id: string; agent_ref: string; prefix: string; binding: Binding; runtime: RuntimeIdentity; action: string; created_at: string; admission?: Admission; stage?: string; operation_ref?: string; outcome?: string; error_code?: string; cleanup?: Cleanup };
 
 function readSaved(accountID: string): Saved[] {
  const raw = sessionStorage.getItem(storageKey(accountID));
@@ -39,7 +39,7 @@ export function saveACPSubmission(accountID: string, prefix: string, binding: Bi
  const capacity = { stop: 256, forget: 256, control: 512, ordinary: 64 };
  if (items.filter((item) => pool(item.action) === pool(action)).length >= capacity[pool(action)]) throw new Error("本地提交记录已满，请先移除不再需要的记录。");
  const submissionID = crypto.randomUUID();
- const selector = { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter, state: runtime.state };
+ const selector = { id: runtime.id, incarnation: runtime.incarnation, generation: runtime.generation, adapter: runtime.adapter };
  writeSaved(accountID, [...items, { submission_id: submissionID, agent_ref: agentRef, prefix, binding, runtime: selector, action, created_at: new Date().toISOString() }]);
  return submissionID;
 }

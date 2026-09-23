@@ -15,7 +15,8 @@ import (
 	"github.com/aiomni/dune/pkg/api"
 )
 
-const sessionProtocol = 1
+// Version 2 requires ordered full Runtime observations on host IPC.
+const sessionProtocol = 2
 
 // Registration is discovery evidence, never execution authority. A matching
 // live IPC handshake is required before the connector calls this Runtime.

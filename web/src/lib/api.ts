@@ -14,7 +14,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   return body as T;
 }
 export function post<T>(path: string, body: unknown) { return request<T>(path, { method: "POST", body: JSON.stringify(body) }); }
-export function call<T>(binding: Binding, operation: string, payload: unknown = {}, runtime?: Runtime) {
+export function call<T>(binding: Binding, operation: string, payload: unknown = {}, runtime?: RuntimeIdentity) {
   return post<T>(runnerPath(binding, "call"), { operation, payload, runtime });
 }
 export const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -30,15 +30,18 @@ export function runnerPath(binding: Binding, suffix: string): string {
 }
 export type SessionMetadata = { revision: string; conversation_id: string | null; title: string | null };
 export function runtimeTitle(runtime?: Runtime, fallback = "会话"): string { return runtime?.session_metadata?.title ?? (runtime?.title || fallback); }
-export type Runtime = {
+export type RuntimeIdentity = { id: string; incarnation: string; generation: number; adapter: "pty" | "acp" };
+export type Runtime = RuntimeIdentity & {
+ observation: { epoch: string; revision: string };
  session_metadata?: SessionMetadata;
+ native_session?: { id: string; cwd: string; sequence: number; source: string; agent_version?: string; resume_supported: boolean };
  availability?: "unavailable" | "lost";
  last_confirmed_at?: string; persistent_acp?: boolean; acp_mode?: "raw" | "managed";
- project_id?: string; directory_id?: string; id: string; incarnation: string; generation: number; adapter: "pty" | "acp"; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };
+ project_id?: string; directory_id?: string; state: string; exit_code?: number; stop_reason?: string; started_at?: string; deadline_at?: string; title?: string; working_directory?: string };
 export type AgentActivity = { state: "unknown" | "working" | "idle" | "blocked"; source: string; agent?: string; foreground?: string; epoch: string; sequence: number };
 export type AgentRuntime = Runtime & { activity?: AgentActivity };
-export function runtimeKey(runtime: Runtime): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }
-export function eventPath(binding: Binding, runtime: Runtime): string {
+export function runtimeKey(runtime: RuntimeIdentity): string { return JSON.stringify([runtime.id, runtime.incarnation, runtime.generation]); }
+export function eventPath(binding: Binding, runtime: RuntimeIdentity): string {
   const query = new URLSearchParams({
     machine_id: binding.machine_id,
     fabric_id: binding.fabric_id,
