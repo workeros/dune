@@ -26,13 +26,17 @@ func (c *Client) PreviewUpgrade(ctx context.Context, request upgrade.PreviewRequ
 }
 
 // StartUpgrade sends exactly once. An interrupted response leaves admission
-// unknown; callers keep the submission ID and query instead of replaying.
-func (c *Client) StartUpgrade(ctx context.Context, request upgrade.Request) (upgrade.Operation, error) {
-	result := upgrade.Operation{Request: request, Admission: api.SubmissionUnknown}
+// unknown; callers durably reserve the submission before dispatch and query
+// instead of replaying. Application callers should use upgrade.Service.
+func (c *Client) StartUpgrade(ctx context.Context, submission upgrade.Submission) (upgrade.Operation, error) {
+	result := upgrade.Operation{Request: submission.Request, Admission: api.SubmissionUnknown}
+	if err := submission.Validate(); err != nil {
+		return result, err
+	}
 	if !slices.Contains(c.Binding.Capabilities, "runner.upgrade.start") {
 		return result, &api.Error{Code: "UPGRADE_UNSUPPORTED", Detail: "Runner does not advertise online upgrade start"}
 	}
-	err := c.Call(ctx, "runner.upgrade.start", request, &result)
+	err := c.Call(ctx, "runner.upgrade.start", submission, &result)
 	return result, err
 }
 func (c *Client) GetUpgrade(ctx context.Context, query upgrade.Query) (upgrade.Operation, error) {

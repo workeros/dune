@@ -208,20 +208,21 @@ func (s *Store) Existing(ctx context.Context, request upgrade.Request) (upgrade.
 // Admit must be called while holding the physical installation lock and after
 // current authorization. Dedup precedes historical source preconditions. Both
 // rejection and acceptance are committed before returning a receipt.
-func (s *Store) Admit(ctx context.Context, request upgrade.Request, target upgrade.Manifest, source upgrade.Inspection, configurationSHA256 string) (upgrade.Operation, error) {
-	return s.admit(ctx, request, target, source, configurationSHA256, "")
+func (s *Store) Admit(ctx context.Context, submission upgrade.Submission, target upgrade.Manifest, source upgrade.Inspection, configurationSHA256 string) (upgrade.Operation, error) {
+	return s.admit(ctx, submission, target, source, configurationSHA256, "")
 }
 
-func (s *Store) Reject(ctx context.Context, request upgrade.Request, code string) (upgrade.Operation, error) {
+func (s *Store) Reject(ctx context.Context, submission upgrade.Submission, code string) (upgrade.Operation, error) {
 	if api.ValidateSubmissionID(code) != nil {
 		return upgrade.Operation{}, fmt.Errorf("stable rejection code required")
 	}
-	return s.admit(ctx, request, upgrade.Manifest{}, upgrade.Inspection{}, "", code)
+	return s.admit(ctx, submission, upgrade.Manifest{}, upgrade.Inspection{}, "", code)
 }
 
-func (s *Store) admit(ctx context.Context, request upgrade.Request, target upgrade.Manifest, source upgrade.Inspection, configurationSHA256, rejection string) (upgrade.Operation, error) {
+func (s *Store) admit(ctx context.Context, submission upgrade.Submission, target upgrade.Manifest, source upgrade.Inspection, configurationSHA256, rejection string) (upgrade.Operation, error) {
+	request := submission.Request
 	unknown := upgrade.Operation{Request: request, Admission: api.SubmissionUnknown}
-	if err := request.Validate(); err != nil {
+	if err := submission.Validate(); err != nil {
 		return unknown, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -248,7 +249,7 @@ func (s *Store) admit(ctx context.Context, request upgrade.Request, target upgra
 		return unknown, &api.Error{Code: "UPGRADE_CAPACITY_EXHAUSTED", Detail: "installation submission evidence capacity exhausted"}
 	}
 	now := time.Now().UTC()
-	op := upgrade.Operation{ID: wire.ID(), Request: request, Revision: "1", Admission: api.SubmissionAccepted, Phase: upgrade.Queued, Rollback: upgrade.RollbackNotNeeded, Source: source, Target: target, StateContract: statecontract.ID(), StartedAt: now, UpdatedAt: now, Participants: []api.UpgradeHost{}}
+	op := upgrade.Operation{ID: wire.ID(), Request: request, Revision: "1", Admission: api.SubmissionAccepted, Phase: upgrade.Queued, Rollback: upgrade.RollbackNotNeeded, Source: source, Target: target, StateContract: statecontract.ID(), StartedAt: submission.ReservedAt.UTC(), UpdatedAt: now, Participants: []api.UpgradeHost{}}
 	reject := func(code string) {
 		op.Admission, op.Phase, op.Confirmed, op.Failure = api.SubmissionNotAccepted, upgrade.Failed, true, &upgrade.Issue{Code: code, Stage: "admission"}
 	}

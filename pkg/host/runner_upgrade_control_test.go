@@ -184,7 +184,7 @@ func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T)
 	source.Running.SHA256, source.Running.StartID = strings.Repeat("b", 64), "previous-process"
 	digest, _ := manifest.Digest()
 	request := upgrade.Request{SubmissionID: "routed-proof", Binding: f.binding, InstallationID: observed.ID, ExpectedInstallationRevision: observed.Revision, ExpectedRunningSHA256: source.Running.SHA256, Release: upgrade.ReleaseRef{ID: manifest.ID, ManifestSHA256: digest}}
-	op, err := jobs.Admit(ctx, request, manifest, source, strings.Repeat("c", 64))
+	op, err := jobs.Admit(ctx, upgrade.Submission{Request: request, ReservedAt: time.Now().UTC()}, manifest, source, strings.Repeat("c", 64))
 	if err != nil {
 		t.Fatal(err)
 	}

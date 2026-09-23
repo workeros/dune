@@ -143,6 +143,28 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 
 ## U01–U19 证据索引
 
+2026-09-23 复核修正：
+
+- U18/U19：`TestWorkerRetainsUnexpectedlySelectedDownload` 覆盖下载完成和中断恢复时
+  current 被改指候选；`TestWorkerChecksSelectionBeforeTerminalRelease` 覆盖确认前、
+  确认后、解封前及重新打开任务；`TestMaintenanceRetainsUnexpectedlySelectedMaterials`
+  验证维护不删除实际选中的发行。安装与 worker 包的普通/race 回归通过，配置丢失后的
+  正常终态清理仍通过。这些故障注入使用真实文件、任务数据库和启动封闭，服务/平台效果模拟。
+- U04/U16：`TestRunnerUpgradeLiveHistoryFindsUndispatchedSubmissions` 通过真实 Gateway
+  路由发现 Reserve 后未派发的 unknown；`TestRunnerUpgradeHistoryKeepsPaginationAcrossAdmissionAndDisconnect`
+  验证后续接纳去重及在线到离线的同游标续页。分页单测覆盖同时间不同提交、字节截断及
+  独立活动任务；宿主观察存储在 SQLite 和隔离 PostgreSQL 的 race 回归通过。
+- 本轮直接更新内部提交协议与游标格式，应用层 Go/HTTP 提交参数不变。原生服务管理器、
+  整机断电及真实 Agent 未在本轮重新执行，不扩大为新的平台验收结论。
+
+本轮 `make test`（含 IM）、`make check-go web-check web-build` 均通过；相关 race 命令为
+`go test -race ./internal/installation ./internal/runnerupgrade -count=1`、
+`go test -race ./pkg/upgrade ./pkg/access ./internal/upgradejob ./pkg/host -count=1 -timeout=180s`，
+以及连接专用临时 PostgreSQL 的 `go test -race ./internal/metadata -run Upgrade -count=1 -v`。
+临时 PostgreSQL 已停止并清理。SandDance 使用临时 modfile 指向本次 Dune 源码，应用包测试
+通过；整仓 `go test ./...` 被其 `artifacts/acp-host-startup-3f7ac74/release-harness-e2e_test.go`
+跨模块导入 Dune internal 包阻断，未修改该验收材料。
+
 各行对应需求断言。原语故障注入、真实进程及原生服务管理器是不同层次的证据；
 不是每个排列组合都在所有操作系统原生执行。测试源码随本次实现提交。
 
@@ -151,7 +173,7 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 | U01 | 替换、删除磁盘程序后，内核映像摘要和启动身份保持；通过 Gateway 查询实际连接器 | `internal/runningprogram`、fabricd 真实子进程 |
 | U02 | Dune/tmux/rg/许可证逐项核验；完整已就绪返回 `already_current`，旧目录的同 SHA 进程仍需重启 | release、upgradejob；标准安装原生无操作及同 SHA 发行升级 |
 | U03 | 同键去重、异请求冲突、并发只有一个活动任务；接纳/下载后源修订变化被拒绝，回滚修订不复用 | upgradejob、installation、worker 屏障与 race |
-| U04 | 宿主先持久保留原键，响应丢失后只查询；另一客户端/重开的宿主发现同一任务 | 公开 Go/HTTP、宿主观察存储及原生任务重查 |
+| U04 | 宿主先持久保留原键，响应丢失后只查询；仅 Reserve 未派发的提交在在线历史中仍可发现且保持 unknown | 公开 Go/HTTP、宿主观察存储及原生任务重查；在线混合分页回归 |
 | U05 | 下载/摘要/非法归档/候选核验失败，未切换源安装 | release、runnerupgrade 故障注入 |
 | U06 | 源/目标/旧宿主/待启动宿主合同不符即拒绝，拒绝前后接纳记录不变 | fabricd 预检、sessionregistry、worker |
 | U07 | 启动竞争进入同一闸门；已接纳待启动宿主被枚举；worker 死后新键持久拒绝 | 真实启动与原生升级 |
@@ -163,7 +185,7 @@ Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、�
 | U13 | HFS+ 发行源→APFS 标准安装、升级及回滚；同 Dune SHA 许可证更新、组件缺失/部分切换恢复 | 跨盘原生整链、release/installation 故障注入 |
 | U14 | v3 运行时旧 v1 宿主完成权限响应并新增 prompt；回滚 v2 后两份新记录可查询；待启动 v1 仍可进入 | 原生整链；恢复受阻/失败另有 worker 测试 |
 | U15 | 七个持久边界 SIGKILL；原生目标在线时杀 worker 并延迟接管，新启动持久拒绝，恢复不重复重启 | 实际 worker 测试子进程、原生服务整链、owner fencing |
-| U16 | SIGKILL 发起 HTTP 提交的 host，重开 PostgreSQL 连接后找回原任务；Runner 断线返回最近事实 | 两宿主进程原生整链、公开 API 离线观察 |
+| U16 | SIGKILL 发起 HTTP 提交的 host，重开 PostgreSQL 连接后找回原任务；执行端确认不改变历史位置，断线后可用同一游标续页 | 两宿主进程原生整链、公开 API 在线/离线分页、宿主持久观察 |
 | U17 | 后续升级不改写旧任务结果和原证明；当前检查独立于历史；未知任务不借当前版本补记成功 | 原生连续升级、宿主存储/worker 状态机 |
 | U18 | 当前权限、原 binding/安装身份、修订与过期键分别校验；离线缓存不绕过权限；实际 current 与记录不一致时拒绝终结和解封 | 授权 API、元数据、installation/upgradejob、worker 指针异常回归 |
 | U19 | 重开持久记录恢复原阶段；确认后解封/清理中断可继续；下载恢复和维护清理先核验实际 current；异常时保留封闭及恢复材料 | worker、installation、upgradejob；未执行整机断电 |

@@ -38,8 +38,8 @@ func (d *Engine) upgradeRequest(s *executionStream, message *pb.Message) {
 	var result any
 	switch message.Operation {
 	case "runner.upgrade.start":
-		var request upgrade.Request
-		if wire.Decode(message, &request) != nil || request.Validate() != nil || request.Binding.MachineID != message.Target {
+		var submission upgrade.Submission
+		if wire.Decode(message, &submission) != nil || submission.Validate() != nil || submission.Request.Binding.MachineID != message.Target {
 			s.Fail("INVALID_ARGUMENT", fmt.Errorf("complete original upgrade request required"))
 			return
 		}
@@ -48,7 +48,7 @@ func (d *Engine) upgradeRequest(s *executionStream, message *pb.Message) {
 			s.Fail("RUNNING_PROGRAM_UNVERIFIABLE", fmt.Errorf("kernel image unavailable"))
 			return
 		}
-		result, err = controller.Start(s.ctx, request, running)
+		result, err = controller.Start(s.ctx, submission, running)
 	case "runner.upgrade.preview":
 		var request upgrade.PreviewRequest
 		if wire.Decode(message, &request) != nil || !request.Binding.Valid() || request.Binding.MachineID != message.Target {

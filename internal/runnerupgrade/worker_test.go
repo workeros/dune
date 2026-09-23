@@ -124,7 +124,7 @@ func newWorkerFixture(t *testing.T, auxiliaryOnly ...bool) *workerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.operation, err = jobs.Admit(t.Context(), request, target, sourceView, configurationSHA)
+	f.operation, err = jobs.Admit(t.Context(), upgrade.Submission{Request: request, ReservedAt: time.Now().UTC()}, target, sourceView, configurationSHA)
 	if err != nil {
 		t.Fatal(err)
 	}

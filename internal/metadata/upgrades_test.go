@@ -61,6 +61,11 @@ func TestUpgradeObservationsPersistUnknownSubmissionAndFenceTerminalFacts(t *tes
 			if _, first, err := store.Reserve(t.Context(), "owner", request); err != nil || first {
 				t.Fatal("host restart authorized replay", first, err)
 			}
+			list := upgrade.ListRequest{Binding: binding, InstallationID: request.InstallationID}
+			pending, err := store.UnknownSubmissions(t.Context(), "owner", list)
+			if err != nil || len(pending.Items) != 1 || pending.Items[0].Request != request || pending.Active != nil {
+				t.Fatal("restart lost undispatched submission", pending, err)
+			}
 			changed := request
 			changed.ExpectedInstallationRevision = "2"
 			if _, _, err := store.Reserve(t.Context(), "owner", changed); err == nil {
@@ -76,6 +81,15 @@ func TestUpgradeObservationsPersistUnknownSubmissionAndFenceTerminalFacts(t *tes
 			terminal.ObservedAt = time.Now().UTC()
 			if err := store.Observe(t.Context(), "owner", terminal); err != nil {
 				t.Fatal(err)
+			}
+			pending, err = store.UnknownSubmissions(t.Context(), "owner", list)
+			if err != nil || len(pending.Items) != 0 || pending.Active != nil {
+				t.Fatal("confirmed key still included as unknown", pending, err)
+			}
+			moved := terminal
+			moved.Operation.StartedAt = terminal.Operation.StartedAt.Add(time.Second)
+			if err := store.Observe(t.Context(), "owner", moved); err == nil {
+				t.Fatal("observation moved immutable history position")
 			}
 			stale := terminal
 			stale.Operation.Revision = "2"

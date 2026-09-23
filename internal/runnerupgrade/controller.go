@@ -54,9 +54,10 @@ func (c *Controller) control(binding runner.Binding) (*upgradecontrol.Client, er
 	return client, nil
 }
 
-func (c *Controller) Start(ctx context.Context, request upgrade.Request, running api.RunningProgram) (upgrade.Operation, error) {
+func (c *Controller) Start(ctx context.Context, submission upgrade.Submission, running api.RunningProgram) (upgrade.Operation, error) {
+	request := submission.Request
 	unknown := upgrade.Operation{Request: request, Admission: api.SubmissionUnknown}
-	if request.Validate() != nil {
+	if submission.Validate() != nil {
 		return unknown, issue("INVALID_ARGUMENT")
 	}
 	if request.InstallationID != c.registration.ID {
@@ -79,7 +80,7 @@ func (c *Controller) Start(ctx context.Context, request upgrade.Request, running
 		return op, err
 	}
 	reject := func(cause error) (upgrade.Operation, error) {
-		return jobs.Reject(ctx, request, failureIssue(cause, "admission").Code)
+		return jobs.Reject(ctx, submission, failureIssue(cause, "admission").Code)
 	}
 	active, err := jobs.Active(ctx)
 	if err != nil {
@@ -128,7 +129,7 @@ func (c *Controller) Start(ctx context.Context, request upgrade.Request, running
 	}
 	source := upgrade.Inspection{Binding: request.Binding, Installation: &observed, Running: running, Supported: true, Issues: []upgrade.Issue{}}
 	source.RunningFromSelectedRelease = runningprogram.IsExecuting(filepath.Join(c.registration.Root, "current", "dune"))
-	return jobs.Admit(ctx, request, manifest, source, configurationSHA)
+	return jobs.Admit(ctx, submission, manifest, source, configurationSHA)
 }
 
 func (c *Controller) Preview(ctx context.Context, request upgrade.PreviewRequest, source upgrade.Inspection) (upgrade.Preview, error) {

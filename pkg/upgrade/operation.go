@@ -18,6 +18,21 @@ type Request struct {
 	Release                      ReleaseRef     `json:"release"`
 }
 
+// Submission is the host-to-executor envelope, created only after Reserve.
+// ReservedAt fixes history order before dispatch; admission and worker deadlines
+// still use the executor's own clock. Public callers supply only Request.
+type Submission struct {
+	Request    Request   `json:"request"`
+	ReservedAt time.Time `json:"reserved_at"`
+}
+
+func (s Submission) Validate() error {
+	if s.ReservedAt.IsZero() {
+		return fmt.Errorf("durable host reservation time required")
+	}
+	return s.Request.Validate()
+}
+
 func (r Request) Validate() error {
 	if api.ValidateSubmissionID(r.SubmissionID) != nil || !r.Binding.Valid() || api.ValidateSubmissionID(r.InstallationID) != nil || !ValidSHA256(r.ExpectedRunningSHA256) || !ValidSHA256(r.Release.ManifestSHA256) || r.Release.ID == "" || len(r.Release.ID) > 128 {
 		return fmt.Errorf("complete original upgrade identity and release reference required")

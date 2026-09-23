@@ -31,8 +31,8 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	var err error
 	switch m.Operation {
 	case "runner.upgrade.start":
-		var request upgrade.Request
-		if decode(&request) != nil || request.Validate() != nil || request.Binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {
+		var submission upgrade.Submission
+		if decode(&submission) != nil || submission.Validate() != nil || submission.Request.Binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {
 			return r, ErrDenied
 		}
 	case "runner.upgrade.preview":

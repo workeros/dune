@@ -86,7 +86,8 @@ func (u *runnerUpgrades) StartUpgrade(ctx context.Context, scope upgrade.Scope, 
 		return u.GetUpgrade(ctx, scope, upgrade.Query{Binding: request.Binding, InstallationID: request.InstallationID, SubmissionID: request.SubmissionID})
 	}
 	op := original.Operation
-	if err := u.call(ctx, scope, "runner.upgrade.start", request, &op); err != nil {
+	submission := upgrade.Submission{Request: request, ReservedAt: original.Operation.StartedAt}
+	if err := u.call(ctx, scope, "runner.upgrade.start", submission, &op); err != nil {
 		original.Freshness = "unreachable"
 		return original, err
 	}
@@ -162,7 +163,12 @@ func (u *runnerUpgrades) ListUpgrades(ctx context.Context, scope upgrade.Scope, 
 			return upgrade.History{Page: page, Freshness: "live", ObservedAt: now}, err
 		}
 	}
-	return upgrade.History{Page: page, Freshness: "live", ObservedAt: now}, nil
+	unknown, err := u.app.upgradeObservations.UnknownSubmissions(ctx, scope.OwnerID, request)
+	if err != nil {
+		return upgrade.History{}, err
+	}
+	merged, err := upgrade.MergePages(page, unknown, request.Cursor, request.Limit)
+	return upgrade.History{Page: merged, Freshness: "live", ObservedAt: now}, err
 }
 
 func (u *runnerUpgrades) authorize(ctx context.Context, scope upgrade.Scope, operation string) error {

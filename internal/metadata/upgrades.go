@@ -89,7 +89,7 @@ func encodeUpgradeObservation(observation upgrade.Observation) (string, error) {
 func (s *Store) Observe(ctx context.Context, owner string, observation upgrade.Observation) error {
 	op := observation.Operation
 	revision, err := strconv.ParseInt(op.Revision, 10, 64)
-	if owner == "" || op.Request.Validate() != nil || api.ValidateSubmissionID(op.ID) != nil || err != nil || revision < 1 || observation.ObservedAt.IsZero() {
+	if owner == "" || op.Request.Validate() != nil || api.ValidateSubmissionID(op.ID) != nil || err != nil || revision < 1 || observation.ObservedAt.IsZero() || op.StartedAt.IsZero() {
 		return ErrInvalidArgument
 	}
 	return s.transaction(ctx, func(tx *sql.Tx) error {
@@ -104,6 +104,9 @@ func (s *Store) Observe(ctx context.Context, owner string, observation upgrade.O
 			old := before.Operation
 			if old.Request != op.Request || (old.ID != "" && old.ID != op.ID) {
 				return &api.Error{Code: "SUBMISSION_CONFLICT", Detail: "observation changed original upgrade identity"}
+			}
+			if !old.StartedAt.Equal(op.StartedAt) {
+				return fmt.Errorf("observation changed original reservation time")
 			}
 			oldRevision, _ := strconv.ParseInt(old.Revision, 10, 64)
 			if revision < oldRevision || (revision == oldRevision && observation.ObservedAt.Before(before.ObservedAt)) {
@@ -163,11 +166,24 @@ func (s *Store) Observation(ctx context.Context, owner string, query upgrade.Que
 	return result, nil
 }
 func (s *Store) Observations(ctx context.Context, owner string, request upgrade.ListRequest) (upgrade.History, error) {
+	return s.upgradeHistory(ctx, owner, request, false)
+}
+
+func (s *Store) UnknownSubmissions(ctx context.Context, owner string, request upgrade.ListRequest) (upgrade.Page, error) {
+	history, err := s.upgradeHistory(ctx, owner, request, true)
+	return history.Page, err
+}
+
+func (s *Store) upgradeHistory(ctx context.Context, owner string, request upgrade.ListRequest, unknownOnly bool) (upgrade.History, error) {
 	result := upgrade.History{Freshness: "last_known"}
 	if owner == "" || request.Validate() != nil {
 		return result, ErrInvalidArgument
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT data FROM dune_upgrade_observations WHERE owner_id=$1 AND installation_id=$2 LIMIT 4096`, owner, request.InstallationID)
+	query := `SELECT data FROM dune_upgrade_observations WHERE owner_id=$1 AND installation_id=$2`
+	if unknownOnly {
+		query += ` AND operation_id=''`
+	}
+	rows, err := s.db.QueryContext(ctx, query+` LIMIT 4096`, owner, request.InstallationID)
 	if err != nil {
 		return result, err
 	}
