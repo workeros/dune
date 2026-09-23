@@ -649,8 +649,7 @@ func (d *Engine) list(ctx context.Context) api.RuntimeList {
 					out.Items[i] = r.host.informationContext(ctx)
 					<-d.discoveryReads
 				case <-ctx.Done():
-					last := r.host.lastObservation()
-					out.Items[i] = r.host.observations.unavailable(last.Observation, false)
+					out.Items[i] = r.host.lastObservation()
 				}
 			}
 		})

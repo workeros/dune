@@ -148,6 +148,9 @@ func (p *sessionProxy) information() api.Runtime {
 }
 
 func (p *sessionProxy) informationContext(parent context.Context) api.Runtime {
+	if parent.Err() != nil {
+		return p.lastObservation()
+	}
 	if p.registry != nil {
 		target, instance := p.registration.Target, p.registration.Instance
 		if host, err := p.registry.Host(parent, target); err == nil && host.Instance == instance && host.Phase == "failed" {
@@ -188,6 +191,10 @@ func (p *sessionProxy) informationContext(parent context.Context) api.Runtime {
 				}
 			}
 		}
+	}
+	// Cancellation describes this reader, not the shared host connection.
+	if parent.Err() != nil {
+		return p.lastObservation()
 	}
 	// A failed probe is not a confirmed process exit.
 	p.probeFailures++

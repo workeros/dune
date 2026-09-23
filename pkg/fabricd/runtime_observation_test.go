@@ -170,3 +170,28 @@ func TestRuntimeObservationFencesDelayedIPC(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeObservationCancelledDiscoveryRetainsConfirmation(t *testing.T) {
+	d := newEngine(t.Context())
+	defer d.Close()
+	current := api.Runtime{ID: "runtime", Incarnation: "original", Generation: 1, Adapter: "acp", State: "exited", Observation: api.ObservationVersion{Epoch: "host", Revision: 5}}
+	proxy := &sessionProxy{registration: sessionRegistration{Runtime: current}}
+	confirmed, err := proxy.observations.confirm(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.runtimes[current.ID] = &runtime{id: current.ID, inc: current.Incarnation, host: proxy}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got := proxy.informationContext(ctx); string(api.Payload(got)) != string(api.Payload(confirmed)) {
+		t.Fatal("cancelled reader changed the shared observation", got)
+	}
+	// Hold every discovery slot to exercise cancellation before a probe starts.
+	for range cap(d.discoveryReads) {
+		d.discoveryReads <- struct{}{}
+	}
+	page := d.list(ctx)
+	if page.Complete || len(page.Items) != 1 || string(api.Payload(page.Items[0])) != string(api.Payload(confirmed)) {
+		t.Fatal("cancelled page fabricated a new availability observation", page)
+	}
+}
