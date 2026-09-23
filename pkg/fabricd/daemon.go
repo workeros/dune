@@ -163,14 +163,16 @@ func (d *Engine) handle(s *executionStream, target string, gen uint64, lease *wi
 }
 
 func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
-	if m.RuntimeId != "" && m.Operation != "submission.get" && m.Operation != "runtime.forget" {
+	// Reads use the connector's ordered observation, shared with list/watch.
+	// Forwarding runtime.get verbatim would expose the host's private epoch.
+	if m.RuntimeId != "" && m.Operation != "runtime.get" && m.Operation != "submission.get" && m.Operation != "runtime.forget" {
 		if r, err := d.lookup(m); err == nil && r.host != nil {
 			if !sessionOperation(m.Operation) {
 				s.Fail("UNSUPPORTED", fmt.Errorf("operation is not available on an ACP host"))
 				return
 			}
 			failed := false
-			if m.Operation == "runtime.stop" || m.Operation == "runtime.get" {
+			if m.Operation == "runtime.stop" {
 				r.host.mu.Lock()
 				original := r.host.registration
 				r.host.mu.Unlock()
@@ -418,7 +420,11 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 			if r.tmux != nil {
 				r.readNativeSession()
 			}
-			result = r.info()
+			if r.host != nil {
+				result = r.host.informationContext(s.ctx)
+			} else {
+				result = r.info()
+			}
 		}
 	case "runtime.capture", "runtime.scrollback", "runtime.history":
 		var r *runtime

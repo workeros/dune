@@ -76,6 +76,11 @@ func TestRuntimeWatchIncludesUnopenedAndNewRuntimes(t *testing.T) {
 			if len(page.Items) != 1 || page.Items[0].Observation.Epoch != observation.Epoch || page.Items[0].Observation.Revision < observation.Revision || string(api.Payload(page.Items[0].SessionMetadata)) != string(api.Payload(metadata)) || page.Items[0].Title != runtime.Title {
 				t.Fatal("barrier-confirmed notification and discovery disagree", page)
 			}
+			read, err := h.client.Get(ctx, runtime)
+			must(t, err)
+			if read.Observation.Epoch != observation.Epoch || read.Observation.Revision < page.Items[0].Observation.Revision || string(api.Payload(read.SessionMetadata)) != string(api.Payload(metadata)) {
+				t.Fatal("single read exposed a different observation order", read)
+			}
 			break
 		}
 	}
