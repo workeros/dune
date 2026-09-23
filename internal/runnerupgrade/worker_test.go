@@ -112,31 +112,7 @@ func newWorkerFixture(t *testing.T, auxiliaryOnly ...bool) *workerFixture {
 	f.running = fixtureProgram(source.Manifest, "original-process")
 	w := &worker{root: root, installed: store, jobs: jobs, metadata: metadata, control: f, poll: time.Millisecond, targetTimeout: time.Second, rollbackTimeout: 2 * time.Second}
 	f.worker = w
-	w.download = func(ctx context.Context, m upgrade.Manifest, destination string) error {
-		observed, complete, err := release.Observe(ctx, f.template, m.Components)
-		if err != nil {
-			return err
-		}
-		if !complete {
-			return fmt.Errorf("bad test template")
-		}
-		return release.Copy(ctx, f.template, destination, observed)
-	}
-	w.check = func(ctx context.Context, program, config string, m upgrade.Manifest) (api.UpgradeReport, error) {
-		f.checks++
-		return api.UpgradeReport{Allowed: true, StateContract: statecontract.ID(), Program: fixtureProgram(m, "checker"), Hosts: []api.UpgradeHost{}}, nil
-	}
-	w.restart = func(ctx context.Context, m installation.Metadata) error {
-		f.restarts++
-		state, err := store.Read()
-		if err != nil {
-			return err
-		}
-		f.running = fixtureProgram(state.Current.Manifest, fmt.Sprintf("restart-%d", f.restarts))
-		probe := f.worker.record.Operation.Probe()
-		f.started = &probe
-		return nil
-	}
+	configureWorkerFixture(f)
 	observed, err := store.Observe(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -154,6 +130,38 @@ func newWorkerFixture(t *testing.T, auxiliaryOnly ...bool) *workerFixture {
 	}
 	return f
 }
+
+// Only service and platform effects are simulated; the worker, installation,
+// durable job and launch seal are the production implementations.
+func configureWorkerFixture(f *workerFixture) {
+	w := f.worker
+	w.download = func(ctx context.Context, m upgrade.Manifest, destination string) error {
+		observed, complete, err := release.Observe(ctx, f.template, m.Components)
+		if err != nil {
+			return err
+		}
+		if !complete {
+			return fmt.Errorf("bad test template")
+		}
+		return release.Copy(ctx, f.template, destination, observed)
+	}
+	w.check = func(ctx context.Context, program, config string, m upgrade.Manifest) (api.UpgradeReport, error) {
+		f.checks++
+		return api.UpgradeReport{Allowed: true, StateContract: statecontract.ID(), Program: fixtureProgram(m, "checker"), Hosts: []api.UpgradeHost{}}, nil
+	}
+	w.restart = func(ctx context.Context, m installation.Metadata) error {
+		f.restarts++
+		state, err := w.installed.Read()
+		if err != nil {
+			return err
+		}
+		f.running = fixtureProgram(state.Current.Manifest, fmt.Sprintf("restart-%d", f.restarts))
+		probe := f.worker.record.Operation.Probe()
+		f.started = &probe
+		return nil
+	}
+}
+
 func fixtureProgram(m upgrade.Manifest, start string) api.RunningProgram {
 	var bytes int64
 	for _, c := range m.Components {

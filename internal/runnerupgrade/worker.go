@@ -221,6 +221,9 @@ func (w *worker) execute(ctx context.Context, id string) error {
 			if err := w.update(ctx, func(r *upgradejob.Record) { r.Operation.Phase = upgrade.Checking }); err != nil {
 				return err
 			}
+			if err := w.checkpoint("downloaded"); err != nil {
+				return err
+			}
 		case upgrade.Checking:
 			if err := w.prepareSwitch(ctx); err != nil {
 				return w.failBeforeSwitch(ctx, err)
@@ -249,6 +252,9 @@ func (w *worker) execute(ctx context.Context, id string) error {
 			proof, err := w.waitProof(ctx, deadline, false)
 			if err != nil {
 				return w.startRollback(ctx, err)
+			}
+			if err := w.checkpoint("proof_received"); err != nil {
+				return err
 			}
 			if err := w.update(ctx, func(r *upgradejob.Record) {
 				r.Operation.Proof = &proof
@@ -385,13 +391,16 @@ func (w *worker) prepareSwitch(ctx context.Context) error {
 	if err := w.validateContext(gateCtx); err != nil {
 		return err
 	}
-	return w.update(ctx, func(r *upgradejob.Record) {
+	if err := w.update(ctx, func(r *upgradejob.Record) {
 		r.Operation.Participants = target.Hosts
 		r.Operation.AttemptID = wire.ID()
 		r.Operation.Challenge = wire.ID()
 		r.Operation.AttemptStartedAt = time.Now().UTC()
 		r.Operation.Phase = upgrade.Switching
-	})
+	}); err != nil {
+		return err
+	}
+	return w.checkpoint("prepared")
 }
 
 func (w *worker) switchTarget(ctx context.Context) error {
