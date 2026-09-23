@@ -125,6 +125,11 @@ Gateway 路由到 fabricd。`Prepare` 返回有界进度及最终 `ProfileResult
 只查询原尝试而不执行或重试。该入口不发布 HTTP/CLI/IPC API，不依赖浏览器
 Session，也不新增主体授权续期或撤销合同；调用前的主体有效性由宿主负责。
 
+`App.AgentDirectory()` 批量发现会话，`App.AgentDirectoryObserver()` 订阅获授权的
+Tenant/Runner 范围。`agents.ObserveDirectory` 管理发现窗口、标题修订和目录失效屏障；
+正常标题通知包含完整快照，无需逐会话查询或解析 ACP。合同与接入示例见
+[自动标题和目录订阅](docs/acp-session-metadata.md)。
+
 `App.AttachedRunnerManager()` 提供另一条受信宿主边界：`Get` 返回 Dune
 权威的 owner、creator 和当前 binding 事实，`HasActive` 为 Tenant 删除规则提供
 有界存在性检查，`CancelEnrollment` 原子撤销尚未绑定的接入命令。宿主根据这些
