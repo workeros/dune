@@ -43,6 +43,32 @@
 接纳待启动宿主时固定程序摘要及合同，宿主注册继承它，预检枚举待启动及存活参与者。
 注册库合同及宿主记录独立于升级历史保留，重启不会解除义务。
 
+### 全发行与安装事务原语
+
+`pkg/upgrade` 定义冻结清单、组件属性、实际观察和独立的更新/重启计划。
+清单摘要使用 Go JSON 编码及按路径排序的组件；内容包含平台、下载地址/摘要、状态合同和全部组件。
+`internal/release` 有界下载、核对归档再解包；只接纳清单声明的普通文件，写入并同步规定权限。
+安装本地暂存以复制完成，不依赖暂存目录与安装目录在同一文件系统。
+
+`internal/installation` 在独占安装锁下检查完整源修订并执行 `current` 切换。
+先持久写入原/目标目录与操作身份，再原子替换相对链接，最后提交实际观察与新修订。
+恢复读取原意图和实际链接，不重做安装命令；无法归属的目录变化报告不可核验。
+辅助文件外部修改会推进观察修订；恢复原发行也产生新修订，旧请求不能重新有效。
+每次切换及恢复要求匹配当前安装、操作与 owner 的持久启动封闭。
+
+这些原语已测试，尚未装配到独立 worker 和标准安装入口，不表示在线升级已经交付。
+
+## 后续装配决策
+
+宿主配置 `upgrade.Source`，负责从固定发行引用解析获准的不可变清单。Runner/worker 使用
+安装时固定的宿主控制端点及原机器凭据；公开提交只接纳发行引用，不能让客户端注入下载命令
+或绕过宿主发行策略。执行前再向宿主核验原有效 binding。
+
+平台确认由 worker 请求宿主完成。宿主验证机器身份、原 binding 和当前操作后，通过正常
+Gateway 路由向实际 Runner 发起只读探测，再把绑定本次挑战、操作、尝试、进程及连接代次的
+证据返回 worker。worker 核对并持久提交结果；网页生命周期不参与确认。多宿主共用持久
+观察存储，无法接通时只返回最近事实及其时间，不推断成功。升级和回滚使用不同尝试。
+
 ## 实际验证证据
 
 | 场景 | 命令与证据 | 范围 |
@@ -52,5 +78,6 @@
 | U01 | `TestInspectPinsActualExecutingImageAcrossPathReplacement`、`TestMachineInfoReportsOriginalImageAfterInstallationReplacement`：替换及删除原程序路径，内核运行摘要和启动身份不变 | 本机 macOS arm64 真实进程，后者经过 Gateway |
 | U06 部分 | `TestUpgradePreflightRejectsPendingHostWithDifferentWriteSemantics`、`TestSharedContractRefusesReopenWithoutChangingAcceptedEvidence`：不同合同在预检/打开数据库时被拒绝，提交证据不丢失 | 待启动宿主及当前 schema，无历史迁移 |
 | 受影响回归 | `go test ./internal/sessionregistry ./internal/launchgate ./internal/runningprogram ./internal/retainedprogram ./pkg/fabricd -count=1 -timeout=900s` 全部通过 | 包含本机真实宿主与可控 Agent；不等于厂商 Agent 或原生服务管理器 |
+| U02/U03/U05/U13 部分 | `go test ./internal/release ./internal/installation ./pkg/upgrade -count=1`：完整组件核验、非法归档、源变化、回滚修订、原先缺失组件保留；切换意图/链接替换/记录提交边界恢复 | 本机文件与状态测试；跨文件系统及服务管理器待验收 |
 
 U01–U19 的完整闭环、原生 systemd/launchd、四平台运行和真实厂商 Agent 尚未验收。
