@@ -1,0 +1,44 @@
+Dune shared state contract, baseline 2026-09-23
+
+Participants: connector, every live and admitted pending session host, upgrade
+worker, recovery worker. An executable attests this entire contract before its
+first shared write. All writers use exactly this contract; no schema migration,
+dual read/write, format downgrade or snapshot restoration is allowed.
+
+Registry: submission keys bind original owner, full Runner binding, Runtime
+incarnation/generation and request digest. Claims never grant a second execution.
+Accepted, rejected and consumed control evidence is durable. Unknown execution
+is never replayed. Runtime/control capacity reservations and cleanup fencing
+share the admission transaction. Terminal stages cannot regress.
+
+Host lifetime: registration fixes executable digest, this contract, bootstrap,
+Runtime identity and resources before host entry. Pending reservations retain
+their fixed program/contract. Hosts may keep admitting prompts, writing results,
+answering permissions and cancellation while a connector is replaced. Their
+obligations end only after irreversible lifecycle retirement, never because an
+upgrade succeeded or its history expired. Registry settings retain this contract
+across every connector/worker restart and subsequent upgrade.
+
+Host data: current session protocol, ordered complete observations, conversation
+and raw ACP journals, tmux metadata, retained executable, startup/group records,
+cleanup checkpoint and bounded lifecycle events use the current baseline types.
+Original host owns its Agent and in-flight operations; reconnect never initializes,
+loads, prompts or resends input. Cleanup requires original resource identity and
+confirmed absence; disconnected does not mean exited.
+
+Upgrade data: immutable release manifests include every program and license with
+content hash and mode. Installation revisions advance on every physical change,
+including rollback and externally detected changes. Operation revisions order
+progress separately. Durable admission precedes worker dispatch. One exclusive
+installation owner performs switching or recovery with write-ahead checkpoints.
+The persistent launch seal precedes switching/shared target writes and survives
+owner death. Only current fenced owner may unseal after a durable verified
+terminal result; unreadable state fails closed. Terminal success requires actual
+image and full release, current Gateway route and fresh normal routed round trip
+bound to operation/attempt/process/connection. Rollback is a distinct attempt.
+No current shared state is reverted when restoring installation files.
+
+Crash recovery: partial writes resolve through their original atomic checkpoint
+and identity, never a fresh submission or guessed success. Active/unresolved
+materials and host obligations cannot be removed by ordinary history collection.
+Progress/diagnostics cannot contain credentials, environment or Agent content.

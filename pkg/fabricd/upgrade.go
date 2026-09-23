@@ -11,12 +11,14 @@ import (
 	"github.com/aiomni/dune/internal/buildinfo"
 	"github.com/aiomni/dune/internal/launchgate"
 	"github.com/aiomni/dune/internal/retainedprogram"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
+	"github.com/aiomni/dune/internal/statecontract"
 	"github.com/aiomni/dune/pkg/api"
 )
 
 func upgradeReport() api.UpgradeReport {
-	return api.UpgradeReport{TargetBuild: buildinfo.Current(), CheckedAt: time.Now().UTC(), ProtocolMin: sessionProtocol, ProtocolMax: sessionProtocol, Hosts: []api.UpgradeHost{}, Issues: []api.RuntimeDiscoveryIssue{}}
+	return api.UpgradeReport{StateContract: statecontract.ID(), TargetBuild: buildinfo.Current(), CheckedAt: time.Now().UTC(), ProtocolMin: sessionProtocol, ProtocolMax: sessionProtocol, Hosts: []api.UpgradeHost{}, Issues: []api.RuntimeDiscoveryIssue{}}
 }
 
 func upgradeIdentity(runtime api.Runtime) api.Runtime {
@@ -39,6 +41,12 @@ func CheckUpgrade(ctx context.Context, stateDir string) api.UpgradeReport {
 		add(nil, "UPGRADE_CHECK_DEADLINE")
 		return report
 	}
+	program, err := runningprogram.Inspect(ctx)
+	if err != nil {
+		add(nil, "RUNNING_PROGRAM_UNVERIFIABLE")
+		return report
+	}
+	report.Program = program
 	if err := launchgate.CheckDirectory(stateDir); os.IsNotExist(err) {
 		report.Allowed = true
 		return report
@@ -75,12 +83,17 @@ func CheckUpgrade(ctx context.Context, stateDir string) api.UpgradeReport {
 		}
 		runtime := issue.Runtime
 		protocol := 0
+		contract, digest := "", ""
 		if runtime.ACPHost != nil {
 			protocol = runtime.ACPHost.Protocol
+			contract, digest = runtime.ACPHost.StateContract, runtime.ACPHost.ProgramSHA256
 		}
-		report.Hosts = append(report.Hosts, api.UpgradeHost{Runtime: upgradeIdentity(*runtime), Protocol: protocol, Phase: issue.Code})
+		report.Hosts = append(report.Hosts, api.UpgradeHost{Runtime: upgradeIdentity(*runtime), Protocol: protocol, StateContract: contract, ProgramSHA256: digest, Phase: issue.Code})
 		if issue.Code != "LAUNCH_FAILED" && protocol != sessionProtocol {
 			add(runtime, "SESSION_PROTOCOL_UNSUPPORTED")
+		}
+		if issue.Code != "LAUNCH_FAILED" && (contract != statecontract.ID() || runtime.ACPHost == nil || (retainedprogram.Identity{SHA256: digest, Bytes: runtime.ACPHost.ProgramBytes}).Validate() != nil) {
+			add(runtime, "HOST_STATE_CONTRACT_UNVERIFIABLE")
 		}
 	}
 	engine := &Engine{stateDir: stateDir}
@@ -94,7 +107,11 @@ func CheckUpgrade(ctx context.Context, stateDir string) api.UpgradeReport {
 		if host.Retiring {
 			phase = "retiring"
 		}
-		report.Hosts = append(report.Hosts, api.UpgradeHost{Runtime: upgradeIdentity(host.Runtime), Target: &host.Target, Instance: host.Instance, Protocol: reg.Version, ProgramSHA256: reg.Program.SHA256, Phase: phase})
+		report.Hosts = append(report.Hosts, api.UpgradeHost{StateContract: reg.StateContract, Runtime: upgradeIdentity(host.Runtime), Target: &host.Target, Instance: host.Instance, Protocol: reg.Version, ProgramSHA256: reg.Program.SHA256, Phase: phase})
+		if reg.StateContract != statecontract.ID() {
+			add(&host.Runtime, "HOST_STATE_CONTRACT_UNVERIFIABLE")
+			continue
+		}
 		if reg.Version != sessionProtocol {
 			add(&host.Runtime, "SESSION_PROTOCOL_UNSUPPORTED")
 			continue

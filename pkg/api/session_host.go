@@ -5,6 +5,7 @@ import "time"
 // ACPHostInfo is diagnostic evidence from the original host. PID values never
 // grant execution authority. Startup contains only bounded, redacted evidence.
 type ACPHostInfo struct {
+	StateContract  string                `json:"state_contract"`
 	Startup        *ACPStartupDiagnostic `json:"startup,omitempty"`
 	Build          *BuildInfo            `json:"build,omitempty"`
 	LifecycleLog   *LifecycleLogUsage    `json:"lifecycle_log,omitempty"`

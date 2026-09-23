@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,11 +30,12 @@ func (id Identity) Validate() error {
 }
 
 func Current(destination string) (Identity, error) {
-	program, err := os.Executable()
+	program, err := runningprogram.Open()
 	if err != nil {
 		return Identity{}, err
 	}
-	return Copy(program, destination)
+	defer program.Close()
+	return copyFile(program, destination)
 }
 
 // Copy uses a distinct inode: overwriting or deleting the release cannot alter
@@ -44,6 +46,10 @@ func Copy(source, destination string) (identity Identity, err error) {
 		return identity, err
 	}
 	defer input.Close()
+	return copyFile(input, destination)
+}
+
+func copyFile(input *os.File, destination string) (identity Identity, err error) {
 	info, err := input.Stat()
 	if err != nil {
 		return identity, err
@@ -62,7 +68,7 @@ func Copy(source, destination string) (identity Identity, err error) {
 		}
 	}()
 	digest := sha256.New()
-	identity.Bytes, err = io.Copy(io.MultiWriter(output, digest), io.LimitReader(input, MaxBytes+1))
+	identity.Bytes, err = io.Copy(io.MultiWriter(output, digest), io.NewSectionReader(input, 0, info.Size()))
 	if err != nil {
 		return identity, err
 	}
@@ -115,7 +121,7 @@ func VerifyExecuting(path string, expected Identity) error {
 	if err != nil {
 		return err
 	}
-	executing, err := executingFile()
+	executing, err := runningprogram.Open()
 	if err != nil {
 		return err
 	}

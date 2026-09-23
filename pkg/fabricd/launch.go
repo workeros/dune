@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/aiomni/dune/internal/launchgate"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
+	"github.com/aiomni/dune/internal/statecontract"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
@@ -87,7 +89,16 @@ func (d *Engine) start(s *executionStream, message *pb.Message) {
 	r := &runtime{id: wire.ID(), inc: wire.ID(), adapter: p.Adapter, title: filepath.Base(argv[0]), cwd: p.WorkingDirectory, projectID: p.ProjectID, directoryID: p.DirectoryID, subs: map[*subscription]bool{}, done: make(chan struct{}), conversations: d.conversations}
 	r.observer = d.publishRuntime
 	if p.Adapter == "acp" {
-		r.hostInfo = &api.ACPHostInfo{Protocol: sessionProtocol}
+		program, err := runningprogram.Inspect(s.ctx)
+		if err != nil {
+			receipt, rejectErr := d.registry.Reject(d.ctx, claim, "RUNNING_PROGRAM_UNVERIFIABLE")
+			if rejectErr == nil {
+				rejectErr = &api.Error{Code: "RUNNING_PROGRAM_UNVERIFIABLE", Detail: "cannot fix the admitted host executable"}
+			}
+			failSubmission(s, receipt, rejectErr)
+			return
+		}
+		r.hostInfo = &api.ACPHostInfo{Protocol: sessionProtocol, StateContract: statecontract.ID(), ProgramSHA256: program.SHA256, ProgramBytes: program.Bytes}
 	}
 	reserved := r.info()
 	reserved.State = "starting"

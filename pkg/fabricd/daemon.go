@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/internal/wire"
@@ -404,6 +405,13 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 		info := api.MachineInfo{Home: home, UserID: strconv.Itoa(os.Getuid()), OS: goruntime.GOOS, Arch: goruntime.GOARCH, ACPConversations: d.conversations.statistics(), StreamCapacity: d.streams.Snapshot()}
 		connector := d.connectorInfo()
 		info.Connector, info.Tmux = &connector, d.tmuxVersions(s.ctx)
+		if e == nil {
+			var running api.RunningProgram
+			running, e = runningprogram.Inspect(s.ctx)
+			if e == nil {
+				info.RunningProgram = &running
+			}
+		}
 		info.LifecycleLog = lifecycleUsage(d.events)
 		if e == nil && d.registry != nil {
 			var capacity api.SubmissionCapacity

@@ -16,6 +16,7 @@ import (
 	"github.com/aiomni/dune/internal/lifecycle"
 	"github.com/aiomni/dune/internal/mcpbridge"
 	"github.com/aiomni/dune/internal/process"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
 	"github.com/aiomni/dune/internal/tmux"
 	"github.com/aiomni/dune/pkg/api"
@@ -36,6 +37,9 @@ func Open(ctx context.Context, stateDir string) (_ *Engine, err error) {
 func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(api.SubmissionKey, string) error) (_ *Engine, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if err := runningprogram.Capture(); err != nil {
+		return nil, fmt.Errorf("identify executing connector: %w", err)
 	}
 	if stateDir == "" {
 		return nil, fmt.Errorf("state directory required")
@@ -61,6 +65,12 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 	if err := syscall.Flock(int(d.lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return nil, fmt.Errorf("fabricd already running: %w", err)
 	}
+	// Validate the persistent read/write contract before tmux metadata, session
+	// terms, background maintenance or host recovery can write shared state.
+	d.registry, err = sessionregistry.Open(ctx, filepath.Join(stateDir, "registry"), sessionregistry.Options{})
+	if err != nil {
+		return nil, err
+	}
 	d.tmux, err = tmux.Open(stateDir)
 	if err != nil {
 		return nil, err
@@ -71,10 +81,6 @@ func openWithCleanupBarrier(ctx context.Context, stateDir string, barrier func(a
 		return nil, err
 	}
 	d.acpTmux, err = tmux.Open(filepath.Join(stateDir, "acp"))
-	if err != nil {
-		return nil, err
-	}
-	d.registry, err = sessionregistry.Open(ctx, filepath.Join(stateDir, "registry"), sessionregistry.Options{})
 	if err != nil {
 		return nil, err
 	}

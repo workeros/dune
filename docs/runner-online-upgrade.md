@@ -31,11 +31,26 @@
 
 此切片提供后续执行器使用的原语，尚未形成在线升级 API 或自动回滚闭环。
 
+### 运行映像与共享状态合同
+
+`machine.info.running_program` 和 `upgrade-check.program` 返回内核选定的程序摘要、字节数、
+进程启动身份和构建信息。Linux 固定 `/proc/self/exe`；macOS 核对自身代码映射的内核 vnode，
+并在服务启动前保留文件描述符。替换或删除路径不改变运行事实；无法核验时拒绝，不读 `current`
+冒充正在运行的程序。保留 ACP 程序也从同一已核验映像复制。
+
+当前读写合同的完整语义位于 `internal/statecontract/contract.txt`，以其摘要标识。
+注册库直接采用包含合同的新 schema，在 tmux 元数据、恢复和后台维护写入前核对；不迁移旧库。
+接纳待启动宿主时固定程序摘要及合同，宿主注册继承它，预检枚举待启动及存活参与者。
+注册库合同及宿主记录独立于升级历史保留，重启不会解除义务。
+
 ## 实际验证证据
 
 | 场景 | 命令与证据 | 范围 |
 | --- | --- | --- |
 | U07/U15 部分 | `go test ./internal/launchgate -count=1`：杀死真实持锁子进程，在恢复前拒绝新启动；陈旧 owner 被拒绝 | 本机文件锁/持久记录，不是服务管理器验收 |
 | U07/U15 部分 | `go test ./pkg/fabricd -run '^TestUpgradeSealRejectsLaunchAcrossConnectorRestart$' -count=1`：真实 connector 及 Gateway 路由返回持久拒绝，connector 重启、解除封闭后原键仍被拒绝；无启动副作用 | 本机真实进程；此用例未启动升级 worker |
+| U01 | `TestInspectPinsActualExecutingImageAcrossPathReplacement`、`TestMachineInfoReportsOriginalImageAfterInstallationReplacement`：替换及删除原程序路径，内核运行摘要和启动身份不变 | 本机 macOS arm64 真实进程，后者经过 Gateway |
+| U06 部分 | `TestUpgradePreflightRejectsPendingHostWithDifferentWriteSemantics`、`TestSharedContractRefusesReopenWithoutChangingAcceptedEvidence`：不同合同在预检/打开数据库时被拒绝，提交证据不丢失 | 待启动宿主及当前 schema，无历史迁移 |
+| 受影响回归 | `go test ./internal/sessionregistry ./internal/launchgate ./internal/runningprogram ./internal/retainedprogram ./pkg/fabricd -count=1 -timeout=900s` 全部通过 | 包含本机真实宿主与可控 Agent；不等于厂商 Agent 或原生服务管理器 |
 
 U01–U19 的完整闭环、原生 systemd/launchd、四平台运行和真实厂商 Agent 尚未验收。

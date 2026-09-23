@@ -280,7 +280,10 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 	if err != nil {
 		return err
 	}
-	reg := sessionRegistration{Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: description, Program: program}
+	if description.ACPHost == nil || description.ACPHost.ProgramSHA256 != program.SHA256 || description.ACPHost.ProgramBytes != program.Bytes {
+		return fmt.Errorf("retained program differs from admitted host executable")
+	}
+	reg := sessionRegistration{StateContract: description.ACPHost.StateContract, Target: target, Version: sessionProtocol, Installation: installationID(d.stateDir), Machine: machine, Instance: wire.ID(), Runtime: description, Program: program}
 	if err := savePrivateFile(filepath.Join(directory, "instance.json"), reg.Instance); err != nil {
 		return err
 	}
@@ -297,7 +300,7 @@ func (d *Engine) launchSession(p api.Profile, machine string, r *runtime, launch
 		return err
 	}
 	description.State = "starting"
-	description.ACPHost = &api.ACPHostInfo{Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: program.SHA256, ProgramBytes: program.Bytes, Startup: &api.ACPStartupDiagnostic{Phase: "host_pending"}}
+	description.ACPHost = &api.ACPHostInfo{StateContract: reg.StateContract, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: program.SHA256, ProgramBytes: program.Bytes, Startup: &api.ACPStartupDiagnostic{Phase: "host_pending"}}
 	prepared := sessionregistry.HostRecord{Target: target, Instance: reg.Instance, BootID: bootID, Runtime: description, Registration: api.Payload(reg), Resources: sessionregistry.CleanupResources{Directory: resource, Socket: sessionregistry.FileIdentity{Path: socket}, Instance: reg.Instance, TmuxSession: "acp-" + r.id}}
 	if err := d.registry.PrepareHost(d.ctx, prepared); err != nil {
 		return err

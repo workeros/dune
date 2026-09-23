@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/aiomni/dune/internal/launchgate"
+	"github.com/aiomni/dune/internal/runningprogram"
 	"github.com/aiomni/dune/internal/sessionregistry"
+	"github.com/aiomni/dune/internal/statecontract"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 )
@@ -45,13 +47,17 @@ func TestUpgradePreflightIncludesLateOriginalLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer registry.Close()
+	program, err := runningprogram.Inspect(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, protocol := range []int{sessionProtocol, sessionProtocol + 1} {
 		key := api.SubmissionKey{SubmissionID: wire.ID(), Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", MachineID: "machine", FabricID: "fabric", BindingRevision: 1}}
 		claim, _, err := registry.ClaimKey(t.Context(), key, sessionregistry.Digest("profile.start", nil), "registry:launch")
 		if err != nil {
 			t.Fatal(err)
 		}
-		pending := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, State: "starting", Adapter: "acp", ACPHost: &api.ACPHostInfo{Protocol: protocol}}
+		pending := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, State: "starting", Adapter: "acp", ACPHost: &api.ACPHostInfo{StateContract: statecontract.ID(), Protocol: protocol, ProgramSHA256: program.SHA256, ProgramBytes: program.Bytes}}
 		if _, err := registry.AcceptLaunch(t.Context(), claim, wire.ID(), pending); err != nil {
 			t.Fatal(err)
 		}
@@ -72,5 +78,41 @@ func TestUpgradePreflightIncludesLateOriginalLaunch(t *testing.T) {
 	guard, report := PrepareUpgrade(t.Context(), state)
 	if guard != nil || report.Allowed || report.Issues[0].Code != "LAUNCH_IN_PROGRESS" {
 		t.Fatal("preflight crossed in-flight launch", report)
+	}
+}
+
+func TestUpgradePreflightRejectsPendingHostWithDifferentWriteSemantics(t *testing.T) {
+	state := t.TempDir()
+	if err := os.Chmod(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := sessionregistry.Open(t.Context(), filepath.Join(state, "registry"), sessionregistry.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.Close()
+	program, err := runningprogram.Inspect(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := api.SubmissionKey{SubmissionID: "pending-incompatible-host", Target: api.SubmissionTarget{OwnerID: "owner", RunnerID: "runner", MachineID: "machine", FabricID: "fabric", BindingRevision: 1}}
+	claim, _, err := registry.ClaimKey(t.Context(), key, sessionregistry.Digest("profile.start", nil), "registry:launch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := api.Runtime{ID: wire.ID(), Incarnation: wire.ID(), Generation: 1, State: "starting", Adapter: "acp", ACPHost: &api.ACPHostInfo{Protocol: sessionProtocol, StateContract: "different-write-semantics", ProgramSHA256: program.SHA256, ProgramBytes: program.Bytes}}
+	if _, err := registry.AcceptLaunch(t.Context(), claim, wire.ID(), pending); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		report := CheckUpgrade(t.Context(), state)
+		if report.Allowed || len(report.Issues) != 1 || report.Issues[0].Code != "HOST_STATE_CONTRACT_UNVERIFIABLE" || len(report.Hosts) != 1 || report.Hosts[0].StateContract != pending.ACPHost.StateContract {
+			t.Fatal(report)
+		}
+		// Reading a preview cannot drop pending participation or its admission.
+		receipt, err := registry.Get(t.Context(), key)
+		if err != nil || receipt.Admission != api.SubmissionAccepted {
+			t.Fatal(receipt, err)
+		}
 	}
 }

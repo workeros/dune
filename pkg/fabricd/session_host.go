@@ -40,7 +40,7 @@ type sessionControl struct {
 }
 
 func sameSession(a, b sessionRegistration) bool {
-	return a.Target == b.Target && a.Version == b.Version && a.Installation == b.Installation && a.Machine == b.Machine && a.Instance == b.Instance && a.Program == b.Program && a.Runtime.ID == b.Runtime.ID && a.Runtime.Incarnation == b.Runtime.Incarnation && a.Runtime.Generation == b.Runtime.Generation
+	return a.StateContract == b.StateContract && a.Target == b.Target && a.Version == b.Version && a.Installation == b.Installation && a.Machine == b.Machine && a.Instance == b.Instance && a.Program == b.Program && a.Runtime.ID == b.Runtime.ID && a.Runtime.Incarnation == b.Runtime.Incarnation && a.Runtime.Generation == b.Runtime.Generation
 }
 
 // runSessionHost is the only owner of the existing Runtime/controller. Its
@@ -149,7 +149,7 @@ func runSessionHostWithRawWriter(directory string, wrap func(io.Writer) io.Write
 	build := buildinfo.Current()
 	r.events = d.events
 	defer d.recordLifecycle("host_exit", r, "", "", 0)
-	r.hostInfo = &api.ACPHostInfo{Build: &build, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted, Startup: &api.ACPStartupDiagnostic{Phase: "host_validation"}}
+	r.hostInfo = &api.ACPHostInfo{StateContract: reg.StateContract, Build: &build, Protocol: reg.Version, Instance: reg.Instance, ProgramSHA256: reg.Program.SHA256, ProgramBytes: reg.Program.Bytes, HostPID: os.Getpid(), StartedAt: &hostStarted, Startup: &api.ACPStartupDiagnostic{Phase: "host_validation"}}
 	reserved := reg.Runtime
 	reserved.State = "starting"
 	reserved.ACPHost = r.hostInfo

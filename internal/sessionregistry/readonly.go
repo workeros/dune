@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/aiomni/dune/internal/launchgate"
+	"github.com/aiomni/dune/internal/statecontract"
 	"modernc.org/sqlite"
 )
 
@@ -51,9 +52,14 @@ func OpenReadOnly(ctx context.Context, directory string) (*Registry, error) {
 	}
 	r := &Registry{db: sql.OpenDB(connector)}
 	r.db.SetMaxOpenConns(1)
-	if err := r.db.QueryRowContext(ctx, `SELECT max_keys,max_controls FROM registry_settings WHERE id=1`).Scan(&r.maxKeys, &r.maxControls); err != nil {
+	var contract string
+	if err := r.db.QueryRowContext(ctx, `SELECT max_keys,max_controls,shared_contract FROM registry_settings WHERE id=1`).Scan(&r.maxKeys, &r.maxControls, &contract); err != nil {
 		r.Close()
 		return nil, err
+	}
+	if contract != statecontract.ID() {
+		r.Close()
+		return nil, fmt.Errorf("shared state contract differs from this executable")
 	}
 	return r, nil
 }

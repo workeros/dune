@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/aiomni/dune/internal/statecontract"
 	"github.com/aiomni/dune/internal/wire"
 	"github.com/aiomni/dune/pkg/api"
 	"modernc.org/sqlite"
@@ -118,7 +119,7 @@ func (r *Registry) initialize(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS registry_settings (
-		id INTEGER PRIMARY KEY CHECK (id = 1), max_keys INTEGER NOT NULL, max_controls INTEGER NOT NULL);
+		id INTEGER PRIMARY KEY CHECK (id = 1), max_keys INTEGER NOT NULL, max_controls INTEGER NOT NULL, shared_contract TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS submission_keys (
 		key TEXT PRIMARY KEY, digest TEXT NOT NULL, receiver TEXT NOT NULL,
 		token TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('claimed','accepted','not_accepted')),
@@ -141,12 +142,16 @@ func (r *Registry) initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO registry_settings(id,max_keys,max_controls) VALUES(1,?,?) ON CONFLICT(id) DO NOTHING`, r.maxKeys, r.maxControls); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO registry_settings(id,max_keys,max_controls,shared_contract) VALUES(1,?,?,?) ON CONFLICT(id) DO NOTHING`, r.maxKeys, r.maxControls, statecontract.ID()); err != nil {
 		return err
 	}
 	var configured, controls int
-	if err = tx.QueryRowContext(ctx, `SELECT max_keys,max_controls FROM registry_settings WHERE id=1`).Scan(&configured, &controls); err != nil {
+	var contract string
+	if err = tx.QueryRowContext(ctx, `SELECT max_keys,max_controls,shared_contract FROM registry_settings WHERE id=1`).Scan(&configured, &controls, &contract); err != nil {
 		return err
+	}
+	if contract != statecontract.ID() {
+		return fmt.Errorf("shared state contract differs from this executable")
 	}
 	if configured != r.maxKeys || controls != r.maxControls {
 		return fmt.Errorf("registry capacity differs from its persisted configuration")
