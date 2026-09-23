@@ -92,9 +92,16 @@ func (c *DirectoryCache) mergeLocked(next Agent, establishesMembership bool) boo
 	if !exists && (!establishesMembership || len(c.members) >= MaxDirectoryMembers) {
 		return false
 	}
-	if exists && previous.Runtime.SessionMetadata != nil && (next.Runtime.SessionMetadata == nil || next.Runtime.SessionMetadata.Revision < previous.Runtime.SessionMetadata.Revision) {
+	if exists && previous.Runtime.SessionMetadata != nil && next.Runtime.SessionMetadata != nil && next.Runtime.SessionMetadata.Revision < previous.Runtime.SessionMetadata.Revision {
+		// Keep the associated action reference too: an old discovery page may
+		// describe the previous native conversation on this same Runtime.
+		return true
+	}
+	if exists && previous.Runtime.SessionMetadata != nil && next.Runtime.SessionMetadata == nil {
 		next.Runtime.SessionMetadata = previous.Runtime.SessionMetadata
 		next.Runtime.ConversationID = previous.Runtime.ConversationID
+		next.Runtime.NativeSession = previous.Runtime.NativeSession
+		next.Ref = previous.Ref
 	}
 	c.members[next.Target] = copyAgent(next)
 	return true

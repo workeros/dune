@@ -41,7 +41,11 @@ export class DirectoryCache {
     if (!previous && (!member || this.members.size >= 4096)) return false;
     const next = structuredClone(agent), metadata = runtime.session_metadata, old = previous?.runtime.session_metadata;
     if (metadata && !/^(0|[1-9][0-9]*)$/.test(metadata.revision)) return false;
-    if (old && (!metadata || BigInt(metadata.revision) < BigInt(old.revision))) next.runtime.session_metadata = structuredClone(old);
+    if (old && metadata && BigInt(metadata.revision) < BigInt(old.revision)) return true;
+    if (old && !metadata) {
+      next.runtime.session_metadata = structuredClone(old);
+      next.agent_ref = previous?.agent_ref;
+    }
     this.members.set(key, next);
     return true;
   }

@@ -52,16 +52,21 @@ func TestDirectoryCacheMergesSingleRevisionAfterMembership(t *testing.T) {
 	var cache DirectoryCache
 	batch := cache.Begin("subscription")
 	newer := directoryCacheAgent(1<<53+2, "new")
+	newer.Ref = "current-native-reference"
 	if !cache.Apply(DirectoryEvent{SubscriptionID: "subscription", Kind: DirectoryMember, Agent: &newer}) {
 		t.Fatal("member event rejected")
 	}
 	older := directoryCacheAgent(1<<53+1, "old")
+	older.Ref = "old-native-reference"
 	cache.MergePage(batch, DirectoryPage{Items: []Agent{older}})
 	absent := older
 	absent.Runtime.SessionMetadata = nil
 	cache.MergePage(batch, DirectoryPage{Items: []Agent{absent}, Complete: false})
 	if value := cache.Snapshot()[0].Runtime.SessionMetadata; value.Revision != newer.Runtime.SessionMetadata.Revision || *value.Title != "new" {
 		t.Fatal("late or unavailable discovery overwrote a newer title", value)
+	}
+	if cache.Snapshot()[0].Ref != newer.Ref {
+		t.Fatal("old discovery replaced the current native action reference")
 	}
 	cleared := directoryCacheAgent(1<<53+3, "")
 	cleared.Runtime.SessionMetadata.Title = nil
