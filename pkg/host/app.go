@@ -37,6 +37,9 @@ type Options struct {
 	// UpgradeSource resolves releases allowed for online Runner upgrades. Nil
 	// disables release selection; inspection and existing recovery remain readable.
 	UpgradeSource upgrade.Source
+	// UpgradeObservations supplies shared durable submission and observation storage.
+	// Nil uses the configured metadata database. The caller owns an injected store.
+	UpgradeObservations upgrade.ObservationStore
 	// DataDir selects SQLite in an absolute, private directory owned by the current user.
 	// The application holds it exclusively until Close has completed. The on-disk
 	// format is managed by Dune and is not a public storage extension interface.
@@ -91,32 +94,33 @@ type Options struct {
 // HTTP middleware must preserve Hijacker and ResponseController support (directly
 // or through Unwrap) for upgrades and cancellation of blocked request I/O.
 type App struct {
-	upgradeSource    upgrade.Source
-	upgradeControls  chan struct{}
-	ctx              context.Context
-	cancel           context.CancelFunc
-	web              *webapp.Server
-	agentMCP         http.Handler
-	agentMCPURL      string
-	core             *gateway.Gateway
-	publicPath       string
-	store            *metadata.Store
-	authorizer       *authorization.Service
-	agentEnvironment agents.EnvironmentResolver
-	agentOnline      func(context.Context, []string) (map[string]bool, error)
-	peer             *peer.Transport
-	peerHandler      http.Handler
-	observer         *observationRecorder
-	mu               sync.Mutex
-	closed           bool
-	draining         bool
-	requests         int
-	requestsDone     chan struct{}
-	servers          map[*http.Server]struct{}
-	active           sync.WaitGroup
-	once             sync.Once
-	done             chan struct{}
-	err              error
+	upgradeSource       upgrade.Source
+	upgradeObservations upgrade.ObservationStore
+	upgradeControls     chan struct{}
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	web                 *webapp.Server
+	agentMCP            http.Handler
+	agentMCPURL         string
+	core                *gateway.Gateway
+	publicPath          string
+	store               *metadata.Store
+	authorizer          *authorization.Service
+	agentEnvironment    agents.EnvironmentResolver
+	agentOnline         func(context.Context, []string) (map[string]bool, error)
+	peer                *peer.Transport
+	peerHandler         http.Handler
+	observer            *observationRecorder
+	mu                  sync.Mutex
+	closed              bool
+	draining            bool
+	requests            int
+	requestsDone        chan struct{}
+	servers             map[*http.Server]struct{}
+	active              sync.WaitGroup
+	once                sync.Once
+	done                chan struct{}
+	err                 error
 }
 
 // Open assembles an application without opening a listener. Cancelling parent
@@ -199,6 +203,10 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	app.agentOnline = online
+	app.upgradeObservations = options.UpgradeObservations
+	if app.upgradeObservations == nil {
+		app.upgradeObservations = store
+	}
 	app.upgradeSource, app.upgradeControls = options.UpgradeSource, make(chan struct{}, 16)
 	app.agentMCPURL = addresses.PublicURL + "api/v1/agent-mcp"
 	if app.agentOnline == nil {
@@ -214,6 +222,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	web, err := webapp.NewServer(ctx, webapp.Options{
 		AgentNativeSessions:    app.AgentNativeSessions(),
 		AgentLauncher:          app.AgentLauncher(),
+		RunnerUpgrades:         app.RunnerUpgrader(),
 		AgentDirectory:         app.AgentDirectory(),
 		AgentDirectoryObserver: app.AgentDirectoryObserver(),
 		AgentMessenger:         app.AgentMessenger(),

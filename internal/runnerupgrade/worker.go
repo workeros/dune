@@ -182,7 +182,7 @@ func (w *worker) execute(ctx context.Context, id string) error {
 				return w.failBeforeSwitch(ctx, err)
 			}
 			fingerprint, err := configurationFingerprint(w.metadata.ConfigPath)
-			if err != nil {
+			if err != nil || fingerprint != w.record.ConfigurationSHA256 {
 				return w.failBeforeSwitch(ctx, issue("UPGRADE_CONFIG_UNAVAILABLE"))
 			}
 			err = w.update(ctx, func(r *upgradejob.Record) {

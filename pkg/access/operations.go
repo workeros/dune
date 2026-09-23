@@ -30,6 +30,26 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	decode := func(out any) error { return json.Unmarshal(m.Payload, out) }
 	var err error
 	switch m.Operation {
+	case "runner.upgrade.start":
+		var request upgrade.Request
+		if decode(&request) != nil || request.Validate() != nil || request.Binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {
+			return r, ErrDenied
+		}
+	case "runner.upgrade.preview":
+		var request upgrade.PreviewRequest
+		if decode(&request) != nil || !upgrade.ValidSHA256(request.Release.ManifestSHA256) || request.Binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {
+			return r, ErrDenied
+		}
+	case "runner.upgrade.get":
+		var query upgrade.Query
+		if decode(&query) != nil || query.Validate() != nil || query.Binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {
+			return r, ErrDenied
+		}
+	case "runner.upgrade.list":
+		var request upgrade.ListRequest
+		if decode(&request) != nil || request.Validate() != nil || request.Binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {
+			return r, ErrDenied
+		}
 	case "runner.upgrade.inspect":
 		var binding runner.Binding
 		if decode(&binding) != nil || binding != scope.Binding || r.Runtime != (RuntimeIdentity{}) {

@@ -117,3 +117,10 @@ func View(ctx context.Context, root string) (upgrade.Installation, error) {
 	}
 	return upgrade.Installation{ID: record.Metadata.ID, Revision: strconv.FormatUint(record.Revision, 10), Method: record.Metadata.Method, Release: record.Current.Manifest, Components: components, Complete: complete, ObservedAt: time.Now().UTC()}, nil
 }
+
+// MetadataAt reads registered configuration/service identity without taking a
+// physical mutation lock. Mutations revalidate the complete record under Lock.
+func MetadataAt(root string) (Metadata, error) {
+	record, err := readRecord(root)
+	return record.Metadata, err
+}

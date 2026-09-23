@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,23 +64,23 @@ func jobFixture(t *testing.T) (*Store, upgrade.Request, upgrade.Manifest, upgrad
 
 func TestAdmissionKeepsOriginalKeyBeforeRecheckingSource(t *testing.T) {
 	s, request, target, source := jobFixture(t)
-	original, err := s.Admit(t.Context(), request, target, source)
+	original, err := s.Admit(t.Context(), request, target, source, strings.Repeat("c", 64))
 	if err != nil || original.Admission != api.SubmissionAccepted || original.Confirmed {
 		t.Fatal(original, err)
 	}
 	changed := inspection(manifest("R3"), "7")
-	duplicate, err := s.Admit(t.Context(), request, target, changed)
+	duplicate, err := s.Admit(t.Context(), request, target, changed, strings.Repeat("c", 64))
 	if err != nil || duplicate.ID != original.ID || duplicate.Revision != original.Revision {
 		t.Fatal("duplicate replaced original admission", duplicate, err)
 	}
 	conflicting := request
 	conflicting.ExpectedInstallationRevision = "7"
-	if _, err := s.Admit(t.Context(), conflicting, target, changed); err == nil {
+	if _, err := s.Admit(t.Context(), conflicting, target, changed, strings.Repeat("c", 64)); err == nil {
 		t.Fatal("same key changed request")
 	}
 	second := request
 	second.SubmissionID = "other-client"
-	rejected, err := s.Admit(t.Context(), second, target, source)
+	rejected, err := s.Admit(t.Context(), second, target, source, strings.Repeat("c", 64))
 	if err != nil || rejected.Admission != api.SubmissionNotAccepted || rejected.ActiveOperationID != original.ID || rejected.Failure.Code != "UPGRADE_CONFLICT" {
 		t.Fatal(rejected, err)
 	}
@@ -94,7 +95,7 @@ func TestStaleHelperRevisionConflictsUnlessTargetIsFullyCurrent(t *testing.T) {
 		t.Run(installed, func(t *testing.T) {
 			s, request, target, _ := jobFixture(t)
 			source := inspection(manifest(installed), "9")
-			operation, err := s.Admit(t.Context(), request, target, source)
+			operation, err := s.Admit(t.Context(), request, target, source, strings.Repeat("c", 64))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +107,7 @@ func TestStaleHelperRevisionConflictsUnlessTargetIsFullyCurrent(t *testing.T) {
 				t.Fatal(operation)
 			}
 			// Repairing the source later must not reactivate a rejected original key.
-			again, err := s.Admit(t.Context(), request, target, inspection(target, "10"))
+			again, err := s.Admit(t.Context(), request, target, inspection(target, "10"), strings.Repeat("c", 64))
 			if err != nil || again.ID != operation.ID || again.Phase != operation.Phase {
 				t.Fatal(again, err)
 			}
@@ -132,7 +133,7 @@ func TestConcurrentAdmissionsHaveOnlyOneExecutor(t *testing.T) {
 			if i%2 == 1 {
 				store = other
 			}
-			result, err := store.Admit(t.Context(), own, target, source)
+			result, err := store.Admit(t.Context(), own, target, source, strings.Repeat("c", 64))
 			results <- result
 			errors <- err
 		})
@@ -158,7 +159,7 @@ func TestConcurrentAdmissionsHaveOnlyOneExecutor(t *testing.T) {
 
 func TestReopenFindsOriginalAdmissionWithoutStartingAnotherJob(t *testing.T) {
 	s, request, target, source := jobFixture(t)
-	original, err := s.Admit(t.Context(), request, target, source)
+	original, err := s.Admit(t.Context(), request, target, source, strings.Repeat("c", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +187,7 @@ func TestReopenFindsOriginalAdmissionWithoutStartingAnotherJob(t *testing.T) {
 
 func verifying(t *testing.T, s *Store, request upgrade.Request, target upgrade.Manifest, source upgrade.Inspection) Record {
 	t.Helper()
-	op, err := s.Admit(t.Context(), request, target, source)
+	op, err := s.Admit(t.Context(), request, target, source, strings.Repeat("c", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,12 +329,12 @@ func TestExpiredHistoryRetainsKeysAndActiveRecovery(t *testing.T) {
 	source := inspection(target, "2")
 	for i := range 130 {
 		request.SubmissionID = fmt.Sprintf("completed-%d", i)
-		if _, err := s.Admit(t.Context(), request, target, source); err != nil {
+		if _, err := s.Admit(t.Context(), request, target, source, strings.Repeat("c", 64)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	request.SubmissionID = "unfinished"
-	active, err := s.Admit(t.Context(), request, target, inspection(manifest("R1"), "1"))
+	active, err := s.Admit(t.Context(), request, target, inspection(manifest("R1"), "1"), strings.Repeat("c", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +343,7 @@ func TestExpiredHistoryRetainsKeysAndActiveRecovery(t *testing.T) {
 		t.Fatal(pruned, err)
 	}
 	request.SubmissionID = "completed-0"
-	expired, err := s.Admit(t.Context(), request, target, source)
+	expired, err := s.Admit(t.Context(), request, target, source, strings.Repeat("c", 64))
 	if err != nil || expired.Admission != api.SubmissionExpired {
 		t.Fatal("expired key admitted work again", expired, err)
 	}

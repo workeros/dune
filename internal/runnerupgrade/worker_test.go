@@ -131,7 +131,11 @@ func newWorkerFixture(t *testing.T) *workerFixture {
 	sourceView := upgrade.Inspection{Binding: binding, Installation: &observed, Running: f.running, Supported: true}
 	digest, _ := target.Digest()
 	request := upgrade.Request{SubmissionID: "request", Binding: binding, InstallationID: metadata.ID, ExpectedInstallationRevision: observed.Revision, ExpectedRunningSHA256: f.running.SHA256, Release: upgrade.ReleaseRef{ID: target.ID, ManifestSHA256: digest}}
-	f.operation, err = jobs.Admit(t.Context(), request, target, sourceView)
+	configurationSHA, err := configurationFingerprint(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.operation, err = jobs.Admit(t.Context(), request, target, sourceView, configurationSHA)
 	if err != nil {
 		t.Fatal(err)
 	}

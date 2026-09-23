@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 }
 
 type executorFixture struct {
+	disconnect func()
 	credential string
 	app        *App
 	executor   RunnerExecutor
@@ -117,7 +118,7 @@ func openExecutorFixtureFor(t *testing.T, duration time.Duration) executorFixtur
 			_ = manager.Close()
 		}
 	})
-	return executorFixture{credential: credential, app: app, executor: app.RunnerExecutor(), principal: principal, owner: owner, binding: binding, workspace: t.TempDir(), stateDir: engineDir}
+	return executorFixture{disconnect: func() { _ = right.Close() }, credential: credential, app: app, executor: app.RunnerExecutor(), principal: principal, owner: owner, binding: binding, workspace: t.TempDir(), stateDir: engineDir}
 }
 
 func (f executorFixture) execution(id string, profile api.Profile) RunnerExecutionRequest {

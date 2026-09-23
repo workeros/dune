@@ -43,7 +43,7 @@ dune upgrade-worker --root /absolute/installation --once
 切换后失败会进入原发行回滚；回滚也必须核验当前共享状态、原文件和平台可达性。
 不能通过恢复旧 SessionDir 快照丢弃升级期间的新记录。
 
-当前实现和尚未完成的公开 API/验收见 [在线升级交付记录](runner-online-upgrade.md)。
+公开接口见 [升级 API](runner-upgrade-api.md)，当前实现与剩余验收见 [在线升级交付记录](runner-online-upgrade.md)。
 已通过 macOS arm64 的独立 LaunchAgent 生命周期测试；systemd 原生运行、其他架构和完整 U01–U19
 尚不能由交叉编译或模拟服务测试替代。
 

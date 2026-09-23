@@ -108,9 +108,10 @@ type Operation struct {
 // Observation describes freshness independently of execution. Offline snapshots
 // preserve the executor's last facts and never infer a new terminal result.
 type Observation struct {
-	Operation  Operation `json:"operation"`
-	Freshness  string    `json:"freshness"`
-	ObservedAt time.Time `json:"observed_at"`
+	ObservationIssue *Issue    `json:"observation_issue,omitempty"`
+	Operation        Operation `json:"operation"`
+	Freshness        string    `json:"freshness"`
+	ObservedAt       time.Time `json:"observed_at"`
 }
 
 type Query struct {

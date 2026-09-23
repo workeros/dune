@@ -26,6 +26,12 @@ Original host owns its Agent and in-flight operations; reconnect never initializ
 loads, prompts or resends input. Cleanup requires original resource identity and
 confirmed absence; disconnected does not mean exited.
 
+Online upgrade baseline: attesting connectors implement the inspection, preview,
+durable admission, query, history and read-only attempt-probe protocol. A standard
+installation retains an independent supervised recovery executable outside the
+selected release. The original config/trust identity is frozen at admission;
+progress or recovery cannot substitute a new endpoint or credential identity.
+
 Upgrade data: immutable release manifests include every program and license with
 content hash and mode. Installation revisions advance on every physical change,
 including rollback and externally detected changes. Operation revisions order

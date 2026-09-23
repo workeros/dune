@@ -19,6 +19,7 @@ import (
 
 	"github.com/aiomni/dune/internal/statecontract"
 	"github.com/aiomni/dune/internal/upgradecontrol"
+	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/upgrade"
 )
@@ -89,7 +90,15 @@ func TestWorkerControlAuthenticatesOriginalMachineAndTrustedReleaseSource(t *tes
 	}
 }
 
-func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T) {
+type installedRunnerFixture struct {
+	executorFixture
+	root, directory, configPath string
+	program                     api.RunningProgram
+	manifest                    upgrade.Manifest
+	observed                    upgrade.Installation
+}
+
+func openInstalledRunnerFixture(t *testing.T) installedRunnerFixture {
 	f := openExecutorFixtureFor(t, time.Minute)
 	ctx := t.Context()
 	root := t.TempDir()
@@ -154,6 +163,18 @@ func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return installedRunnerFixture{executorFixture: f, root: root, directory: directory, configPath: configPath, program: program, manifest: manifest, observed: observed}
+}
+
+func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T) {
+	f := openInstalledRunnerFixture(t)
+	root, directory, program, manifest, observed := f.root, f.directory, f.program, f.manifest, f.observed
+	ctx := t.Context()
+	installed, err := installation.Lock(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer installed.Close()
 	jobs, err := upgradejob.Open(ctx, filepath.Join(root, "upgrades"))
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +184,7 @@ func TestWorkerControlConfirmsActualImageThroughNormalGatewayRoute(t *testing.T)
 	source.Running.SHA256, source.Running.StartID = strings.Repeat("b", 64), "previous-process"
 	digest, _ := manifest.Digest()
 	request := upgrade.Request{SubmissionID: "routed-proof", Binding: f.binding, InstallationID: observed.ID, ExpectedInstallationRevision: observed.Revision, ExpectedRunningSHA256: source.Running.SHA256, Release: upgrade.ReleaseRef{ID: manifest.ID, ManifestSHA256: digest}}
-	op, err := jobs.Admit(ctx, request, manifest, source)
+	op, err := jobs.Admit(ctx, request, manifest, source, strings.Repeat("c", 64))
 	if err != nil {
 		t.Fatal(err)
 	}

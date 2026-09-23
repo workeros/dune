@@ -34,6 +34,8 @@ type profileAttempt struct {
 	at     time.Time
 }
 type Engine struct {
+	upgradeReads       chan struct{}
+	upgradePreviews    chan struct{}
 	runtimeWatches     runtimeWatchHub
 	runtimeObserveOnce sync.Once
 	cleaner            *process.Cleaner
@@ -82,6 +84,8 @@ type Engine struct {
 func newEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
 	engine := &Engine{cancel: cancel, inc: wire.ID(), starts: make(chan struct{}, 64), runtimes: map[string]*runtime{}, uploads: map[string]*upload{}, cache: map[string]*cached{}, attempts: map[string]*profileAttempt{}, bulk: make(chan struct{}, 4), searchSlots: make(chan struct{}, 2), conversations: newConversationStore(), conversationReads: make(chan struct{}, 8), ctx: ctx}
+	engine.upgradeReads = make(chan struct{}, 4)
+	engine.upgradePreviews = make(chan struct{}, 1)
 	engine.startedAt = time.Now().UTC()
 	engine.submissionReads = make(chan struct{}, 8)
 	engine.stateReads = make(chan struct{}, 16)
@@ -188,6 +192,9 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	}
 	var e error
 	switch m.Operation {
+	case "runner.upgrade.start", "runner.upgrade.preview", "runner.upgrade.get", "runner.upgrade.list":
+		d.upgradeRequest(s, m)
+		return
 	case "runner.upgrade.inspect":
 		d.inspectUpgrade(s, m)
 		return

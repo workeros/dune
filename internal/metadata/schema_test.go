@@ -30,7 +30,7 @@ func TestSchemaInitializationIsAtomic(t *testing.T) {
 					}
 				}
 				// Drop children before parents so both backends enforce foreign keys.
-				for _, table := range []string{"dune_views", "dune_projects", "dune_profile_revisions", "dune_profiles", "dune_enrollments", "dune_runners", "dune_sessions", "dune_users", "dune_agent_credentials"} {
+				for _, table := range []string{"dune_upgrade_observations", "dune_views", "dune_projects", "dune_profile_revisions", "dune_profiles", "dune_enrollments", "dune_runners", "dune_sessions", "dune_users", "dune_agent_credentials"} {
 					if _, err := tx.ExecContext(ctx, "DROP TABLE "+table); err != nil {
 						return err
 					}

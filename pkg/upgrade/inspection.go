@@ -68,7 +68,7 @@ func Compare(source Installation, running api.RunningProgram, target Manifest) P
 		plan.Differences = append(plan.Differences, path)
 	}
 	slices.Sort(plan.Differences)
-	plan.ReleaseUpdateRequired = len(plan.Differences) != 0
+	plan.ReleaseUpdateRequired = len(plan.Differences) != 0 || !source.Complete
 	plan.ConnectorRestartRequired = running.SHA256 != target.ProgramSHA256()
 	if plan.ConnectorRestartRequired {
 		plan.RestartReason = "CONNECTOR_PROGRAM_CHANGED"

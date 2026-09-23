@@ -59,7 +59,7 @@ func (d *Engine) ServeConn(ctx context.Context, conn net.Conn, target string) er
 	}
 	b.Limits["acp_conversation_bytes"] = api.MaxACPConversationBytes
 	b.Capabilities = append(append([]string(nil), b.Capabilities...), "submission.acp", "submission.raw", "acp.raw.state", "acp.raw.read", "acp.persistent")
-	b.Capabilities = append(b.Capabilities, "runner.upgrade.probe", "runner.upgrade.inspect")
+	b.Capabilities = append(b.Capabilities, "runner.upgrade.probe", "runner.upgrade.inspect", "runner.upgrade.preview", "runner.upgrade.start", "runner.upgrade.get", "runner.upgrade.list")
 	b.Limits["raw_acp_message_bytes"] = api.RawACPMaxMessageBytes
 	b.Limits["raw_acp_pending_bytes"] = api.RawACPMaxPendingBytes
 	b.Limits["raw_acp_pending_messages"] = api.RawACPMaxPendingMessages

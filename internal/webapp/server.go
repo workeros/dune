@@ -31,6 +31,7 @@ import (
 	"github.com/aiomni/dune/pkg/managed"
 	"github.com/aiomni/dune/pkg/runner"
 	"github.com/aiomni/dune/pkg/transport/tunnel"
+	"github.com/aiomni/dune/pkg/upgrade"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 	"github.com/fasthttp/websocket"
 )
@@ -42,6 +43,7 @@ func (s *Server) setSession(w http.ResponseWriter, token string, lifetime time.D
 }
 
 type Options struct {
+	RunnerUpgrades         upgrade.Service
 	AgentNativeSessions    agents.NativeSessions
 	AgentLauncher          agents.Launcher
 	AgentDirectory         agents.Directory
@@ -181,6 +183,7 @@ func NewServer(parent context.Context, options Options, store *metadata.Store, s
 	s.mux.HandleFunc("DELETE /api/v1/runners/{runner}/binding", s.revokeRunner)
 	s.mux.HandleFunc("POST /api/v1/runners/{runner}/call", s.call)
 	s.mux.HandleFunc("POST /api/v1/runners/{runner}/sessions", s.start)
+	s.mux.HandleFunc("POST /api/v1/runners/{runner}/upgrade/{action}", s.runnerUpgrade)
 	s.mux.HandleFunc("GET /api/v1/ws/runners/{runner}/sessions/{runtime}/events", s.events)
 	if options.Assets != "" {
 		s.mux.Handle("GET /", http.FileServer(http.Dir(options.Assets)))

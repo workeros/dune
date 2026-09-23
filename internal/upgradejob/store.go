@@ -208,7 +208,18 @@ func (s *Store) Existing(ctx context.Context, request upgrade.Request) (upgrade.
 // Admit must be called while holding the physical installation lock and after
 // current authorization. Dedup precedes historical source preconditions. Both
 // rejection and acceptance are committed before returning a receipt.
-func (s *Store) Admit(ctx context.Context, request upgrade.Request, target upgrade.Manifest, source upgrade.Inspection) (upgrade.Operation, error) {
+func (s *Store) Admit(ctx context.Context, request upgrade.Request, target upgrade.Manifest, source upgrade.Inspection, configurationSHA256 string) (upgrade.Operation, error) {
+	return s.admit(ctx, request, target, source, configurationSHA256, "")
+}
+
+func (s *Store) Reject(ctx context.Context, request upgrade.Request, code string) (upgrade.Operation, error) {
+	if api.ValidateSubmissionID(code) != nil {
+		return upgrade.Operation{}, fmt.Errorf("stable rejection code required")
+	}
+	return s.admit(ctx, request, upgrade.Manifest{}, upgrade.Inspection{}, "", code)
+}
+
+func (s *Store) admit(ctx context.Context, request upgrade.Request, target upgrade.Manifest, source upgrade.Inspection, configurationSHA256, rejection string) (upgrade.Operation, error) {
 	unknown := upgrade.Operation{Request: request, Admission: api.SubmissionUnknown}
 	if err := request.Validate(); err != nil {
 		return unknown, err
@@ -246,6 +257,13 @@ func (s *Store) Admit(ctx context.Context, request upgrade.Request, target upgra
 		return unknown, activeErr
 	}
 	switch {
+	case rejection != "":
+		reject(rejection)
+		if activeErr == nil {
+			op.ActiveOperationID = active.Operation.ID
+		}
+	case !upgrade.ValidSHA256(configurationSHA256):
+		reject("UPGRADE_CONFIG_UNVERIFIABLE")
 	case source.Installation == nil || source.Installation.ID != request.InstallationID || source.Binding != request.Binding:
 		reject("INSTALLATION_CHANGED")
 	case activeErr == nil:
@@ -265,7 +283,7 @@ func (s *Store) Admit(ctx context.Context, request upgrade.Request, target upgra
 			reject("INSTALLATION_CHANGED")
 		}
 	}
-	record := Record{Operation: op, Deadline: now.Add(10 * time.Minute)}
+	record := Record{Operation: op, ConfigurationSHA256: configurationSHA256, Deadline: now.Add(10 * time.Minute)}
 	body, err := encode(record)
 	if err != nil {
 		return unknown, err

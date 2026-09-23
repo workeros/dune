@@ -18,6 +18,8 @@ var localIdentitySchema = []string{
 }
 
 var executionSchema = []string{
+	`CREATE TABLE dune_upgrade_observations (owner_id TEXT NOT NULL,installation_id TEXT NOT NULL,submission_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>=0),data TEXT NOT NULL,PRIMARY KEY(owner_id,installation_id,submission_id))`,
+	`CREATE INDEX dune_upgrade_operations ON dune_upgrade_observations(owner_id,installation_id,operation_id)`,
 	`CREATE TABLE dune_agent_credentials (hash TEXT PRIMARY KEY,owner_id TEXT NOT NULL,target_key TEXT NOT NULL,target TEXT NOT NULL,principal_id TEXT NOT NULL,namespace TEXT NOT NULL,subject TEXT NOT NULL,kind TEXT NOT NULL,expires_at BIGINT NOT NULL,UNIQUE(owner_id,target_key))`,
 	`CREATE INDEX dune_agent_credentials_expiry ON dune_agent_credentials(expires_at)`,
 	`CREATE TABLE dune_views (owner_id TEXT NOT NULL,user_namespace TEXT NOT NULL,user_id TEXT NOT NULL,id TEXT NOT NULL,revision BIGINT NOT NULL CHECK(revision>0),spec TEXT NOT NULL,updated_at BIGINT NOT NULL,PRIMARY KEY(owner_id,user_namespace,user_id,id))`,
@@ -39,16 +41,17 @@ type schemaQueryer interface {
 }
 
 var schemaColumns = map[string][]string{
-	"dune_agent_credentials": {"hash", "owner_id", "target_key", "target", "principal_id", "namespace", "subject", "kind", "expires_at"},
-	"dune_views":             {"owner_id", "user_namespace", "user_id", "id", "revision", "spec", "updated_at"},
-	"dune_projects":          {"id", "owner_id", "revision", "spec", "created_at", "updated_at"},
-	"dune_profiles":          {"id", "owner_id", "kind", "revision", "created_by_type", "created_by_subject", "created_at", "updated_at"},
-	"dune_profile_revisions": {"profile_id", "revision", "name", "description", "profile", "created_at"},
-	"dune_users":             {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
-	"dune_sessions":          {"hash", "user_id", "expires_at", "auth_version"},
-	"dune_runners":           {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
-	"dune_enrollments":       {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
-	"dune_routes":            {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
+	"dune_upgrade_observations": {"owner_id", "installation_id", "submission_id", "operation_id", "revision", "data"},
+	"dune_agent_credentials":    {"hash", "owner_id", "target_key", "target", "principal_id", "namespace", "subject", "kind", "expires_at"},
+	"dune_views":                {"owner_id", "user_namespace", "user_id", "id", "revision", "spec", "updated_at"},
+	"dune_projects":             {"id", "owner_id", "revision", "spec", "created_at", "updated_at"},
+	"dune_profiles":             {"id", "owner_id", "kind", "revision", "created_by_type", "created_by_subject", "created_at", "updated_at"},
+	"dune_profile_revisions":    {"profile_id", "revision", "name", "description", "profile", "created_at"},
+	"dune_users":                {"id", "email", "salt", "password_hash", "enabled", "auth_version"},
+	"dune_sessions":             {"hash", "user_id", "expires_at", "auth_version"},
+	"dune_runners":              {"id", "owner_id", "created_by_id", "created_by_namespace", "created_by_subject", "name", "kind", "fabric_id", "binding_revision", "machine_id", "credential_hash", "os", "arch", "enabled", "suspended", "created_at"},
+	"dune_enrollments":          {"hash", "owner_id", "issued_to_id", "issued_to_kind", "namespace", "subject", "name", "runner_id", "kind", "fabric_id", "expires_at"},
+	"dune_routes":               {"machine_id", "epoch", "owner_boot_id", "owner_address", "binding", "published", "expires_at"},
 }
 
 func (s *Store) schemaExists(ctx context.Context, queryer schemaQueryer) (bool, error) {
@@ -98,7 +101,7 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 }
 
 func (s *Store) expectedTables() []string {
-	tables := []string{"dune_agent_credentials", "dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions", "dune_projects", "dune_views"}
+	tables := []string{"dune_upgrade_observations", "dune_agent_credentials", "dune_enrollments", "dune_runners", "dune_profiles", "dune_profile_revisions", "dune_projects", "dune_views"}
 	if s.localIdentity {
 		tables = append(tables, "dune_sessions", "dune_users")
 	}

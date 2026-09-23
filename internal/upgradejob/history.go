@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/aiomni/dune/pkg/api"
@@ -29,33 +28,13 @@ func (s *Store) List(ctx context.Context, binding runner.Binding, installationID
 	if !binding.Valid() || api.ValidateSubmissionID(installationID) != nil {
 		return page, fmt.Errorf("complete upgrade history scope required")
 	}
-	if limit == 0 {
-		limit = 50
-	}
-	if limit < 1 || limit > 100 {
-		return page, fmt.Errorf("upgrade history limit must be 1..100")
-	}
-	before := int64(1<<63 - 1)
-	if cursor != "" {
-		parsed, err := strconv.ParseInt(cursor, 10, 64)
-		if err != nil || parsed <= 0 || strconv.FormatInt(parsed, 10) != cursor {
-			return page, fmt.Errorf("invalid upgrade history cursor")
-		}
-		before = parsed
-	}
-	active, err := s.Active(ctx)
-	if err != nil {
-		return page, err
-	}
-	if active != nil && sameScope(active.Operation, binding, installationID) {
-		page.Active = &active.Operation
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT data,digest,sequence FROM upgrades WHERE active=0 AND expired=0 AND sequence<? ORDER BY sequence DESC LIMIT ?`, before, MaxKeys)
+
+	rows, err := s.db.QueryContext(ctx, `SELECT data,digest,sequence FROM upgrades WHERE expired=0 ORDER BY sequence DESC LIMIT ?`, MaxKeys)
 	if err != nil {
 		return page, err
 	}
 	defer rows.Close()
-	var last int64
+	var operations []upgrade.Operation
 	for rows.Next() {
 		var body []byte
 		var digest string
@@ -70,14 +49,12 @@ func (s *Store) List(ctx context.Context, binding runner.Binding, installationID
 		if !sameScope(record.Operation, binding, installationID) {
 			continue
 		}
-		if len(page.Items) == limit {
-			page.NextCursor = strconv.FormatInt(last, 10)
-			break
-		}
-		page.Items = append(page.Items, record.Operation)
-		last = sequence
+		operations = append(operations, record.Operation)
 	}
-	return page, rows.Err()
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+	return upgrade.Paginate(operations, cursor, limit)
 }
 
 func sameScope(operation upgrade.Operation, binding runner.Binding, installationID string) bool {
