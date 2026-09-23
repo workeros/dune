@@ -206,3 +206,36 @@ func TestSwitchRequiresCurrentRecoveryOwnerAndInstallationLock(t *testing.T) {
 		t.Fatal("rejected owner changed installation", after, err)
 	}
 }
+
+func TestReadOnlyProbeDuringWorkerOwnershipRejectsUntrackedChanges(t *testing.T) {
+	store, source, _ := installationFixture(t)
+	if err := store.Register(); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration, err := Find(record.Metadata.StateDir)
+	if err != nil || registration.ID != record.Metadata.ID || registration.Root != store.root {
+		t.Fatal(registration, err)
+	}
+	observed, err := View(t.Context(), registration.Root)
+	if err != nil || !observed.Complete {
+		t.Fatal(observed, err)
+	}
+	if err := os.WriteFile(filepath.Join(store.root, source.Directory, "rg"), []byte("external replacement"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := View(t.Context(), store.root); err == nil {
+		t.Fatal("read-only probe vouched for an obsolete revision")
+	}
+	changed, err := store.Observe(t.Context())
+	if err != nil || changed.Revision == observed.Revision {
+		t.Fatal(changed, err)
+	}
+	updated, err := View(t.Context(), store.root)
+	if err != nil || updated.Revision != changed.Revision || updated.Complete {
+		t.Fatal(updated, err)
+	}
+}

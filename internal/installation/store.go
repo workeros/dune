@@ -133,14 +133,21 @@ func (l Location) valid() bool {
 }
 
 func (s *Store) Read() (Record, error) {
-	var record Record
 	if s.lock == nil {
-		return record, os.ErrClosed
+		return Record{}, os.ErrClosed
 	}
-	if err := readJSON(filepath.Join(s.root, "installation.json"), &record); err != nil {
+	return readRecord(s.root)
+}
+
+func readRecord(root string) (Record, error) {
+	var record Record
+	if err := launchgate.CheckDirectory(root); err != nil {
 		return record, err
 	}
-	if record.Metadata.Validate(s.root) != nil || record.Revision == 0 || !record.Current.valid() || !upgrade.ValidSHA256(record.Fingerprint) {
+	if err := readJSON(filepath.Join(root, "installation.json"), &record); err != nil {
+		return record, err
+	}
+	if record.Metadata.Validate(root) != nil || record.Revision == 0 || !record.Current.valid() || !upgrade.ValidSHA256(record.Fingerprint) {
 		return record, fmt.Errorf("invalid installation record")
 	}
 	if pending := record.Pending; pending != nil && (api.ValidateSubmissionID(pending.OperationID) != nil || !pending.From.valid() || !pending.To.valid()) {

@@ -47,8 +47,19 @@ type Store struct {
 }
 
 func Open(ctx context.Context, directory string) (*Store, error) {
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return nil, err
+	return open(ctx, directory, false)
+}
+
+// OpenReadOnly cannot create jobs, databases, schemas or recovery side effects.
+func OpenReadOnly(ctx context.Context, directory string) (*Store, error) {
+	return open(ctx, directory, true)
+}
+
+func open(ctx context.Context, directory string, readOnly bool) (*Store, error) {
+	if !readOnly {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			return nil, err
+		}
 	}
 	if err := launchgate.CheckDirectory(directory); err != nil {
 		return nil, err
@@ -56,7 +67,10 @@ func Open(ctx context.Context, directory string) (*Store, error) {
 	path := filepath.Join(directory, "upgrades.sqlite")
 	for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
 		flags := os.O_RDWR | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
-		if suffix == "" {
+		if readOnly {
+			flags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+		}
+		if suffix == "" && !readOnly {
 			flags |= os.O_CREATE
 		}
 		file, err := os.OpenFile(path+suffix, flags, 0600)
@@ -81,6 +95,10 @@ func Open(ctx context.Context, directory string) (*Store, error) {
 	query.Set("_txlock", "immediate")
 	query.Add("_pragma", "busy_timeout(5000)")
 	query.Add("_pragma", "synchronous(FULL)")
+	if readOnly {
+		query.Set("mode", "ro")
+		query.Add("_pragma", "query_only(ON)")
+	}
 	dsn.RawQuery = query.Encode()
 	connector, err := sqlite.NewConnector(dsn.String())
 	if err != nil {
@@ -88,6 +106,18 @@ func Open(ctx context.Context, directory string) (*Store, error) {
 	}
 	store := &Store{db: sql.OpenDB(connector), directory: directory}
 	store.db.SetMaxOpenConns(1)
+	if readOnly {
+		var contract string
+		err := store.db.QueryRowContext(ctx, `SELECT shared_contract FROM upgrade_settings WHERE id=1`).Scan(&contract)
+		if err == nil && contract != statecontract.ID() {
+			err = fmt.Errorf("upgrade state contract differs from executable")
+		}
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+		return store, nil
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		store.Close()

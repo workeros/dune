@@ -30,9 +30,13 @@ import (
 	"github.com/aiomni/dune/pkg/storage"
 	"github.com/aiomni/dune/pkg/transport/peer"
 	"github.com/aiomni/dune/pkg/transport/ws"
+	"github.com/aiomni/dune/pkg/upgrade"
 )
 
 type Options struct {
+	// UpgradeSource resolves releases allowed for online Runner upgrades. Nil
+	// disables release selection; inspection and existing recovery remain readable.
+	UpgradeSource upgrade.Source
 	// DataDir selects SQLite in an absolute, private directory owned by the current user.
 	// The application holds it exclusively until Close has completed. The on-disk
 	// format is managed by Dune and is not a public storage extension interface.
@@ -87,6 +91,8 @@ type Options struct {
 // HTTP middleware must preserve Hijacker and ResponseController support (directly
 // or through Unwrap) for upgrades and cancellation of blocked request I/O.
 type App struct {
+	upgradeSource    upgrade.Source
+	upgradeControls  chan struct{}
 	ctx              context.Context
 	cancel           context.CancelFunc
 	web              *webapp.Server
@@ -193,6 +199,7 @@ func Open(parent context.Context, options Options) (*App, error) {
 	}
 	app := &App{core: core, publicPath: addresses.Path, requestsDone: make(chan struct{}), ctx: ctx, cancel: cancel, store: store, authorizer: authorizer, agentEnvironment: options.AgentEnvironment, peer: transport, peerHandler: peerHandler, observer: observer, servers: make(map[*http.Server]struct{}), done: make(chan struct{})}
 	app.agentOnline = online
+	app.upgradeSource, app.upgradeControls = options.UpgradeSource, make(chan struct{}, 16)
 	app.agentMCPURL = addresses.PublicURL + "api/v1/agent-mcp"
 	if app.agentOnline == nil {
 		app.agentOnline = func(_ context.Context, ids []string) (map[string]bool, error) {
@@ -231,6 +238,10 @@ func Open(parent context.Context, options Options) (*App, error) {
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.health(w, r) {
+		return
+	}
+	if r.URL.Path == a.publicPath+"api/v1/runner-upgrade-control" {
+		a.serveHTTP(http.HandlerFunc(a.serveUpgradeControl), w, r, false)
 		return
 	}
 	if r.URL.Path == a.publicPath+"api/v1/agent-mcp" {

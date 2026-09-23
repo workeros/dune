@@ -188,6 +188,9 @@ func (d *Engine) dispatch(s *executionStream, m *pb.Message, target string) {
 	}
 	var e error
 	switch m.Operation {
+	case "runner.upgrade.probe":
+		d.probeUpgrade(s, m)
+		return
 	case "runtime.watch":
 		d.watchRuntimes(s, m)
 		return

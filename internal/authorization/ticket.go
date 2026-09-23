@@ -28,6 +28,7 @@ type ConnectionAccess struct {
 	Session, PrincipalID, PrincipalKind, Namespace, Subject, Target, RunnerID, FabricID, OwnerID string
 	BindingRevision, ExpiresAt                                                                   int64
 	Background                                                                                   bool
+	UpgradeVerification                                                                          bool
 }
 
 func (r ConnectionAccess) Scope() access.Scope {

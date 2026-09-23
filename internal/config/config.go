@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,12 +24,13 @@ import (
 )
 
 type Config struct {
-	Gateway     string `yaml:"gateway"`
-	Listen      string `yaml:"listen"`
-	Token       string `yaml:"token"`
-	Target      string `yaml:"target"`
-	Certificate string `yaml:"certificate"`
-	Key         string `yaml:"key"`
+	UpgradeControlURL string `yaml:"upgrade_control_url,omitempty"`
+	Gateway           string `yaml:"gateway"`
+	Listen            string `yaml:"listen"`
+	Token             string `yaml:"token"`
+	Target            string `yaml:"target"`
+	Certificate       string `yaml:"certificate"`
+	Key               string `yaml:"key"`
 	// SessionDir stores machine configuration and identifies the private tmux server.
 	SessionDir string `yaml:"session_dir,omitempty"`
 }
@@ -69,6 +71,12 @@ func listenAddress(address string) error {
 	return nil
 }
 func (c Config) Validate() error {
+	if c.UpgradeControlURL != "" {
+		endpoint, err := url.Parse(c.UpgradeControlURL)
+		if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" || endpoint.RawQuery != "" || len(c.UpgradeControlURL) > 4096 {
+			return fmt.Errorf("invalid upgrade control endpoint")
+		}
+	}
 	_, e := deployment.Gateway(c.Gateway)
 	if e != nil {
 		return e

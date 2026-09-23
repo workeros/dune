@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/aiomni/dune/pkg/api"
+	"github.com/aiomni/dune/pkg/upgrade"
 	pb "github.com/aiomni/dune/proto/dune/dtp/v1"
 )
 
@@ -28,6 +29,11 @@ func Describe(scope Scope, m *pb.Message) (Request, error) {
 	decode := func(out any) error { return json.Unmarshal(m.Payload, out) }
 	var err error
 	switch m.Operation {
+	case "runner.upgrade.probe":
+		var probe upgrade.Probe
+		if decode(&probe) != nil || probe.Binding != scope.Binding || api.ValidateSubmissionID(probe.InstallationID) != nil || api.ValidateSubmissionID(probe.OperationID) != nil || api.ValidateSubmissionID(probe.AttemptID) != nil || api.ValidateSubmissionID(probe.Challenge) != nil || r.Runtime != (RuntimeIdentity{}) {
+			return r, ErrDenied
+		}
 	case "submission.raw":
 		var submission api.SubmissionRequest
 		if decode(&submission) != nil || submission.SubmissionKey.Validate() != nil || !oneOf(submission.Operation, "acp.raw.take", "acp.raw.write") || submission.Target.RuntimeID == "" || !matchesSubmissionScope(scope, submission.Target, m) {

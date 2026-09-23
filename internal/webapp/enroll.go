@@ -88,7 +88,7 @@ func EnrollMachine(ctx context.Context, path, site, token, certificate, runnerID
 	if result.Machine.RunnerID != runnerID {
 		return unknown(fmt.Errorf("response does not match the requested Runner"))
 	}
-	c := config.Config{Gateway: result.Gateway, Token: result.Credential, Target: result.Machine.ID, Certificate: certificate, SessionDir: filepath.Join(filepath.Dir(path), "sessions")}
+	c := config.Config{Gateway: result.Gateway, UpgradeControlURL: strings.TrimSuffix(site, "/") + "/api/v1/runner-upgrade-control", Token: result.Credential, Target: result.Machine.ID, Certificate: certificate, SessionDir: filepath.Join(filepath.Dir(path), "sessions")}
 	if u.Scheme == "https" && !strings.HasPrefix(c.Gateway, "wss://") {
 		return unknown(fmt.Errorf("server attempted to downgrade the machine connection"))
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -352,5 +353,29 @@ func TestExpiredHistoryRetainsKeysAndActiveRecovery(t *testing.T) {
 	more, err := s.List(t.Context(), request.Binding, request.InstallationID, page.NextCursor, 100)
 	if err != nil || len(more.Items) != 28 || more.NextCursor != "" {
 		t.Fatal(more, err)
+	}
+}
+
+func TestReadOnlyStoreCannotCreateOrAdvanceUpgrade(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "absent")
+	if store, err := OpenReadOnly(t.Context(), directory); err == nil {
+		store.Close()
+		t.Fatal("created missing store")
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatal("read created filesystem state", err)
+	}
+	writer, err := Open(t.Context(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	reader, err := OpenReadOnly(t.Context(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if _, err := reader.db.ExecContext(t.Context(), `DELETE FROM upgrade_settings`); err == nil {
+		t.Fatal("read-only handle permitted shared state mutation")
 	}
 }

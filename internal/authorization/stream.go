@@ -42,6 +42,9 @@ func (l *Service) validateAccess(ctx context.Context, record ConnectionAccess) (
 	}
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
+	if record.UpgradeVerification {
+		return l.validateUpgradeVerification(ctx, record)
+	}
 	expires := time.Now().Add(access.StreamLeaseLimit)
 	if record.Background {
 		if record.Session != "" {
@@ -84,6 +87,12 @@ func (c streamChecker) Check(ctx context.Context, request access.Request) (acces
 	expires, err := c.service.validateAccess(ctx, c.record)
 	if err != nil {
 		return access.Decision{}, err
+	}
+	if c.record.UpgradeVerification {
+		if request.Operation != "runner.upgrade.probe" || request.Runtime.ID != "" {
+			return access.Decision{}, access.ErrDenied
+		}
+		return access.Decision{Allowed: true, Reason: "RUNNER_UPGRADE_VERIFICATION", ID: request.RequestID, ValidUntil: earliest(started.Add(access.StreamLeaseLimit), expires)}, nil
 	}
 	decision, err := c.service.checker.Check(ctx, request)
 	if err != nil {

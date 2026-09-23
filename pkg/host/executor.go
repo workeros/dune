@@ -6,6 +6,7 @@ import (
 
 	"github.com/aiomni/dune/pkg/api"
 	"github.com/aiomni/dune/pkg/client"
+	"github.com/aiomni/dune/pkg/gateway"
 	"github.com/aiomni/dune/pkg/identity"
 	"github.com/aiomni/dune/pkg/runner"
 )
@@ -102,10 +103,14 @@ func (e *runnerExecutor) connect(ctx context.Context, principal identity.User, o
 	if err != nil {
 		return nil, nil, err
 	}
+	return e.app.connectGrantedRunner(ctx, binding, capability, grant, handler)
+}
+
+func (a *App) connectGrantedRunner(ctx context.Context, binding runner.Binding, capability string, grant gateway.BindingContext, handler gateway.ConnectionHandler) (*client.Client, func(), error) {
 	gatewayConn, sdkConn := net.Pipe()
 	done := make(chan struct{})
 	go func() {
-		_ = e.app.core.ServeConn(ctx, gatewayConn, grant, handler)
+		_ = a.core.ServeConn(ctx, gatewayConn, grant, handler)
 		close(done)
 	}()
 	sdk, err := client.Connect(ctx, sdkConn, binding.MachineID)
