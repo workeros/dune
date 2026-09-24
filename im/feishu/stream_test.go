@@ -46,7 +46,7 @@ func TestCardKitChunksRespectEscapedUpdateRequestBudget(t *testing.T) {
 			if err != nil || len(encoded) > maxStreamUpdateRequestBytes {
 				t.Fatalf("part %d exceeds update request budget: bytes=%d err=%v", index, len(encoded), err)
 			}
-			cardJSON, err := streamCardJSON("已完成", part, false)
+			cardJSON, err := streamCardJSON(part, false)
 			if err != nil || len(cardJSON) > 30*1024 {
 				t.Fatalf("final card %d exceeds CardKit's 30 KiB size limit: bytes=%d err=%v", index, len(cardJSON), err)
 			}
@@ -188,7 +188,7 @@ func testStreamMessage(text string) channel.OutboundMessage {
 	}}
 }
 
-func checkFinalCardUpdate(body []byte, wantText, wantTitle string) error {
+func checkFinalCardUpdate(body []byte, wantText string) error {
 	var request larkcard.UpdateCardReqBody
 	if err := json.Unmarshal(body, &request); err != nil {
 		return err
@@ -196,20 +196,18 @@ func checkFinalCardUpdate(body []byte, wantText, wantTitle string) error {
 	if request.Card == nil || value(request.Card.Type) != "card_json" || value(request.Uuid) == "" || request.Sequence == nil || *request.Sequence < 1 {
 		return fmt.Errorf("invalid final CardKit update: %s", body)
 	}
-	data := value(request.Card.Data)
+	return checkStreamCard(value(request.Card.Data), wantText, false)
+}
+
+func checkStreamCard(data, wantText string, streaming bool) error {
 	var card struct {
 		Schema string `json:"schema"`
 		Config struct {
 			StreamingMode *bool `json:"streaming_mode"`
 			UpdateMulti   bool  `json:"update_multi"`
 		} `json:"config"`
-		Header struct {
-			Title struct {
-				Tag     string `json:"tag"`
-				Content string `json:"content"`
-			} `json:"title"`
-		} `json:"header"`
-		Body struct {
+		Header json.RawMessage `json:"header"`
+		Body   struct {
 			Elements []struct {
 				Tag       string `json:"tag"`
 				ElementID string `json:"element_id"`
@@ -220,25 +218,25 @@ func checkFinalCardUpdate(body []byte, wantText, wantTitle string) error {
 	if err := json.Unmarshal([]byte(data), &card); err != nil {
 		return err
 	}
-	if len(data) > 30*1024 || card.Schema != "2.0" || card.Config.StreamingMode == nil || *card.Config.StreamingMode || !card.Config.UpdateMulti ||
-		card.Header.Title.Tag != "plain_text" || card.Header.Title.Content != wantTitle || len(card.Body.Elements) != 1 {
-		return fmt.Errorf("final card has incorrect status, config or size: %s", data)
+	if len(data) > 30*1024 || card.Schema != "2.0" || card.Config.StreamingMode == nil || *card.Config.StreamingMode != streaming || !card.Config.UpdateMulti ||
+		len(card.Header) != 0 || len(card.Body.Elements) != 1 {
+		return fmt.Errorf("card has a header, incorrect config or size: %s", data)
 	}
 	element := card.Body.Elements[0]
 	if element.Tag != "markdown" || element.ElementID != streamElementID || element.Content != wantText {
-		return fmt.Errorf("final card did not preserve its answer: %q, want %q", element.Content, wantText)
+		return fmt.Errorf("card did not preserve its answer: %q, want %q", element.Content, wantText)
 	}
 	return nil
 }
 
 func TestCardKitStreamCreatesRepliesUpdatesAndCloses(t *testing.T) {
 	for _, tc := range []struct {
-		name, finalText, title string
-		completed              bool
+		name, finalText string
+		completed       bool
 	}{
-		{name: "revised answer", finalText: "HELLO revised", title: "已完成", completed: true},
-		{name: "unchanged answer", finalText: "hello world", title: "已完成", completed: true},
-		{name: "agent failed", finalText: "hello world\n\n⚠️ 处理未完成，Agent 结果未知。", title: "处理未完成"},
+		{name: "revised answer", finalText: "HELLO revised", completed: true},
+		{name: "unchanged answer", finalText: "hello world", completed: true},
+		{name: "agent failed", finalText: "hello world\n\n⚠️ 处理未完成，Agent 结果未知。"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &memoryStreamStore{}
@@ -262,8 +260,11 @@ func TestCardKitStreamCreatesRepliesUpdatesAndCloses(t *testing.T) {
 					var request struct {
 						Data string `json:"data"`
 					}
-					if json.Unmarshal(body, &request) != nil || !strings.Contains(request.Data, `"streaming_mode":true`) || !strings.Contains(request.Data, `"update_multi":true`) || !strings.Contains(request.Data, "正在处理") {
-						t.Errorf("create did not enable shared native streaming: %s", body)
+					if err := json.Unmarshal(body, &request); err != nil {
+						t.Error(err)
+					}
+					if err := checkStreamCard(request.Data, "", true); err != nil {
+						t.Error(err)
 					}
 					_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-123"}}`)
 				case "/open-apis/im/v1/messages/om_input/reply":
@@ -294,7 +295,7 @@ func TestCardKitStreamCreatesRepliesUpdatesAndCloses(t *testing.T) {
 					var request struct {
 						Sequence int `json:"sequence"`
 					}
-					if err := checkFinalCardUpdate(body, tc.finalText, tc.title); err != nil {
+					if err := checkFinalCardUpdate(body, tc.finalText); err != nil {
 						t.Error(err)
 					}
 					if r.Method != http.MethodPut || json.Unmarshal(body, &request) != nil {
@@ -502,6 +503,15 @@ func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		switch {
 		case r.URL.Path == "/open-apis/cardkit/v1/cards":
+			var request struct {
+				Data string `json:"data"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			if err := checkStreamCard(request.Data, "", true); err != nil {
+				t.Error(err)
+			}
 			created++
 			_, _ = fmt.Fprintf(w, `{"code":0,"data":{"card_id":"card-%d"}}`, created)
 		case r.URL.Path == "/open-apis/im/v1/messages/om_input/reply":
@@ -533,7 +543,7 @@ func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
 			_, _ = io.WriteString(w, `{"code":0}`)
 		case r.URL.Path == fmt.Sprintf("/open-apis/cardkit/v1/cards/card-%d", created):
 			body, _ := io.ReadAll(r.Body)
-			if err := checkFinalCardUpdate(body, texts[created-1], "已完成"); err != nil {
+			if err := checkFinalCardUpdate(body, texts[created-1]); err != nil {
 				t.Error(err)
 			}
 			closed++

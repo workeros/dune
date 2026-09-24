@@ -335,7 +335,7 @@ func TestCallbackReplyModesInDirectAndGroupSessions(t *testing.T) {
 					case call.path == "/open-apis/cardkit/v1/cards/card-1":
 						cardCloses++
 						body, _ := json.Marshal(call.body)
-						if err := checkFinalCardUpdate(body, visible, "已完成"); err != nil {
+						if err := checkFinalCardUpdate(body, visible); err != nil {
 							t.Fatal(err)
 						}
 					default:
