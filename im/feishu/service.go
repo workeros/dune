@@ -431,7 +431,7 @@ func (s *Service) CallbackHandler(tenantID, bindingID string) (http.Handler, err
 		current := s.bindings[bindingID]
 		if s.closed || current == nil || current.retiring || current.binding.TenantID != tenantID || current.config.ReceiveMode != ReceiveCallback || current.err != nil {
 			s.mu.RUnlock()
-			http.Error(w, "Feishu callback Binding is not active", http.StatusServiceUnavailable)
+			writeCallbackError(w, http.StatusServiceUnavailable, "Feishu callback Binding is not active")
 			return
 		}
 		s.mu.RUnlock()
@@ -439,7 +439,7 @@ func (s *Service) CallbackHandler(tenantID, bindingID string) (http.Handler, err
 		// The Channel's stopped/ingress checks fence a receiver replaced here.
 		stored, found, err := s.store.GetBinding(r.Context(), tenantID, bindingID)
 		if err != nil || !found || !stored.Enabled || stored.Provider != Kind || stored.Revision != current.binding.Revision {
-			http.Error(w, "Feishu callback Binding is stale or disabled", http.StatusServiceUnavailable)
+			writeCallbackError(w, http.StatusServiceUnavailable, "Feishu callback Binding is stale or disabled")
 			return
 		}
 		current.channel.CallbackHandler().ServeHTTP(w, r)

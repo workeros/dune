@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -108,6 +107,9 @@ func TestCallbackAndWebSocketShareNormalizedEvent(t *testing.T) {
 	stamp := strconv.FormatInt(time.Now().Unix(), 10)
 	recorder := httptest.NewRecorder()
 	c.CallbackHandler().ServeHTTP(recorder, signedCallback(t, testEventJSON(), stamp))
+	if body := assertCallbackJSON(t, recorder, http.StatusOK); len(body) != 0 {
+		t.Fatalf("event acknowledgement = %#v", body)
+	}
 	if recorder.Code != http.StatusOK || len(sink.messages) != 1 {
 		t.Fatalf("callback status=%d, messages=%d", recorder.Code, len(sink.messages))
 	}
@@ -215,12 +217,11 @@ func TestCallbackRejectsInvalidSignatureAndStaleTimestamp(t *testing.T) {
 	request.Header.Set(larkevent.EventSignature, "invalid")
 	recorder := httptest.NewRecorder()
 	c.CallbackHandler().ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("bad signature status=%d", recorder.Code)
-	}
+	assertCallbackJSON(t, recorder, http.StatusUnauthorized)
 	recorder = httptest.NewRecorder()
 	stale := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 	c.CallbackHandler().ServeHTTP(recorder, signedCallback(t, testEventJSON(), stale))
+	assertCallbackJSON(t, recorder, http.StatusUnauthorized)
 	if recorder.Code != http.StatusUnauthorized || len(sink.messages) != 0 {
 		t.Fatalf("stale callback accepted: status=%d, messages=%d", recorder.Code, len(sink.messages))
 	}
@@ -229,19 +230,20 @@ func TestCallbackRejectsInvalidSignatureAndStaleTimestamp(t *testing.T) {
 func TestCallbackURLVerificationRequiresEncryptedMatchingToken(t *testing.T) {
 	c := testChannel(t, &recordingSink{})
 	for _, test := range []struct {
-		token string
-		want  int
-	}{{testToken, http.StatusOK}, {"wrong-token", http.StatusUnauthorized}} {
+		token  string
+		signed bool
+		want   int
+	}{{testToken, true, http.StatusOK}, {testToken, false, http.StatusOK}, {"wrong-token", false, http.StatusUnauthorized}} {
 		plain, _ := json.Marshal(map[string]string{"type": "url_verification", "challenge": "challenge-123", "token": test.token})
 		request := signedCallback(t, plain, strconv.FormatInt(time.Now().Unix(), 10))
-		request.Header.Del(larkevent.EventSignature)
+		if !test.signed {
+			request.Header.Del(larkevent.EventSignature)
+		}
 		response := httptest.NewRecorder()
 		c.CallbackHandler().ServeHTTP(response, request)
-		if response.Code != test.want {
-			t.Fatalf("token %q status=%d, want %d", test.token, response.Code, test.want)
-		}
-		if test.want == http.StatusOK && !strings.Contains(response.Body.String(), "challenge-123") {
-			t.Fatalf("challenge was not returned: %s", response.Body.String())
+		body := assertCallbackJSON(t, response, test.want)
+		if test.want == http.StatusOK && (len(body) != 1 || body["challenge"] != "challenge-123") {
+			t.Fatalf("challenge response = %#v", body)
 		}
 	}
 }
@@ -251,9 +253,7 @@ func TestCallbackDoesNotAckFailedDurableAcceptance(t *testing.T) {
 	c := testChannel(t, sink)
 	recorder := httptest.NewRecorder()
 	c.CallbackHandler().ServeHTTP(recorder, signedCallback(t, testEventJSON(), strconv.FormatInt(time.Now().Unix(), 10)))
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("failed acceptance status=%d", recorder.Code)
-	}
+	assertCallbackJSON(t, recorder, http.StatusServiceUnavailable)
 }
 
 func TestCallbackRedeliveryAfterStorageFailureIsDurablyDeduplicated(t *testing.T) {
@@ -264,12 +264,10 @@ func TestCallbackRedeliveryAfterStorageFailureIsDurablyDeduplicated(t *testing.T
 	}
 	defer store.Close()
 	channel := testChannel(t, channel.Ingress{Inbox: &flakyInbox{store: store, failOnce: true}})
-	for index, want := range []int{http.StatusServiceUnavailable, http.StatusOK, http.StatusOK} {
+	for _, want := range []int{http.StatusServiceUnavailable, http.StatusOK, http.StatusOK} {
 		response := httptest.NewRecorder()
 		channel.CallbackHandler().ServeHTTP(response, signedCallback(t, testEventJSON(), strconv.FormatInt(time.Now().Unix(), 10)))
-		if response.Code != want {
-			t.Fatalf("attempt %d status=%d, want %d", index+1, response.Code, want)
-		}
+		assertCallbackJSON(t, response, want)
 	}
 	item, found, err := store.Claim(ctx, time.Minute)
 	if err != nil || !found || item.Message.EventID != "event-1" {
