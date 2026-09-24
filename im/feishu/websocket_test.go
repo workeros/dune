@@ -278,7 +278,7 @@ func testWebSocketGroupEventReachesAgentAndThreadReply(t *testing.T, mode string
 			_, _ = io.WriteString(w, `{"code":0}`)
 		case "/open-apis/cardkit/v1/cards/card-1":
 			body, _ := io.ReadAll(r.Body)
-			if err := checkFinalCardUpdate(body, "answer: question om_root", "已完成"); err != nil || mode != ReplyStreaming || r.Method != http.MethodPut {
+			if err := checkFinalCardUpdate(body, "answer: question om_root"); err != nil || mode != ReplyStreaming || r.Method != http.MethodPut {
 				serverErrors <- fmt.Errorf("invalid CardKit close request: %s: %v", body, err)
 			}
 			cardCalls <- "close"

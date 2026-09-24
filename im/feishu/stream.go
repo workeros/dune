@@ -78,23 +78,20 @@ func (c *Channel) OpenStream(ctx context.Context, address channel.ReplyAddress, 
 		return nil, fmt.Errorf("Feishu stream %q is %s; reconcile before retry", initial.DeliveryID, delivery.Phase)
 	}
 	stream := &cardStream{owner: c, delivery: delivery, state: state, to: to}
-	if err := stream.startCard(ctx, initial.Text); err != nil {
+	if err := stream.startCard(ctx); err != nil {
 		return nil, err
 	}
 	return stream, nil
 }
 
-func (s *cardStream) startCard(ctx context.Context, title string) error {
+func (s *cardStream) startCard(ctx context.Context) error {
 	s.state.CardID, s.state.MessageID, s.state.ConfirmedText, s.state.PendingText = "", "", "", ""
 	s.state.Sequence = 0
 	s.state.NeedsContinuation = false
 	if err := s.commit(ctx, "creating"); err != nil {
 		return err
 	}
-	if strings.TrimSpace(title) == "" {
-		title = "正在处理"
-	}
-	cardJSON, err := streamCardJSON(title, "", true)
+	cardJSON, err := streamCardJSON("", true)
 	if err != nil {
 		return err
 	}
@@ -130,11 +127,10 @@ func (s *cardStream) startCard(ctx context.Context, title string) error {
 	return s.commit(ctx, "active")
 }
 
-func streamCardJSON(title, text string, streaming bool) (string, error) {
+func streamCardJSON(text string, streaming bool) (string, error) {
 	card := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{"streaming_mode": streaming, "update_multi": true},
-		"header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": title}},
 		"body": map[string]any{"elements": []any{
 			map[string]string{"tag": "markdown", "element_id": streamElementID, "content": text},
 		}},
@@ -235,7 +231,7 @@ func (s *cardStream) Complete(ctx context.Context, message channel.OutboundMessa
 	chunks := streamChunks(message.Text)
 	for index, chunk := range chunks {
 		if index > 0 {
-			if err := s.startCard(ctx, "继续"); err != nil {
+			if err := s.startCard(ctx); err != nil {
 				return err
 			}
 		}
@@ -250,11 +246,7 @@ func (s *cardStream) Complete(ctx context.Context, message channel.OutboundMessa
 }
 
 func (s *cardStream) closeCard(ctx context.Context, complete bool) error {
-	title := "处理未完成"
-	if s.delivery.AgentTurnCompleted {
-		title = "已完成"
-	}
-	cardJSON, err := streamCardJSON(title, s.state.ConfirmedText, false)
+	cardJSON, err := streamCardJSON(s.state.ConfirmedText, false)
 	if err != nil {
 		return err
 	}
@@ -268,8 +260,7 @@ func (s *cardStream) closeCard(ctx context.Context, complete bool) error {
 	if err := s.commit(ctx, "closing"); err != nil {
 		return err
 	}
-	// Settings only changes config/card_link. Replace the card so its visible
-	// status and streaming mode finish in the same confirmed operation.
+	// Finalize the card body and streaming mode in one confirmed operation.
 	uuid := streamUUID(s.delivery, s.state, "final-card")
 	request := larkcard.NewUpdateCardReqBuilder().CardId(s.state.CardID).
 		Body(larkcard.NewUpdateCardReqBodyBuilder().Uuid(uuid).Sequence(s.state.Sequence).

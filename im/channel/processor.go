@@ -259,11 +259,7 @@ func (p Processor) executeTurn(ctx context.Context, item WorkItem, active Active
 	}
 	var stream ReplyStream
 	if active.Streaming {
-		title := "正在处理"
-		if backendSession.ContextLost {
-			title = "上下文未恢复，正在重新开始"
-		}
-		stream, err = active.Channel.(StreamingChannel).OpenStream(ctx, item.Message.Address, OutboundMessage{Text: title, DeliveryID: delivery, Session: session.Key})
+		stream, err = active.Channel.(StreamingChannel).OpenStream(ctx, item.Message.Address, OutboundMessage{DeliveryID: delivery, Session: session.Key})
 		if err != nil {
 			return err
 		}
