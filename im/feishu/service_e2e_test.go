@@ -258,7 +258,7 @@ func TestCallbackReplyModesInDirectAndGroupSessions(t *testing.T) {
 						_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-1"}}`)
 					case r.URL.Path == "/open-apis/im/v1/messages" || strings.HasSuffix(r.URL.Path, "/reply"):
 						_, _ = io.WriteString(w, `{"code":0,"data":{"message_id":"om_answer"}}`)
-					case strings.HasPrefix(r.URL.Path, "/open-apis/cardkit/v1/cards/card-1/"):
+					case r.URL.Path == "/open-apis/cardkit/v1/cards/card-1" || strings.HasPrefix(r.URL.Path, "/open-apis/cardkit/v1/cards/card-1/"):
 						_, _ = io.WriteString(w, `{"code":0}`)
 					default:
 						t.Errorf("unexpected outbound API path: %s", r.URL.Path)
@@ -332,10 +332,11 @@ func TestCallbackReplyModesInDirectAndGroupSessions(t *testing.T) {
 					case strings.HasSuffix(call.path, "/elements/answer/content"):
 						cardUpdates++
 						visible = fmt.Sprint(call.body["content"])
-					case strings.HasSuffix(call.path, "/settings"):
+					case call.path == "/open-apis/cardkit/v1/cards/card-1":
 						cardCloses++
-						if !strings.Contains(fmt.Sprint(call.body["settings"]), `"streaming_mode":false`) {
-							t.Fatalf("streaming mode was not closed: %+v", call)
+						body, _ := json.Marshal(call.body)
+						if err := checkFinalCardUpdate(body, visible, "已完成"); err != nil {
+							t.Fatal(err)
 						}
 					default:
 						t.Fatalf("unexpected outbound API request: %+v", call)

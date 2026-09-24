@@ -91,7 +91,10 @@ func (s *cardStream) startCard(ctx context.Context, title string) error {
 	if err := s.commit(ctx, "creating"); err != nil {
 		return err
 	}
-	cardJSON, err := initialStreamCard(title)
+	if strings.TrimSpace(title) == "" {
+		title = "正在处理"
+	}
+	cardJSON, err := streamCardJSON(title, "", true)
 	if err != nil {
 		return err
 	}
@@ -127,16 +130,13 @@ func (s *cardStream) startCard(ctx context.Context, title string) error {
 	return s.commit(ctx, "active")
 }
 
-func initialStreamCard(title string) (string, error) {
-	if strings.TrimSpace(title) == "" {
-		title = "正在处理"
-	}
+func streamCardJSON(title, text string, streaming bool) (string, error) {
 	card := map[string]any{
 		"schema": "2.0",
-		"config": map[string]any{"streaming_mode": true, "update_multi": true},
+		"config": map[string]any{"streaming_mode": streaming, "update_multi": true},
 		"header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": title}},
 		"body": map[string]any{"elements": []any{
-			map[string]string{"tag": "markdown", "element_id": streamElementID, "content": ""},
+			map[string]string{"tag": "markdown", "element_id": streamElementID, "content": text},
 		}},
 	}
 	data, err := json.Marshal(card)
@@ -250,23 +250,36 @@ func (s *cardStream) Complete(ctx context.Context, message channel.OutboundMessa
 }
 
 func (s *cardStream) closeCard(ctx context.Context, complete bool) error {
+	title := "处理未完成"
+	if s.delivery.AgentTurnCompleted {
+		title = "已完成"
+	}
+	cardJSON, err := streamCardJSON(title, s.state.ConfirmedText, false)
+	if err != nil {
+		return err
+	}
 	if err := s.throttle(ctx); err != nil {
 		return err
+	}
+	if s.state.Sequence >= math.MaxInt32 {
+		return errors.New("CardKit stream sequence exceeds the API range")
 	}
 	s.state.Sequence++
 	if err := s.commit(ctx, "closing"); err != nil {
 		return err
 	}
-	uuid := streamUUID(s.delivery, s.state, "settings")
-	request := larkcard.NewSettingsCardReqBuilder().CardId(s.state.CardID).
-		Body(larkcard.NewSettingsCardReqBodyBuilder().Uuid(uuid).Sequence(s.state.Sequence).
-			Settings(`{"config":{"streaming_mode":false}}`).Build()).Build()
-	response, err := s.owner.client.Cardkit.V1.Card.Settings(ctx, request)
+	// Settings only changes config/card_link. Replace the card so its visible
+	// status and streaming mode finish in the same confirmed operation.
+	uuid := streamUUID(s.delivery, s.state, "final-card")
+	request := larkcard.NewUpdateCardReqBuilder().CardId(s.state.CardID).
+		Body(larkcard.NewUpdateCardReqBodyBuilder().Uuid(uuid).Sequence(s.state.Sequence).
+			Card(larkcard.NewCardBuilder().Type("card_json").Data(cardJSON).Build()).Build()).Build()
+	response, err := s.owner.client.Cardkit.V1.Card.Update(ctx, request)
 	if err != nil {
-		return s.remoteFailure(ctx, fmt.Errorf("close CardKit streaming mode (outcome may be unknown): %w", err))
+		return s.remoteFailure(ctx, fmt.Errorf("finalize CardKit card (outcome may be unknown): %w", err))
 	}
 	if response == nil || !response.Success() {
-		return s.remoteFailure(ctx, fmt.Errorf("close CardKit streaming mode failed: %v", response))
+		return s.remoteFailure(ctx, fmt.Errorf("finalize CardKit card failed: %v", response))
 	}
 	if complete {
 		return s.commit(ctx, "complete")
