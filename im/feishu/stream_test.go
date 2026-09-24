@@ -263,7 +263,7 @@ func TestCardKitStreamCreatesRepliesUpdatesAndCloses(t *testing.T) {
 					if err := json.Unmarshal(body, &request); err != nil {
 						t.Error(err)
 					}
-					if err := checkStreamCard(request.Data, "", true); err != nil {
+					if err := checkStreamCard(request.Data, "正在思考…", true); err != nil {
 						t.Error(err)
 					}
 					_, _ = io.WriteString(w, `{"code":0,"data":{"card_id":"card-123"}}`)
@@ -316,6 +316,14 @@ func TestCardKitStreamCreatesRepliesUpdatesAndCloses(t *testing.T) {
 			stream, err := c.OpenStream(ctx, testGroupAddress(), testStreamMessage(""))
 			if err != nil {
 				t.Fatal(err)
+			}
+			for _, emptyText := range []string{"", " \n\t"} {
+				if err := stream.Update(ctx, testStreamMessage(emptyText)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if state := store.state(); state.ConfirmedText != "" || state.Sequence != 0 {
+				t.Fatalf("placeholder or empty delta entered the cumulative answer: %+v", state)
 			}
 			wrong := testStreamMessage("wrong session")
 			wrong.Session.SubjectID = "om_elsewhere"
@@ -492,6 +500,8 @@ func TestCardKitUnknownUpdateSurvivesStoreReopenWithoutResend(t *testing.T) {
 func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
 	store := &memoryStreamStore{}
 	c := testStreamingChannel(t, store)
+	answer := strings.Repeat("你好", maxStreamUpdateRequestBytes/4) // multibyte UTF-8 across multiple cards
+	chunks := streamChunks(answer)
 	var paths, texts, sendUUIDs []string
 	created, closed := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -509,7 +519,12 @@ func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Error(err)
 			}
-			if err := checkStreamCard(request.Data, "", true); err != nil {
+			wantText := "正在思考…"
+			if created > 0 {
+				wantText = chunks[created]
+				texts = append(texts, wantText)
+			}
+			if err := checkStreamCard(request.Data, wantText, true); err != nil {
 				t.Error(err)
 			}
 			created++
@@ -560,7 +575,6 @@ func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	answer := strings.Repeat("你好", maxStreamUpdateRequestBytes/4) // multibyte UTF-8 across multiple cards
 	if err := stream.Update(ctx, testStreamMessage(answer)); err != nil {
 		t.Fatal(err)
 	}
@@ -579,8 +593,8 @@ func TestCardKitLongAnswerContinuesInSameThread(t *testing.T) {
 	if state.Parts[0].Text+state.ConfirmedText != answer || len(texts) != 2 || texts[0] != state.Parts[0].Text || texts[1] != state.ConfirmedText {
 		t.Fatalf("long answer was lost or duplicated: chunk sizes=%d/%d, answer=%d", len(state.Parts[0].Text), len(state.ConfirmedText), len(answer))
 	}
-	if len(paths) != 8 {
-		t.Fatalf("expected create/send/update/close for each card, got %v", paths)
+	if len(paths) != 7 {
+		t.Fatalf("expected create/send/update/close, then a continuation with its answer already present; got %v", paths)
 	}
 }
 

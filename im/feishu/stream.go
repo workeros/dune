@@ -78,20 +78,24 @@ func (c *Channel) OpenStream(ctx context.Context, address channel.ReplyAddress, 
 		return nil, fmt.Errorf("Feishu stream %q is %s; reconcile before retry", initial.DeliveryID, delivery.Phase)
 	}
 	stream := &cardStream{owner: c, delivery: delivery, state: state, to: to}
-	if err := stream.startCard(ctx); err != nil {
+	if err := stream.startCard(ctx, ""); err != nil {
 		return nil, err
 	}
 	return stream, nil
 }
 
-func (s *cardStream) startCard(ctx context.Context) error {
+func (s *cardStream) startCard(ctx context.Context, initialText string) error {
 	s.state.CardID, s.state.MessageID, s.state.ConfirmedText, s.state.PendingText = "", "", "", ""
 	s.state.Sequence = 0
 	s.state.NeedsContinuation = false
 	if err := s.commit(ctx, "creating"); err != nil {
 		return err
 	}
-	cardJSON, err := streamCardJSON("", true)
+	visibleText := initialText
+	if visibleText == "" {
+		visibleText = "正在思考…"
+	}
+	cardJSON, err := streamCardJSON(visibleText, true)
 	if err != nil {
 		return err
 	}
@@ -104,6 +108,9 @@ func (s *cardStream) startCard(ctx context.Context) error {
 		return s.remoteFailure(ctx, fmt.Errorf("create CardKit entity failed: %v", response))
 	}
 	s.state.CardID = value(response.Data.CardId)
+	// Keep the placeholder out of cumulative Agent text so the first delta
+	// replaces it. Continuation cards already have confirmed answer content.
+	s.state.ConfirmedText = initialText
 	if err := s.commit(ctx, "created"); err != nil {
 		return err
 	}
@@ -175,6 +182,9 @@ func (s *cardStream) updateLocked(ctx context.Context, fullText string, final bo
 	if s.state.NeedsContinuation || s.state.CardID == "" || s.state.MessageID == "" {
 		return errors.New("CardKit stream has no active card; reconcile before continuing")
 	}
+	if !final && s.state.ConfirmedText == "" && strings.TrimSpace(fullText) == "" {
+		return nil // Keep the thinking placeholder until visible answer text arrives.
+	}
 	first, fits := streamChunkPrefix(fullText)
 	if !final && !fits {
 		fullText = first
@@ -231,7 +241,7 @@ func (s *cardStream) Complete(ctx context.Context, message channel.OutboundMessa
 	chunks := streamChunks(message.Text)
 	for index, chunk := range chunks {
 		if index > 0 {
-			if err := s.startCard(ctx); err != nil {
+			if err := s.startCard(ctx, chunk); err != nil {
 				return err
 			}
 		}
