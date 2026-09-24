@@ -276,14 +276,10 @@ func testWebSocketGroupEventReachesAgentAndThreadReply(t *testing.T, mode string
 			}
 			cardCalls <- "update"
 			_, _ = io.WriteString(w, `{"code":0}`)
-		case "/open-apis/cardkit/v1/cards/card-1/settings":
-			var request struct {
-				Settings string `json:"settings"`
-				Sequence int    `json:"sequence"`
-				UUID     string `json:"uuid"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || mode != ReplyStreaming || !strings.Contains(request.Settings, `"streaming_mode":false`) || request.Sequence < 1 || request.UUID == "" {
-				serverErrors <- fmt.Errorf("invalid CardKit close request: %+v: %v", request, err)
+		case "/open-apis/cardkit/v1/cards/card-1":
+			body, _ := io.ReadAll(r.Body)
+			if err := checkFinalCardUpdate(body, "answer: question om_root", "已完成"); err != nil || mode != ReplyStreaming || r.Method != http.MethodPut {
+				serverErrors <- fmt.Errorf("invalid CardKit close request: %s: %v", body, err)
 			}
 			cardCalls <- "close"
 			_, _ = io.WriteString(w, `{"code":0}`)
