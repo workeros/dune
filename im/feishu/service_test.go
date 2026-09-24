@@ -252,9 +252,7 @@ func TestLoadTenantSynchronizesMultipleBotsAndDisablesOne(t *testing.T) {
 	}
 	preSync := httptest.NewRecorder()
 	mounted.ServeHTTP(preSync, httptest.NewRequest(http.MethodPost, "/im/feishu/tenant-a/bot-a", nil))
-	if preSync.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled Binding accepted callback before transport sync: %d", preSync.Code)
-	}
+	assertCallbackJSON(t, preSync, http.StatusServiceUnavailable)
 	if active, err := service.LookupBinding(ctx, "bot-a"); err != nil || active.Binding.Enabled {
 		t.Fatalf("disabled Binding still eligible before transport sync: %+v %v", active, err)
 	}
@@ -269,9 +267,7 @@ func TestLoadTenantSynchronizesMultipleBotsAndDisablesOne(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	mounted.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/im/feishu/tenant-a/bot-a", nil))
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("stale mounted handler status=%d", response.Code)
-	}
+	assertCallbackJSON(t, response, http.StatusServiceUnavailable)
 	if err := store.Insert(ctx, channel.InboundMessage{BindingID: "bot-a", EventID: "after-disable", MessageID: "om_after_disable"}); err != nil {
 		t.Fatal(err)
 	}
@@ -358,9 +354,7 @@ func TestSlowCallbackCannotBlockServiceStop(t *testing.T) {
 	close(release)
 	select {
 	case <-callbackDone:
-		if response.Code != http.StatusServiceUnavailable {
-			t.Fatalf("retired callback was ACKed after Stop: %d", response.Code)
-		}
+		assertCallbackJSON(t, response, http.StatusServiceUnavailable)
 	case <-time.After(5 * time.Second):
 		t.Fatal("retired callback did not finish after request body was released")
 	}
@@ -709,9 +703,7 @@ func TestActivateFailureDoesNotKeepOldReceiverConnected(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			mounted.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/im/feishu/tenant-a/bot-a", nil))
-			if response.Code != http.StatusServiceUnavailable {
-				t.Fatalf("mounted callback still resolved old receiver: %d", response.Code)
-			}
+			assertCallbackJSON(t, response, http.StatusServiceUnavailable)
 		})
 	}
 }
@@ -783,9 +775,7 @@ func TestLoadTenantDeactivatesRemovedBotDespiteAnotherActivationFailure(t *testi
 	for _, handler := range []http.Handler{oldA, oldB} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/im/feishu/tenant-a/bot", nil))
-		if response.Code != http.StatusServiceUnavailable {
-			t.Fatalf("removed or stale Binding still accepted callback: %d", response.Code)
-		}
+		assertCallbackJSON(t, response, http.StatusServiceUnavailable)
 	}
 }
 

@@ -19,12 +19,12 @@ const callbackTimeWindow = 5 * time.Minute
 func (c *Channel) serveCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeCallbackError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	select {
 	case <-c.stopped:
-		http.Error(w, "channel stopped", http.StatusServiceUnavailable)
+		writeCallbackError(w, http.StatusServiceUnavailable, "channel stopped")
 		return
 	default:
 	}
@@ -32,9 +32,9 @@ func (c *Channel) serveCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			writeCallbackError(w, http.StatusRequestEntityTooLarge, "request too large")
 		} else {
-			http.Error(w, "invalid body", http.StatusBadRequest)
+			writeCallbackError(w, http.StatusBadRequest, "invalid body")
 		}
 		return
 	}
@@ -42,23 +42,23 @@ func (c *Channel) serveCallback(w http.ResponseWriter, r *http.Request) {
 	// Do not verify and ACK it after its receiver has been retired.
 	select {
 	case <-c.stopped:
-		http.Error(w, "channel stopped", http.StatusServiceUnavailable)
+		writeCallbackError(w, http.StatusServiceUnavailable, "channel stopped")
 		return
 	default:
 	}
 	var envelope larkevent.EventEncryptMsg
 	if json.Unmarshal(data, &envelope) != nil || envelope.Encrypt == "" {
-		http.Error(w, "encrypted event required", http.StatusBadRequest)
+		writeCallbackError(w, http.StatusBadRequest, "encrypted event required")
 		return
 	}
 	signed := freshSignedCallback(r.Header, data, c.secret.EncryptKey, time.Now())
 	if r.Header.Get(larkevent.EventSignature) != "" && !signed {
-		http.Error(w, "invalid signature or timestamp", http.StatusUnauthorized)
+		writeCallbackError(w, http.StatusUnauthorized, "invalid signature or timestamp")
 		return
 	}
 	plain, err := safeEventDecrypt(envelope.Encrypt, c.secret.EncryptKey)
 	if err != nil {
-		http.Error(w, "invalid encrypted event", http.StatusUnauthorized)
+		writeCallbackError(w, http.StatusUnauthorized, "invalid encrypted event")
 		return
 	}
 	var header struct {
@@ -72,7 +72,7 @@ func (c *Channel) serveCallback(w http.ResponseWriter, r *http.Request) {
 		} `json:"header"`
 	}
 	if json.Unmarshal(plain, &header) != nil {
-		http.Error(w, "invalid event", http.StatusBadRequest)
+		writeCallbackError(w, http.StatusBadRequest, "invalid event")
 		return
 	}
 	token := header.Header.Token
@@ -80,38 +80,50 @@ func (c *Channel) serveCallback(w http.ResponseWriter, r *http.Request) {
 		token = header.Token
 	}
 	if !secureEqual(token, c.secret.VerificationToken) {
-		http.Error(w, "invalid event token", http.StatusUnauthorized)
+		writeCallbackError(w, http.StatusUnauthorized, "invalid event token")
 		return
 	}
 	if header.Header.AppID != "" && header.Header.AppID != c.config.AppID {
-		http.Error(w, "invalid app ID", http.StatusUnauthorized)
+		writeCallbackError(w, http.StatusUnauthorized, "invalid app ID")
 		return
 	}
 	if header.Type == "url_verification" {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"challenge": header.Challenge})
+		writeCallbackJSON(w, http.StatusOK, map[string]string{"challenge": header.Challenge})
 		return
 	}
 	if header.Header.AppID == "" || !signed {
-		http.Error(w, "invalid signature or timestamp", http.StatusUnauthorized)
+		writeCallbackError(w, http.StatusUnauthorized, "invalid signature or timestamp")
 		return
 	}
 	if header.Header.EventType != "im.message.receive_v1" {
-		w.WriteHeader(http.StatusOK)
+		writeCallbackJSON(w, http.StatusOK, struct{}{})
 		return
 	}
 	var event larkim.P2MessageReceiveV1
 	if err := json.Unmarshal(plain, &event); err != nil {
-		http.Error(w, "invalid message event", http.StatusBadRequest)
+		writeCallbackError(w, http.StatusBadRequest, "invalid message event")
 		return
 	}
 	if err := c.onMessage(r.Context(), &event); err != nil {
 		// A non-2xx response allows Feishu to redeliver when durable
 		// acceptance failed. The sink must deduplicate by event ID.
-		http.Error(w, "event not accepted", http.StatusServiceUnavailable)
+		writeCallbackError(w, http.StatusServiceUnavailable, "event not accepted")
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	writeCallbackJSON(w, http.StatusOK, struct{}{})
+}
+
+// Return JSON for every callback outcome so Feishu can parse errors as well as
+// URL verification. Keep failures non-2xx so durable-acceptance failures retry.
+func writeCallbackError(w http.ResponseWriter, status int, message string) {
+	writeCallbackJSON(w, status, map[string]string{"code": "CALLBACK_REJECTED", "error": message})
+}
+
+func writeCallbackJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // The upstream SDK may panic when decrypting attacker-controlled ciphertext

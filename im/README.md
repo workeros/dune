@@ -123,6 +123,11 @@ Profile ID、正整数 Profile revision、绝对工作目录。凭据 JSON 包�
 - 首版三种模式均使用 ACP，流式模式另外要求有序 assistant 正文增量。PTY 在激活前被拒绝。
 - 飞书应用须订阅 `im.message.receive_v1`，按使用的消息、话题查询和 CardKit API 配齐权限。
 
+飞书回调的 HTTP 响应由本模块直接保证 `Content-Type: application/json`：URL 校验返回
+`{"challenge":"..."}`，接受或忽略事件返回 `{}`，校验失败、存储失败或失效 Binding 返回
+`{"code":"CALLBACK_REJECTED","error":"..."}` 并保留对应的非 2xx 状态码。
+接入方直接挂载 handler，无需包装或改写响应；加密、Token 和签名校验失败仍会拒绝请求。
+
 更新或轮换凭据后，持久化新 Binding revision 并调用 `LoadTenant`；停用也先持久化 `Enabled=false`。
 健康且版本未变的连接会保留。更新 Agent 目标只影响尚未启动 Runtime 的会话；已有会话继续使用目标快照。
 
