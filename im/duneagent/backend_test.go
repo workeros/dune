@@ -297,7 +297,16 @@ func TestPromptStreamsOnlyAssistantAnswerAndDoesNotDuplicateFullFinal(t *testing
 	connection.outputs = []api.AgentOperationOutput{outputPage("completed",
 		update("thought_message_chunk", "hidden"),
 		update("agent_message_chunk", "hello"),
-		update("tool_call", "tool output"),
+		&pb.Message{Payload: jsonPayload(map[string]any{
+			"sessionId": "acp-session-a",
+			"update":    map[string]any{"sessionUpdate": "tool_call", "toolCallId": "tool-1", "content": []any{}},
+		})},
+		&pb.Message{Payload: jsonPayload(map[string]any{
+			"sessionId": "acp-session-a",
+			"update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "tool-1", "status": "completed", "content": []any{
+				map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": "tool output"}},
+			}},
+		})},
 		update("agent_message_chunk", " "),
 		update("agent_message_chunk", "world"),
 		update("agent_message", "hello world"),

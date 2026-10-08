@@ -118,12 +118,9 @@ func assistantUpdate(message *pb.Message, sessionID string) (text string, full b
 	var event struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
-			SessionUpdate string `json:"sessionUpdate"`
-			SnakeUpdate   string `json:"session_update"`
-			Content       struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
+			SessionUpdate string          `json:"sessionUpdate"`
+			SnakeUpdate   string          `json:"session_update"`
+			Content       json.RawMessage `json:"content"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(message.Payload, &event); err != nil {
@@ -136,6 +133,20 @@ func assistantUpdate(message *pb.Message, sessionID string) (text string, full b
 	if kind == "" {
 		kind = event.Update.SnakeUpdate
 	}
-	text, ok = NormalizeAssistantUpdate(kind, event.Update.Content.Type, event.Update.Content.Text)
+	if kind != "agent_message_chunk" && kind != "agent_message" {
+		return "", false, false, nil
+	}
+	// Tool updates carry an array of content blocks. Decode answer content
+	// only after selecting an assistant message so tools cannot abort the turn.
+	var content struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if len(event.Update.Content) > 0 {
+		if err := json.Unmarshal(event.Update.Content, &content); err != nil {
+			return "", false, false, fmt.Errorf("decode ACP assistant content: %w", err)
+		}
+	}
+	text, ok = NormalizeAssistantUpdate(kind, content.Type, content.Text)
 	return text, kind == "agent_message", ok, nil
 }
